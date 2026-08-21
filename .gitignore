@@ -1,1 +1,2 @@
-# add ignored files here
+# nix/direnv
+.direnv

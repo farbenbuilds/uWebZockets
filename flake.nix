@@ -56,6 +56,36 @@
       in {
         formatter = pkgs.alejandra;
 
+        packages =
+          {
+            default = pkgs.stdenv.mkDerivation {
+              name = "uWebZockets-binaries-default";
+              src = ./.;
+              nativeBuildInputs = mkBuildDeps pkgs;
+              dontConfigure = true;
+              buildPhase = ''
+                export ZIG_GLOBAL_CACHE_DIR=$TMPDIR/zig-cache
+                # Build everything (library and examples) in ReleaseFast mode.
+                # Output binaries will automatically go to $out/bin due to --prefix.
+                zig build -Doptimize=ReleaseFast --prefix $out
+              '';
+              installPhase = "true"; # zig build --prefix handles installation
+            };
+          }
+          // pkgs.lib.optionalAttrs isLinux {
+            musl = pkgsMusl.stdenv.mkDerivation {
+              name = "uWebZockets-binaries-musl";
+              src = ./.;
+              nativeBuildInputs = mkBuildDeps pkgsMusl;
+              dontConfigure = true;
+              buildPhase = ''
+                export ZIG_GLOBAL_CACHE_DIR=$TMPDIR/zig-cache
+                zig build -Doptimize=ReleaseFast --prefix $out
+              '';
+              installPhase = "true";
+            };
+          };
+
         checks =
           {
             test-default = pkgs.stdenv.mkDerivation {
