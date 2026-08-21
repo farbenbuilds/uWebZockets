@@ -6,4 +6,4 @@
 
 A high-performance, commercial-grade WebSocket and HTTP server API library written in Zig. Engineered with a strict zero-allocation fast-path and Data-Oriented Design (DoD) to push I/O boundaries beyond the original C++ `µWebSockets`.
 
-> 🚧 **WIP**: This project is currently a Work In Progress.
+# WIP
