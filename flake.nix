@@ -1,5 +1,5 @@
 {
-  description = "farbenbuilds/uWebZockets";
+  description = "farbenbuilds/uWebZockets - A Zig implementation inspired by uWebSockets, designed for zero-allocation and better IO.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
