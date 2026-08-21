@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "skills": {
+    "Functional Programming Fundamentals": {
+      "source": "whatiskadudoing/fp-ts-skills",
+      "sourceType": "github",
+      "skillPath": "skills/fp-fundamentals/SKILL.md",
+      "computedHash": "0da195e3bce1fe6b115b5b114eea8c564e1b652d5d32f2c1175a32ad97d9a2ee"
+    },
+    "caveman": {
+      "source": "juliusbrussee/caveman",
+      "sourceType": "github",
+      "skillPath": "skills/caveman/SKILL.md",
+      "computedHash": "48646eeec87b27067502d8bd450484faf08af588df783706b1571ee72f2d918c"
+    },
+    "context7": {
+      "source": "intellectronica/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/context7/SKILL.md",
+      "computedHash": "fccbea654f8e35824a8bdce3e059e206efeb6c1fab9f6c096c3867e761081983"
+    },
+    "dod": {
+      "source": "cielixer/my-skills",
+      "sourceType": "github",
+      "skillPath": "dod/SKILL.md",
+      "computedHash": "2746973a03ae09612ec1a5fe5f6160deac3de2beba11343e57fd442cd0e4a5bb"
+    },
+    "nix-best-practices": {
+      "source": "alleneubank/claude-code",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/nix-best-practices/SKILL.md",
+      "computedHash": "f6d14bf40d4b505dd50cb389711eae74bc1459740adb27f4641cd75c21042311"
+    },
+    "ponytail": {
+      "source": "dietrichgebert/ponytail",
+      "sourceType": "github",
+      "skillPath": "skills/ponytail/SKILL.md",
+      "computedHash": "210fa0831f649ce9f8a305f7b7c8cf2a0dd09ac4dd53067109941b96e7811d4e"
+    },
+    "zig-0.16": {
+      "source": "zigcc/skills",
+      "sourceType": "github",
+      "skillPath": "zig-0.16/SKILL.md",
+      "computedHash": "82a551c0121974da06daf2d4bb06f47c33dfd840c11f86d758688ed2177371dd"
+    },
+    "zig-best-practices": {
+      "source": "alleneubank/claude-code",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/zig-best-practices/SKILL.md",
+      "computedHash": "2066ad212238ab5b8216db478fb19e54e3ed2b2837e0d438e86ba0f717bb0d67"
+    },
+    "zig-build-system": {
+      "source": "mohitmishra786/low-level-dev-skills",
+      "sourceType": "github",
+      "skillPath": "skills/zig/zig-build-system/SKILL.md",
+      "computedHash": "b2f709845af63d7e5fc5e55c35f3389c9c71c1a76f24dcda515e74e0af3e119b"
+    },
+    "zig-cinterop": {
+      "source": "mohitmishra786/low-level-dev-skills",
+      "sourceType": "github",
+      "skillPath": "skills/zig/zig-cinterop/SKILL.md",
+      "computedHash": "b22168c5c578a5e3d99574f5a26ac710ced9c5867669e84bb1a2037ec0d2c813"
+    },
+    "zig-compiler": {
+      "source": "mohitmishra786/low-level-dev-skills",
+      "sourceType": "github",
+      "skillPath": "skills/zig/zig-compiler/SKILL.md",
+      "computedHash": "522b2eb448526fb161a9e70ddda8632e9b96e4e7a654126ec4383ecb8db49fed"
+    },
+    "zig-comptime": {
+      "source": "mohitmishra786/low-level-dev-skills",
+      "sourceType": "github",
+      "skillPath": "skills/zig/zig-comptime/SKILL.md",
+      "computedHash": "facd6ae57770b9a80a0275d6bbbaf74b0714bdcdf2d00dbc8f0542b8c109a9e6"
+    },
+    "zig-cross": {
+      "source": "mohitmishra786/low-level-dev-skills",
+      "sourceType": "github",
+      "skillPath": "skills/zig/zig-cross/SKILL.md",
+      "computedHash": "1af8b3b73b834814558d96b17e7017564be3c52502c7061843277c936a2821f4"
+    },
+    "zig-debugging": {
+      "source": "mohitmishra786/low-level-dev-skills",
+      "sourceType": "github",
+      "skillPath": "skills/zig/zig-debugging/SKILL.md",
+      "computedHash": "bfad91d4d6301941a53c388766827971c2c18eb4525bd60b6e0824f11c4a3897"
+    },
+    "zig-testing": {
+      "source": "mohitmishra786/low-level-dev-skills",
+      "sourceType": "github",
+      "skillPath": "skills/zig/zig-testing/SKILL.md",
+      "computedHash": "0b4e87322173473ee5dc18a8b4152c2a64df2ed0a532576f8e7ea07d9e46ecc0"
+    }
+  }
+}
