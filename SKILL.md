@@ -13,7 +13,7 @@ This document outlines the unified workflow combining all specialized skills ava
 - **Ponytail Mode (`ponytail`)**: Embrace extreme laziness and simplicity. Ask "Do we even need this?" before writing any code. Prefer native Zig language features over dependencies. Keep solutions minimal.
 - **Caveman Mode (`caveman`)**: Keep communication dense and concise. High signal-to-noise ratio in documentation, commit messages, and PRs.
 
-## 2. Core Architecture (`uwebzockets-arch`, `zig-0.16`)
+## 2. Core Architecture (`zig-0.16`)
 - **Zero-Allocation Hot Paths**: The request/response cycle must not allocate memory dynamically. Pre-allocate buffers and leverage `std.heap.ArenaAllocator` for temporary per-connection data.
 - **Event Loop & IO**: Utilize `mitchellh/libxev` for a robust, cross-platform, non-blocking event loop.
 - **Parsing**: Leverage `farbenbuilds/zslay` for protocol parsing.
