@@ -2,6 +2,17 @@
 
 This document outlines the Continuous Integration and Continuous Deployment (CI/CD) strategy for `uWebZockets`. Given our strict performance and functional paradigms, the pipeline acts as the ultimate gatekeeper for zero-allocations, memory safety, and protocol compliance.
 
+## Workflows
+
+The following table maps our CI/CD strategy to specific GitHub Actions workflow files:
+
+| Workflow                          | Trigger                             | Purpose                                         |
+| --------------------------------- | ----------------------------------- | ----------------------------------------------- |
+| `.github/workflows/lint.yml`      | Pull request into `main`            | Code formatting (`zig fmt --check .`) and convention checks (emoji/`snake_case` scanner). |
+| `.github/workflows/test.yml`      | Pull request into `main`            | Native Zig unit tests (`zig build test`) with `std.testing.allocator` memory leak detection. |
+| `.github/workflows/compliance.yml`| Pull request into `main`            | Spins up target servers and runs Autobahn WS and `h1spec` test suites. |
+| `.github/workflows/publish.yml`   | Push of a version tag matching `v*` | Cross-platform builds (Linux/macOS) via Nix and GitHub release binary distribution. |
+
 ## Pipeline Stages
 
 ### 1. Formatting & Linting (`zig fmt` & Custom Checks)
@@ -17,7 +28,9 @@ This document outlines the Continuous Integration and Continuous Deployment (CI/
 
 ### 3. Build Verification (`ReleaseSafe` & `ReleaseFast`)
 - **Compilation Check**: Ensures that the library, target servers in `tests/`, and sample apps in `examples/` compile successfully across different optimization modes.
-- **Cross-Compilation Check**: Validates that `uWebZockets` cross-compiles flawlessly for critical target triples (e.g., `x86_64-linux-musl`, `aarch64-linux-gnu`, `aarch64-macos-none`) to guarantee `libxev` and C-interop portability.
+  - **`ReleaseSafe`**: Compiled with optimizations enabled but safety checks (bounds checking, overflow) retained. Used to catch hidden memory bugs under load.
+  - **`ReleaseFast`**: Compiled with max speed, stripping safety checks. The ultimate production target for our zero-alloc hot paths.
+- **Cross-Compilation Check**: Validates that `uWebZockets` cross-compiles flawlessly for critical target triples (e.g., `x86_64-linux-musl`, `aarch64-linux-gnu`, `aarch64-macos-none`) via Nix.
 
 ### 4. Protocol Compliance Testing (Autobahn & h1spec)
 To position `uWebZockets` as a commercial-grade alternative to `uWebSockets`, we must perfectly pass industry-standard protocol test suites.
