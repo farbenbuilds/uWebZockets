@@ -51,12 +51,12 @@ To position `uWebZockets` as a commercial-grade alternative to `uWebSockets`, we
 3. Derives the version from the tag (`v0.1.0` becomes `0.1.0`).
 4. Extracts the release notes from the matching `## [0.1.0]` section of `CHANGELOG.md`.
 5. Calls `nix build` sequentially for the targets defined in `flake.nix`:
-   - `linux-x86_64-gnu` -> builds `libuWebZockets-x86_64-linux-gnu.a`
-   - `linux-x86_64-musl` -> builds `libuWebZockets-x86_64-linux-musl.a`
-   - `linux-aarch64-gnu` -> builds `libuWebZockets-aarch64-linux-gnu.a`
-   - `linux-aarch64-musl` -> builds `libuWebZockets-aarch64-linux-musl.a`
-   - `macos-x86_64` -> builds `libuWebZockets-x86_64-macos.a`
-   - `macos-aarch64` -> builds `libuWebZockets-aarch64-macos.a`
+   - `linux-x86_64-gnu` -> builds `uWebZockets-x86_64-linux-gnu.a`
+   - `linux-x86_64-musl` -> builds `uWebZockets-x86_64-linux-musl.a`
+   - `linux-aarch64-gnu` -> builds `uWebZockets-aarch64-linux-gnu.a`
+   - `linux-aarch64-musl` -> builds `uWebZockets-aarch64-linux-musl.a`
+   - `macos-x86_64` -> builds `uWebZockets-x86_64-macos.a`
+   - `macos-aarch64` -> builds `uWebZockets-aarch64-macos.a`
    - `windows-x86_64` -> builds `uWebZockets-x86_64-windows.lib`
 6. Packages Linux and macOS artifacts exclusively into cross-platform archives (`.tar.bz2`, `.tar.gz`, `.tar.xz`) utilizing hermetic tools (`gnutar`, `bzip2`, `gzip`, `xz`). Windows targets are packaged into `.zip` archives utilizing the `zip` tool. All tools are provided via `flake.nix` dev shells. The raw `.a`/`.lib` files are strictly omitted from the payload.
 7. Creates (or updates) the GitHub Release named after the tag and uploads the generated tarball archives.
