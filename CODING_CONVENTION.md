@@ -32,10 +32,10 @@ These conventions adapt the spirit of the Linux Kernel Coding Style to Zig 0.16.
 - **Zero Allocations & Purity**: Network fast-paths must not allocate dynamically. Functional pipelines (e.g., map/filter concepts) must be implemented via zero-allocation iterators or comptime metaprogramming, never generating intermediate heap allocations.
 - **Alignment and Padding**: Be conscious of struct sizes and padding. Order struct fields from largest to smallest to minimize padding, unless a specific memory layout is required for C interop or hardware constraints.
 
-## 4. Naming Conventions (Zig Standard)
-- **Functions & Variables**: `camelCase` (Note: Zig convention is camelCase for functions and variables, though Linux prefers snake_case. We will stick to standard Zig `camelCase` for functions/variables to integrate smoothly with the standard library, unless mapping directly to C).
-- **Types**: `PascalCase` for structs, enums, unions, and error sets.
-- **C Interop**: When wrapping C libraries (BoringSSL, libsquic), preserve the original C names in the raw bindings, but provide a clean, idiomatic Zig wrapper.
+## 4. Naming Conventions (Linux Style Override)
+- **Functions & Variables**: `snake_case` is strictly enforced for all functions and variables to align with Linux kernel styling preferences, explicitly overriding standard Zig `camelCase`.
+- **Types**: `PascalCase` for structs, enums, unions, and error sets (Standard Zig).
+- **C Interop**: When wrapping C libraries (BoringSSL, libsquic), preserve the original C names in the raw bindings, but provide a clean `snake_case` Zig wrapper for the public API.
 
 ## 5. C Interop & FFI
 - Use `@cImport` judiciously, or prefer translating C headers ahead-of-time using `translate-c` for better compilation speeds and type safety.
