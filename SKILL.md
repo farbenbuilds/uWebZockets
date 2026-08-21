@@ -7,9 +7,10 @@ description: Master high-performance workflow integrating all specialized skills
 
 This document outlines the unified workflow combining all specialized skills available in `.agents/skills/*` to build a blazingly fast, zero-allocation WebSocket/HTTP library.
 
-## 1. Mindset & Optimization (`ponytail`, `caveman`, `dod`)
+## 1. Mindset & Optimization (`ponytail`, `caveman`, `dod`, `functional-programming-fundamentals`)
+- **Functional & Pure (No OOP)**: Zero Object-Oriented Programming allowed. Emphasize pure functions, explicit state passing, and immutability where it doesn't cost performance. Never bind state and behavior into "classes".
+- **Data-Oriented Design (`dod`)**: Performance starts with memory. Group data by access pattern, not by object. Use Struct of Arrays (SoA) to maximize CPU cache utilization and minimize pointer chasing. Functional pipelines must operate over these DOD-optimized structures without allocating.
 - **Ponytail Mode (`ponytail`)**: Embrace extreme laziness and simplicity. Ask "Do we even need this?" before writing any code. Prefer native Zig language features over dependencies. Keep solutions minimal.
-- **Data-Oriented Design (`dod`)**: Performance starts with memory. Group data by access pattern, not by object. Use Struct of Arrays (SoA) to maximize CPU cache utilization and minimize pointer chasing.
 - **Caveman Mode (`caveman`)**: Keep communication dense and concise. High signal-to-noise ratio in documentation, commit messages, and PRs.
 
 ## 2. Core Architecture (`uwebzockets-arch`, `zig-0.16`)

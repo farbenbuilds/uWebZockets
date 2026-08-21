@@ -25,9 +25,11 @@ These conventions adapt the spirit of the Linux Kernel Coding Style to Zig 0.16.
 - **Variable Scoping**: Declare variables as close to their first use as possible.
 - **Switch Statements**: Use `switch` over long `if/else` chains. Exhaustive switching is a Zig strength; leverage it.
 
-## 3. Data-Oriented Design (DoD)
+## 3. Data-Oriented Design (DoD) & Functional Programming
+- **Zero Object-Oriented Programming (OOP)**: OOP is strictly forbidden. Do not try to emulate classes or bind hidden state to behavior. Separate pure data structures from the functions that transform them.
+- **Pure Functions**: Favor pure functions that take explicit inputs and return explicit outputs without side effects. Pass state explicitly rather than relying on hidden contexts.
 - **Data Locality**: Organize data for cache efficiency. Prefer Struct of Arrays (SoA) via `std.MultiArrayList` over Array of Structs (AoS) for large collections of entities processed in bulk.
-- **Zero Allocations**: Network fast-paths must not allocate dynamically. Pre-allocate buffers, use arenas for request lifecycles, and leverage fixed-size buffers.
+- **Zero Allocations & Purity**: Network fast-paths must not allocate dynamically. Functional pipelines (e.g., map/filter concepts) must be implemented via zero-allocation iterators or comptime metaprogramming, never generating intermediate heap allocations.
 - **Alignment and Padding**: Be conscious of struct sizes and padding. Order struct fields from largest to smallest to minimize padding, unless a specific memory layout is required for C interop or hardware constraints.
 
 ## 4. Naming Conventions (Zig Standard)
