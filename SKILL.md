@@ -1,9 +1,9 @@
 ---
 name: uwebzockets-workflow
-description: Master high-performance workflow integrating all specialized skills for the uWebZockets project.
+description: Master high-performance workflow integrating all specialized skills for the µWebZockets project.
 ---
 
-# uWebZockets High-Performance Master Workflow
+# µWebZockets High-Performance Master Workflow
 
 This document outlines the unified workflow combining all specialized skills available in `.agents/skills/*` to build a blazingly fast, zero-allocation WebSocket/HTTP library.
 

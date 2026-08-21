@@ -1,4 +1,4 @@
-# uWebZockets Coding Conventions
+# µWebZockets Coding Conventions
 
 These conventions adapt the spirit of the Linux Kernel Coding Style to Zig 0.16.0, focusing on pragmatism, performance, and readability.
 

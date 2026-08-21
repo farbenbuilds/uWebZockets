@@ -1,14 +1,14 @@
-# Contributing to uWebZockets
+# Contributing to µWebZockets
 
-Thank you for your interest in contributing to `uWebZockets`! To maintain our extreme performance targets and strict codebase quality, please read and adhere to the following guidelines before submitting a Pull Request.
+Thank you for your interest in contributing to `µWebZockets`! To maintain our extreme performance targets and strict codebase quality, please read and adhere to the following guidelines before submitting a Pull Request.
 
 ## Prerequisites
 Before you start coding, please familiarize yourself with our core architectural documents:
-1. **[CODEBASE.md](./CODEBASE.md)**: Understand the directory structure and how we map to the original C++ `uWebSockets` stack.
+1. **[CODEBASE.md](./CODEBASE.md)**: Understand the directory structure and how we map to the original C++ `µWebSockets` stack.
 2. **[CODING_CONVENTION.md](./CODING_CONVENTION.md)**: Our strict style, naming, and formatting rules.
 3. **[CI_CD_PIPELINE.md](./CI_CD_PIPELINE.md)**: How your code will be tested and benchmarked.
 
-## The Three Pillars of uWebZockets
+## The Three Pillars of µWebZockets
 
 1. **Zero-Allocation Hot Paths**: The network request and response cycles must *never* dynamically allocate memory on the heap. Pre-allocate buffers or use arena allocators for temporary per-connection state. If a PR introduces a heap allocation in `src/http/` or `src/ws/`, it will be rejected.
 2. **Strictly Functional & DoD (No OOP)**: Do not try to emulate classes or bind hidden state to behavior. Separate data structures (designed for cache-locality using Data-Oriented Design) from the pure functions that operate on them.

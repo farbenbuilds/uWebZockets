@@ -1,12 +1,12 @@
 name: Bug Report
-description: Submit a functional bug, protocol violation, or build issue for uWebZockets
+description: Submit a functional bug, protocol violation, or build issue for µWebZockets
 labels: [bug]
 body:
   - type: markdown
     attributes:
       value: |
         ## Bug Report
-        Thank you for reporting an issue in **uWebZockets**. 
+        Thank you for reporting an issue in **µWebZockets**. 
         *Note: If this is a memory safety issue (out-of-bounds read, use-after-free) or a parser panic, please use the `Security Vulnerability` template instead.*
   - type: input
     id: bug-description
@@ -22,7 +22,7 @@ body:
       label: Steps to Reproduce
       description: How can we reproduce this? Please provide a minimal Zig `test` block, a C FFI snippet, or the raw hex bytes of the WebSocket frame.
       placeholder: |
-        1. Start the uWebZockets server...
+        1. Start the µWebZockets server...
         2. Feed the following hex payload: `81 85 37 fa 21 3d 7f 9f 4d 51 58`
         3. Observe the parsing state machine
     validations:
@@ -31,7 +31,7 @@ body:
     id: expected-behavior
     attributes:
       label: Expected Behavior
-      description: What did you expect to happen according to RFC 6455 or the uWebZockets API?
+      description: What did you expect to happen according to RFC 6455 or the µWebZockets API?
       placeholder: E.g. The parser should transition to the PAYLOAD state and return the cleanly unmasked bytes.
     validations:
       required: true

@@ -1,12 +1,12 @@
 name: Feature Request
-description: Suggest a new parser capability, API enhancement, or FFI improvement for uWebZockets
+description: Suggest a new parser capability, API enhancement, or FFI improvement for µWebZockets
 labels: [enhancement]
 body:
   - type: markdown
     attributes:
       value: |
         ## Feature Request
-        Thank you for contributing to **uWebZockets**! 
+        Thank you for contributing to **µWebZockets**! 
 
         *Please note that all new features must adhere to our core philosophy: **zero hidden allocations, I/O-agnostic design, and strict C-ABI compatibility**.*
   - type: input
@@ -37,7 +37,7 @@ body:
     id: alternatives
     attributes:
       label: Alternatives Considered
-      description: Have you considered implementing this purely on the consumer side instead of modifying the uWebZockets core?
+      description: Have you considered implementing this purely on the consumer side instead of modifying the µWebZockets core?
       placeholder: E.g. Handling decompression entirely in the host runtime, but that requires extra buffer copying and complicates the callback flow...
     validations:
       required: false
