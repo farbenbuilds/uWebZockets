@@ -24,8 +24,10 @@ This document outlines the unified workflow combining all specialized skills ava
 - **Compile-Time Evaluation (`zig-comptime`)**: heavily utilize `comptime` for routing logic and protocol framing to completely eliminate runtime overhead.
 - **Build Infrastructure (`zig-build-system`, `nix-best-practices`)**: Write lean `build.zig` scripts. Utilize Nix for reproducible developer environments to ensure identical cross-platform builds.
 
-## 4. FFI & Cross-Compilation (`zig-cinterop`, `zig-cross`)
-- **C Interoperability (`zig-cinterop`)**: Integrate `BoringSSL`, `libsquic`, and `libdeflate`. Prefer using `translate-c` to convert headers to Zig for improved type safety and faster compilation over raw `@cImport`.
+## 4. FFI, C/C++ Ecosystem & Cross-Compilation (`zig-cinterop`, `zig-cross`, `cmake`, `ninja`, `gcc`, `c-systems-programming`, `cpp-coding-standards`, `cpp-modules`)
+- **C Interoperability (`zig-cinterop`)**: Integrate `BoringSSL`, `lsquic`, and `libdeflate`. Prefer using `translate-c` to convert headers to Zig for improved type safety and faster compilation over raw `@cImport`.
+- **C/C++ Build Orchestration (`cmake`, `ninja`, `gcc`)**: Utilize CMake and Ninja for building complex C/C++ dependencies (like BoringSSL and lsquic) natively from `build.zig`, ensuring correct GCC flags and cross-platform compatibility.
+- **Low-Level C/C++ (`c-systems-programming`, `cpp-coding-standards`, `cpp-modules`)**: Apply strict modern C/C++ standards when modifying or wrapping any native code, utilizing C++20 modules where applicable, and understanding low-level OS interaction.
 - **Targeting (`zig-cross`)**: Ensure the library can cross-compile flawlessly to diverse target architectures using Zig's native cross-compilation toolchain.
 
 ## 5. Debugging & QA (`zig-testing`, `zig-debugging`, `zig-compiler`)
