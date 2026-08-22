@@ -1,2 +1,16 @@
 # nix/direnv
-.direnv
+.direnv/
+.envrc.cache
+.envrc.local
+
+# zig
+.zig-cache/
+zig-out/
+zig-cache/
+zig-pkg/
+
+# build artifacts
+*.o
+*.a
+*.so
+result
