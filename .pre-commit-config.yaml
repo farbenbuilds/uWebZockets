@@ -14,7 +14,7 @@ repos:
     hooks:
       - id: zon2nix
         name: zon2nix
-        entry: nix develop -c zon2nix --nix=build.zig.zon.nix --json=build.zig.zon.json --txt=build.zig.zon.txt
+        entry: bash -c 'if command -v nix >/dev/null 2>&1; then nix develop -c zon2nix --nix=build.zig.zon.nix --json=build.zig.zon.json --txt=build.zig.zon.txt "$@"; else echo "nix not found, skipping zon2nix"; exit 0; fi' --
         language: system
         files: ^build\.zig\.zon$
         pass_filenames: true
