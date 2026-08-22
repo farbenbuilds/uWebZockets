@@ -1,0 +1,36 @@
+name: Lint
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "**.zig"
+      - "**.zon"
+      - "build.zig"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "**.zig"
+      - "**.zon"
+      - "build.zig"
+
+jobs:
+  fmt:
+    name: Check Zig Formatting
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.16.0
+
+      - name: Run Zig fmt
+        run: zig fmt --check .
