@@ -20,12 +20,13 @@ jobs:
   fmt:
     name: Check Zig Formatting
     runs-on: ubuntu-latest
+    environment: Linting
     permissions:
       contents: read
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Zig
         uses: mlugg/setup-zig@v1
