@@ -41,6 +41,11 @@
               p.ninja
               p.pkg-config
               p.go
+              p.gnutar
+              p.bzip2
+              p.gzip
+              p.xz
+              p.zip
             ];
           };
 
@@ -51,6 +56,11 @@
           p.ninja
           p.pkg-config
           p.go
+          p.gnutar
+          p.bzip2
+          p.gzip
+          p.xz
+          p.zip
         ];
 
       in {
