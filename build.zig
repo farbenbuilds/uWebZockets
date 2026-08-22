@@ -64,21 +64,21 @@ pub fn build(b: *std.Build) void {
     lib.step.dependOn(&deflate_ninja.step);
 
     // Library paths (where the .a files are generated)
-    lib.addLibraryPath(b.path(b.pathJoin(&.{ bssl_build_dir, "ssl" })));
-    lib.addLibraryPath(b.path(b.pathJoin(&.{ bssl_build_dir, "crypto" })));
-    lib.addLibraryPath(b.path(b.pathJoin(&.{ lsquic_build_dir, "src", "liblsquic" })));
-    lib.addLibraryPath(b.path(deflate_build_dir));
+    lib.root_module.addLibraryPath(b.path(b.pathJoin(&.{ bssl_build_dir, "ssl" })));
+    lib.root_module.addLibraryPath(b.path(b.pathJoin(&.{ bssl_build_dir, "crypto" })));
+    lib.root_module.addLibraryPath(b.path(b.pathJoin(&.{ lsquic_build_dir, "src", "liblsquic" })));
+    lib.root_module.addLibraryPath(b.path(deflate_build_dir));
 
     // System libraries
-    lib.linkSystemLibrary("ssl");
-    lib.linkSystemLibrary("crypto");
-    lib.linkSystemLibrary("lsquic");
-    lib.linkSystemLibrary("deflate");
+    lib.root_module.linkSystemLibrary("ssl", .{});
+    lib.root_module.linkSystemLibrary("crypto", .{});
+    lib.root_module.linkSystemLibrary("lsquic", .{});
+    lib.root_module.linkSystemLibrary("deflate", .{});
 
     // Include paths (so src/c.zig can @cImport them)
-    lib.addIncludePath(b.path(b.pathJoin(&.{ bssl_src, "include" })));
-    lib.addIncludePath(b.path(b.pathJoin(&.{ lsquic_src, "include" })));
-    lib.addIncludePath(b.path(deflate_src));
+    lib.root_module.addIncludePath(b.path(b.pathJoin(&.{ bssl_src, "include" })));
+    lib.root_module.addIncludePath(b.path(b.pathJoin(&.{ lsquic_src, "include" })));
+    lib.root_module.addIncludePath(b.path(deflate_src));
 
     b.installArtifact(lib);
 
