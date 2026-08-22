@@ -1,0 +1,16 @@
+[submodule "vendor/libdeflate"]
+	path = vendor/libdeflate
+	url = https://github.com/ebiggers/libdeflate
+	shallow = true
+[submodule "vendor/boringssl"]
+	path = vendor/boringssl
+	url = https://github.com/google/boringssl
+	shallow = true
+[submodule "vendor/lsquic"]
+	path = vendor/lsquic
+	url = https://github.com/litespeedtech/lsquic
+	shallow = true
+[submodule "vendor/h1spec"]
+	path = vendor/h1spec
+	url = https://github.com/uNetworking/h1spec
+	shallow = true
