@@ -14,3 +14,9 @@ zig-pkg/
 *.a
 *.so
 result
+result-*
+
+# os / editors
+.DS_Store
+.vscode/
+*.swp
