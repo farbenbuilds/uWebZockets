@@ -1,5 +1,3 @@
-git+https://codeberg.org/ziglang/arocc#a4e99cedda3bff1e3a3a388e9f6ed05bbd36e441
-git+https://codeberg.org/ziglang/translate-c#3da873cacdd7e9190fe1cf40372ddf5387c970ea
 git+https://github.com/jacobsandlund/uucode#2826a37a4562284fdacd8fa029d49509cc9bffcd
 git+https://github.com/mitchellh/libxev#9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf
 git+https://github.com/natecraddock/zf#c35c421f84895193246db06c40683c1a30e616ef

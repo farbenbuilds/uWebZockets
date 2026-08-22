@@ -100,29 +100,11 @@ let
 in
 linkFarm name [
   {
-    name = "aro-0.0.0-JSD1QllKNwBfEKDTpieRPt0mp_0RCJUOEAFBUdGHGXFl";
-    path = fetchZigArtifact {
-      name = "aro";
-      url = "git+https://codeberg.org/ziglang/arocc#a4e99cedda3bff1e3a3a388e9f6ed05bbd36e441";
-      hash = "sha256-04Wbb/6aFN0EpIa8RYBce8WJbdOGco9JK5XFLlBspf0=";
-      unpack = true;
-    };
-  }
-  {
     name = "libxev-0.0.0-86vtcwIRFADbH4hk-EjROXxlrKIRPQdA41XiTSytYO-F";
     path = fetchZigArtifact {
       name = "libxev";
       url = "git+https://github.com/mitchellh/libxev#9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf";
       hash = "sha256-fOU1oxIxfoEgoLuWz7fVX6M+zmqpo7gqZObWiH/aDE0=";
-      unpack = true;
-    };
-  }
-  {
-    name = "translate_c-0.0.0-Q_BUWktLBwBO7VLbmrOKUcAMRtE5fmOxI35189X5XbJs";
-    path = fetchZigArtifact {
-      name = "translate_c";
-      url = "git+https://codeberg.org/ziglang/translate-c#3da873cacdd7e9190fe1cf40372ddf5387c970ea";
-      hash = "sha256-YwC1Gx/OpzjSWPJcoJEaHzdsTLGA2CpDH83rpkShesE=";
       unpack = true;
     };
   }
