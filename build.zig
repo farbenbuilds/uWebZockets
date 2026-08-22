@@ -9,7 +9,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
 
-    const lib = b.addStaticLibrary(.{
+    const lib = b.addLibrary(.{
+        .linkage = .static,
         .name = "uWebZockets",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/root.zig"),
