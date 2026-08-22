@@ -19,7 +19,7 @@ The following table maps our CI/CD strategy to specific GitHub Actions workflow 
 - **`zig fmt` Check**: Ensures all source code adheres strictly to the Zig formatter. Any unformatted code will fail the build.
 - **Convention Checks**: A custom CI script will scan for banned patterns based on our `CODING_CONVENTION.md`:
   - **Emojis**: Scans for and rejects any emojis in code, comments, or commit messages.
-  - **Naming**: Enforces `snake_case` for functions and variables (our Linux style override).
+  - **Naming**: Enforces Linux file naming (`snake_case`), as well as `snake_case` for functions and variables (our Linux style override).
 
 ### 2. Unit Testing & Memory Leak Detection (`zig build test`)
 - **Execution**: Runs all internal `test` blocks defined across the `src/` directory.
@@ -34,7 +34,7 @@ The following table maps our CI/CD strategy to specific GitHub Actions workflow 
 
 ### 4. Protocol Compliance Testing (Autobahn & h1spec)
 To position `µWebZockets` as a commercial-grade alternative to `µWebSockets`, we must perfectly pass industry-standard protocol test suites.
-- **Autobahn WebSockets Testsuite**: 
+- **Autobahn WebSockets Testsuite**:
   - *Action*: The pipeline spins up our `tests/autobahn/` target server in the background and runs the standard Python `wstest` docker container against it.
   - *Purpose*: Validates 100% strict compliance with RFC-6455 (WebSocket Protocol), including fragmentation, masking, per-message deflate, and control frames.
 - **h1spec (HTTP/1.1 Testsuite)**:

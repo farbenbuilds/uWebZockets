@@ -20,3 +20,5 @@ We aim to support the latest major version of this project. Security fixes will 
 ## Disclosure Policy
 
 We ask that you give us a reasonable amount of time to resolve the issue before making any public disclosure. We are committed to addressing security issues quickly and responsibly.
+
+Note: All contributions related to security fixes must also adhere to our Linux file naming (`snake_case`) conventions.

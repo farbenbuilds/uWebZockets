@@ -6,7 +6,7 @@
 ## Core Paradigms
 1. **Data-Oriented Design (DoD)**: Memory layout dictates performance. We employ Struct of Arrays (SoA) and tight data packing to maximize CPU cache utilization.
 2. **Functional Programming (No OOP)**: Object-Oriented Programming is strictly forbidden. We separate pure data structures from the functions that transform them, favor pure functions without hidden state, and implement zero-allocation pipelines.
-3. **Linux Kernel Coding Style**: We combine Zig's safety with Linux's pragmatic style, enforcing `snake_case` for variables and functions, shallow nesting via early returns, and an absolute ban on emojis in the codebase.
+3. **Linux Kernel Coding Style**: We combine Zig's safety with Linux's pragmatic style, enforcing Linux file naming (`snake_case`) as well as `snake_case` for variables and functions, shallow nesting via early returns, and an absolute ban on emojis in the codebase.
 
 ## Ecosystem & Dependencies
 - **Event Loop**: `mitchellh/libxev` for high-performance, cross-platform asynchronous I/O.
@@ -37,10 +37,8 @@ uWebZockets/
 │   │                     # -> Counterpart: `µWebSockets` WebSocket.h, WebSocketProtocol.h, PerMessageDeflate.h
 │   ├── quic/             # HTTP/3 module (lsquic integration).
 │   │                     # -> Counterpart: `uSockets` quic layer / future uWS HTTP/3 support
-│   ├── app.zig           # Developer-facing API (app initialization and routing setup).
-│   │                     # -> Counterpart: `µWebSockets` App.h, TemplatedApp.h
-│   └── router.zig        # Static comptime routing logic.
-│                         # -> Counterpart: `µWebSockets` HttpRouter.h
+│   └── router/           # Developer-facing API and static comptime routing logic.
+│                         # -> Counterpart: `µWebSockets` App.h, TemplatedApp.h, HttpRouter.h
 ├── tests/
 │   ├── autobahn/         # WS Target server for Autobahn Testsuite
 │   └── h1spec/           # HTTP/1.1 Target server for h1spec testing
@@ -50,7 +48,6 @@ uWebZockets/
 ```
 
 ## Architecture Notes
-- **`src/app.zig`**: The primary developer-facing interface. Unlike the templated C++ OOP approach of `TemplatedApp.h`, this must present a clean, ergonomic, and purely functional API passing state explicitly.
-- **`src/router.zig`**: Leverages Zig's `comptime` to resolve routes at compile-time, completely eliminating dynamic routing overhead at runtime (aiming to surpass `µWebSockets` runtime Trie-based `HttpRouter.h`).
+- **`src/router/`**: The primary developer-facing interface and routing logic. Unlike the templated C++ OOP approach of `TemplatedApp.h`, this must present a clean, ergonomic, and purely functional API passing state explicitly. It leverages Zig's `comptime` to resolve routes at compile-time, completely eliminating dynamic routing overhead at runtime (aiming to surpass `µWebSockets` runtime Trie-based `HttpRouter.h`).
 - **`src/http/` & `src/ws/`**: The absolute critical paths. These layers must operate entirely without dynamic heap allocations during the request/response lifecycle.
 - **`src/core/`**: While `uSockets` rolls its own epoll/kqueue bindings, we leverage `libxev` here for proven, cross-platform performance, wrapping it with functional zero-allocation paradigms.

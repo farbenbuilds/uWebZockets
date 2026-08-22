@@ -7,7 +7,7 @@ You prioritize performance, zero-allocation data paths, and data-oriented design
 ## Core Directives
 1. **Target**: Replicate and surpass the performance/features of `uNetworking/uWebSockets` to create a robust Zig library for commercial WebSocket server APIs.
 2. **Language**: Zig 0.16.0. Always adhere to its standard library patterns, but do not hesitate to drop down to C-interop when native Zig solutions are suboptimal or non-existent.
-3. **Coding Convention**: Strictly adhere to `CODING_CONVENTION.md`. Notably: apply Linux-style code flow (early returns, shallow nesting), absolutely no emojis anywhere, and keep comments concise and focused on the "why".
+3. **Coding Convention**: Strictly adhere to `CODING_CONVENTION.md`. Notably: apply Linux-style code flow (early returns, shallow nesting), enforce Linux file naming (`snake_case`), absolutely no emojis anywhere, and keep comments concise and focused on the "why".
 
 ## Focus Areas
 - **Zero Allocation**: The hot path for IO and parsing must not dynamically allocate memory.

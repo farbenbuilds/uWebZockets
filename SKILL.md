@@ -20,7 +20,7 @@ This document outlines the unified workflow combining all specialized skills ava
 - **Zig 0.16 Primitives (`zig-0.16`)**: Strictly adhere to the latest `std.io` patterns and deprecations.
 
 ## 3. Implementation & Build (`zig-best-practices`, `zig-comptime`, `zig-build-system`)
-- **Idiomatic Zig (`zig-best-practices`)**: Follow standard Zig naming, error handling (native error sets), and explicit memory management. Combine with our Linux-style coding conventions (early returns, minimal indentation).
+- **Idiomatic Zig (`zig-best-practices`)**: Follow standard Zig naming, error handling (native error sets), and explicit memory management. Combine with our Linux-style coding conventions (early returns, minimal indentation, and strictly Linux file naming `snake_case`).
 - **Compile-Time Evaluation (`zig-comptime`)**: heavily utilize `comptime` for routing logic and protocol framing to completely eliminate runtime overhead.
 - **Build Infrastructure (`zig-build-system`, `nix-best-practices`)**: Write lean `build.zig` scripts. Utilize Nix for reproducible developer environments to ensure identical cross-platform builds.
 

@@ -33,6 +33,7 @@ These conventions adapt the spirit of the Linux Kernel Coding Style to Zig 0.16.
 - **Alignment and Padding**: Be conscious of struct sizes and padding. Order struct fields from largest to smallest to minimize padding, unless a specific memory layout is required for C interop or hardware constraints.
 
 ## 4. Naming Conventions (Linux Style Override)
+- **File Naming**: Linux file naming (`snake_case`) is strictly enforced for all files.
 - **Functions & Variables**: `snake_case` is strictly enforced for all functions and variables to align with Linux kernel styling preferences, explicitly overriding standard Zig `camelCase`.
 - **Types**: `PascalCase` for structs, enums, unions, and error sets (Standard Zig).
 - **C Interop**: When wrapping C libraries (BoringSSL, libsquic), preserve the original C names in the raw bindings, but provide a clean `snake_case` Zig wrapper for the public API.
