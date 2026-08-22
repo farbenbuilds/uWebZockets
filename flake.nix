@@ -70,7 +70,7 @@
           {
             default = pkgs.stdenv.mkDerivation {
               name = "uWebZockets-binaries-default";
-              src = ./.;
+              src = builtins.fetchGit { url = ./.; submodules = true; };
               nativeBuildInputs = mkBuildDeps pkgs;
               dontConfigure = true;
               buildPhase = ''
@@ -85,7 +85,7 @@
           // pkgs.lib.optionalAttrs isLinux {
             musl = pkgsMusl.stdenv.mkDerivation {
               name = "uWebZockets-binaries-musl";
-              src = ./.;
+              src = builtins.fetchGit { url = ./.; submodules = true; };
               nativeBuildInputs = mkBuildDeps pkgsMusl;
               dontConfigure = true;
               buildPhase = ''
@@ -100,7 +100,7 @@
           {
             test-default = pkgs.stdenv.mkDerivation {
               name = "uWebZockets-test-default";
-              src = ./.;
+              src = builtins.fetchGit { url = ./.; submodules = true; };
               nativeBuildInputs = mkBuildDeps pkgs;
               dontConfigure = true;
               buildPhase = ''
@@ -113,7 +113,7 @@
           // pkgs.lib.optionalAttrs isLinux {
             test-musl = pkgsMusl.stdenv.mkDerivation {
               name = "uWebZockets-test-musl";
-              src = ./.;
+              src = builtins.fetchGit { url = ./.; submodules = true; };
               nativeBuildInputs = mkBuildDeps pkgsMusl;
               dontConfigure = true;
               buildPhase = ''
