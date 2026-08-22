@@ -7,11 +7,23 @@
       "skillPath": "skills/fp-fundamentals/SKILL.md",
       "computedHash": "0da195e3bce1fe6b115b5b114eea8c564e1b652d5d32f2c1175a32ad97d9a2ee"
     },
+    "c-systems-programming": {
+      "source": "thebushidocollective/han",
+      "sourceType": "github",
+      "skillPath": "plugins/languages/c/skills/c-systems-programming/SKILL.md",
+      "computedHash": "b94317463048c9b35768dbcb63065c715ff2ecf9ebcea5c063fc9cf4c526239c"
+    },
     "caveman": {
       "source": "juliusbrussee/caveman",
       "sourceType": "github",
       "skillPath": "skills/caveman/SKILL.md",
       "computedHash": "48646eeec87b27067502d8bd450484faf08af588df783706b1571ee72f2d918c"
+    },
+    "cmake": {
+      "source": "mohitmishra786/low-level-dev-skills",
+      "sourceType": "github",
+      "skillPath": "skills/build-systems/cmake/SKILL.md",
+      "computedHash": "ca5d2b6e4df8cc503ac624a44d61bf5d823abba1eb1fbc0de0d6969eba351db6"
     },
     "context7": {
       "source": "intellectronica/agent-skills",
@@ -19,11 +31,35 @@
       "skillPath": "skills/context7/SKILL.md",
       "computedHash": "fccbea654f8e35824a8bdce3e059e206efeb6c1fab9f6c096c3867e761081983"
     },
+    "cpp-coding-standards": {
+      "source": "affaan-m/ecc",
+      "sourceType": "github",
+      "skillPath": "skills/cpp-coding-standards/SKILL.md",
+      "computedHash": "e8c59d13fe23b088e24dcf6b77845823c5b5636b5c52434550f9b1837bc44ac3"
+    },
+    "cpp-modules": {
+      "source": "mohitmishra786/low-level-dev-skills",
+      "sourceType": "github",
+      "skillPath": "skills/compilers/cpp-modules/SKILL.md",
+      "computedHash": "950016ec40aabfbe5ae63f2dad7c413abb089e83c196b8943f567e0227a4a96f"
+    },
     "dod": {
       "source": "cielixer/my-skills",
       "sourceType": "github",
       "skillPath": "dod/SKILL.md",
       "computedHash": "2746973a03ae09612ec1a5fe5f6160deac3de2beba11343e57fd442cd0e4a5bb"
+    },
+    "gcc": {
+      "source": "mohitmishra786/low-level-dev-skills",
+      "sourceType": "github",
+      "skillPath": "skills/compilers/gcc/SKILL.md",
+      "computedHash": "8ec4b941ab86510681e77b21fee4b1abde2ef742235a950ec6a07a728852672e"
+    },
+    "ninja": {
+      "source": "mohitmishra786/low-level-dev-skills",
+      "sourceType": "github",
+      "skillPath": "skills/build-systems/ninja/SKILL.md",
+      "computedHash": "7a2d57431726513821e60f5fcee8c00d03ffe0e840a9e0ec1ab8d21f90c1f0fb"
     },
     "nix-best-practices": {
       "source": "alleneubank/claude-code",
