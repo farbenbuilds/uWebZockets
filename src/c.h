@@ -3,11 +3,11 @@
 #include <netinet/in.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <openssl/base.h>
+#include "../vendor/boringssl/include/openssl/base.h"
 #undef OPENSSL_GNUC_CLANG_PRAGMA
 #define OPENSSL_GNUC_CLANG_PRAGMA(arg)
 
-#include <openssl/ssl.h>
-#include <openssl/crypto.h>
-#include <lsquic.h>
-#include <libdeflate.h>
+#include "../vendor/boringssl/include/openssl/ssl.h"
+#include "../vendor/boringssl/include/openssl/crypto.h"
+#include "../vendor/lsquic/include/lsquic.h"
+#include "../vendor/libdeflate/libdeflate.h"
