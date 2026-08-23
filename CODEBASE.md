@@ -27,7 +27,7 @@ uWebZockets/
 ├── vendor/               # Contains git submodules (libdeflate, boringssl, lsquic, h1spec)
 ├── src/
 │   ├── root.zig          # Library entry point (exports app, loop)
-│   ├── c.zig             # Centralized C-interop layer. @cImports headers for BoringSSL, lsquic, libdeflate, etc.
+│   ├── c.h               # Centralized C header for translation. Includes BoringSSL, lsquic, libdeflate, etc.
 │   ├── test.zig          # Centralized unit test suite. Validates C-bindings and implementation integrity.
 │   ├── core/             # I/O layer (loop.zig, tcp.zig, udp.zig). Wraps libxev.
 │   │                     # -> Counterpart: `uSockets` (Loop.c, Socket.c, Event.c)
