@@ -1,0 +1,7 @@
+[
+  {
+    "directory": ".",
+    "command": "cc -Ivendor/boringssl/include -Ivendor/lsquic/include -Ivendor/libdeflate -c src/c.h",
+    "file": "src/c.h"
+  }
+]
