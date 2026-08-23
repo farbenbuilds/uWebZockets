@@ -1,8 +1,2 @@
-# Mark the vast majority of the vendor directory as vendored so GitHub doesn't classify this as a C/C++ project
-vendor/** linguist-vendored
-
-# Selectively un-vendor a few small files to trick GitHub into displaying C and Go
-# as subordinate languages, without letting their massive byte-sizes eclipse the Zig code.
-vendor/boringssl/ssl/ssl_c_test.c -linguist-vendored
-vendor/libdeflate/lib/adler32.c -linguist-vendored
-vendor/boringssl/crypto/fipsmodule/ec/make_ec_scalar_base_mult_tests.go -linguist-vendored
+# Force GitHub Linguist to detect our dummy files to represent submodule languages
+.linguist-overrides/* linguist-detectable=true
