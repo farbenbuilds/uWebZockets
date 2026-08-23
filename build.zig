@@ -9,17 +9,11 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
 
-    const lib = b.addLibrary(.{
-        .linkage = .static,
+    mod.link_libc = true;
+
+    const lib = b.addStaticLibrary(.{
         .name = "uWebZockets",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/root.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "uWebZockets", .module = mod },
-            },
-        }),
+        .root_module = mod,
     });
 
     // --- Vendor Dependencies Orchestration ---
@@ -64,21 +58,21 @@ pub fn build(b: *std.Build) void {
     lib.step.dependOn(&deflate_ninja.step);
 
     // Library paths (where the .a files are generated)
-    lib.root_module.addLibraryPath(b.path(bssl_build_dir));
-    lib.root_module.addLibraryPath(b.path(b.pathJoin(&.{ lsquic_build_dir, "src", "liblsquic" })));
-    lib.root_module.addLibraryPath(b.path(deflate_build_dir));
+    mod.addLibraryPath(b.path(bssl_build_dir));
+    mod.addLibraryPath(b.path(b.pathJoin(&.{ lsquic_build_dir, "src", "liblsquic" })));
+    mod.addLibraryPath(b.path(deflate_build_dir));
 
     // System libraries
-    lib.root_module.linkSystemLibrary("ssl", .{});
-    lib.root_module.linkSystemLibrary("crypto", .{});
-    lib.root_module.linkSystemLibrary("lsquic", .{});
-    lib.root_module.linkSystemLibrary("deflate", .{});
-    lib.root_module.linkSystemLibrary("z", .{});
+    mod.linkSystemLibrary("ssl", .{});
+    mod.linkSystemLibrary("crypto", .{});
+    mod.linkSystemLibrary("lsquic", .{});
+    mod.linkSystemLibrary("deflate", .{});
+    mod.linkSystemLibrary("z", .{});
 
     // Include paths (so src/c.zig can @cImport them)
-    lib.root_module.addIncludePath(b.path(b.pathJoin(&.{ bssl_src, "include" })));
-    lib.root_module.addIncludePath(b.path(b.pathJoin(&.{ lsquic_src, "include" })));
-    lib.root_module.addIncludePath(b.path(deflate_src));
+    mod.addIncludePath(b.path(b.pathJoin(&.{ bssl_src, "include" })));
+    mod.addIncludePath(b.path(b.pathJoin(&.{ lsquic_src, "include" })));
+    mod.addIncludePath(b.path(deflate_src));
 
     b.installArtifact(lib);
 
