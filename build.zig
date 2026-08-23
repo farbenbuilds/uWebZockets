@@ -71,10 +71,15 @@ pub fn build(b: *std.Build) void {
     mod.linkSystemLibrary("deflate", .{});
     mod.linkSystemLibrary("z", .{});
 
-    // Include paths (so src/c.zig can @cImport them)
-    mod.addIncludePath(b.path(b.pathJoin(&.{ bssl_src, "include" })));
-    mod.addIncludePath(b.path(b.pathJoin(&.{ lsquic_src, "include" })));
-    mod.addIncludePath(b.path(deflate_src));
+    const translate_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/c.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    translate_c.addIncludePath(b.path(b.pathJoin(&.{ bssl_src, "include" })));
+    translate_c.addIncludePath(b.path(b.pathJoin(&.{ lsquic_src, "include" })));
+    translate_c.addIncludePath(b.path(deflate_src));
+    mod.addImport("c", translate_c.createModule());
 
     b.installArtifact(lib);
 

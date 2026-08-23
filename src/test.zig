@@ -1,5 +1,5 @@
 const std = @import("std");
-const c = @import("c.zig").c;
+const c = @import("c");
 
 test "ensure BoringSSL compiles and links" {
     // Check if BoringSSL constants and types are exposed properly
