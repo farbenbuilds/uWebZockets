@@ -64,8 +64,7 @@ pub fn build(b: *std.Build) void {
     lib.step.dependOn(&deflate_ninja.step);
 
     // Library paths (where the .a files are generated)
-    lib.root_module.addLibraryPath(b.path(b.pathJoin(&.{ bssl_build_dir, "ssl" })));
-    lib.root_module.addLibraryPath(b.path(b.pathJoin(&.{ bssl_build_dir, "crypto" })));
+    lib.root_module.addLibraryPath(b.path(bssl_build_dir));
     lib.root_module.addLibraryPath(b.path(b.pathJoin(&.{ lsquic_build_dir, "src", "liblsquic" })));
     lib.root_module.addLibraryPath(b.path(deflate_build_dir));
 
@@ -74,6 +73,7 @@ pub fn build(b: *std.Build) void {
     lib.root_module.linkSystemLibrary("crypto", .{});
     lib.root_module.linkSystemLibrary("lsquic", .{});
     lib.root_module.linkSystemLibrary("deflate", .{});
+    lib.root_module.linkSystemLibrary("z", .{});
 
     // Include paths (so src/c.zig can @cImport them)
     lib.root_module.addIncludePath(b.path(b.pathJoin(&.{ bssl_src, "include" })));
@@ -85,11 +85,17 @@ pub fn build(b: *std.Build) void {
     const mod_tests = b.addTest(.{
         .root_module = mod,
     });
+    mod_tests.step.dependOn(&bssl_ninja.step);
+    mod_tests.step.dependOn(&lsquic_ninja.step);
+    mod_tests.step.dependOn(&deflate_ninja.step);
     const run_mod_tests = b.addRunArtifact(mod_tests);
 
     const lib_tests = b.addTest(.{
         .root_module = lib.root_module,
     });
+    lib_tests.step.dependOn(&bssl_ninja.step);
+    lib_tests.step.dependOn(&lsquic_ninja.step);
+    lib_tests.step.dependOn(&deflate_ninja.step);
     const run_lib_tests = b.addRunArtifact(lib_tests);
 
     const test_step = b.step("test", "Run tests");

@@ -1,4 +1,5 @@
 const std = @import("std");
+pub const c = @import("c.zig");
 const Io = std.Io;
 
 pub fn print_another_message(writer: *Io.Writer) Io.Writer.Error!void {

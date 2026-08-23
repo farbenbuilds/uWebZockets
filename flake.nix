@@ -46,6 +46,7 @@
               p.gzip
               p.xz
               p.zip
+              p.zlib
             ];
           };
 
@@ -61,6 +62,7 @@
           p.gzip
           p.xz
           p.zip
+          p.zlib
         ];
 
       in {
