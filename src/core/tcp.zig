@@ -2,9 +2,9 @@ const std = @import("std");
 const xev = @import("xev");
 const Loop = @import("loop.zig").Loop;
 
-/// represents an active tcp connection.
-/// memory for this struct must be stable (e.g., pre-allocated in a static pool or slab),
-/// because libxev relies on the exact memory addresses of the `xev.Completion` fields.
+// represents an active tcp connection.
+// memory for this struct must be stable (e.g., pre-allocated in a static pool or slab),
+// because libxev relies on the exact memory addresses of the `xev.Completion` fields.
 pub const TcpConnection = struct {
     read_buffer: [8192]u8 = undefined,
     read_completion: xev.Completion = undefined,
@@ -12,7 +12,7 @@ pub const TcpConnection = struct {
     socket: xev.TCP,
 };
 
-/// initiates an asynchronous read operation.
+// initiates an asynchronous read operation.
 pub fn read_start(conn: *TcpConnection, loop: *Loop) void {
     conn.socket.read(
         loop.get_xev_loop(),
@@ -24,7 +24,7 @@ pub fn read_start(conn: *TcpConnection, loop: *Loop) void {
     );
 }
 
-/// callback triggered by libxev when a read completes or fails.
+// callback triggered by libxev when a read completes or fails.
 fn on_read_complete(
     user_data: ?*TcpConnection,
     loop: *xev.Loop,
@@ -52,13 +52,13 @@ fn on_read_complete(
     return .rearm;
 }
 
-/// tcp listener that binds to a port and accepts incoming connections.
+// tcp listener that binds to a port and accepts incoming connections.
 pub const TcpServer = struct {
     accept_completion: xev.Completion = undefined,
     listener: xev.TCP,
 };
 
-/// binds to an ipv4 address and port, and begins listening.
+// binds to an ipv4 address and port, and begins listening.
 pub fn init_server(address: []const u8, port: u16) !TcpServer {
     const addr = try std.net.Address.parseIp4(address, port);
 
@@ -72,7 +72,7 @@ pub fn init_server(address: []const u8, port: u16) !TcpServer {
     };
 }
 
-/// starts accepting incoming connections asynchronously.
+// starts accepting incoming connections asynchronously.
 pub fn accept_start(server: *TcpServer, loop: *Loop) void {
     server.listener.accept(
         loop.get_xev_loop(),
@@ -83,7 +83,7 @@ pub fn accept_start(server: *TcpServer, loop: *Loop) void {
     );
 }
 
-/// callback triggered when a new client connects.
+// callback triggered when a new client connects.
 fn on_accept_complete(
     user_data: ?*TcpServer,
     loop: *xev.Loop,
