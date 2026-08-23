@@ -20,3 +20,4 @@ result-*
 .DS_Store
 .vscode/
 *.swp
+.cache/
