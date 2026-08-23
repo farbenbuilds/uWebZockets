@@ -17,7 +17,7 @@ pub fn read_start(conn: *TcpConnection, loop: *Loop) void {
     conn.socket.read(
         loop.get_xev_loop(),
         &conn.read_completion,
-        { .slice = &conn.read_buffer },
+        .{ .slice = &conn.read_buffer },
         TcpConnection,
         conn,
         on_read_complete,
@@ -90,8 +90,10 @@ fn on_accept_complete(
     completion: *xev.Completion,
     result: xev.AcceptResult,
 ) xev.CallbackAction {
+    _ = loop;
     _ = completion;
     const server = user_data.?;
+    _ = server;
 
     if (result.err != .none) {
         std.debug.print("accept error: {}\n", .{result.err});
