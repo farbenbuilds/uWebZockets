@@ -39,5 +39,5 @@ jobs:
       - name: Check Formatting
         run: nix develop -c zig fmt --check .
 
-      - name: Run Flake Checks (Native & Musl Tests)
-        run: nix flake check --print-build-logs
+      - name: Run Tests (with Network Access)
+        run: nix develop -c zig build test --summary all
