@@ -3,4 +3,4 @@ git+https://github.com/mitchellh/libxev#9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf
 git+https://github.com/natecraddock/zf#c35c421f84895193246db06c40683c1a30e616ef
 git+https://github.com/rockorager/libvaxis.git#c1e1f23be38951c425cdf31af455ba23ef178940
 git+https://github.com/zigimg/zigimg#d695acd97c02e57bb151e8f659d1280f5cd6ca70
-https://github.com/farbenbuilds/zslay/archive/refs/tags/v0.1.2-alpha.tar.gz
+https://github.com/farbenbuilds/zslay/archive/refs/tags/v0.1.3-alpha.tar.gz
