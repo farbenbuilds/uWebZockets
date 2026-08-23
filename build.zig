@@ -7,11 +7,13 @@ pub fn build(b: *std.Build) void {
     const mod = b.addModule("uWebZockets", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
+        .optimize = optimize,
     });
 
     mod.link_libc = true;
 
-    const lib = b.addStaticLibrary(.{
+    const lib = b.addLibrary(.{
+        .linkage = .static,
         .name = "uWebZockets",
         .root_module = mod,
     });
