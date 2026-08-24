@@ -9,7 +9,7 @@ const zslay = @import("zslay");
 // takes over the raw tcp stream after a successful http 101 upgrade.
 pub const WebSocket = struct {
     conn: *TcpConnection,
-    parser: zslay.Parser = .{},
+    // zslay rx_state and buffers would go here for parsing
 };
 
 // computes the sec-websocket-accept token.
@@ -52,7 +52,6 @@ pub fn upgrade(ws: *WebSocket, req: *const Request, res: *Response) void {
     };
 
     tcp.write_start(ws.conn, ws.conn.loop, headers);
-    ws.parser = zslay.Parser.init();
 
     // context switch: hijack the tcp read callback.
     // this would be enabled when tcpconnection supports protocol states.
@@ -62,7 +61,18 @@ pub fn upgrade(ws: *WebSocket, req: *const Request, res: *Response) void {
 // application-facing api to send data back to the client.
 pub fn send(ws: *WebSocket, data: []const u8, opcode: zslay.Opcode) void {
     var frame_header: [14]u8 = undefined;
-    const header_len = zslay.encodeFrameHeader(&frame_header, data.len, opcode);
+
+    const header_struct = zslay.FrameHeader{
+        .payload_len = if (data.len < 126) @intCast(data.len) else if (data.len <= 65535) 126 else 127,
+        .mask = false,
+        .opcode = @intCast(@intFromEnum(opcode)),
+        .rsv3 = false,
+        .rsv2 = false,
+        .rsv1 = false,
+        .fin = true,
+    };
+
+    const header_len = zslay.encode_header(&frame_header, header_struct, data.len, null) catch return;
 
     // scatter-gather i/o: send header + payload without allocating a new combined buffer.
     ws.conn.write_iov[0] = .{ .slice = frame_header[0..header_len] };
