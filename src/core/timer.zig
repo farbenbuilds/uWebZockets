@@ -28,28 +28,29 @@ pub fn deinit_timer(ctx: *TimerContext) void {
 // arms the timer on the provided event loop.
 pub fn start_timer(ctx: *TimerContext, loop: *Loop) void {
     ctx.timer.run(
-        loop.get_xev_loop(),
+        @import("loop.zig").get_xev_loop(loop),
         &ctx.completion,
         ctx.interval_ms,
         TimerContext,
         ctx,
-        on_tick_complete,
+        on_timer_tick,
     );
 }
 
 // callback triggered by libxev when the interval elapses.
-fn on_tick_complete(
+fn on_timer_tick(
     user_data: ?*TimerContext,
     loop: *xev.Loop,
     completion: *xev.Completion,
-    result: xev.TimerResult,
+    result: anyerror!void,
 ) xev.CallbackAction {
     _ = loop;
     _ = completion;
 
-    if (result.err != .none) {
+    _ = result catch |err| {
+        std.debug.print("timer error: {}\n", .{err});
         return .disarm;
-    }
+    };
 
     const ctx = user_data.?;
     ctx.tick_cb();

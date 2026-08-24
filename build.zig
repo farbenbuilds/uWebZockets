@@ -96,6 +96,27 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(lib);
 
+    // --- Examples ---
+    const hello_world_exe = b.addExecutable(.{
+        .name = "hello_world",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/hello_world.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    hello_world_exe.root_module.addImport("uWebZockets", mod);
+    // Note: mod's C library links and paths are transitive, but we must ensure ninja runs first.
+    hello_world_exe.step.dependOn(&bssl_ninja.step);
+    hello_world_exe.step.dependOn(&lsquic_ninja.step);
+    hello_world_exe.step.dependOn(&deflate_ninja.step);
+
+    b.installArtifact(hello_world_exe);
+
+    const run_hello_world = b.addRunArtifact(hello_world_exe);
+    const example_step = b.step("hello_world", "Run the hello_world example");
+    example_step.dependOn(&run_hello_world.step);
+
     const mod_tests = b.addTest(.{
         .root_module = mod,
     });
