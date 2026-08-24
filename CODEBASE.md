@@ -28,7 +28,8 @@ uWebZockets/
 ├── src/
 │   ├── root.zig          # Library entry point (exports app, loop)
 │   ├── c.h               # Centralized C header for translation. Includes BoringSSL, lsquic, libdeflate, etc.
-│   ├── test.zig          # Centralized unit test suite. Validates C-bindings and implementation integrity.
+│   ├── test.zig          # Centralized unit test suite. Re-exports sub-module tests.
+│   ├── tests/            # Dedicated test modules (e.g., core_tests.zig, c_tests.zig)
 │   ├── core/             # I/O layer (loop.zig, tcp.zig, udp.zig). Wraps libxev.
 │   │                     # -> Counterpart: `uSockets` (Loop.c, Socket.c, Event.c)
 │   ├── crypto/           # Security layer (tls.zig).
