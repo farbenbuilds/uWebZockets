@@ -15,7 +15,6 @@ const Response = http_response.Response;
 pub const TcpConnection = struct {
     read_buffer: [8192]u8 = undefined,
     write_buffer: [1024]u8 = undefined,
-    write_iov: [3]xev.WriteBuffer = undefined,
     req: Request = .{},
     read_completion: xev.Completion = undefined,
     write_completion: xev.Completion = undefined,

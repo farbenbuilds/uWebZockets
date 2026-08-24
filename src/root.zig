@@ -12,6 +12,8 @@ pub const Response = @import("http/response.zig").Response;
 pub const end_response = @import("http/response.zig").end;
 pub const write_chunk = @import("http/response.zig").write_chunk;
 
+pub const WebSocket = @import("ws/socket.zig").WebSocket;
+
 comptime {
     _ = @import("test.zig");
 }
