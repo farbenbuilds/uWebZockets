@@ -74,9 +74,13 @@ pub fn send(ws: *WebSocket, data: []const u8, opcode: zslay.Opcode) void {
 
     const header_len = zslay.encode_header(&frame_header, header_struct, data.len, null) catch return;
 
-    // scatter-gather i/o: send header + payload without allocating a new combined buffer.
-    ws.conn.write_iov[0] = .{ .slice = frame_header[0..header_len] };
-    ws.conn.write_iov[1] = .{ .slice = data };
-
-    tcp.writev_start(ws.conn, ws.conn.loop, ws.conn.write_iov[0..2]);
+    // libxev currently doesn't support writev. copy to buffer if it fits!
+    const total_len = header_len + data.len;
+    if (total_len <= ws.conn.write_buffer.len) {
+        @memcpy(ws.conn.write_buffer[0..header_len], frame_header[0..header_len]);
+        @memcpy(ws.conn.write_buffer[header_len..total_len], data);
+        tcp.write_start(ws.conn, ws.conn.loop, ws.conn.write_buffer[0..total_len]);
+    } else {
+        std.debug.print("websocket frame too large for write buffer\n", .{});
+    }
 }
