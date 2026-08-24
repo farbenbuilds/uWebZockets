@@ -14,10 +14,13 @@ const Response = http_response.Response;
 // because libxev relies on the exact memory addresses of the `xev.Completion` fields.
 pub const TcpConnection = struct {
     read_buffer: [8192]u8 = undefined,
+    write_buffer: [1024]u8 = undefined,
+    write_iov: [3]xev.WriteBuffer = undefined,
     req: Request = .{},
     read_completion: xev.Completion = undefined,
     write_completion: xev.Completion = undefined,
     socket: xev.TCP,
+    loop: *xev.Loop = undefined,
     parser: HttpParser = .{},
 };
 
@@ -41,7 +44,6 @@ fn on_read_complete(
     state: xev.State,
     result: xev.ReadBufferResult,
 ) xev.CallbackAction {
-    _ = loop;
     _ = completion;
     const conn = user_data.?;
 
@@ -51,6 +53,9 @@ fn on_read_complete(
     }
 
     const data = conn.read_buffer[0..result.bytes_read];
+
+    // ensure the loop is stored on the connection for subsequent operations.
+    conn.loop = loop;
 
     // pass data into the fsm parser.
     _ = http_parser.consume(&conn.parser, &conn.req, data);
