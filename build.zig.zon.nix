@@ -109,42 +109,6 @@ linkFarm name [
     };
   }
   {
-    name = "uucode-0.2.0-ZZjBPlK5VADj7fdoq7G8LIHzD5o6FSkcBXXrRWr4jnrA";
-    path = fetchZigArtifact {
-      name = "uucode";
-      url = "git+https://github.com/jacobsandlund/uucode#2826a37a4562284fdacd8fa029d49509cc9bffcd";
-      hash = "sha256-R5RXW5tWIaDq5JOF2+oWd5YOYOyns6WH7f687WE+b20=";
-      unpack = true;
-    };
-  }
-  {
-    name = "vaxis-0.6.0-BWNV_MjFCQCs9UDHiRkrgw_ayeiPkzOe4xVbaAqXkUWW";
-    path = fetchZigArtifact {
-      name = "vaxis";
-      url = "git+https://github.com/rockorager/libvaxis.git#c1e1f23be38951c425cdf31af455ba23ef178940";
-      hash = "sha256-bIXu8lGwGo42QbItC0jOi/eN7u+f4snknBexw7dc0DI=";
-      unpack = true;
-    };
-  }
-  {
-    name = "zf-0.11.0-OIRy8X-RAAAwaRXHMYpj2uvBnuGTZWEE_3V7acqHQNtW";
-    path = fetchZigArtifact {
-      name = "zf";
-      url = "git+https://github.com/natecraddock/zf#c35c421f84895193246db06c40683c1a30e616ef";
-      hash = "sha256-LHurWwqK8jhP8AZd/CXrMJNeVsKftRCTN31/EgEgKaA=";
-      unpack = true;
-    };
-  }
-  {
-    name = "zigimg-0.1.0-8_eo2oyaFwBZwJpmqPkCfVXWBrHcqbYwmrp1I6bTD3lI";
-    path = fetchZigArtifact {
-      name = "zigimg";
-      url = "git+https://github.com/zigimg/zigimg#d695acd97c02e57bb151e8f659d1280f5cd6ca70";
-      hash = "sha256-0IYATQldT6eJxRR2T/2CsIYZuzomqjvmdVyjmsjguyE=";
-      unpack = true;
-    };
-  }
-  {
     name = "zslay-0.1.3-alpha-OB-IfHmQAADK-Qm9j874tzvze9_qvRtbxGHcUCeqBX_7";
     path = fetchZigArtifact {
       name = "zslay";

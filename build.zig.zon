@@ -15,12 +15,6 @@
             .url = "git+https://github.com/mitchellh/libxev#9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf",
             .hash = "libxev-0.0.0-86vtcwIRFADbH4hk-EjROXxlrKIRPQdA41XiTSytYO-F",
         },
-
-        // natecraddock/zf
-        .zf = .{
-            .url = "git+https://github.com/natecraddock/zf#c35c421f84895193246db06c40683c1a30e616ef",
-            .hash = "zf-0.11.0-OIRy8X-RAAAwaRXHMYpj2uvBnuGTZWEE_3V7acqHQNtW",
-        },
     },
     .paths = .{
         "build.zig",
