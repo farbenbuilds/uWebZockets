@@ -1,18 +1,9 @@
-const std = @import("std");
-pub const c = @import("c");
-const Io = std.Io;
+// exposes the main api for uWebZockets.
+// follows data-oriented design by separating data structures from behavior.
 
-pub fn print_another_message(writer: *Io.Writer) Io.Writer.Error!void {
-    try writer.print("Run `zig build test` to run the tests.\n", .{});
-}
-
-pub fn add(a: i32, b: i32) i32 {
-    return a + b;
-}
-
-test "basic add functionality" {
-    try std.testing.expect(add(3, 7) == 10);
-}
+pub const App = @import("router/app.zig").App;
+pub const Request = @import("http/request.zig").Request;
+pub const Response = @import("http/response.zig").Response;
 
 comptime {
     _ = @import("test.zig");
