@@ -60,7 +60,7 @@ pub const TcpServer = struct {
 
 // binds to an ipv4 address and port, and begins listening.
 pub fn init_server(address: []const u8, port: u16) !TcpServer {
-    const addr = try std.net.Address.parseIp4(address, port);
+    const addr = try std.Io.net.IpAddress.parse(address, port);
 
     // initialize a non-blocking tcp socket
     var listener = try xev.TCP.init(addr);
