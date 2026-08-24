@@ -41,14 +41,21 @@ fn on_read_complete(
     user_data: ?*TcpConnection,
     loop: *xev.Loop,
     completion: *xev.Completion,
-    state: xev.State,
-    result: xev.ReadBufferResult,
+    s: xev.TCP,
+    b: xev.ReadBuffer,
+    result: xev.ReadError!usize,
 ) xev.CallbackAction {
     _ = completion;
+    _ = s;
+    _ = b;
     const conn = user_data.?;
 
-    if (result.err != .none or result.bytes_read == 0) {
-        conn.socket.close(state) catch {};
+    const bytes_read = result catch |err| {
+        std.debug.print("read error: {}\n", .{err});
+        return .disarm;
+    };
+
+    if (bytes_read == 0) {
         return .disarm;
     }
 
@@ -69,12 +76,11 @@ fn on_read_complete(
     return .rearm;
 }
 
-// executes scatter-gather i/o to send multiple buffers without allocating a mega-buffer.
-pub fn writev_start(conn: *TcpConnection, loop_ptr: *xev.Loop, buffers: []const xev.WriteBuffer) void {
-    conn.socket.writev(
-        loop_ptr,
+pub fn write_start(conn: *TcpConnection, loop: *xev.Loop, data: []const u8) void {
+    conn.socket.write(
+        loop,
         &conn.write_completion,
-        buffers,
+        .{ .slice = data },
         TcpConnection,
         conn,
         on_write_complete,
@@ -86,18 +92,20 @@ fn on_write_complete(
     user_data: ?*TcpConnection,
     loop: *xev.Loop,
     completion: *xev.Completion,
-    state: xev.State,
-    result: xev.WriteBufferResult,
+    s: xev.TCP,
+    b: xev.WriteBuffer,
+    result: xev.WriteError!usize,
 ) xev.CallbackAction {
     _ = user_data;
     _ = loop;
     _ = completion;
-    _ = state;
+    _ = s;
+    _ = b;
 
-    if (result.err != .none) {
-        std.debug.print("write error: {}\n", .{result.err});
+    _ = result catch |err| {
+        std.debug.print("write error: {}\n", .{err});
         return .disarm;
-    }
+    };
 
     // successfully written. wait for next request on this keep-alive connection.
     return .disarm;
@@ -126,7 +134,7 @@ pub fn init_server(address: []const u8, port: u16) !TcpServer {
 // starts accepting incoming connections asynchronously.
 pub fn accept_start(server: *TcpServer, loop: *Loop) void {
     server.listener.accept(
-        loop.get_xev_loop(),
+        @import("loop.zig").get_xev_loop(loop),
         &server.accept_completion,
         TcpServer,
         server,
@@ -139,19 +147,17 @@ fn on_accept_complete(
     user_data: ?*TcpServer,
     loop: *xev.Loop,
     completion: *xev.Completion,
-    result: xev.AcceptResult,
+    result: xev.AcceptError!xev.TCP,
 ) xev.CallbackAction {
     _ = loop;
     _ = completion;
     const server = user_data.?;
     _ = server;
 
-    if (result.err != .none) {
-        std.debug.print("accept error: {}\n", .{result.err});
+    const accepted_socket = result catch |err| {
+        std.debug.print("accept error: {}\n", .{err});
         return .rearm;
-    }
-
-    const accepted_socket = result.socket;
+    };
 
     std.debug.print("new connection accepted: fd {}\n", .{accepted_socket.fd});
 

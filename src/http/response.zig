@@ -20,16 +20,14 @@ pub fn end(self: *Response, status: []const u8, body: []const u8) void {
         return;
     };
 
-    // construct the scatter-gather array (iovec) using connection's stable memory.
-    self.conn.write_iov[0] = .{ .slice = headers };
-    self.conn.write_iov[1] = .{ .slice = body };
-
-    // fire and forget directly to the kernel via libxev!
-    tcp_mod.writev_start(
-        self.conn,
-        self.conn.loop,
-        self.conn.write_iov[0..2],
-    );
+    // libxev currently doesn't support writev. copy body if it fits!
+    const total_len = headers.len + body.len;
+    if (total_len <= self.conn.write_buffer.len) {
+        @memcpy(self.conn.write_buffer[headers.len..total_len], body);
+        tcp_mod.write_start(self.conn, self.conn.loop, self.conn.write_buffer[0..total_len]);
+    } else {
+        std.debug.print("response too large for write buffer\n", .{});
+    }
 }
 
 // sends an http response formatted as a chunk.
@@ -40,15 +38,13 @@ pub fn write_chunk(self: *Response, chunk: []const u8) void {
         .{chunk.len},
     ) catch return;
 
-    // construct the scatter-gather array for the chunk using connection's stable memory.
-    self.conn.write_iov[0] = .{ .slice = header_chunk };
-    self.conn.write_iov[1] = .{ .slice = chunk };
-    self.conn.write_iov[2] = .{ .slice = "\r\n" };
-
-    // fire and forget directly to the kernel via libxev!
-    tcp_mod.writev_start(
-        self.conn,
-        self.conn.loop,
-        self.conn.write_iov[0..3],
-    );
+    // merge header and chunk
+    const total_len = header_chunk.len + chunk.len + 2;
+    if (total_len <= self.conn.write_buffer.len) {
+        @memcpy(self.conn.write_buffer[header_chunk.len .. header_chunk.len + chunk.len], chunk);
+        @memcpy(self.conn.write_buffer[header_chunk.len + chunk.len .. total_len], "\r\n");
+        tcp_mod.write_start(self.conn, self.conn.loop, self.conn.write_buffer[0..total_len]);
+    } else {
+        std.debug.print("chunk too large for write buffer\n", .{});
+    }
 }

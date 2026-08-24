@@ -7,7 +7,7 @@ const radix = @import("radix.zig");
 
 // main application builder.
 // statically allocates memory needed for the connection pool.
-pub fn app(comptime max_connections: usize) type {
+pub fn App(comptime max_connections: usize) type {
     return struct {
         loop: core_loop.Loop,
         pool: core_context.connection_pool(max_connections),
@@ -18,10 +18,10 @@ pub fn app(comptime max_connections: usize) type {
 }
 
 // initializes a new application.
-pub fn init_app(comptime max_connections: usize) !app(max_connections) {
+pub fn init_app(comptime max_connections: usize) !App(max_connections) {
     const loop = try core_loop.init();
 
-    return app(max_connections){
+    return App(max_connections){
         .loop = loop,
         .pool = core_context.init_pool(max_connections),
         .router = radix.Router{},
