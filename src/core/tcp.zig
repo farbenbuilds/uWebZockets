@@ -1,15 +1,24 @@
 const std = @import("std");
 const xev = @import("xev");
 const Loop = @import("loop.zig").Loop;
+const http_parser = @import("../http/parser.zig");
+const HttpParser = http_parser.HttpParser;
+const Request = @import("../http/request.zig").Request;
+const http_response = @import("../http/response.zig");
+const Response = http_response.Response;
+
+// placeholder for router pointer injection later.
 
 // represents an active tcp connection.
 // memory for this struct must be stable (e.g., pre-allocated in a static pool or slab),
 // because libxev relies on the exact memory addresses of the `xev.Completion` fields.
 pub const TcpConnection = struct {
     read_buffer: [8192]u8 = undefined,
+    req: Request = .{},
     read_completion: xev.Completion = undefined,
     write_completion: xev.Completion = undefined,
     socket: xev.TCP,
+    parser: HttpParser = .{},
 };
 
 // initiates an asynchronous read operation.
@@ -37,19 +46,56 @@ fn on_read_complete(
     const conn = user_data.?;
 
     if (result.err != .none or result.bytes_read == 0) {
-        // eof or error indicates client disconnected.
-        // in a full implementation, this slot returns to the memory pool.
         conn.socket.close(state) catch {};
         return .disarm;
     }
 
     const data = conn.read_buffer[0..result.bytes_read];
 
-    // pass `data` into the http/1.1 fsm parser (phase 2).
-    std.debug.print("received {} bytes\n", .{data.len});
+    // pass data into the fsm parser.
+    _ = http_parser.consume(&conn.parser, &conn.req, data);
+
+    // map to router and response logic here.
+    // echo direct response for testing.
+    var res = Response{ .conn = conn };
+    http_response.end(&res, "200 OK", "Hello from Zig!");
 
     // re-arm the completion to keep listening for more data.
     return .rearm;
+}
+
+// executes scatter-gather i/o to send multiple buffers without allocating a mega-buffer.
+pub fn writev_start(conn: *TcpConnection, loop_ptr: *xev.Loop, buffers: []const xev.WriteBuffer) void {
+    conn.socket.writev(
+        loop_ptr,
+        &conn.write_completion,
+        buffers,
+        TcpConnection,
+        conn,
+        on_write_complete,
+    );
+}
+
+// callback triggered when the kernel finishes sending data.
+fn on_write_complete(
+    user_data: ?*TcpConnection,
+    loop: *xev.Loop,
+    completion: *xev.Completion,
+    state: xev.State,
+    result: xev.WriteBufferResult,
+) xev.CallbackAction {
+    _ = user_data;
+    _ = loop;
+    _ = completion;
+    _ = state;
+
+    if (result.err != .none) {
+        std.debug.print("write error: {}\n", .{result.err});
+        return .disarm;
+    }
+
+    // successfully written. wait for next request on this keep-alive connection.
+    return .disarm;
 }
 
 // tcp listener that binds to a port and accepts incoming connections.
@@ -102,12 +148,7 @@ fn on_accept_complete(
 
     const accepted_socket = result.socket;
 
-    // claim a free `TcpConnection` slot from a pre-allocated array (memory pool)
-    // to avoid allocation on the hot path.
     std.debug.print("new connection accepted: fd {}\n", .{accepted_socket.fd});
-
-    // note: the new connection needs to be stored stably in memory,
-    // then `read_start(conn, loop_wrapper)` is called.
 
     return .rearm;
 }
