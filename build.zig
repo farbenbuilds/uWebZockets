@@ -25,12 +25,6 @@ pub fn build(b: *std.Build) void {
     });
     mod.addImport("xev", libxev_dep.module("xev"));
 
-    const zf_dep = b.dependency("zf", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    mod.addImport("zf", zf_dep.module("zf"));
-
     const lib = b.addLibrary(.{
         .linkage = .static,
         .name = "uWebZockets",

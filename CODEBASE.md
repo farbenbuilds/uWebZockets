@@ -13,7 +13,7 @@
 - **Parser**: `farbenbuilds/zslay` integrated as the core WebSocket protocol parser.
 - **C-Interop**: Zig's `translate-c` is utilized to safely and ergonomically wrap C libraries.
 - **Vendored C/C++ Libraries**: `BoringSSL` (Crypto/TLS), `lsquic` (HTTP/3), and `libdeflate` (compression).
-- **Tooling**: `natecraddock/zf` (fuzzy finder) integrated for development workflows.
+
 
 ## Architecture Mapping: µWebZockets vs µWebSockets
 In the original C++ ecosystem, the stack is split into `uSockets` (handling the low-level C event loop and raw sockets) and `µWebSockets` (handling the C++ HTTP/WS protocols and user API). In `µWebZockets`, these concepts are unified into a single cohesive Zig codebase.
