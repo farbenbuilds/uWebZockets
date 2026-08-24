@@ -4,6 +4,7 @@ const TcpConnection = tcp.TcpConnection;
 const Request = @import("../http/request.zig").Request;
 const Response = @import("../http/response.zig").Response;
 const zslay = @import("zslay");
+const handshake = @import("handshake.zig");
 
 // a zero-allocation websocket connection wrapper.
 // takes over the raw tcp stream after a successful http 101 upgrade.
@@ -11,21 +12,6 @@ pub const WebSocket = struct {
     conn: *TcpConnection,
     // zslay rx_state and buffers would go here for parsing
 };
-
-// computes the sec-websocket-accept token.
-pub fn compute_accept_token(ws_key: []const u8, buf: *[28]u8) []const u8 {
-    const magic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-    var combined: [64]u8 = undefined;
-    if (ws_key.len + magic.len > combined.len) return "";
-
-    @memcpy(combined[0..ws_key.len], ws_key);
-    @memcpy(combined[ws_key.len..][0..magic.len], magic);
-
-    var hash: [std.crypto.hash.Sha1.digest_length]u8 = undefined;
-    std.crypto.hash.Sha1.hash(combined[0 .. ws_key.len + magic.len], &hash, .{});
-
-    return std.base64.standard.Encoder.encode(buf, &hash);
-}
 
 // handles the protocol upgrade from http/1.1 to websocket.
 pub fn upgrade(ws: *WebSocket, req: *const Request, res: *Response) void {
@@ -35,7 +21,7 @@ pub fn upgrade(ws: *WebSocket, req: *const Request, res: *Response) void {
     };
 
     var accept_token_buf: [28]u8 = undefined;
-    const accept_token = compute_accept_token(ws_key, &accept_token_buf);
+    const accept_token = handshake.compute_accept_token(ws_key, &accept_token_buf);
 
     if (accept_token.len == 0) {
         res.end("500 Internal Server Error", "Handshake failed");
