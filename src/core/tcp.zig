@@ -87,6 +87,17 @@ pub fn write_start(conn: *TcpConnection, loop: *xev.Loop, data: []const u8) void
     );
 }
 
+pub fn writev_start(conn: *TcpConnection, loop: *xev.Loop, iovs: []const xev.WriteBuffer) void {
+    conn.socket.write(
+        loop,
+        &conn.write_completion,
+        .{ .array = iovs },
+        TcpConnection,
+        conn,
+        on_write_complete,
+    );
+}
+
 // callback triggered when the kernel finishes sending data.
 fn on_write_complete(
     user_data: ?*TcpConnection,
