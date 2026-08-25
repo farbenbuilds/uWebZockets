@@ -6,6 +6,7 @@ const core_timer = @import("../core/timer.zig");
 const radix = @import("radix.zig");
 const xev = @import("xev");
 const PubSubEngine = @import("../ws/pubsub.zig").PubSubEngine;
+const TlsContext = @import("../crypto/tls.zig").TlsContext;
 
 // main application builder.
 // statically allocates memory needed for the connection pool.
@@ -18,6 +19,7 @@ pub fn App(comptime max_connections: usize) type {
         router: radix.Router,
         server: ?core_tcp.TcpServer = null,
         timer: ?core_timer.TimerContext = null,
+        tls_ctx: ?TlsContext = null,
 
         // embeds the pub/sub engine directly into the app
         pubsub: PubSubEngine,
@@ -34,8 +36,16 @@ pub fn App(comptime max_connections: usize) type {
             };
         }
 
+        // initializes a new application with https support.
+        pub fn init_https(cert_path: [:0]const u8, key_path: [:0]const u8) !Self {
+            var app = try Self.init();
+            app.tls_ctx = try TlsContext.init(cert_path, key_path);
+            return app;
+        }
+
         // deinitializes the application and releases os resources.
         pub fn deinit(self: *Self) void {
+            if (self.tls_ctx) |*tls| tls.deinit();
             if (self.timer) |*t| core_timer.deinit_timer(t);
             core_loop.deinit(&self.loop);
         }
@@ -62,7 +72,7 @@ pub fn App(comptime max_connections: usize) type {
             const self: *Self = @ptrCast(@alignCast(user_data));
             const conn = core_context.acquire_connection(max_connections, &self.pool) orelse {
                 std.debug.print("connection pool full\n", .{});
-                std.posix.close(socket.fd);
+                _ = std.os.linux.close(socket.fd);
                 return;
             };
 
