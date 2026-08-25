@@ -63,7 +63,7 @@ pub fn build(b: *std.Build) void {
     // 3. libdeflate
     const deflate_src = "vendor/libdeflate";
     const deflate_build_dir = b.pathJoin(&.{ vendor_build, "libdeflate" });
-    const deflate_cmake = b.addSystemCommand(&.{ "cmake", "-B", deflate_build_dir, "-S", deflate_src, "-GNinja", "-DCMAKE_BUILD_TYPE=Release", "-DLIBDEFLATE_BUILD_GZIP=OFF", "-DLIBDEFLATE_BUILD_SHARED_LIB=OFF", "-DCMAKE_C_FLAGS=-DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_VPCLMULQDQ", zig_cc, zig_cxx, zig_asm });
+    const deflate_cmake = b.addSystemCommand(&.{ "cmake", "-B", deflate_build_dir, "-S", deflate_src, "-GNinja", "-DCMAKE_BUILD_TYPE=Release", "-DLIBDEFLATE_BUILD_GZIP=OFF", "-DLIBDEFLATE_BUILD_SHARED_LIB=OFF", "-DCMAKE_C_FLAGS=-DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_VPCLMULQDQ -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_AVX512VNNI", zig_cc, zig_cxx, zig_asm });
     const deflate_ninja = b.addSystemCommand(&.{ "ninja", "-C", deflate_build_dir });
     deflate_ninja.step.dependOn(&deflate_cmake.step);
 
