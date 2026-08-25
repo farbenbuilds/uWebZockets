@@ -6,21 +6,28 @@ const HttpParser = http_parser.HttpParser;
 const Request = @import("../http/request.zig").Request;
 const http_response = @import("../http/response.zig");
 const Response = http_response.Response;
+const WebSocket = @import("../ws/socket.zig").WebSocket;
 
-// placeholder for router pointer injection later.
+// determines the protocol of the socket.
+pub const ProtocolState = enum {
+    http,
+    websocket,
+    // tls or quic will be added in future phases.
+};
 
 // represents an active tcp connection.
-// memory for this struct must be stable (e.g., pre-allocated in a static pool or slab),
-// because libxev relies on the exact memory addresses of the `xev.Completion` fields.
+// memory for this struct must be stable.
 pub const TcpConnection = struct {
     read_buffer: [8192]u8 = undefined,
     write_buffer: [1024]u8 = undefined,
     req: Request = .{},
     read_completion: xev.Completion = undefined,
     write_completion: xev.Completion = undefined,
+    parser: HttpParser = .{},
+    ws: WebSocket = undefined,
     socket: xev.TCP,
     loop: *xev.Loop = undefined,
-    parser: HttpParser = .{},
+    protocol_state: ProtocolState = .http,
 };
 
 // initiates an asynchronous read operation.
@@ -54,24 +61,31 @@ fn on_read_complete(
         return .disarm;
     };
 
-    if (bytes_read == 0) {
-        return .disarm;
-    }
+    if (bytes_read == 0) return .disarm;
 
-    const data = conn.read_buffer[0..result.bytes_read];
+    const data = conn.read_buffer[0..bytes_read];
 
     // ensure the loop is stored on the connection for subsequent operations.
     conn.loop = loop;
 
-    // pass data into the fsm parser.
-    _ = http_parser.consume(&conn.parser, &conn.req, data);
+    // data routing switch.
+    switch (conn.protocol_state) {
+        .http => {
+            _ = http_parser.consume(&conn.parser, &conn.req, data);
 
-    // map to router and response logic here.
-    // echo direct response for testing.
-    var res = Response{ .conn = conn };
-    http_response.end(&res, "200 OK", "Hello from Zig!");
+            // temporary routing logic.
+            // if app router decides this is an upgrade endpoint,
+            // it will call ws.upgrade(&req, &res) and change protocol_state to .websocket
 
-    // re-arm the completion to keep listening for more data.
+            var res = Response{ .conn = conn };
+            http_response.end(&res, "200 OK", "Hello from Zig!");
+        },
+        .websocket => {
+            // raw binary bytes are passed directly to the zslay decoder.
+            // TODO: implement and call conn.ws.on_data(data);
+        },
+    }
+
     return .rearm;
 }
 
@@ -106,7 +120,6 @@ fn on_write_complete(
         return .disarm;
     };
 
-    // successfully written. wait for next request on this keep-alive connection.
     return .disarm;
 }
 
@@ -120,10 +133,9 @@ pub const TcpServer = struct {
 pub fn init_server(address: []const u8, port: u16) !TcpServer {
     const addr = try std.Io.net.IpAddress.parse(address, port);
 
-    // initialize a non-blocking tcp socket
     var listener = try xev.TCP.init(addr);
     try listener.bind(addr);
-    try listener.listen(128); // backlog size
+    try listener.listen(128);
 
     return TcpServer{
         .listener = listener,
@@ -148,10 +160,9 @@ fn on_accept_complete(
     completion: *xev.Completion,
     result: xev.AcceptError!xev.TCP,
 ) xev.CallbackAction {
+    _ = user_data;
     _ = loop;
     _ = completion;
-    const server = user_data.?;
-    _ = server;
 
     const accepted_socket = result catch |err| {
         std.debug.print("accept error: {}\n", .{err});
