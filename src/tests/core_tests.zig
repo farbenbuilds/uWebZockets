@@ -23,7 +23,7 @@ test "core: loop init and deinit" {
     defer loop.deinit(&l);
 
     // ensure the underlying xev loop is available by taking its pointer.
-    const xev_loop = loop.get_xev_loop(&l);
+    const xev_loop = l.get_xev_loop();
     _ = xev_loop;
 }
 
