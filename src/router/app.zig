@@ -20,6 +20,8 @@ pub fn App(comptime max_connections: usize) type {
         server: ?core_tcp.TcpServer = null,
         timer: ?core_timer.TimerContext = null,
         tls_ctx: ?TlsContext = null,
+        reject_completions: [64]xev.Completion = undefined,
+        reject_idx: usize = 0,
 
         // embeds the pub/sub engine directly into the app
         pubsub: PubSubEngine,
@@ -33,6 +35,8 @@ pub fn App(comptime max_connections: usize) type {
                 .pool = core_context.init_pool(max_connections),
                 .router = radix.Router.init(),
                 .pubsub = .{},
+                .reject_completions = undefined,
+                .reject_idx = 0,
             };
         }
 
@@ -72,13 +76,30 @@ pub fn App(comptime max_connections: usize) type {
             const self: *Self = @ptrCast(@alignCast(user_data));
             const conn = core_context.acquire_connection(max_connections, &self.pool) orelse {
                 std.debug.print("connection pool full\n", .{});
-                _ = std.os.linux.close(socket.fd);
+
+                // synchronously drop if possible, or close asynchronously via round-robin completion pool
+                self.reject_idx = (self.reject_idx + 1) % self.reject_completions.len;
+                const c = &self.reject_completions[self.reject_idx];
+
+                socket.close(&self.loop.xev_loop, c, void, null, (struct {
+                    fn cb(_: ?*void, _: *xev.Loop, _: *xev.Completion, _: xev.TCP, _: xev.CloseError!void) xev.CallbackAction {
+                        return .disarm;
+                    }
+                }).cb);
                 return;
             };
 
             conn.socket = socket;
             conn.router = &self.router;
             conn.pubsub = &self.pubsub;
+            conn.pool_ptr = &self.pool;
+            conn.on_close_cb = (struct {
+                fn cb(pool_ptr: *anyopaque, c: *core_tcp.TcpConnection) void {
+                    const pool: *core_context.connection_pool(max_connections) = @ptrCast(@alignCast(pool_ptr));
+                    core_context.release_connection(max_connections, pool, c);
+                }
+            }).cb;
+
             core_tcp.read_start(conn, &self.loop);
         }
 
