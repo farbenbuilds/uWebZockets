@@ -24,6 +24,7 @@ pub const TcpConnection = struct {
     req: Request = .{},
     read_completion: xev.Completion = undefined,
     write_completion: xev.Completion = undefined,
+    close_completion: xev.Completion = undefined,
     parser: HttpParser = .{},
     ws: WebSocket = undefined,
     socket: xev.TCP,
@@ -31,6 +32,8 @@ pub const TcpConnection = struct {
     protocol_state: ProtocolState = .http,
     router: *const Router = undefined,
     pubsub: ?*@import("../ws/pubsub.zig").PubSubEngine = null,
+    pool_ptr: ?*anyopaque = null,
+    on_close_cb: ?*const fn (pool_ptr: *anyopaque, conn: *TcpConnection) void = null,
 };
 
 // initiates an asynchronous read operation.
@@ -132,6 +135,36 @@ fn on_write_complete(
     };
 
     return .disarm;
+}
+
+// cleanly closes the connection asynchronously across platforms via libxev.
+pub fn close_connection(conn: *TcpConnection) void {
+    conn.socket.close(
+        conn.loop,
+        &conn.close_completion,
+        TcpConnection,
+        conn,
+        (struct {
+            fn cb(
+                ud: ?*TcpConnection,
+                l: *xev.Loop,
+                c: *xev.Completion,
+                s: xev.TCP,
+                r: xev.CloseError!void,
+            ) xev.CallbackAction {
+                _ = l;
+                _ = c;
+                _ = s;
+                _ = r catch {};
+                if (ud) |connection| {
+                    if (connection.on_close_cb) |cb_func| {
+                        cb_func(connection.pool_ptr.?, connection);
+                    }
+                }
+                return .disarm;
+            }
+        }).cb,
+    );
 }
 
 pub const AcceptCallback = *const fn (socket: xev.TCP, user_data: ?*anyopaque) void;

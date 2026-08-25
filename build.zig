@@ -11,6 +11,7 @@ pub fn build(b: *std.Build) void {
     });
 
     mod.link_libc = true;
+    mod.link_libcpp = true;
 
     // --- Zig Dependencies ---
     const zslay_dep = b.dependency("zslay", .{
