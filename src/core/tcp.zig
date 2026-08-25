@@ -30,6 +30,7 @@ pub const TcpConnection = struct {
     loop: *xev.Loop = undefined,
     protocol_state: ProtocolState = .http,
     router: *const Router = undefined,
+    pubsub: ?*@import("../ws/pubsub.zig").PubSubEngine = null,
 };
 
 // initiates an asynchronous read operation.
@@ -80,7 +81,7 @@ fn on_read_complete(
 
                 if (conn.router.match(conn.req.path)) |route| {
                     if (route.route_type == .websocket) {
-                        conn.ws = WebSocket{ .conn = conn };
+                        conn.ws = WebSocket{ .conn = conn, .pubsub = conn.pubsub };
                         conn.ws.upgrade(&conn.req, &res, route.ws_behavior.?);
                     } else if (route.http_handler) |handler| {
                         handler(&conn.req, &res);

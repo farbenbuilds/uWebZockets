@@ -5,6 +5,7 @@ const Request = @import("../http/request.zig").Request;
 const Response = @import("../http/response.zig").Response;
 const zslay = @import("zslay");
 const handshake = @import("handshake.zig");
+const PubSubEngine = @import("pubsub.zig").PubSubEngine;
 
 // a zero-allocation websocket connection wrapper.
 // takes over the raw tcp stream after a successful http 101 upgrade.
@@ -13,6 +14,9 @@ pub const WebSocket = struct {
     behavior: @import("../router/radix.zig").WsBehavior = .{},
     z_conn: zslay.Conn = undefined,
     tx_nodes: [4]zslay.Conn.FrameNode = undefined,
+
+    // pointer to the central pub/sub engine
+    pubsub: ?*PubSubEngine = null,
 
     // handles the protocol upgrade from http/1.1 to websocket.
     pub fn upgrade(self: *WebSocket, req: *const Request, res: *Response, behavior: @import("../router/radix.zig").WsBehavior) void {
@@ -156,6 +160,20 @@ pub const WebSocket = struct {
                 },
                 else => unreachable,
             }
+        }
+    }
+
+    // registers this client into a pub/sub topic
+    pub fn subscribe(self: *WebSocket, topic: []const u8) !void {
+        if (self.pubsub) |ps| {
+            try ps.subscribe(self, topic);
+        }
+    }
+
+    // broadcasts a message to a topic from this client
+    pub fn publish(self: *WebSocket, topic: []const u8, message: []const u8, is_text: bool) void {
+        if (self.pubsub) |ps| {
+            ps.publish(topic, message, is_text);
         }
     }
 };
