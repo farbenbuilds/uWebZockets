@@ -5,6 +5,7 @@ const core_context = @import("../core/context.zig");
 const core_timer = @import("../core/timer.zig");
 const radix = @import("radix.zig");
 const xev = @import("xev");
+const PubSubEngine = @import("../ws/pubsub.zig").PubSubEngine;
 
 // main application builder.
 // statically allocates memory needed for the connection pool.
@@ -18,6 +19,9 @@ pub fn App(comptime max_connections: usize) type {
         server: ?core_tcp.TcpServer = null,
         timer: ?core_timer.TimerContext = null,
 
+        // embeds the pub/sub engine directly into the app
+        pubsub: PubSubEngine,
+
         // initializes a new application.
         pub fn init() !Self {
             const loop = try core_loop.init();
@@ -26,6 +30,7 @@ pub fn App(comptime max_connections: usize) type {
                 .loop = loop,
                 .pool = core_context.init_pool(max_connections),
                 .router = radix.Router.init(),
+                .pubsub = .{},
             };
         }
 
@@ -63,6 +68,7 @@ pub fn App(comptime max_connections: usize) type {
 
             conn.socket = socket;
             conn.router = &self.router;
+            conn.pubsub = &self.pubsub;
             core_tcp.read_start(conn, &self.loop);
         }
 
@@ -80,6 +86,11 @@ pub fn App(comptime max_connections: usize) type {
         // blocks the current thread and enters the event loop.
         pub fn run(self: *Self) !void {
             try core_loop.run(&self.loop);
+        }
+
+        // global publish from the server side.
+        pub fn publish(self: *Self, topic: []const u8, message: []const u8, is_text: bool) void {
+            self.pubsub.publish(topic, message, is_text);
         }
     };
 }
