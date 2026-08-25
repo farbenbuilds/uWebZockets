@@ -42,9 +42,9 @@ jobs:
           path: |
             ~/.cache/zig
             .zig-cache
-          key: ${{ runner.os }}-zig-${{ hashFiles('build.zig', 'build.zig.zon') }}
+          key: ${{ runner.os }}-zig-v2-${{ hashFiles('build.zig', 'build.zig.zon') }}
           restore-keys: |
-            ${{ runner.os }}-zig-
+            ${{ runner.os }}-zig-v2-
 
       - name: Check Formatting
         run: nix develop -c zig fmt --check .
