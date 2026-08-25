@@ -82,7 +82,7 @@ fn on_read_complete(
         },
         .websocket => {
             // raw binary bytes are passed directly to the zslay decoder.
-            // TODO: implement and call conn.ws.on_data(data);
+            conn.ws.on_data(data);
         },
     }
 
