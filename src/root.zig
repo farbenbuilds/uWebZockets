@@ -10,7 +10,8 @@ pub const write_chunk = Response.write_chunk;
 pub const WebSocket = @import("ws/socket.zig").WebSocket;
 pub const WsBehavior = @import("router/radix.zig").WsBehavior;
 
+pub const tls = @import("crypto/tls.zig");
+
 comptime {
     _ = @import("test.zig");
 }
-pub const tls = @import("crypto/tls.zig");
