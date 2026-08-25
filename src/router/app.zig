@@ -62,7 +62,7 @@ pub fn App(comptime max_connections: usize) type {
             const self: *Self = @ptrCast(@alignCast(user_data));
             const conn = core_context.acquire_connection(max_connections, &self.pool) orelse {
                 std.debug.print("connection pool full\n", .{});
-                _ = std.posix.system.close(socket.fd);
+                std.posix.close(socket.fd);
                 return;
             };
 
