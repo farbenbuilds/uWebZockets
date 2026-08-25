@@ -10,11 +10,14 @@ const handshake = @import("handshake.zig");
 // takes over the raw tcp stream after a successful http 101 upgrade.
 pub const WebSocket = struct {
     conn: *TcpConnection,
+    behavior: @import("../router/radix.zig").WsBehavior = .{},
     z_conn: zslay.Conn = undefined,
     tx_nodes: [4]zslay.Conn.FrameNode = undefined,
 
     // handles the protocol upgrade from http/1.1 to websocket.
-    pub fn upgrade(self: *WebSocket, req: *const Request, res: *Response) void {
+    pub fn upgrade(self: *WebSocket, req: *const Request, res: *Response, behavior: @import("../router/radix.zig").WsBehavior) void {
+        self.behavior = behavior;
+
         const ws_key = req.get_header("Sec-WebSocket-Key") orelse {
             res.end("400 Bad Request", "Missing Sec-WebSocket-Key");
             return;
@@ -44,6 +47,8 @@ pub const WebSocket = struct {
 
         // context switch: hijack the tcp read callback.
         self.conn.protocol_state = .websocket;
+
+        if (self.behavior.open) |cb| cb(self);
     }
 
     // application-facing api to send data back to the client.
@@ -84,7 +89,7 @@ pub const WebSocket = struct {
             const action = self.z_conn.advance_rx() catch |err| {
                 std.debug.print("protocol error: {}\n", .{err});
                 // hacker sent malformed frame -> close immediately to protect server
-                std.posix.close(self.conn.socket.fd);
+                _ = std.posix.system.close(self.conn.socket.fd);
                 return;
             };
 
@@ -116,22 +121,18 @@ pub const WebSocket = struct {
                     if (self.z_conn.payload_bytes_processed == dh.extended_len) {
                         const op: zslay.Opcode = @enumFromInt(dh.header.opcode);
 
-                        if (op == .text) {
-                            // TODO: forward this payload up to the app router
-                            std.debug.print("received text chunk: {s}\n", .{chunk});
-                            // echo test: send the message back
-                            self.send(chunk, .text);
-                        } else if (op == .binary) {
-                            std.debug.print("received binary chunk length: {d}\n", .{chunk.len});
-                            self.send(chunk, .binary);
+                        if (op == .text or op == .binary) {
+                            if (self.behavior.message) |cb| {
+                                cb(self, chunk, op);
+                            }
                         } else if (op == .ping) {
                             // rfc 6455: must respond with pong immediately, including ping payload
                             self.send(chunk, .pong);
                         } else if (op == .pong) {
                             // update heartbeat/time-to-live to prevent timeout
                         } else if (op == .close) {
-                            std.debug.print("client requested close\n", .{});
-                            std.posix.close(self.conn.socket.fd);
+                            if (self.behavior.close) |cb| cb(self);
+                            _ = std.posix.system.close(self.conn.socket.fd);
                             return;
                         }
 
@@ -147,8 +148,8 @@ pub const WebSocket = struct {
                     if (op == .ping) {
                         self.send(&.{}, .pong);
                     } else if (op == .close) {
-                        std.debug.print("client requested close\n", .{});
-                        std.posix.close(self.conn.socket.fd);
+                        if (self.behavior.close) |cb| cb(self);
+                        _ = std.posix.system.close(self.conn.socket.fd);
                         return;
                     }
                     self.z_conn.complete_frame();

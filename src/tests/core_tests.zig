@@ -27,10 +27,15 @@ test "core: loop init and deinit" {
     _ = xev_loop;
 }
 
+fn dummy_accept(socket: @import("xev").TCP, user_data: ?*anyopaque) void {
+    _ = socket;
+    _ = user_data;
+}
+
 // test tcp server initialization.
 test "core: tcp server init" {
     // bind to ephemeral port 0 to prevent port collisions during tests.
-    const server = try tcp.init_server("127.0.0.1", 0);
+    const server = try tcp.init_server("127.0.0.1", 0, dummy_accept, null);
     _ = server;
 }
 

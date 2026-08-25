@@ -4,6 +4,7 @@ const core_tcp = @import("../core/tcp.zig");
 const core_context = @import("../core/context.zig");
 const core_timer = @import("../core/timer.zig");
 const radix = @import("radix.zig");
+const xev = @import("xev");
 
 // main application builder.
 // statically allocates memory needed for the connection pool.
@@ -51,9 +52,23 @@ pub fn App(comptime max_connections: usize) type {
             // sweep through the connection pool to clean up idle connections
         }
 
+        // callback triggered when the tcp server accepts a new socket.
+        fn on_new_connection(socket: xev.TCP, user_data: ?*anyopaque) void {
+            const self: *Self = @ptrCast(@alignCast(user_data));
+            const conn = core_context.acquire_connection(max_connections, &self.pool) orelse {
+                std.debug.print("connection pool full\n", .{});
+                _ = std.posix.system.close(socket.fd);
+                return;
+            };
+
+            conn.socket = socket;
+            conn.router = &self.router;
+            core_tcp.read_start(conn, &self.loop);
+        }
+
         // binds the server to an address and port and arms the accept loop.
         pub fn listen(self: *Self, address: []const u8, port: u16) !void {
-            self.server = try core_tcp.init_server(address, port);
+            self.server = try core_tcp.init_server(address, port, on_new_connection, self);
             core_tcp.accept_start(&self.server.?, &self.loop);
 
             self.timer = try core_timer.init_timer(4000, on_tick);

@@ -8,8 +8,8 @@ fn hello_handler(req: *uz.Request, res: *uz.Response) void {
 }
 
 pub fn main() !void {
-    // initialize app with a static pool of 4096 connections
-    var app = try uz.App(4096).init();
+    // initialize app with a static pool of 128 connections (avoids stack overflow)
+    var app = try uz.App(128).init();
     defer app.deinit();
 
     _ = app.get("/", hello_handler);
