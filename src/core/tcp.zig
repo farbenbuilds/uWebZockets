@@ -86,7 +86,7 @@ fn on_read_complete(
                         handler(&conn.req, &res);
                     }
                 } else {
-                    http_response.end(&res, "404 Not Found", "Route not found");
+                    res.end("404 Not Found", "Route not found");
                 }
             }
         },
@@ -161,7 +161,7 @@ pub fn init_server(address: []const u8, port: u16, cb: AcceptCallback, user_data
 // starts accepting incoming connections asynchronously.
 pub fn accept_start(server: *TcpServer, loop: *Loop) void {
     server.listener.accept(
-        @import("loop.zig").get_xev_loop(loop),
+        loop.get_xev_loop(),
         &server.accept_completion,
         TcpServer,
         server,

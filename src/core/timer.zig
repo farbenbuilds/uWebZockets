@@ -28,7 +28,7 @@ pub fn deinit_timer(ctx: *TimerContext) void {
 // arms the timer on the provided event loop.
 pub fn start_timer(ctx: *TimerContext, loop: *Loop) void {
     ctx.timer.run(
-        @import("loop.zig").get_xev_loop(loop),
+        loop.get_xev_loop(),
         &ctx.completion,
         ctx.interval_ms,
         TimerContext,
