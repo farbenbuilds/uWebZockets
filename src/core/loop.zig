@@ -2,6 +2,10 @@ const xev = @import("xev");
 
 pub const Loop = struct {
     xev_loop: xev.Loop,
+    // internal api: allow sockets to get the pointer to the underlying xev.loop
+    pub inline fn get_xev_loop(self: *Loop) *xev.Loop {
+        return &self.xev_loop;
+    }
 };
 
 // intializes the event loop
@@ -24,9 +28,4 @@ pub fn run(l: *Loop) !void {
     // .until_done forces the loop to run continuously until all
     // completions (i/o, timer) are fully canceled or processed
     try l.xev_loop.run(.until_done);
-}
-
-// internal api: allow sockets to get the pointer to the underlying xev.loop
-pub inline fn get_xev_loop(l: *Loop) *xev.Loop {
-    return &l.xev_loop;
 }

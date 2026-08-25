@@ -7,44 +7,44 @@ const TcpConnection = tcp_mod.TcpConnection;
 // relies on tcp connection for stable memory buffers.
 pub const Response = struct {
     conn: *TcpConnection,
+
+    // sends a complete http response in one go using scatter-gather i/o.
+    pub fn end(self: *Response, status: []const u8, body: []const u8) void {
+        const headers = std.fmt.bufPrint(
+            &self.conn.write_buffer,
+            "HTTP/1.1 {s}\r\nContent-Length: {d}\r\nConnection: keep-alive\r\n\r\n",
+            .{ status, body.len },
+        ) catch |err| {
+            std.debug.print("header buffer overflow: {}\n", .{err});
+            return;
+        };
+
+        // libxev currently doesn't support writev. copy body if it fits!
+        const total_len = headers.len + body.len;
+        if (total_len <= self.conn.write_buffer.len) {
+            @memcpy(self.conn.write_buffer[headers.len..total_len], body);
+            tcp_mod.write_start(self.conn, self.conn.loop, self.conn.write_buffer[0..total_len]);
+        } else {
+            std.debug.print("response too large for write buffer\n", .{});
+        }
+    }
+
+    // sends an http response formatted as a chunk.
+    pub fn write_chunk(self: *Response, chunk: []const u8) void {
+        const header_chunk = std.fmt.bufPrint(
+            &self.conn.write_buffer,
+            "{x}\r\n",
+            .{chunk.len},
+        ) catch return;
+
+        // merge header and chunk
+        const total_len = header_chunk.len + chunk.len + 2;
+        if (total_len <= self.conn.write_buffer.len) {
+            @memcpy(self.conn.write_buffer[header_chunk.len .. header_chunk.len + chunk.len], chunk);
+            @memcpy(self.conn.write_buffer[header_chunk.len + chunk.len .. total_len], "\r\n");
+            tcp_mod.write_start(self.conn, self.conn.loop, self.conn.write_buffer[0..total_len]);
+        } else {
+            std.debug.print("chunk too large for write buffer\n", .{});
+        }
+    }
 };
-
-// sends a complete http response in one go using scatter-gather i/o.
-pub fn end(self: *Response, status: []const u8, body: []const u8) void {
-    const headers = std.fmt.bufPrint(
-        &self.conn.write_buffer,
-        "HTTP/1.1 {s}\r\nContent-Length: {d}\r\nConnection: keep-alive\r\n\r\n",
-        .{ status, body.len },
-    ) catch |err| {
-        std.debug.print("header buffer overflow: {}\n", .{err});
-        return;
-    };
-
-    // libxev currently doesn't support writev. copy body if it fits!
-    const total_len = headers.len + body.len;
-    if (total_len <= self.conn.write_buffer.len) {
-        @memcpy(self.conn.write_buffer[headers.len..total_len], body);
-        tcp_mod.write_start(self.conn, self.conn.loop, self.conn.write_buffer[0..total_len]);
-    } else {
-        std.debug.print("response too large for write buffer\n", .{});
-    }
-}
-
-// sends an http response formatted as a chunk.
-pub fn write_chunk(self: *Response, chunk: []const u8) void {
-    const header_chunk = std.fmt.bufPrint(
-        &self.conn.write_buffer,
-        "{x}\r\n",
-        .{chunk.len},
-    ) catch return;
-
-    // merge header and chunk
-    const total_len = header_chunk.len + chunk.len + 2;
-    if (total_len <= self.conn.write_buffer.len) {
-        @memcpy(self.conn.write_buffer[header_chunk.len .. header_chunk.len + chunk.len], chunk);
-        @memcpy(self.conn.write_buffer[header_chunk.len + chunk.len .. total_len], "\r\n");
-        tcp_mod.write_start(self.conn, self.conn.loop, self.conn.write_buffer[0..total_len]);
-    } else {
-        std.debug.print("chunk too large for write buffer\n", .{});
-    }
-}
