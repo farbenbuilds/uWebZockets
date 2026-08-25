@@ -7,6 +7,7 @@ const Request = @import("../http/request.zig").Request;
 const http_response = @import("../http/response.zig");
 const Response = http_response.Response;
 const WebSocket = @import("../ws/socket.zig").WebSocket;
+const Router = @import("../router/radix.zig").Router;
 
 // determines the protocol of the socket.
 pub const ProtocolState = enum {
@@ -28,6 +29,7 @@ pub const TcpConnection = struct {
     socket: xev.TCP,
     loop: *xev.Loop = undefined,
     protocol_state: ProtocolState = .http,
+    router: *const Router = undefined,
 };
 
 // initiates an asynchronous read operation.
@@ -73,12 +75,20 @@ fn on_read_complete(
         .http => {
             _ = http_parser.consume(&conn.parser, &conn.req, data);
 
-            // temporary routing logic.
-            // if app router decides this is an upgrade endpoint,
-            // it will call ws.upgrade(&req, &res) and change protocol_state to .websocket
+            if (conn.parser.state == .done) {
+                var res = Response{ .conn = conn };
 
-            var res = Response{ .conn = conn };
-            http_response.end(&res, "200 OK", "Hello from Zig!");
+                if (conn.router.match(conn.req.path)) |route| {
+                    if (route.route_type == .websocket) {
+                        conn.ws = WebSocket{ .conn = conn };
+                        conn.ws.upgrade(&conn.req, &res, route.ws_behavior.?);
+                    } else if (route.http_handler) |handler| {
+                        handler(&conn.req, &res);
+                    }
+                } else {
+                    http_response.end(&res, "404 Not Found", "Route not found");
+                }
+            }
         },
         .websocket => {
             // raw binary bytes are passed directly to the zslay decoder.
@@ -123,14 +133,18 @@ fn on_write_complete(
     return .disarm;
 }
 
+pub const AcceptCallback = *const fn (socket: xev.TCP, user_data: ?*anyopaque) void;
+
 // tcp listener that binds to a port and accepts incoming connections.
 pub const TcpServer = struct {
     accept_completion: xev.Completion = undefined,
     listener: xev.TCP,
+    on_connection: AcceptCallback,
+    user_data: ?*anyopaque,
 };
 
 // binds to an ipv4 address and port, and begins listening.
-pub fn init_server(address: []const u8, port: u16) !TcpServer {
+pub fn init_server(address: []const u8, port: u16, cb: AcceptCallback, user_data: ?*anyopaque) !TcpServer {
     const addr = try std.Io.net.IpAddress.parse(address, port);
 
     var listener = try xev.TCP.init(addr);
@@ -139,6 +153,8 @@ pub fn init_server(address: []const u8, port: u16) !TcpServer {
 
     return TcpServer{
         .listener = listener,
+        .on_connection = cb,
+        .user_data = user_data,
     };
 }
 
@@ -160,16 +176,17 @@ fn on_accept_complete(
     completion: *xev.Completion,
     result: xev.AcceptError!xev.TCP,
 ) xev.CallbackAction {
-    _ = user_data;
     _ = loop;
     _ = completion;
+
+    const server = user_data.?;
 
     const accepted_socket = result catch |err| {
         std.debug.print("accept error: {}\n", .{err});
         return .rearm;
     };
 
-    std.debug.print("new connection accepted: fd {}\n", .{accepted_socket.fd});
+    server.on_connection(accepted_socket, server.user_data);
 
     return .rearm;
 }

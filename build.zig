@@ -106,16 +106,34 @@ pub fn build(b: *std.Build) void {
         }),
     });
     hello_world_exe.root_module.addImport("uWebZockets", mod);
-    // Note: mod's C library links and paths are transitive, but we must ensure ninja runs first.
     hello_world_exe.step.dependOn(&bssl_ninja.step);
     hello_world_exe.step.dependOn(&lsquic_ninja.step);
     hello_world_exe.step.dependOn(&deflate_ninja.step);
-
     b.installArtifact(hello_world_exe);
 
     const run_hello_world = b.addRunArtifact(hello_world_exe);
-    const example_step = b.step("hello_world", "Run the hello_world example");
-    example_step.dependOn(&run_hello_world.step);
+    const hello_world_step = b.step("hello_world", "Run the hello_world example");
+    hello_world_step.dependOn(&run_hello_world.step);
+
+    const chat_server_exe = b.addExecutable(.{
+        .name = "chat_server",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/chat_server.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    chat_server_exe.root_module.addImport("uWebZockets", mod);
+    // Note: mod's C library links and paths are transitive, but we must ensure ninja runs first.
+    chat_server_exe.root_module.addImport("zslay", zslay_dep.module("zslay"));
+    chat_server_exe.step.dependOn(&bssl_ninja.step);
+    chat_server_exe.step.dependOn(&lsquic_ninja.step);
+    chat_server_exe.step.dependOn(&deflate_ninja.step);
+    b.installArtifact(chat_server_exe);
+
+    const run_chat_server = b.addRunArtifact(chat_server_exe);
+    const chat_server_step = b.step("chat_server", "Run the chat_server example");
+    chat_server_step.dependOn(&run_chat_server.step);
 
     const mod_tests = b.addTest(.{
         .root_module = mod,
