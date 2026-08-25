@@ -93,7 +93,7 @@ pub const WebSocket = struct {
             const action = self.z_conn.advance_rx() catch |err| {
                 std.debug.print("protocol error: {}\n", .{err});
                 // hacker sent malformed frame -> close immediately to protect server
-                _ = std.posix.system.close(self.conn.socket.fd);
+                std.posix.close(self.conn.socket.fd);
                 return;
             };
 
@@ -136,7 +136,7 @@ pub const WebSocket = struct {
                             // update heartbeat/time-to-live to prevent timeout
                         } else if (op == .close) {
                             if (self.behavior.close) |cb| cb(self);
-                            _ = std.posix.system.close(self.conn.socket.fd);
+                            std.posix.close(self.conn.socket.fd);
                             return;
                         }
 
@@ -153,7 +153,7 @@ pub const WebSocket = struct {
                         self.send(&.{}, .pong);
                     } else if (op == .close) {
                         if (self.behavior.close) |cb| cb(self);
-                        _ = std.posix.system.close(self.conn.socket.fd);
+                        std.posix.close(self.conn.socket.fd);
                         return;
                     }
                     self.z_conn.complete_frame();
