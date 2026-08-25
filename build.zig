@@ -56,13 +56,14 @@ pub fn build(b: *std.Build) void {
           b.fmt("-DBORINGSSL_DIR={s}", .{b.pathFromRoot(bssl_src)}),
     });
     const lsquic_ninja = b.addSystemCommand(&.{ "ninja", "-C", lsquic_build_dir });
+    lsquic_cmake.step.dependOn(&bssl_ninja.step);
     lsquic_ninja.step.dependOn(&lsquic_cmake.step);
     lsquic_ninja.step.dependOn(&bssl_ninja.step);
 
     // 3. libdeflate
     const deflate_src = "vendor/libdeflate";
     const deflate_build_dir = b.pathJoin(&.{ vendor_build, "libdeflate" });
-    const deflate_cmake = b.addSystemCommand(&.{ "cmake", "-B", deflate_build_dir, "-S", deflate_src, "-GNinja", "-DCMAKE_BUILD_TYPE=Release", "-DLIBDEFLATE_BUILD_GZIP=OFF", "-DLIBDEFLATE_BUILD_SHARED_LIB=OFF", "-DCMAKE_C_FLAGS=-Xclang -target-feature -Xclang +evex512", zig_cc, zig_cxx, zig_asm });
+    const deflate_cmake = b.addSystemCommand(&.{ "cmake", "-B", deflate_build_dir, "-S", deflate_src, "-GNinja", "-DCMAKE_BUILD_TYPE=Release", "-DLIBDEFLATE_BUILD_GZIP=OFF", "-DLIBDEFLATE_BUILD_SHARED_LIB=OFF", "-DCMAKE_C_FLAGS=-mno-evex512", zig_cc, zig_cxx, zig_asm });
     const deflate_ninja = b.addSystemCommand(&.{ "ninja", "-C", deflate_build_dir });
     deflate_ninja.step.dependOn(&deflate_cmake.step);
 
