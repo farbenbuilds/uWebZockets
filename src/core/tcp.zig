@@ -1,5 +1,6 @@
 const std = @import("std");
 const xev = @import("xev");
+const c = @import("c"); // import boringssl
 const Loop = @import("loop.zig").Loop;
 const http_parser = @import("../http/parser.zig");
 const HttpParser = http_parser.HttpParser;
@@ -20,7 +21,7 @@ pub const ProtocolState = enum {
 // memory for this struct must be stable.
 pub const TcpConnection = struct {
     read_buffer: [8192]u8 = undefined,
-    write_buffer: [1024]u8 = undefined,
+    write_buffer: [8192]u8 = undefined,
     req: Request = .{},
     read_completion: xev.Completion = undefined,
     write_completion: xev.Completion = undefined,
@@ -34,6 +35,112 @@ pub const TcpConnection = struct {
     pubsub: ?*@import("../ws/pubsub.zig").PubSubEngine = null,
     pool_ptr: ?*anyopaque = null,
     on_close_cb: ?*const fn (pool_ptr: *anyopaque, conn: *TcpConnection) void = null,
+
+    // tls security state
+    ssl: ?*c.SSL = null,
+    is_tls_handshake_done: bool = false,
+
+    // called by server when accepting a new connection on an https port
+    pub fn init_tls(self: *TcpConnection, ssl_ctx: *c.SSL_CTX) !void {
+        // create ssl object specifically for this connection
+        self.ssl = c.SSL_new(ssl_ctx) orelse return error.SslAllocationFailed;
+
+        // create 2 memory bio pipes (read and write) entirely in ram
+        const rbio = c.BIO_new(c.BIO_s_mem());
+        const wbio = c.BIO_new(c.BIO_s_mem());
+        if (rbio == null or wbio == null) return error.BioAllocationFailed;
+
+        // attach bio pipes to ssl and set it to server mode
+        c.SSL_set_bio(self.ssl, rbio, wbio);
+        c.SSL_set_accept_state(self.ssl);
+    }
+
+    // frees boringssl memory when connection closes
+    pub fn deinit_tls(self: *TcpConnection) void {
+        if (self.ssl) |ssl_ptr| {
+            c.SSL_free(ssl_ptr); // ssl_free automatically cleans up rbio and wbio
+            self.ssl = null;
+        }
+    }
+
+    // injects raw data into boringssl and extracts clean data
+    pub fn process_tls_data(self: *TcpConnection, ssl: *c.SSL, encrypted_data: []const u8) void {
+        // pump encrypted bytes into input memory bio (rbio)
+        const rbio = c.SSL_get_rbio(ssl);
+        _ = c.BIO_write(rbio, encrypted_data.ptr, @intCast(encrypted_data.len));
+
+        // activate ssl state machine (handshake or decrypt)
+        if (!self.is_tls_handshake_done) {
+            const ret = c.SSL_do_handshake(ssl);
+            if (ret == 1) {
+                self.is_tls_handshake_done = true;
+            }
+            // after handshake (or if more data is needed), we must flush data from wbio to network
+            self.flush_tls_out(ssl);
+            if (!self.is_tls_handshake_done) return;
+        }
+
+        // continuously pull clean bytes (plaintext) until pipe is empty
+        var plain_buf: [8192]u8 = undefined;
+        while (true) {
+            const read_bytes = c.SSL_read(ssl, &plain_buf, plain_buf.len);
+            if (read_bytes <= 0) {
+                const err = c.SSL_get_error(ssl, read_bytes);
+                if (err == c.SSL_ERROR_WANT_READ) break; // wait for tcp to receive more packets
+                // if other error, connection should close, handled at a higher level
+                break;
+            }
+
+            // send clean data into our router system
+            self.route_decrypted_data(plain_buf[0..@intCast(read_bytes)]);
+        }
+
+        self.flush_tls_out(ssl);
+    }
+
+    // routes clean data to parser or websocket
+    pub fn route_decrypted_data(self: *TcpConnection, data: []u8) void {
+        switch (self.protocol_state) {
+            .http => {
+                _ = http_parser.consume(&self.parser, &self.req, data);
+
+                if (self.parser.state == .done) {
+                    var res = Response{ .conn = self };
+
+                    if (self.router.match(self.req.path)) |route| {
+                        if (route.route_type == .websocket) {
+                            self.ws = WebSocket{ .conn = self, .pubsub = self.pubsub };
+                            self.ws.upgrade(&self.req, &res, route.ws_behavior.?);
+                        } else if (route.http_handler) |handler| {
+                            handler(&self.req, &res);
+                        }
+                    } else {
+                        res.end("404 Not Found", "Route not found");
+                    }
+                }
+            },
+            .websocket => {
+                // raw binary bytes are passed directly to the zslay decoder.
+                self.ws.on_data(data);
+            },
+        }
+    }
+
+    // extracts encrypted bytes from wbio and pushes out to libxev to send
+    pub fn flush_tls_out(self: *TcpConnection, ssl: *c.SSL) void {
+        const wbio = c.SSL_get_wbio(ssl);
+        var buf: [8192]u8 = undefined;
+        while (true) {
+            const pending = c.BIO_ctrl_pending(wbio);
+            if (pending <= 0) break;
+
+            const to_read = @min(pending, buf.len);
+            const read_bytes = c.BIO_read(wbio, &buf, @intCast(to_read));
+            if (read_bytes <= 0) break;
+
+            write_start(self, self.loop, buf[0..@intCast(read_bytes)]);
+        }
+    }
 };
 
 // initiates an asynchronous read operation.
@@ -64,40 +171,26 @@ fn on_read_complete(
 
     const bytes_read = result catch |err| {
         std.debug.print("read error: {}\n", .{err});
+        conn.deinit_tls();
         return .disarm;
     };
 
-    if (bytes_read == 0) return .disarm;
+    if (bytes_read == 0) {
+        conn.deinit_tls();
+        return .disarm;
+    }
 
     const data = conn.read_buffer[0..bytes_read];
 
     // ensure the loop is stored on the connection for subsequent operations.
     conn.loop = loop;
 
-    // data routing switch.
-    switch (conn.protocol_state) {
-        .http => {
-            _ = http_parser.consume(&conn.parser, &conn.req, data);
-
-            if (conn.parser.state == .done) {
-                var res = Response{ .conn = conn };
-
-                if (conn.router.match(conn.req.path)) |route| {
-                    if (route.route_type == .websocket) {
-                        conn.ws = WebSocket{ .conn = conn, .pubsub = conn.pubsub };
-                        conn.ws.upgrade(&conn.req, &res, route.ws_behavior.?);
-                    } else if (route.http_handler) |handler| {
-                        handler(&conn.req, &res);
-                    }
-                } else {
-                    res.end("404 Not Found", "Route not found");
-                }
-            }
-        },
-        .websocket => {
-            // raw binary bytes are passed directly to the zslay decoder.
-            conn.ws.on_data(data);
-        },
+    // if running in https mode, data must pass through the decryption engine first
+    if (conn.ssl) |ssl_ptr| {
+        conn.process_tls_data(ssl_ptr, data);
+    } else {
+        // run pure http
+        conn.route_decrypted_data(data);
     }
 
     return .rearm;
@@ -139,6 +232,8 @@ fn on_write_complete(
 
 // cleanly closes the connection asynchronously across platforms via libxev.
 pub fn close_connection(conn: *TcpConnection) void {
+    conn.deinit_tls();
+
     conn.socket.close(
         conn.loop,
         &conn.close_completion,
@@ -148,12 +243,12 @@ pub fn close_connection(conn: *TcpConnection) void {
             fn cb(
                 ud: ?*TcpConnection,
                 l: *xev.Loop,
-                c: *xev.Completion,
+                c_ptr: *xev.Completion,
                 s: xev.TCP,
                 r: xev.CloseError!void,
             ) xev.CallbackAction {
                 _ = l;
-                _ = c;
+                _ = c_ptr;
                 _ = s;
                 _ = r catch {};
                 if (ud) |connection| {

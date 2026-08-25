@@ -38,19 +38,17 @@ pub fn build(b: *std.Build) void {
     // 1. BoringSSL
     const bssl_src = "vendor/boringssl";
     const bssl_build_dir = b.pathJoin(&.{ vendor_build, "boringssl" });
-    const bssl_cmake = b.addSystemCommand(&.{
-        "cmake",   "-B",                         bssl_build_dir,            "-S", bssl_src,
-        "-GNinja", "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_SHARED_LIBS=OFF",
-    });
-    const bssl_ninja = b.addSystemCommand(&.{ "ninja", "-C", bssl_build_dir });
+    const bssl_cmake = b.addSystemCommand(&.{ "cmake", "-B", bssl_build_dir, "-S", bssl_src, "-GNinja", "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_SHARED_LIBS=OFF", "-DCMAKE_C_COMPILER=/home/noah/uWebZockets/zig-cc", "-DCMAKE_CXX_COMPILER=/home/noah/uWebZockets/zig-c++", "-DCMAKE_ASM_COMPILER=/home/noah/uWebZockets/zig-cc" });
+    const bssl_ninja = b.addSystemCommand(&.{ "ninja", "-C", bssl_build_dir, "ssl", "crypto" });
     bssl_ninja.step.dependOn(&bssl_cmake.step);
 
     // 2. lsquic
     const lsquic_src = "vendor/lsquic";
     const lsquic_build_dir = b.pathJoin(&.{ vendor_build, "lsquic" });
     const lsquic_cmake = b.addSystemCommand(&.{
-        "cmake",   "-B",                         lsquic_build_dir,          "-S",                                                      lsquic_src,
-        "-GNinja", "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_SHARED_LIBS=OFF",
+        "cmake",                                              "-B",                                                      lsquic_build_dir,          "-S",                                               lsquic_src,
+        "-GNinja",                                            "-DCMAKE_BUILD_TYPE=Release",                              "-DBUILD_SHARED_LIBS=OFF", "-DCMAKE_C_COMPILER=/home/noah/uWebZockets/zig-cc", "-DCMAKE_CXX_COMPILER=/home/noah/uWebZockets/zig-c++",
+        "-DCMAKE_ASM_COMPILER=/home/noah/uWebZockets/zig-cc",
         // Give lsquic the path to boringssl so it finds the headers and libs
         b.fmt("-DBORINGSSL_DIR={s}", .{b.pathFromRoot(bssl_src)}),
     });
@@ -61,10 +59,7 @@ pub fn build(b: *std.Build) void {
     // 3. libdeflate
     const deflate_src = "vendor/libdeflate";
     const deflate_build_dir = b.pathJoin(&.{ vendor_build, "libdeflate" });
-    const deflate_cmake = b.addSystemCommand(&.{
-        "cmake",   "-B",                         deflate_build_dir,             "-S",                                deflate_src,
-        "-GNinja", "-DCMAKE_BUILD_TYPE=Release", "-DLIBDEFLATE_BUILD_GZIP=OFF", "-DLIBDEFLATE_BUILD_SHARED_LIB=OFF",
-    });
+    const deflate_cmake = b.addSystemCommand(&.{ "cmake", "-B", deflate_build_dir, "-S", deflate_src, "-GNinja", "-DCMAKE_BUILD_TYPE=Release", "-DLIBDEFLATE_BUILD_GZIP=OFF", "-DLIBDEFLATE_BUILD_SHARED_LIB=OFF", "-DCMAKE_C_COMPILER=/home/noah/uWebZockets/zig-cc", "-DCMAKE_CXX_COMPILER=/home/noah/uWebZockets/zig-c++", "-DCMAKE_ASM_COMPILER=/home/noah/uWebZockets/zig-cc" });
     const deflate_ninja = b.addSystemCommand(&.{ "ninja", "-C", deflate_build_dir });
     deflate_ninja.step.dependOn(&deflate_cmake.step);
 
