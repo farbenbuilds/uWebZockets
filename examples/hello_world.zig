@@ -9,10 +9,11 @@ fn hello_handler(req: *uz.Request, res: *uz.Response) void {
 
 pub fn main() !void {
     // initialize app with a static pool of 4096 connections
-    var app = try uz.init_app(4096);
-    defer uz.deinit_app(&app);
+    var app = try uz.App(4096).init();
+    defer app.deinit();
 
-    uz.add_route(&app, "/", hello_handler);
-    try uz.listen(&app, "0.0.0.0", 3000);
-    try uz.run(&app);
+    _ = app.get("/", hello_handler);
+
+    try app.listen("0.0.0.0", 3000);
+    try app.run();
 }
