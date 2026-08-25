@@ -24,7 +24,7 @@ pub fn init_app(comptime max_connections: usize) !App(max_connections) {
     return App(max_connections){
         .loop = loop,
         .pool = core_context.init_pool(max_connections),
-        .router = radix.Router{},
+        .router = radix.Router.init(),
     };
 }
 
@@ -36,7 +36,12 @@ pub fn deinit_app(app_instance: anytype) void {
 
 // registers an http get route.
 pub fn add_route(app_instance: anytype, path: []const u8, handler: radix.Handler) void {
-    radix.add_route(&app_instance.router, path, handler);
+    app_instance.router.get(path, handler);
+}
+
+// registers a websocket route.
+pub fn ws_route(app_instance: anytype, path: []const u8, behavior: radix.WsBehavior) void {
+    app_instance.router.ws(path, behavior);
 }
 
 // global tick callback for the timer wheel.
