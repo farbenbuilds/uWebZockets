@@ -34,11 +34,14 @@ pub fn build(b: *std.Build) void {
 
     // --- Vendor Dependencies Orchestration ---
     const vendor_build = ".zig-cache/vendor-build";
+    const zig_cc = b.fmt("-DCMAKE_C_COMPILER={s}", .{b.pathFromRoot("zig-cc")});
+    const zig_cxx = b.fmt("-DCMAKE_CXX_COMPILER={s}", .{b.pathFromRoot("zig-c++")});
+    const zig_asm = b.fmt("-DCMAKE_ASM_COMPILER={s}", .{b.pathFromRoot("zig-cc")});
 
     // 1. BoringSSL
     const bssl_src = "vendor/boringssl";
     const bssl_build_dir = b.pathJoin(&.{ vendor_build, "boringssl" });
-    const bssl_cmake = b.addSystemCommand(&.{ "cmake", "-B", bssl_build_dir, "-S", bssl_src, "-GNinja", "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_SHARED_LIBS=OFF", "-DCMAKE_C_COMPILER=/home/noah/uWebZockets/zig-cc", "-DCMAKE_CXX_COMPILER=/home/noah/uWebZockets/zig-c++", "-DCMAKE_ASM_COMPILER=/home/noah/uWebZockets/zig-cc" });
+    const bssl_cmake = b.addSystemCommand(&.{ "cmake", "-B", bssl_build_dir, "-S", bssl_src, "-GNinja", "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_SHARED_LIBS=OFF", zig_cc, zig_cxx, zig_asm });
     const bssl_ninja = b.addSystemCommand(&.{ "ninja", "-C", bssl_build_dir, "ssl", "crypto" });
     bssl_ninja.step.dependOn(&bssl_cmake.step);
 
@@ -46,11 +49,11 @@ pub fn build(b: *std.Build) void {
     const lsquic_src = "vendor/lsquic";
     const lsquic_build_dir = b.pathJoin(&.{ vendor_build, "lsquic" });
     const lsquic_cmake = b.addSystemCommand(&.{
-        "cmake",                                              "-B",                                                      lsquic_build_dir,          "-S",                                               lsquic_src,
-        "-GNinja",                                            "-DCMAKE_BUILD_TYPE=Release",                              "-DBUILD_SHARED_LIBS=OFF", "-DCMAKE_C_COMPILER=/home/noah/uWebZockets/zig-cc", "-DCMAKE_CXX_COMPILER=/home/noah/uWebZockets/zig-c++",
-        "-DCMAKE_ASM_COMPILER=/home/noah/uWebZockets/zig-cc",
+        "cmake",   "-B",                                                      lsquic_build_dir,          "-S",   lsquic_src,
+        "-GNinja", "-DCMAKE_BUILD_TYPE=Release",                              "-DBUILD_SHARED_LIBS=OFF", zig_cc, zig_cxx,
+        zig_asm,
         // Give lsquic the path to boringssl so it finds the headers and libs
-        b.fmt("-DBORINGSSL_DIR={s}", .{b.pathFromRoot(bssl_src)}),
+          b.fmt("-DBORINGSSL_DIR={s}", .{b.pathFromRoot(bssl_src)}),
     });
     const lsquic_ninja = b.addSystemCommand(&.{ "ninja", "-C", lsquic_build_dir });
     lsquic_ninja.step.dependOn(&lsquic_cmake.step);
@@ -59,7 +62,7 @@ pub fn build(b: *std.Build) void {
     // 3. libdeflate
     const deflate_src = "vendor/libdeflate";
     const deflate_build_dir = b.pathJoin(&.{ vendor_build, "libdeflate" });
-    const deflate_cmake = b.addSystemCommand(&.{ "cmake", "-B", deflate_build_dir, "-S", deflate_src, "-GNinja", "-DCMAKE_BUILD_TYPE=Release", "-DLIBDEFLATE_BUILD_GZIP=OFF", "-DLIBDEFLATE_BUILD_SHARED_LIB=OFF", "-DCMAKE_C_COMPILER=/home/noah/uWebZockets/zig-cc", "-DCMAKE_CXX_COMPILER=/home/noah/uWebZockets/zig-c++", "-DCMAKE_ASM_COMPILER=/home/noah/uWebZockets/zig-cc" });
+    const deflate_cmake = b.addSystemCommand(&.{ "cmake", "-B", deflate_build_dir, "-S", deflate_src, "-GNinja", "-DCMAKE_BUILD_TYPE=Release", "-DLIBDEFLATE_BUILD_GZIP=OFF", "-DLIBDEFLATE_BUILD_SHARED_LIB=OFF", zig_cc, zig_cxx, zig_asm });
     const deflate_ninja = b.addSystemCommand(&.{ "ninja", "-C", deflate_build_dir });
     deflate_ninja.step.dependOn(&deflate_cmake.step);
 
