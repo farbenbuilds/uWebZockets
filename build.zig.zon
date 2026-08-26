@@ -23,5 +23,7 @@
         "vendor",
         "LICENSE",
         "README.md",
+        "flake.nix",
+        "flake.lock",
     },
 }
