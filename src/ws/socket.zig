@@ -18,6 +18,9 @@ pub const WebSocket = struct {
     // pointer to the central pub/sub engine
     pubsub: ?*PubSubEngine = null,
 
+    // pointer to the shared compression engine
+    compressor: ?*@import("deflate.zig").Compressor = null,
+
     // handles the protocol upgrade from http/1.1 to websocket.
     pub fn upgrade(self: *WebSocket, req: *const Request, res: *Response, behavior: @import("../router/radix.zig").WsBehavior) void {
         self.behavior = behavior;

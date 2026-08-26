@@ -34,6 +34,7 @@ pub const TcpConnection = struct {
     protocol_state: ProtocolState = .http,
     router: *const Router = undefined,
     pubsub: ?*@import("../ws/pubsub.zig").PubSubEngine = null,
+    compressor: ?*@import("../ws/deflate.zig").Compressor = null,
     pool_ptr: ?*anyopaque = null,
     on_close_cb: ?*const fn (pool_ptr: *anyopaque, conn: *TcpConnection) void = null,
 
@@ -110,7 +111,7 @@ pub const TcpConnection = struct {
 
                     if (self.router.match(self.req.path)) |route| {
                         if (route.route_type == .websocket) {
-                            self.ws = WebSocket{ .conn = self, .pubsub = self.pubsub };
+                            self.ws = WebSocket{ .conn = self, .pubsub = self.pubsub, .compressor = self.compressor };
                             self.ws.upgrade(&self.req, &res, route.ws_behavior.?);
                         } else if (route.http_handler) |handler| {
                             handler(&self.req, &res);

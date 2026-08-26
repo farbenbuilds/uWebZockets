@@ -7,6 +7,8 @@ const radix = @import("radix.zig");
 const xev = @import("xev");
 const PubSubEngine = @import("../ws/pubsub.zig").PubSubEngine;
 const TlsContext = @import("../crypto/tls.zig").TlsContext;
+const deflate = @import("../ws/deflate.zig");
+const Compressor = deflate.Compressor;
 
 // main application builder.
 // statically allocates memory needed for the connection pool.
@@ -26,9 +28,15 @@ pub fn App(comptime max_connections: usize) type {
         // embeds the pub/sub engine directly into the app
         pubsub: PubSubEngine,
 
+        // shared compression engine for websocket permessage-deflate
+        compressor: Compressor,
+
         // initializes a new application.
         pub fn init() !Self {
             const loop = try core_loop.init();
+
+            // initialize compression engine at level 6 (optimal speed/size balance)
+            const comp = try deflate.init_compressor(6);
 
             return Self{
                 .loop = loop,
@@ -37,6 +45,7 @@ pub fn App(comptime max_connections: usize) type {
                 .pubsub = .{},
                 .reject_completions = undefined,
                 .reject_idx = 0,
+                .compressor = comp,
             };
         }
 
@@ -51,6 +60,7 @@ pub fn App(comptime max_connections: usize) type {
         pub fn deinit(self: *Self) void {
             if (self.tls_ctx) |*tls| tls.deinit();
             if (self.timer) |*t| core_timer.deinit_timer(t);
+            deflate.deinit_compressor(self.compressor);
             core_loop.deinit(&self.loop);
         }
 
@@ -92,6 +102,7 @@ pub fn App(comptime max_connections: usize) type {
             conn.socket = socket;
             conn.router = &self.router;
             conn.pubsub = &self.pubsub;
+            conn.compressor = &self.compressor;
             conn.pool_ptr = &self.pool;
             conn.on_close_cb = (struct {
                 fn cb(pool_ptr: *anyopaque, c: *core_tcp.TcpConnection) void {
