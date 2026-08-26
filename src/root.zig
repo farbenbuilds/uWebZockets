@@ -11,6 +11,7 @@ pub const WebSocket = @import("ws/socket.zig").WebSocket;
 pub const WsBehavior = @import("router/radix.zig").WsBehavior;
 
 pub const tls = @import("crypto/tls.zig");
+pub const quic = @import("quic/engine.zig");
 
 comptime {
     _ = @import("test.zig");
