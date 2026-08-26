@@ -1,6 +1,7 @@
 const std = @import("std");
 const xev = @import("xev");
 const Loop = @import("loop.zig").Loop;
+const QuicEngine = @import("../quic/engine.zig").QuicEngine;
 
 // static udp server, handling millions of packets via a single port
 pub const UdpServer = struct {
@@ -11,10 +12,11 @@ pub const UdpServer = struct {
     // but we allocate a 64kb chunk (udp memory standard) on this struct's stack.
     read_buffer: [65536]u8 = undefined,
 
-    // TODO: pointer to lsquic engine to be embedded here
+    // static embedded pointer to quic engine
+    engine: *QuicEngine,
 
     // initialize and bind udp socket to network port
-    pub fn init(ip: []const u8, port: u16) !UdpServer {
+    pub fn init(ip: []const u8, port: u16, engine: *QuicEngine) !UdpServer {
         // use std.Io.net (zig 0.16.0) to initialize ip address
         const addr = try std.Io.net.IpAddress.parse(ip, port);
 
@@ -24,6 +26,7 @@ pub const UdpServer = struct {
 
         return UdpServer{
             .socket = socket,
+            .engine = engine,
         };
     }
 
@@ -57,9 +60,9 @@ pub const UdpServer = struct {
         if (result.err == .none and result.bytes_read > 0) {
             const datagram = self.read_buffer[0..result.bytes_read];
 
-            // TODO: inject this datagram into lsquic engine
-            // lsquic_engine_packet_in(..., datagram);
-            _ = datagram;
+            // pump static byte array directly into quic engine
+            // no memory copy, no dynamic allocation!
+            self.engine.process_datagram(datagram);
         }
 
         // rearm for the kernel to continue tracking the next udp packet
