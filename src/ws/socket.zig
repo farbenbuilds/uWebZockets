@@ -47,7 +47,7 @@ pub const WebSocket = struct {
         // initialize zslay parser state
         self.z_conn = zslay.Conn.init(&self.tx_nodes);
 
-        tcp.write_start(self.conn, self.conn.loop, headers);
+        self.conn.write_data(headers);
 
         // context switch: hijack the tcp read callback.
         self.conn.protocol_state = .websocket;
@@ -76,7 +76,7 @@ pub const WebSocket = struct {
         if (total_len <= self.conn.write_buffer.len) {
             @memcpy(self.conn.write_buffer[0..header_len], frame_header[0..header_len]);
             @memcpy(self.conn.write_buffer[header_len..total_len], data);
-            tcp.write_start(self.conn, self.conn.loop, self.conn.write_buffer[0..total_len]);
+            self.conn.write_data(self.conn.write_buffer[0..total_len]);
         } else {
             std.debug.print("websocket frame too large for write buffer\n", .{});
         }

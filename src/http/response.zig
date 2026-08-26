@@ -23,7 +23,7 @@ pub const Response = struct {
         const total_len = headers.len + body.len;
         if (total_len <= self.conn.write_buffer.len) {
             @memcpy(self.conn.write_buffer[headers.len..total_len], body);
-            tcp_mod.write_start(self.conn, self.conn.loop, self.conn.write_buffer[0..total_len]);
+            self.conn.write_data(self.conn.write_buffer[0..total_len]);
         } else {
             std.debug.print("response too large for write buffer\n", .{});
         }
@@ -42,7 +42,7 @@ pub const Response = struct {
         if (total_len <= self.conn.write_buffer.len) {
             @memcpy(self.conn.write_buffer[header_chunk.len .. header_chunk.len + chunk.len], chunk);
             @memcpy(self.conn.write_buffer[header_chunk.len + chunk.len .. total_len], "\r\n");
-            tcp_mod.write_start(self.conn, self.conn.loop, self.conn.write_buffer[0..total_len]);
+            self.conn.write_data(self.conn.write_buffer[0..total_len]);
         } else {
             std.debug.print("chunk too large for write buffer\n", .{});
         }
