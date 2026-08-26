@@ -9,6 +9,7 @@ const http_response = @import("../http/response.zig");
 const Response = http_response.Response;
 const WebSocket = @import("../ws/socket.zig").WebSocket;
 const Router = @import("../router/radix.zig").Router;
+const handshake = @import("../crypto/handshake.zig");
 
 // determines the protocol of the socket.
 pub const ProtocolState = enum {
@@ -73,13 +74,25 @@ pub const TcpConnection = struct {
 
         // activate ssl state machine (handshake or decrypt)
         if (!self.is_tls_handshake_done) {
-            const ret = c.SSL_do_handshake(ssl);
-            if (ret == 1) {
-                self.is_tls_handshake_done = true;
-            }
-            // after handshake (or if more data is needed), we must flush data from wbio to network
+            const status = handshake.step(ssl);
+
+            // flush what boringssl wants to send to the client (e.g. server hello)
             self.flush_tls_out(ssl);
-            if (!self.is_tls_handshake_done) return;
+
+            switch (status) {
+                .success => {
+                    self.is_tls_handshake_done = true;
+                    std.debug.print("tls 1.3 secure channel established!\n", .{});
+                    // handshake is done, there might be application data (e.g. first http request)
+                    // stuck in bio, so we fallthrough to the decryption loop below.
+                },
+                .want_read => return, // stop, wait for libxev to trigger on_read_complete again
+                .want_write => return, // already flushed above, wait for network
+                .failed => {
+                    close_connection(self);
+                    return;
+                },
+            }
         }
 
         // continuously pull clean bytes (plaintext) until pipe is empty
