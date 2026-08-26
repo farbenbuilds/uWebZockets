@@ -22,6 +22,7 @@ pub const ProtocolState = enum {
 pub const TcpConnection = struct {
     read_buffer: [8192]u8 = undefined,
     write_buffer: [8192]u8 = undefined,
+    tls_write_buffer: [8192]u8 = undefined,
     req: Request = .{},
     read_completion: xev.Completion = undefined,
     write_completion: xev.Completion = undefined,
@@ -129,16 +130,43 @@ pub const TcpConnection = struct {
     // extracts encrypted bytes from wbio and pushes out to libxev to send
     pub fn flush_tls_out(self: *TcpConnection, ssl: *c.SSL) void {
         const wbio = c.SSL_get_wbio(ssl);
-        var buf: [8192]u8 = undefined;
-        while (true) {
-            const pending = c.BIO_ctrl_pending(wbio);
-            if (pending <= 0) break;
 
-            const to_read = @min(pending, buf.len);
-            const read_bytes = c.BIO_read(wbio, &buf, @intCast(to_read));
-            if (read_bytes <= 0) break;
+        const pending = c.BIO_ctrl_pending(wbio);
+        if (pending <= 0) return;
 
-            write_start(self, self.loop, buf[0..@intCast(read_bytes)]);
+        const read_bytes = c.BIO_read(wbio, &self.tls_write_buffer, @intCast(self.tls_write_buffer.len));
+        if (read_bytes > 0) {
+            const encrypted_chunk = self.tls_write_buffer[0..@intCast(read_bytes)];
+
+            self.socket.write(
+                self.loop,
+                &self.write_completion,
+                .{ .slice = encrypted_chunk },
+                TcpConnection,
+                self,
+                on_write_complete,
+            );
+        }
+    }
+
+    // unified data write interface
+    pub fn write_data(self: *TcpConnection, data: []const u8) void {
+        if (self.ssl) |ssl| {
+            const ret = c.SSL_write(ssl, data.ptr, @intCast(data.len));
+            if (ret > 0) {
+                self.flush_tls_out(ssl);
+            } else {
+                std.debug.print("ssl_write error\n", .{});
+            }
+        } else {
+            self.socket.write(
+                self.loop,
+                &self.write_completion,
+                .{ .slice = data },
+                TcpConnection,
+                self,
+                on_write_complete,
+            );
         }
     }
 };
@@ -194,17 +222,6 @@ fn on_read_complete(
     }
 
     return .rearm;
-}
-
-pub fn write_start(conn: *TcpConnection, loop: *xev.Loop, data: []const u8) void {
-    conn.socket.write(
-        loop,
-        &conn.write_completion,
-        .{ .slice = data },
-        TcpConnection,
-        conn,
-        on_write_complete,
-    );
 }
 
 // callback triggered when the kernel finishes sending data.
