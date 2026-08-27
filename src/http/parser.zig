@@ -22,32 +22,41 @@ pub const HttpParser = struct {
 pub fn consume(parser: *HttpParser, req: *Request, buffer: []const u8) usize {
     var i: usize = parser.mark;
 
-    while (i < buffer.len) : (i += 1) {
-        const char = buffer[i];
-
+    while (i < buffer.len) {
         switch (parser.state) {
             .method => {
-                if (char == ' ') {
-                    req.method = buffer[parser.mark..i];
-                    parser.mark = i + 1;
+                if (std.mem.indexOfScalar(u8, buffer[i..], ' ')) |space_idx| {
+                    const abs_space = i + space_idx;
+                    req.method = buffer[parser.mark..abs_space];
+                    parser.mark = abs_space + 1;
                     parser.state = .path;
+                    i = abs_space + 1;
+                } else {
+                    return buffer.len; // need more data
                 }
             },
             .path => {
-                if (char == ' ') {
-                    req.path = buffer[parser.mark..i];
-                    parser.mark = i + 1;
+                if (std.mem.indexOfScalar(u8, buffer[i..], ' ')) |space_idx| {
+                    const abs_space = i + space_idx;
+                    req.path = buffer[parser.mark..abs_space];
+                    parser.mark = abs_space + 1;
                     parser.state = .protocol;
+                    i = abs_space + 1;
+                } else {
+                    return buffer.len;
                 }
             },
             .protocol => {
-                if (char == '\n') {
-                    parser.mark = i + 1;
+                if (std.mem.indexOfScalar(u8, buffer[i..], '\n')) |nl_idx| {
+                    const abs_nl = i + nl_idx;
+                    parser.mark = abs_nl + 1;
                     parser.state = .headers;
+                    i = abs_nl + 1;
+                } else {
+                    return buffer.len;
                 }
             },
             .headers => {
-                // fast path: search for end of headers
                 const headers_end = std.mem.indexOfPos(u8, buffer, parser.mark, "\r\n\r\n");
                 if (headers_end) |end| {
                     var lines = std.mem.splitSequence(u8, buffer[parser.mark..end], "\r\n");
@@ -63,7 +72,7 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []const u8) usize {
                     parser.state = .done;
                     return end + 4;
                 } else {
-                    return buffer.len; // need more data
+                    return buffer.len;
                 }
             },
             .done, .error_invalid => return i,

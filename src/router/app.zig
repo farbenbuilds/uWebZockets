@@ -138,7 +138,7 @@ pub fn App(comptime max_connections: usize) type {
             core_tcp.accept_start(&self.server.?, &self.loop);
 
             const PoolT = core_pool.freelist_pool(core_tcp.TcpConnection, max_connections);
-            self.sweeper = try core_timer.ConnectionSweeper(PoolT).init(&self.pool);
+            self.sweeper = try core_timer.ConnectionSweeper(PoolT).init(self.io, &self.pool);
             if (self.sweeper) |*sw| {
                 sw.start(&self.loop);
             }

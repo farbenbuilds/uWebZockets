@@ -9,7 +9,7 @@ fn on_index(req: *uz.Request, res: *uz.Response) void {
 
     // send response. underneath, res.end() automatically triggers
     // stream writes and flushes directly to udp.
-    uz.end_response(res, "200 OK", "Welcome to uWebZockets super-fast HTTP/3!") catch {};
+    res.end("200 OK", "Welcome to uWebZockets super-fast HTTP/3!") catch {};
 }
 
 fn on_video_chunk(req: *uz.Request, res: *uz.Response) void {
