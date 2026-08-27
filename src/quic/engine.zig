@@ -33,17 +33,28 @@ export fn on_packets_out(
 
     // iterate through each packet lsquic wants to send using functional slice iteration (dod)
     for (specs_slice) |spec| {
-        // extract the buffer containing the raw udp datagram
-        // (these are tls 1.3 encrypted bytes wrapped in a quic header)
-        const iov = spec.iov[0];
-        const datagram_ptr: [*]const u8 = @ptrCast(iov.iov_base);
-        const datagram = datagram_ptr[0..iov.iov_len];
-
         if (engine.udp_fd != -1) {
             const dest_addr = spec.dest_sa;
             const sa_len: u32 = if (dest_addr.*.sa_family == std.posix.AF.INET6) @sizeOf(std.posix.sockaddr.in6) else @sizeOf(std.posix.sockaddr.in);
-            std.debug.print("quic sending packet of {} bytes to {}\n", .{ datagram.len, dest_addr.*.sa_family });
-            _ = std.os.linux.sendto(engine.udp_fd, datagram.ptr, datagram.len, 0, @ptrCast(dest_addr), sa_len);
+
+            // accumulate total length for debug print
+            var total_len: usize = 0;
+            const iov_slice = @as([*]const c.iovec, @ptrCast(spec.iov))[0..spec.iovlen];
+            for (iov_slice) |v| total_len += v.iov_len;
+
+            std.debug.print("quic sending packet of {} bytes to {}\n", .{ total_len, dest_addr.*.sa_family });
+
+            const msg = std.os.linux.msghdr_const{
+                .name = @ptrCast(dest_addr),
+                .namelen = sa_len,
+                .iov = @ptrCast(spec.iov),
+                .iovlen = @intCast(spec.iovlen),
+                .control = null,
+                .controllen = 0,
+                .flags = 0,
+            };
+
+            _ = std.os.linux.sendmsg(engine.udp_fd, &msg, 0);
         }
 
         sent += 1;

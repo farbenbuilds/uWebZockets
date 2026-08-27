@@ -13,6 +13,9 @@ fn acquire_stream(stream_ptr: *c.lsquic_stream, router: *const @import("../route
         if (!is_active.*) {
             is_active.* = true;
             stream_pool[i] = QuicStream.init(stream_ptr, router);
+            // explicitly clear parser state (dod) to prevent dirty reads from recycled streams
+            stream_pool[i].parser = .{};
+            stream_pool[i].req = .{};
             return &stream_pool[i];
         }
     }
