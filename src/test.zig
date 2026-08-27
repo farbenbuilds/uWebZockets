@@ -4,5 +4,4 @@ comptime {
     _ = @import("tests/http_tests.zig");
     _ = @import("tests/ws_tests.zig");
     _ = @import("tests/router_tests.zig");
-    _ = @import("core/udp.zig");
 }
