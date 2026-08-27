@@ -24,8 +24,8 @@ fn on_ws_close(ws: *uz.WebSocket) void {
     // subscription cleanup could be hooked here
 }
 
-pub fn main() !void {
-    var app = try uz.App(128).init();
+pub fn main(init: std.process.Init) !void {
+    var app = try uz.App(128).init(init.io);
     defer app.deinit();
 
     try app.ws("/chat", .{

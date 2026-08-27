@@ -16,6 +16,7 @@ pub fn App(comptime max_connections: usize) type {
     return struct {
         const Self = @This();
 
+        io: std.Io,
         loop: core_loop.Loop,
         pool: core_context.connection_pool(max_connections),
         router: radix.Router,
@@ -37,13 +38,14 @@ pub fn App(comptime max_connections: usize) type {
         compressor: Compressor,
 
         // initializes a new application.
-        pub fn init() !Self {
+        pub fn init(io: std.Io) !Self {
             const loop = try core_loop.init();
 
             // initialize compression engine at level 6 (optimal speed/size balance)
             const comp = try deflate.init_compressor(6);
 
             return Self{
+                .io = io,
                 .loop = loop,
                 .pool = core_context.init_pool(max_connections),
                 .router = radix.Router.init(),
@@ -55,15 +57,15 @@ pub fn App(comptime max_connections: usize) type {
         }
 
         // initializes a new application with https support.
-        pub fn init_https(cert_path: [:0]const u8, key_path: [:0]const u8) !Self {
-            var app = try Self.init();
+        pub fn init_https(io: std.Io, cert_path: [:0]const u8, key_path: [:0]const u8) !Self {
+            var app = try Self.init(io);
             app.tls_ctx = try TlsContext.init(cert_path, key_path);
             return app;
         }
 
         // initializes a new application with http/3 (quic) support.
-        pub fn init_http3(cert_path: [:0]const u8, key_path: [:0]const u8) !Self {
-            var app = try Self.init_https(cert_path, key_path);
+        pub fn init_http3(io: std.Io, cert_path: [:0]const u8, key_path: [:0]const u8) !Self {
+            var app = try Self.init_https(io, cert_path, key_path);
             app.quic_engine = try @import("../quic/engine.zig").QuicEngine.init(app.tls_ctx.?.ctx);
             return app;
         }
@@ -116,6 +118,7 @@ pub fn App(comptime max_connections: usize) type {
             conn.pubsub = &self.pubsub;
             conn.compressor = &self.compressor;
             conn.pool_ptr = &self.pool;
+            conn.io = self.io;
             conn.on_close_cb = (struct {
                 fn cb(pool_ptr: *anyopaque, c: *core_tcp.TcpConnection) void {
                     const pool: *core_context.connection_pool(max_connections) = @ptrCast(@alignCast(pool_ptr));

@@ -7,9 +7,9 @@ fn hello_handler(req: *uz.Request, res: *uz.Response) void {
     uz.end_response(res, "200 OK", "Hello from uWebZockets! Zero allocation achieved.") catch return;
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     // initialize app with a static pool of 128 connections (avoids stack overflow)
-    var app = try uz.App(128).init();
+    var app = try uz.App(128).init(init.io);
     defer app.deinit();
 
     _ = app.get("/", hello_handler);

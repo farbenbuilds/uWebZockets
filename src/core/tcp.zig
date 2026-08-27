@@ -11,15 +11,15 @@ const WebSocket = @import("../ws/socket.zig").WebSocket;
 const Router = @import("../router/radix.zig").Router;
 const handshake = @import("../crypto/handshake.zig");
 
-// determines the protocol of the socket.
+/// determines the protocol of the socket.
 pub const ProtocolState = enum {
     http,
     websocket,
     // tls or quic will be added in future phases.
 };
 
-// represents an active tcp connection.
-// memory for this struct must be stable.
+/// represents an active tcp connection.
+/// memory for this struct must be stable.
 pub const TcpConnection = struct {
     read_buffer: [8192]u8 = undefined,
     write_buffer: [8192]u8 = undefined,
@@ -38,12 +38,14 @@ pub const TcpConnection = struct {
     compressor: ?*@import("../ws/deflate.zig").Compressor = null,
     pool_ptr: ?*anyopaque = null,
     on_close_cb: ?*const fn (pool_ptr: *anyopaque, conn: *TcpConnection) void = null,
+    last_active_ms: i64 = 0,
+    io: std.Io = undefined,
 
-    // tls security state
+    /// tls security state
     ssl: ?*c.SSL = null,
     is_tls_handshake_done: bool = false,
 
-    // called by server when accepting a new connection on an https port
+    /// called by server when accepting a new connection on an https port
     pub fn init_tls(self: *TcpConnection, ssl_ctx: *c.SSL_CTX) !void {
         // create ssl object specifically for this connection
         self.ssl = c.SSL_new(ssl_ctx) orelse return error.SslAllocationFailed;
@@ -58,7 +60,7 @@ pub const TcpConnection = struct {
         c.SSL_set_accept_state(self.ssl);
     }
 
-    // frees boringssl memory when connection closes
+    /// frees boringssl memory when connection closes
     pub fn deinit_tls(self: *TcpConnection) void {
         if (self.ssl) |ssl_ptr| {
             c.SSL_free(ssl_ptr); // ssl_free automatically cleans up rbio and wbio
@@ -223,6 +225,10 @@ fn on_read_complete(
     }
 
     const data = conn.read_buffer[0..bytes_read];
+
+    // update activity timestamp using cross-platform Io clock
+    const now = std.Io.Clock.now(.awake, conn.io);
+    conn.last_active_ms = @intCast(@divTrunc(now.nanoseconds, 1000000));
 
     // ensure the loop is stored on the connection for subsequent operations.
     conn.loop = loop;
