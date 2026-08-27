@@ -87,7 +87,7 @@ pub const QuicEngine = struct {
         engine_api.ea_get_ssl_ctx = get_ssl_ctx;
 
         // initialize the engine
-        const ptr = c.lsquic_engine_new(c.LSENG_SERVER, &engine_api);
+        const ptr = c.lsquic_engine_new(c.LSENG_HTTP_SERVER, &engine_api);
         if (ptr == null) {
             std.heap.c_allocator.destroy(engine);
             return error.EngineInitFailed;

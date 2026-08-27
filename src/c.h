@@ -8,4 +8,6 @@
 #include <openssl/ssl.h>
 #include <openssl/crypto.h>
 #include <lsquic.h>
+
+void send_h3_response(lsquic_stream_t *stream, const char *body, size_t body_len);
 #include <libdeflate.h>

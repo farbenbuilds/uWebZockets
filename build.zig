@@ -12,6 +12,10 @@ pub fn build(b: *std.Build) void {
 
     mod.link_libc = true;
     mod.link_libcpp = true;
+    mod.addCSourceFile(.{
+        .file = b.path("src/quic/http3_helpers.c"),
+        .flags = &[_][]const u8{},
+    });
 
     // --- Zig Dependencies ---
     const zslay_dep = b.dependency("zslay", .{
@@ -92,6 +96,11 @@ pub fn build(b: *std.Build) void {
     translate_c.addIncludePath(b.path(b.pathJoin(&.{ bssl_src, "include" })));
     translate_c.addIncludePath(b.path(b.pathJoin(&.{ lsquic_src, "include" })));
     translate_c.addIncludePath(b.path(deflate_src));
+
+    mod.addIncludePath(b.path(b.pathJoin(&.{ bssl_src, "include" })));
+    mod.addIncludePath(b.path(b.pathJoin(&.{ lsquic_src, "include" })));
+    mod.addIncludePath(b.path(deflate_src));
+
     mod.addImport("c", translate_c.createModule());
 
     b.installArtifact(lib);
