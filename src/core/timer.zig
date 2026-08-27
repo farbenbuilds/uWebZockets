@@ -67,14 +67,16 @@ pub fn ConnectionSweeper(comptime PoolType: type) type {
         timer: xev.Timer,
         completion: xev.Completion = undefined,
         pool: *PoolType,
+        io: std.Io,
 
         // timeout 30 seconds (30,000 ms)
         const timeout_ms: i64 = 30_000;
 
-        pub fn init(pool: *PoolType) !Self {
+        pub fn init(io: std.Io, pool: *PoolType) !Self {
             return Self{
                 .timer = try xev.Timer.init(),
                 .pool = pool,
+                .io = io,
             };
         }
 
@@ -108,7 +110,8 @@ pub fn ConnectionSweeper(comptime PoolType: type) type {
             };
 
             const self = user_data.?;
-            const current_time = std.time.milliTimestamp();
+            const now = std.Io.Clock.now(.awake, self.io);
+            const current_time: i64 = @intCast(@divTrunc(now.nanoseconds, 1000000));
 
             // sweep through contiguous storage array (data-oriented design)
             // contiguous memory ensures cpu cache processes all items in microseconds

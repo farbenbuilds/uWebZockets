@@ -34,7 +34,7 @@ pub const QuicStream = struct {
         if (self.parser.state == .done) {
             std.debug.print("received full http/3 request: {s}\n", .{self.req.path});
 
-            // TODO: call app router to route this request.
+            // todo: call app router to route this request.
             // app.router.match(self.req.path)...
 
             // hardcoded response example:
