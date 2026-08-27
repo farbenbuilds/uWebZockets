@@ -115,7 +115,7 @@ pub fn ConnectionSweeper(comptime PoolType: type) type {
 
             // sweep through contiguous storage array (data-oriented design)
             // contiguous memory ensures cpu cache processes all items in microseconds
-            for (&self.pool.storage) |*conn| {
+            for (self.pool.storage) |*conn| {
                 if (conn.last_active_ms > 0) {
                     const idle_time = current_time - conn.last_active_ms;
 

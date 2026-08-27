@@ -48,7 +48,7 @@ pub fn App(comptime max_connections: usize) type {
             return Self{
                 .io = io,
                 .loop = loop,
-                .pool = core_pool.freelist_pool(core_tcp.TcpConnection, max_connections).init(),
+                .pool = try core_pool.freelist_pool(core_tcp.TcpConnection, max_connections).init(),
                 .router = radix.Router.init(),
                 .pubsub = .{},
                 .reject_completions = undefined,
@@ -77,6 +77,7 @@ pub fn App(comptime max_connections: usize) type {
             if (self.sweeper) |*sw| sw.deinit();
             deflate.deinit_compressor(self.compressor);
             core_loop.deinit(&self.loop);
+            self.pool.deinit();
         }
 
         // registers an http get route with fluent chaining.
