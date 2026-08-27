@@ -28,7 +28,7 @@ pub fn App(comptime max_connections: usize) type {
         udp_socket: ?xev.UDP = null,
         udp_read_completion: xev.Completion = undefined,
         udp_read_state: xev.UDP.State = undefined,
-        udp_read_buf: [65536]u8 = undefined,
+        udp_read_buf: [8192]u8 = undefined,
         reject_completions: [64]xev.Completion = undefined,
         reject_idx: usize = 0,
 
