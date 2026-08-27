@@ -20,6 +20,11 @@ pub fn freelist_pool(comptime T: type, comptime capacity: usize) type {
 
             // allocate memory for the slab and freelist
             pool.storage = try std.heap.page_allocator.alloc(T, capacity);
+
+            // strictly zero-initialize the slab to prevent garbage state on first use
+            const bytes = std.mem.sliceAsBytes(pool.storage);
+            @memset(bytes, 0);
+
             pool.free_indices = try std.heap.page_allocator.alloc(usize, capacity);
 
             // push all indices from 0 to capacity-1 into the free stack
