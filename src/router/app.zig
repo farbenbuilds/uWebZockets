@@ -22,6 +22,11 @@ pub fn App(comptime max_connections: usize) type {
         server: ?core_tcp.TcpServer = null,
         timer: ?core_timer.TimerContext = null,
         tls_ctx: ?TlsContext = null,
+        quic_engine: ?*@import("../quic/engine.zig").QuicEngine = null,
+        udp_socket: ?xev.UDP = null,
+        udp_read_completion: xev.Completion = undefined,
+        udp_read_state: xev.UDP.State = undefined,
+        udp_read_buf: [65536]u8 = undefined,
         reject_completions: [64]xev.Completion = undefined,
         reject_idx: usize = 0,
 
@@ -53,6 +58,13 @@ pub fn App(comptime max_connections: usize) type {
         pub fn init_https(cert_path: [:0]const u8, key_path: [:0]const u8) !Self {
             var app = try Self.init();
             app.tls_ctx = try TlsContext.init(cert_path, key_path);
+            return app;
+        }
+
+        // initializes a new application with http/3 (quic) support.
+        pub fn init_http3(cert_path: [:0]const u8, key_path: [:0]const u8) !Self {
+            var app = try Self.init_https(cert_path, key_path);
+            app.quic_engine = try @import("../quic/engine.zig").QuicEngine.init(app.tls_ctx.?.ctx);
             return app;
         }
 
@@ -123,6 +135,62 @@ pub fn App(comptime max_connections: usize) type {
             core_timer.start_timer(&self.timer.?, &self.loop);
 
             std.debug.print("server listening on {s}:{d}\n", .{ address, port });
+        }
+
+        // binds the server to a udp socket for quic/http3.
+        pub fn listen_udp(self: *Self, address: []const u8, port: u16) !void {
+            const addr = try std.Io.net.IpAddress.parse(address, port);
+            self.udp_socket = try xev.UDP.init(addr);
+            try self.udp_socket.?.bind(addr);
+
+            if (self.quic_engine) |quic| {
+                quic.udp_fd = self.udp_socket.?.fd;
+            }
+
+            self.udp_socket.?.read(
+                &self.loop.xev_loop,
+                &self.udp_read_completion,
+                &self.udp_read_state,
+                .{ .slice = &self.udp_read_buf },
+                Self,
+                self,
+                on_udp_read,
+            );
+
+            std.debug.print("udp server listening on {s}:{d} (quic/http3)\n", .{ address, port });
+        }
+
+        fn on_udp_read(
+            ud: ?*Self,
+            l: *xev.Loop,
+            c: *xev.Completion,
+            s: *xev.UDP.State,
+            addr: std.Io.net.IpAddress,
+            udp_socket: xev.UDP,
+            b: xev.ReadBuffer,
+            r: xev.ReadError!usize,
+        ) xev.CallbackAction {
+            _ = l;
+            _ = c;
+            _ = s;
+            _ = udp_socket;
+            _ = b;
+
+            const self = ud.?;
+
+            const bytes_read = r catch |err| {
+                std.debug.print("udp read error: {}\n", .{err});
+                return .rearm;
+            };
+
+            if (bytes_read > 0) {
+                if (self.quic_engine) |quic| {
+                    const datagram = self.udp_read_buf[0..bytes_read];
+                    quic.process_datagram(datagram, addr);
+                }
+            }
+
+            return .rearm;
         }
 
         // blocks the current thread and enters the event loop.

@@ -21,3 +21,6 @@ result-*
 .vscode/
 *.swp
 .cache/
+
+# certificates
+certs/

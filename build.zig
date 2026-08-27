@@ -12,6 +12,10 @@ pub fn build(b: *std.Build) void {
 
     mod.link_libc = true;
     mod.link_libcpp = true;
+    mod.addCSourceFile(.{
+        .file = b.path("src/quic/http3_helpers.c"),
+        .flags = &[_][]const u8{},
+    });
 
     // --- Zig Dependencies ---
     const zslay_dep = b.dependency("zslay", .{
@@ -92,6 +96,11 @@ pub fn build(b: *std.Build) void {
     translate_c.addIncludePath(b.path(b.pathJoin(&.{ bssl_src, "include" })));
     translate_c.addIncludePath(b.path(b.pathJoin(&.{ lsquic_src, "include" })));
     translate_c.addIncludePath(b.path(deflate_src));
+
+    mod.addIncludePath(b.path(b.pathJoin(&.{ bssl_src, "include" })));
+    mod.addIncludePath(b.path(b.pathJoin(&.{ lsquic_src, "include" })));
+    mod.addIncludePath(b.path(deflate_src));
+
     mod.addImport("c", translate_c.createModule());
 
     b.installArtifact(lib);
@@ -134,6 +143,24 @@ pub fn build(b: *std.Build) void {
     const run_chat_server = b.addRunArtifact(chat_server_exe);
     const chat_server_step = b.step("chat_server", "Run the chat_server example");
     chat_server_step.dependOn(&run_chat_server.step);
+
+    const http3_server_exe = b.addExecutable(.{
+        .name = "http3_server",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/http3_server.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    http3_server_exe.root_module.addImport("uWebZockets", mod);
+    http3_server_exe.step.dependOn(&bssl_ninja.step);
+    http3_server_exe.step.dependOn(&lsquic_ninja.step);
+    http3_server_exe.step.dependOn(&deflate_ninja.step);
+    b.installArtifact(http3_server_exe);
+
+    const run_http3_server = b.addRunArtifact(http3_server_exe);
+    const http3_server_step = b.step("http3_server", "Run the http3_server example");
+    http3_server_step.dependOn(&run_http3_server.step);
 
     const mod_tests = b.addTest(.{
         .root_module = mod,

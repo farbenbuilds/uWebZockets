@@ -27,7 +27,7 @@ pub const QuicStream = struct {
 
         if (self.parser.state == .error_invalid) {
             std.debug.print("http/3 parse error\n", .{});
-            c.lsquic_stream_close(self.stream_ptr);
+            _ = c.lsquic_stream_close(self.stream_ptr);
             return;
         }
 
@@ -38,18 +38,12 @@ pub const QuicStream = struct {
             // app.router.match(self.req.path)...
 
             // hardcoded response example:
-            self.send_response("HTTP/3 200 OK\r\n\r\nHello from QUIC!");
+            self.send_response("Hello from QUIC!");
         }
     }
 
-    // sends data back to engine for encryption and udp transmission.
+    // sends HTTP/3 headers and body
     pub fn send_response(self: *QuicStream, data: []const u8) void {
-        _ = c.lsquic_stream_write(self.stream_ptr, data.ptr, data.len);
-
-        // requests lsquic to immediately package and send.
-        _ = c.lsquic_stream_flush(self.stream_ptr);
-
-        // normally close stream after sending http response.
-        c.lsquic_stream_close(self.stream_ptr);
+        c.send_h3_response(self.stream_ptr, data.ptr, data.len);
     }
 };

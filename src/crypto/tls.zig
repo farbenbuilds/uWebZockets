@@ -15,7 +15,9 @@ pub const TlsContext = struct {
         };
         errdefer c.SSL_CTX_free(ctx);
 
-        _ = c.SSL_CTX_set_min_proto_version(ctx, c.TLS1_2_VERSION);
+        _ = c.SSL_CTX_set_min_proto_version(ctx, c.TLS1_3_VERSION);
+        _ = c.SSL_CTX_set_max_proto_version(ctx, c.TLS1_3_VERSION);
+        c.SSL_CTX_set_alpn_select_cb(ctx, select_alpn, null);
 
         if (c.SSL_CTX_use_certificate_chain_file(ctx, cert_path.ptr) != 1) {
             return error.CertificateLoadFailed;
@@ -37,3 +39,22 @@ pub const TlsContext = struct {
         c.SSL_CTX_free(self.ctx);
     }
 };
+
+export fn select_alpn(
+    ssl: ?*c.SSL,
+    out: [*c][*c]const u8,
+    outlen: [*c]u8,
+    in: [*c]const u8,
+    inlen: c_uint,
+    arg: ?*anyopaque,
+) callconv(.c) c_int {
+    _ = ssl;
+    _ = arg;
+
+    const alpn_h3 = "\x02h3";
+
+    if (c.SSL_select_next_proto(@ptrCast(out), outlen, alpn_h3, 3, in, inlen) != c.OPENSSL_NPN_NEGOTIATED) {
+        return c.SSL_TLSEXT_ERR_ALERT_FATAL;
+    }
+    return c.SSL_TLSEXT_ERR_OK;
+}
