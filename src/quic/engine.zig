@@ -43,6 +43,7 @@ pub const QuicEngine = struct {
         var stream_if = std.mem.zeroes(c.lsquic_stream_if);
         stream_if.on_new_stream = lsquic_api.on_new_stream;
         stream_if.on_read = lsquic_api.on_read;
+        stream_if.on_close = lsquic_api.on_close;
 
         // configure engine to activate http/3
         var engine_api = std.mem.zeroes(c.lsquic_engine_api);
