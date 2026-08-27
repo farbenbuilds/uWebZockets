@@ -31,8 +31,8 @@ fn release_stream(stream_obj: *QuicStream) void {
 
 // callback invoked when a new quic connection is established
 pub export fn on_new_conn(ea_ctx: ?*anyopaque, conn: ?*c.lsquic_conn) callconv(.c) ?*c.lsquic_conn_ctx {
-    _ = ea_ctx;
-    return @ptrCast(conn);
+    _ = conn;
+    return @ptrCast(ea_ctx);
 }
 
 // callback invoked when a quic connection is closed

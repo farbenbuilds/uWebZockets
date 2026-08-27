@@ -155,6 +155,8 @@ pub fn App(comptime max_connections: usize) type {
 
             if (self.quic_engine) |quic| {
                 quic.udp_fd = self.udp_socket.?.fd;
+                // update the router pointer since `self` now has a stable memory address
+                quic.router = &self.router;
             }
 
             self.udp_socket.?.read(
