@@ -29,17 +29,6 @@ fn release_stream(stream_obj: *QuicStream) void {
     }
 }
 
-// callback invoked when a new quic connection is established
-pub export fn on_new_conn(ea_ctx: ?*anyopaque, conn: ?*c.lsquic_conn) callconv(.c) ?*c.lsquic_conn_ctx {
-    _ = ea_ctx;
-    return @ptrCast(conn);
-}
-
-// callback invoked when a quic connection is closed
-pub export fn on_conn_closed(conn: ?*c.lsquic_conn) callconv(.c) void {
-    _ = conn;
-}
-
 // receive new stream from a quic connection
 pub export fn on_new_stream(conn_ctx: ?*anyopaque, stream: ?*c.lsquic_stream) callconv(.c) ?*c.lsquic_stream_ctx {
     _ = conn_ctx;
@@ -55,13 +44,6 @@ pub export fn on_new_stream(conn_ctx: ?*anyopaque, stream: ?*c.lsquic_stream) ca
     }
 
     return null;
-}
-
-// callback invoked when lsquic stream is ready to write
-pub export fn on_write(stream: ?*c.lsquic_stream, stream_ctx: ?*c.lsquic_stream_ctx) callconv(.c) void {
-    _ = stream;
-    _ = stream_ctx;
-    // this will be implemented later for pushing data
 }
 
 // callback invoked when lsquic extracts udp packet and decrypts tls
