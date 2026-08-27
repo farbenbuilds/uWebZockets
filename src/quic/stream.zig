@@ -13,10 +13,12 @@ pub const QuicStream = struct {
     // (note: http/3 actually uses qpack, but this architecture simulates l7 streams).
     parser: HttpParser = .{},
     req: Request = .{},
+    router: *const @import("../router/radix.zig").Router = undefined,
 
-    pub fn init(stream: *c.lsquic_stream) QuicStream {
+    pub fn init(stream: *c.lsquic_stream, router: *const @import("../router/radix.zig").Router) QuicStream {
         return .{
             .stream_ptr = stream,
+            .router = router,
         };
     }
 
@@ -32,18 +34,25 @@ pub const QuicStream = struct {
         }
 
         if (self.parser.state == .done) {
-            std.debug.print("received full http/3 request: {s}\n", .{self.req.path});
+            var res = @import("../http/response.zig").Response{ .target = .{ .quic = self } };
 
-            // todo: call app router to route this request.
-            // app.router.match(self.req.path)...
-
-            // hardcoded response example:
-            self.send_response("Hello from QUIC!");
+            if (self.router.match(self.req.path)) |route| {
+                if (route.route_type == .http) {
+                    if (route.http_handler) |handler| {
+                        handler(&self.req, &res);
+                    }
+                } else {
+                    res.end("404 Not Found", "WebSockets over QUIC not implemented") catch {};
+                }
+            } else {
+                res.end("404 Not Found", "Route not found") catch {};
+            }
         }
     }
 
     // sends HTTP/3 headers and body
-    pub fn send_response(self: *QuicStream, data: []const u8) void {
-        c.send_h3_response(self.stream_ptr, data.ptr, data.len);
+    pub fn send_response(self: *QuicStream, status: []const u8, body: []const u8) void {
+        _ = status; // lsquic helper currently hardcodes 200 OK
+        c.send_h3_response(self.stream_ptr, body.ptr, body.len);
     }
 };

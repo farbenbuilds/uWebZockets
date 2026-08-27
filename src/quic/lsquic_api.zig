@@ -8,11 +8,11 @@ var stream_pool: [MAX_STREAMS]QuicStream = undefined;
 var active_streams: [MAX_STREAMS]bool = [_]bool{false} ** MAX_STREAMS;
 
 // acquires a free stream from the pool.
-fn acquire_stream(stream_ptr: *c.lsquic_stream) ?*QuicStream {
+fn acquire_stream(stream_ptr: *c.lsquic_stream, router: *const @import("../router/radix.zig").Router) ?*QuicStream {
     for (&active_streams, 0..) |*is_active, i| {
         if (!is_active.*) {
             is_active.* = true;
-            stream_pool[i] = QuicStream.init(stream_ptr);
+            stream_pool[i] = QuicStream.init(stream_ptr, router);
             return &stream_pool[i];
         }
     }
@@ -42,11 +42,11 @@ pub export fn on_conn_closed(conn: ?*c.lsquic_conn) callconv(.c) void {
 
 // receive new stream from a quic connection
 pub export fn on_new_stream(conn_ctx: ?*anyopaque, stream: ?*c.lsquic_stream) callconv(.c) ?*c.lsquic_stream_ctx {
-    _ = conn_ctx;
+    const engine: *@import("engine.zig").QuicEngine = @ptrCast(@alignCast(conn_ctx orelse return null));
 
     if (stream) |s| {
         // acquire a zero-allocation stream from the pool
-        if (acquire_stream(s)) |stream_obj| {
+        if (acquire_stream(s, engine.router)) |stream_obj| {
             _ = c.lsquic_stream_wantread(s, 1);
             return @ptrCast(stream_obj);
         }

@@ -18,16 +18,9 @@ fn on_video_chunk(req: *uz.Request, res: *uz.Response) void {
     // (http/3 doesn't natively use chunked encoding like http/1.1,
     // this demonstrates incremental stream writing logic)
 
-    // manually writing response headers for chunked simulation
-    const headers = "HTTP/1.1 200 OK\r\nContent-Type: video/mp4\r\nTransfer-Encoding: chunked\r\n\r\n";
-    res.conn.write_data(headers);
-
-    // send each data chunk (simulated)
-    uz.chunked.send_chunk(res.conn, "video_data_chunk_1...") catch {};
-    uz.chunked.send_chunk(res.conn, "video_data_chunk_2...") catch {};
-
-    // close the chunked stream
-    uz.chunked.end(res.conn);
+    // note: true incremental streaming over QUIC needs a new C binding for lsquic.
+    // for now, we just send a single response since the C binding closes the stream.
+    res.end("200 OK", "video_data_chunk_1...video_data_chunk_2...") catch {};
 }
 
 pub fn main(init: std.process.Init) !void {

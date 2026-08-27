@@ -67,7 +67,7 @@ pub fn App(comptime max_connections: usize) type {
         // initializes a new application with http/3 (quic) support.
         pub fn init_http3(io: std.Io, cert_path: [:0]const u8, key_path: [:0]const u8) !Self {
             var app = try Self.init_https(io, cert_path, key_path);
-            app.quic_engine = try @import("../quic/engine.zig").QuicEngine.init(app.tls_ctx.?.ctx);
+            app.quic_engine = try @import("../quic/engine.zig").QuicEngine.init(app.tls_ctx.?.ctx, &app.router);
             return app;
         }
 

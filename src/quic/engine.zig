@@ -57,10 +57,11 @@ pub const QuicEngine = struct {
     engine_ptr: *c.lsquic_engine = undefined,
     udp_fd: std.posix.socket_t = -1,
     ssl_ctx: *c.SSL_CTX,
+    router: *const @import("../router/radix.zig").Router = undefined,
 
-    pub fn init(ssl_ctx: *c.SSL_CTX) !*QuicEngine {
+    pub fn init(ssl_ctx: *c.SSL_CTX, router: *const @import("../router/radix.zig").Router) !*QuicEngine {
         const engine = try std.heap.c_allocator.create(QuicEngine);
-        engine.* = QuicEngine{ .ssl_ctx = ssl_ctx };
+        engine.* = QuicEngine{ .ssl_ctx = ssl_ctx, .router = router };
 
         if (c.lsquic_global_init(c.LSQUIC_GLOBAL_SERVER) != 0) {
             std.heap.c_allocator.destroy(engine);
@@ -79,6 +80,7 @@ pub const QuicEngine = struct {
         // configure engine to activate http/3
         var engine_api = std.mem.zeroes(c.lsquic_engine_api);
         engine_api.ea_stream_if = &stream_if;
+        engine_api.ea_stream_if_ctx = engine;
         engine_api.ea_alpn = "h3";
 
         // register the data exhaust callback
