@@ -2,7 +2,7 @@ const std = @import("std");
 const TcpConnection = @import("../core/tcp.zig").TcpConnection;
 
 // utility for chunked http transfers.
-pub const chunked_encoder = struct {
+pub const ChunkedEncoder = struct {
     // sends a single chunk, zero allocation.
     pub fn send_chunk(conn: *TcpConnection, data: []const u8) void {
         if (data.len == 0) return;

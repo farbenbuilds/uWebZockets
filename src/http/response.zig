@@ -31,7 +31,7 @@ pub const Response = struct {
 
     // sends an http response formatted as a chunk.
     pub fn write_chunk(self: *Response, chunk: []const u8) void {
-        const chunked_encoder = @import("chunked.zig").chunked_encoder;
-        chunked_encoder.send_chunk(self.conn, chunk);
+        const ChunkedEncoder = @import("chunked.zig").ChunkedEncoder;
+        ChunkedEncoder.send_chunk(self.conn, chunk);
     }
 };
