@@ -122,7 +122,7 @@ pub const TcpConnection = struct {
                 _ = http_parser.consume(&self.parser, &self.req, data);
 
                 if (self.parser.state == .done) {
-                    var res = Response{ .conn = self };
+                    var res = Response{ .target = .{ .tcp = self } };
 
                     if (self.router.match(self.req.path)) |route| {
                         if (route.route_type == .websocket) {
