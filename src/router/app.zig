@@ -23,6 +23,10 @@ pub fn App(comptime max_connections: usize) type {
         timer: ?core_timer.TimerContext = null,
         tls_ctx: ?TlsContext = null,
         quic_engine: ?@import("../quic/engine.zig").QuicEngine = null,
+        udp_socket: ?xev.UDP = null,
+        udp_read_completion: xev.Completion = undefined,
+        udp_read_state: xev.UDP.State = undefined,
+        udp_read_buf: [65536]u8 = undefined,
         reject_completions: [64]xev.Completion = undefined,
         reject_idx: usize = 0,
 
@@ -133,12 +137,57 @@ pub fn App(comptime max_connections: usize) type {
             std.debug.print("server listening on {s}:{d}\n", .{ address, port });
         }
 
-        // binds the server to a udp socket for quic/http3 (stub for now).
+        // binds the server to a udp socket for quic/http3.
         pub fn listen_udp(self: *Self, address: []const u8, port: u16) !void {
-            _ = self;
-            _ = address;
-            _ = port;
-            std.debug.print("udp listening is not fully implemented yet\n", .{});
+            const addr = try std.Io.net.IpAddress.parse(address, port);
+            self.udp_socket = try xev.UDP.init(addr);
+            try self.udp_socket.?.bind(addr);
+
+            self.udp_socket.?.read(
+                &self.loop.xev_loop,
+                &self.udp_read_completion,
+                &self.udp_read_state,
+                .{ .slice = &self.udp_read_buf },
+                Self,
+                self,
+                on_udp_read,
+            );
+
+            std.debug.print("udp server listening on {s}:{d} (quic/http3)\n", .{ address, port });
+        }
+
+        fn on_udp_read(
+            ud: ?*Self,
+            l: *xev.Loop,
+            c: *xev.Completion,
+            s: *xev.UDP.State,
+            addr: std.Io.net.IpAddress,
+            udp_socket: xev.UDP,
+            b: xev.ReadBuffer,
+            r: xev.ReadError!usize,
+        ) xev.CallbackAction {
+            _ = l;
+            _ = c;
+            _ = s;
+            _ = addr;
+            _ = udp_socket;
+            _ = b;
+
+            const self = ud.?;
+
+            const bytes_read = r catch |err| {
+                std.debug.print("udp read error: {}\n", .{err});
+                return .rearm;
+            };
+
+            if (bytes_read > 0) {
+                if (self.quic_engine) |*quic| {
+                    const datagram = self.udp_read_buf[0..bytes_read];
+                    quic.process_datagram(datagram);
+                }
+            }
+
+            return .rearm;
         }
 
         // blocks the current thread and enters the event loop.

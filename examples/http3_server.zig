@@ -39,10 +39,10 @@ pub fn main() !void {
     _ = app.get("/", on_index);
     _ = app.get("/video", on_video_chunk);
 
-    std.debug.print("quic/http3 server ready to receive datagrams on port 443...\n", .{});
+    std.debug.print("quic/http3 server ready to receive datagrams on port 8443...\n", .{});
 
     // bind to udp socket instead of tcp
-    try app.listen_udp("0.0.0.0", 443);
+    try app.listen_udp("0.0.0.0", 8443);
 
     // run the event loop
     try app.run();
