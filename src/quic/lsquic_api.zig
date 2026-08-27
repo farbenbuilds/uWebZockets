@@ -12,12 +12,17 @@ fn acquire_stream(stream_ptr: *c.lsquic_stream, router: *const @import("../route
     for (&active_streams, 0..) |*is_active, i| {
         if (!is_active.*) {
             is_active.* = true;
-            stream_pool[i] = QuicStream.init(stream_ptr, router);
-            // explicitly clear parser state (dod) to prevent dirty reads from recycled streams
-            stream_pool[i].parser = .{};
-            stream_pool[i].req = .{};
-            stream_pool[i].read_len = 0;
-            return &stream_pool[i];
+            const stream_obj = &stream_pool[i];
+            // initialize in-place to avoid returning a 10KB struct on the stack (which crashes on musl)
+            stream_obj.stream_ptr = stream_ptr;
+            stream_obj.router = router;
+            stream_obj.read_len = 0;
+            stream_obj.parser.state = .method;
+            stream_obj.parser.mark = 0;
+            stream_obj.req.method = "";
+            stream_obj.req.path = "";
+            stream_obj.req.header_count = 0;
+            return stream_obj;
         }
     }
     return null; // pool exhausted
