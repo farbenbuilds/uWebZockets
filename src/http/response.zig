@@ -19,24 +19,23 @@ pub const Response = struct {
     pub fn end(self: *Response, status: []const u8, body: []const u8) !void {
         switch (self.target) {
             .tcp => |conn| {
-                const headers = std.fmt.bufPrint(
-                    &conn.write_buffer,
+                var header_buf: [1024]u8 = undefined;
+                const formatted_headers = std.fmt.bufPrint(
+                    &header_buf,
                     "HTTP/1.1 {s}\r\nContent-Length: {d}\r\nConnection: keep-alive\r\n\r\n",
                     .{ status, body.len },
-                ) catch |err| {
-                    std.debug.print("header buffer overflow: {}\n", .{err});
+                ) catch {
+                    std.debug.print("header buffer overflow\n", .{});
                     return error.BufferOverflow;
                 };
 
-                // libxev currently doesn't support writev. copy body if it fits!
-                const total_len = headers.len + body.len;
-                if (total_len <= conn.write_buffer.len) {
-                    @memcpy(conn.write_buffer[headers.len..total_len], body);
-                    conn.write_data(conn.write_buffer[0..total_len]);
-                } else {
-                    std.debug.print("response too large for write buffer\n", .{});
-                    return error.BufferOverflow;
-                }
+                const total_len = formatted_headers.len + body.len;
+                var packet = std.heap.c_allocator.alloc(u8, total_len) catch return error.BufferOverflow;
+
+                @memcpy(packet[0..formatted_headers.len], formatted_headers);
+                @memcpy(packet[formatted_headers.len..total_len], body);
+
+                conn.write_data_dynamic(packet);
             },
             .quic => |stream| {
                 stream.send_response(status, body);

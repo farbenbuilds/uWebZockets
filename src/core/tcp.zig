@@ -41,6 +41,10 @@ pub const TcpConnection = struct {
     last_active_ms: i64 = 0,
     io: std.Io = undefined,
 
+    // backpressure queue
+    pending_writes: std.ArrayListUnmanaged([]u8) = .empty,
+    is_writing: bool = false,
+
     /// tls security state
     ssl: ?*c.SSL = null,
     is_tls_handshake_done: bool = false,
@@ -154,15 +158,33 @@ pub const TcpConnection = struct {
         if (read_bytes > 0) {
             const encrypted_chunk = self.tls_write_buffer[0..@intCast(read_bytes)];
 
-            self.socket.write(
-                self.loop,
-                &self.write_completion,
-                .{ .slice = encrypted_chunk },
-                TcpConnection,
-                self,
-                on_write_complete,
-            );
+            // allocate and copy for the queue
+            if (std.heap.c_allocator.alloc(u8, encrypted_chunk.len)) |copy| {
+                @memcpy(copy, encrypted_chunk);
+                self.queue_or_write(copy);
+            } else |_| {}
         }
+    }
+
+    // internal helper to queue or write dynamic buffers
+    fn queue_or_write(self: *TcpConnection, data: []u8) void {
+        if (self.is_writing) {
+            self.pending_writes.append(std.heap.c_allocator, data) catch {
+                std.heap.c_allocator.free(data);
+                close_connection(self);
+            };
+            return;
+        }
+
+        self.is_writing = true;
+        self.socket.write(
+            self.loop,
+            &self.write_completion,
+            .{ .slice = data },
+            TcpConnection,
+            self,
+            on_write_complete, // use unified completion
+        );
     }
 
     // unified data write interface
@@ -175,14 +197,25 @@ pub const TcpConnection = struct {
                 std.debug.print("ssl_write error\n", .{});
             }
         } else {
-            self.socket.write(
-                self.loop,
-                &self.write_completion,
-                .{ .slice = data },
-                TcpConnection,
-                self,
-                on_write_complete,
-            );
+            if (std.heap.c_allocator.alloc(u8, data.len)) |copy| {
+                @memcpy(copy, data);
+                self.queue_or_write(copy);
+            } else |_| {}
+        }
+    }
+
+    // directly accepts a dynamically allocated buffer to send, taking ownership
+    pub fn write_data_dynamic(self: *TcpConnection, data: []u8) void {
+        if (self.ssl) |ssl| {
+            const ret = c.SSL_write(ssl, data.ptr, @intCast(data.len));
+            if (ret > 0) {
+                self.flush_tls_out(ssl);
+            } else {
+                std.debug.print("ssl_write error\n", .{});
+            }
+            std.heap.c_allocator.free(data);
+        } else {
+            self.queue_or_write(data);
         }
     }
 };
@@ -253,16 +286,35 @@ fn on_write_complete(
     b: xev.WriteBuffer,
     result: xev.WriteError!usize,
 ) xev.CallbackAction {
-    _ = user_data;
     _ = loop;
     _ = completion;
     _ = s;
-    _ = b;
+
+    const conn = user_data.?;
+    const slice = @constCast(b.slice);
+    std.heap.c_allocator.free(slice);
 
     _ = result catch |err| {
         std.debug.print("write error: {}\n", .{err});
+        conn.is_writing = false;
+        for (conn.pending_writes.items) |p| std.heap.c_allocator.free(p);
+        conn.pending_writes.clearAndFree(std.heap.c_allocator);
         return .disarm;
     };
+
+    if (conn.pending_writes.items.len > 0) {
+        const next_data = conn.pending_writes.orderedRemove(0);
+        conn.socket.write(
+            conn.loop,
+            &conn.write_completion,
+            .{ .slice = next_data },
+            TcpConnection,
+            conn,
+            on_write_complete,
+        );
+    } else {
+        conn.is_writing = false;
+    }
 
     return .disarm;
 }
@@ -270,6 +322,14 @@ fn on_write_complete(
 // cleanly closes the connection asynchronously across platforms via libxev.
 pub fn close_connection(conn: *TcpConnection) void {
     conn.deinit_tls();
+
+    for (conn.pending_writes.items) |p| std.heap.c_allocator.free(p);
+    conn.pending_writes.clearAndFree(std.heap.c_allocator);
+    conn.is_writing = false;
+
+    if (conn.protocol_state == .websocket) {
+        conn.ws.deinit();
+    }
 
     conn.socket.close(
         conn.loop,
