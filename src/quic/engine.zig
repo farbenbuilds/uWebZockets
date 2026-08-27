@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("c");
 const lsquic_api = @import("lsquic_api.zig");
+pub const QuicStream = @import("stream.zig").QuicStream;
 
 // callback invoked by lsquic when it needs to dispatch udp packets to the network.
 // the `specs` parameter is an array containing pre-encoded packets ready for dispatch.
