@@ -4,17 +4,32 @@ const loop = @import("../core/loop.zig");
 const tcp = @import("../core/tcp.zig");
 const timer = @import("../core/timer.zig");
 
-// test connection pool logic.
-test "core: connection pool acquires and releases slots" {
-    var pool = context.init_pool(10);
-    try std.testing.expectEqual(@as(usize, 0), context.count_active_connections(10, &pool));
+const pool_mod = @import("../core/pool.zig");
 
-    const conn = context.acquire_connection(10, &pool);
-    try std.testing.expect(conn != null);
-    try std.testing.expectEqual(@as(usize, 1), context.count_active_connections(10, &pool));
+// test generic bitset pool logic.
+test "core: bitset pool acquires and releases slots" {
+    var pool = context.bitset_pool(usize, 10).init();
+    try std.testing.expectEqual(@as(usize, 0), pool.count_active());
 
-    context.release_connection(10, &pool, conn.?);
-    try std.testing.expectEqual(@as(usize, 0), context.count_active_connections(10, &pool));
+    const item = pool.acquire();
+    try std.testing.expect(item != null);
+    try std.testing.expectEqual(@as(usize, 1), pool.count_active());
+
+    pool.release(item.?);
+    try std.testing.expectEqual(@as(usize, 0), pool.count_active());
+}
+
+// test generic freelist pool logic.
+test "core: freelist pool acquires and releases slots" {
+    var pool = pool_mod.freelist_pool(usize, 10).init();
+    try std.testing.expectEqual(@as(usize, 0), pool.count_active());
+
+    const item = pool.acquire();
+    try std.testing.expect(item != null);
+    try std.testing.expectEqual(@as(usize, 1), pool.count_active());
+
+    pool.release(item.?);
+    try std.testing.expectEqual(@as(usize, 0), pool.count_active());
 }
 
 // test loop initialization and deinitialization.

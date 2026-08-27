@@ -2,6 +2,7 @@ const std = @import("std");
 const core_loop = @import("../core/loop.zig");
 const core_tcp = @import("../core/tcp.zig");
 const core_context = @import("../core/context.zig");
+const core_pool = @import("../core/pool.zig");
 const core_timer = @import("../core/timer.zig");
 const radix = @import("radix.zig");
 const xev = @import("xev");
@@ -18,7 +19,7 @@ pub fn App(comptime max_connections: usize) type {
 
         io: std.Io,
         loop: core_loop.Loop,
-        pool: core_context.connection_pool(max_connections),
+        pool: core_pool.freelist_pool(core_tcp.TcpConnection, max_connections),
         router: radix.Router,
         server: ?core_tcp.TcpServer = null,
         timer: ?core_timer.TimerContext = null,
@@ -47,7 +48,7 @@ pub fn App(comptime max_connections: usize) type {
             return Self{
                 .io = io,
                 .loop = loop,
-                .pool = core_context.init_pool(max_connections),
+                .pool = core_pool.freelist_pool(core_tcp.TcpConnection, max_connections).init(),
                 .router = radix.Router.init(),
                 .pubsub = .{},
                 .reject_completions = undefined,
@@ -98,7 +99,7 @@ pub fn App(comptime max_connections: usize) type {
         // callback triggered when the tcp server accepts a new socket.
         fn on_new_connection(socket: xev.TCP, user_data: ?*anyopaque) void {
             const self: *Self = @ptrCast(@alignCast(user_data));
-            const conn = core_context.acquire_connection(max_connections, &self.pool) orelse {
+            const conn = self.pool.acquire() orelse {
                 std.debug.print("connection pool full\n", .{});
 
                 // synchronously drop if possible, or close asynchronously via round-robin completion pool
@@ -113,6 +114,14 @@ pub fn App(comptime max_connections: usize) type {
                 return;
             };
 
+            // dod optimization: reset only lightweight state before assigning to router.
+            conn.req = .{};
+            conn.parser = .{};
+            conn.protocol_state = .http;
+            conn.ssl = null;
+            conn.is_tls_handshake_done = false;
+            conn.last_active_ms = 0;
+
             conn.socket = socket;
             conn.router = &self.router;
             conn.pubsub = &self.pubsub;
@@ -121,8 +130,8 @@ pub fn App(comptime max_connections: usize) type {
             conn.io = self.io;
             conn.on_close_cb = (struct {
                 fn cb(pool_ptr: *anyopaque, c: *core_tcp.TcpConnection) void {
-                    const pool: *core_context.connection_pool(max_connections) = @ptrCast(@alignCast(pool_ptr));
-                    core_context.release_connection(max_connections, pool, c);
+                    const pool: *core_pool.freelist_pool(core_tcp.TcpConnection, max_connections) = @ptrCast(@alignCast(pool_ptr));
+                    pool.release(c);
                 }
             }).cb;
 
