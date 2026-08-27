@@ -30,9 +30,9 @@ fn on_video_chunk(req: *uz.Request, res: *uz.Response) void {
     uz.chunked.end(res.conn);
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     // initialize app with quic/http3 engine and tls keys.
-    var app = try uz.App(8).init_http3("certs/cert.pem", "certs/key.pem");
+    var app = try uz.App(8).init_http3(init.io, "certs/cert.pem", "certs/key.pem");
     defer app.deinit();
 
     // route mapping is identical to http/1.1

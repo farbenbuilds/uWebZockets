@@ -18,12 +18,6 @@ pub const ProtocolState = enum {
     // tls or quic will be added in future phases.
 };
 
-fn get_time_ms() i64 {
-    var ts: std.os.linux.timespec = undefined;
-    _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.MONOTONIC, &ts);
-    return @as(i64, ts.sec) * 1000 + @divTrunc(@as(i64, ts.nsec), 1000000);
-}
-
 /// represents an active tcp connection.
 /// memory for this struct must be stable.
 pub const TcpConnection = struct {
@@ -45,6 +39,7 @@ pub const TcpConnection = struct {
     pool_ptr: ?*anyopaque = null,
     on_close_cb: ?*const fn (pool_ptr: *anyopaque, conn: *TcpConnection) void = null,
     last_active_ms: i64 = 0,
+    io: std.Io = undefined,
 
     /// tls security state
     ssl: ?*c.SSL = null,
@@ -231,8 +226,9 @@ fn on_read_complete(
 
     const data = conn.read_buffer[0..bytes_read];
 
-    // update activity timestamp
-    conn.last_active_ms = get_time_ms();
+    // update activity timestamp using cross-platform Io clock
+    const now = std.Io.Clock.now(.awake, conn.io);
+    conn.last_active_ms = @intCast(@divTrunc(now.nanoseconds, 1000000));
 
     // ensure the loop is stored on the connection for subsequent operations.
     conn.loop = loop;
