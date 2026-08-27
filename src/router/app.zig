@@ -22,7 +22,7 @@ pub fn App(comptime max_connections: usize) type {
         pool: core_pool.freelist_pool(core_tcp.TcpConnection, max_connections),
         router: radix.Router,
         server: ?core_tcp.TcpServer = null,
-        timer: ?core_timer.TimerContext = null,
+        sweeper: ?core_timer.ConnectionSweeper(core_pool.freelist_pool(core_tcp.TcpConnection, max_connections)) = null,
         tls_ctx: ?TlsContext = null,
         quic_engine: ?*@import("../quic/engine.zig").QuicEngine = null,
         udp_socket: ?xev.UDP = null,
@@ -74,7 +74,7 @@ pub fn App(comptime max_connections: usize) type {
         // deinitializes the application and releases os resources.
         pub fn deinit(self: *Self) void {
             if (self.tls_ctx) |*tls| tls.deinit();
-            if (self.timer) |*t| core_timer.deinit_timer(t);
+            if (self.sweeper) |*sw| sw.deinit();
             deflate.deinit_compressor(self.compressor);
             core_loop.deinit(&self.loop);
         }
@@ -89,11 +89,6 @@ pub fn App(comptime max_connections: usize) type {
         pub fn ws(self: *Self, path: []const u8, behavior: radix.WsBehavior) *Self {
             self.router.ws(path, behavior);
             return self;
-        }
-
-        // global tick callback for the timer wheel.
-        fn on_tick() void {
-            // sweep through the connection pool to clean up idle connections
         }
 
         // callback triggered when the tcp server accepts a new socket.
@@ -138,13 +133,15 @@ pub fn App(comptime max_connections: usize) type {
             core_tcp.read_start(conn, &self.loop);
         }
 
-        // binds the server to an address and port and arms the accept loop.
         pub fn listen(self: *Self, address: []const u8, port: u16) !void {
             self.server = try core_tcp.init_server(address, port, on_new_connection, self);
             core_tcp.accept_start(&self.server.?, &self.loop);
 
-            self.timer = try core_timer.init_timer(4000, on_tick);
-            core_timer.start_timer(&self.timer.?, &self.loop);
+            const PoolT = core_pool.freelist_pool(core_tcp.TcpConnection, max_connections);
+            self.sweeper = try core_timer.ConnectionSweeper(PoolT).init(&self.pool);
+            if (self.sweeper) |*sw| {
+                sw.start(&self.loop);
+            }
 
             std.debug.print("server listening on {s}:{d}\n", .{ address, port });
         }
