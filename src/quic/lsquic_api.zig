@@ -16,6 +16,7 @@ fn acquire_stream(stream_ptr: *c.lsquic_stream, router: *const @import("../route
             // explicitly clear parser state (dod) to prevent dirty reads from recycled streams
             stream_pool[i].parser = .{};
             stream_pool[i].req = .{};
+            stream_pool[i].read_len = 0;
             return &stream_pool[i];
         }
     }
@@ -71,14 +72,18 @@ pub export fn on_write(stream: ?*c.lsquic_stream, stream_ctx: ?*c.lsquic_stream_
 pub export fn on_read(stream: ?*c.lsquic_stream, stream_ctx: ?*c.lsquic_stream_ctx) callconv(.c) void {
     const stream_obj: *QuicStream = @ptrCast(@alignCast(stream_ctx orelse return));
 
-    // zero-allocation static buffer for the hot path
-    var buf: [8192]u8 = undefined;
+    if (stream_obj.read_len >= stream_obj.read_buf.len) {
+        // stream too large, close it
+        _ = c.lsquic_stream_close(stream);
+        return;
+    }
 
-    // read clean payload from the lsquic buffer
-    const read_bytes = c.lsquic_stream_read(stream, &buf, buf.len);
+    const available_space = stream_obj.read_buf[stream_obj.read_len..];
+    const read_bytes = c.lsquic_stream_read(stream, available_space.ptr, available_space.len);
 
     if (read_bytes > 0) {
-        const clean_data = buf[0..@intCast(read_bytes)];
+        stream_obj.read_len += @intCast(read_bytes);
+        const clean_data = stream_obj.read_buf[0..stream_obj.read_len];
         stream_obj.on_data(clean_data);
     } else if (read_bytes == 0) {
         _ = c.lsquic_stream_close(stream);
