@@ -27,7 +27,7 @@ pub const QuicStream = struct {
 
         if (self.parser.state == .error_invalid) {
             std.debug.print("http/3 parse error\n", .{});
-            c.lsquic_stream_close(self.stream_ptr);
+            _ = c.lsquic_stream_close(self.stream_ptr);
             return;
         }
 
@@ -50,6 +50,6 @@ pub const QuicStream = struct {
         _ = c.lsquic_stream_flush(self.stream_ptr);
 
         // normally close stream after sending http response.
-        c.lsquic_stream_close(self.stream_ptr);
+        _ = c.lsquic_stream_close(self.stream_ptr);
     }
 };

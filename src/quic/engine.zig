@@ -6,9 +6,11 @@ pub const QuicStream = @import("stream.zig").QuicStream;
 // callback invoked by lsquic when it needs to dispatch udp packets to the network.
 // the `specs` parameter is an array containing pre-encoded packets ready for dispatch.
 export fn on_packets_out(
+    ea_ctx: ?*anyopaque,
     specs: [*c]const c.lsquic_out_spec,
     n_specs: c_uint,
-) callconv(.C) c_int {
+) callconv(.c) c_int {
+    _ = ea_ctx;
     // cast the c pointer to a many-item pointer to safely slice it
     const n_specs_usize: usize = @intCast(n_specs);
     const specs_ptr: [*]const c.lsquic_out_spec = @ptrCast(specs);

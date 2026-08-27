@@ -25,7 +25,7 @@ fn on_ws_close(ws: *uz.WebSocket) void {
 }
 
 pub fn main() !void {
-    var app = try uz.App(4096).init();
+    var app = try uz.App(128).init();
     defer app.deinit();
 
     try app.ws("/chat", .{

@@ -30,13 +30,13 @@ fn release_stream(stream_obj: *QuicStream) void {
 }
 
 // receive new stream from a quic connection
-export fn on_new_stream(conn_ctx: ?*anyopaque, stream: ?*c.lsquic_stream) callconv(.C) ?*c.lsquic_stream_ctx {
+pub export fn on_new_stream(conn_ctx: ?*anyopaque, stream: ?*c.lsquic_stream) callconv(.c) ?*c.lsquic_stream_ctx {
     _ = conn_ctx;
 
     if (stream) |s| {
         // acquire a zero-allocation stream from the pool
         if (acquire_stream(s)) |stream_obj| {
-            c.lsquic_stream_wantread(s, 1);
+            _ = c.lsquic_stream_wantread(s, 1);
             return @ptrCast(stream_obj);
         }
         // if pool is full, we must close the stream
@@ -47,7 +47,7 @@ export fn on_new_stream(conn_ctx: ?*anyopaque, stream: ?*c.lsquic_stream) callco
 }
 
 // callback invoked when lsquic extracts udp packet and decrypts tls
-export fn on_read(stream: ?*c.lsquic_stream, stream_ctx: ?*c.lsquic_stream_ctx) callconv(.C) void {
+pub export fn on_read(stream: ?*c.lsquic_stream, stream_ctx: ?*c.lsquic_stream_ctx) callconv(.c) void {
     const stream_obj: *QuicStream = @ptrCast(@alignCast(stream_ctx orelse return));
 
     // zero-allocation static buffer for the hot path
@@ -64,7 +64,7 @@ export fn on_read(stream: ?*c.lsquic_stream, stream_ctx: ?*c.lsquic_stream_ctx) 
     }
 }
 
-export fn on_close(stream: ?*c.lsquic_stream, stream_ctx: ?*c.lsquic_stream_ctx) callconv(.C) void {
+pub export fn on_close(stream: ?*c.lsquic_stream, stream_ctx: ?*c.lsquic_stream_ctx) callconv(.c) void {
     _ = stream;
     if (stream_ctx) |ctx| {
         const stream_obj: *QuicStream = @ptrCast(@alignCast(ctx));

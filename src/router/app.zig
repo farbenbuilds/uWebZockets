@@ -22,6 +22,7 @@ pub fn App(comptime max_connections: usize) type {
         server: ?core_tcp.TcpServer = null,
         timer: ?core_timer.TimerContext = null,
         tls_ctx: ?TlsContext = null,
+        quic_engine: ?@import("../quic/engine.zig").QuicEngine = null,
         reject_completions: [64]xev.Completion = undefined,
         reject_idx: usize = 0,
 
@@ -53,6 +54,13 @@ pub fn App(comptime max_connections: usize) type {
         pub fn init_https(cert_path: [:0]const u8, key_path: [:0]const u8) !Self {
             var app = try Self.init();
             app.tls_ctx = try TlsContext.init(cert_path, key_path);
+            return app;
+        }
+
+        // initializes a new application with http/3 (quic) support.
+        pub fn init_http3(cert_path: [:0]const u8, key_path: [:0]const u8) !Self {
+            var app = try Self.init_https(cert_path, key_path);
+            app.quic_engine = try @import("../quic/engine.zig").QuicEngine.init();
             return app;
         }
 
@@ -123,6 +131,14 @@ pub fn App(comptime max_connections: usize) type {
             core_timer.start_timer(&self.timer.?, &self.loop);
 
             std.debug.print("server listening on {s}:{d}\n", .{ address, port });
+        }
+
+        // binds the server to a udp socket for quic/http3 (stub for now).
+        pub fn listen_udp(self: *Self, address: []const u8, port: u16) !void {
+            _ = self;
+            _ = address;
+            _ = port;
+            std.debug.print("udp listening is not fully implemented yet\n", .{});
         }
 
         // blocks the current thread and enters the event loop.
