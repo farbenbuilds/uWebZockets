@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("c");
 const lsquic_api = @import("lsquic_api.zig");
+pub const QuicStream = @import("stream.zig").QuicStream;
 
 // callback invoked by lsquic when it needs to dispatch udp packets to the network.
 // the `specs` parameter is an array containing pre-encoded packets ready for dispatch.
@@ -42,6 +43,7 @@ pub const QuicEngine = struct {
         var stream_if = std.mem.zeroes(c.lsquic_stream_if);
         stream_if.on_new_stream = lsquic_api.on_new_stream;
         stream_if.on_read = lsquic_api.on_read;
+        stream_if.on_close = lsquic_api.on_close;
 
         // configure engine to activate http/3
         var engine_api = std.mem.zeroes(c.lsquic_engine_api);

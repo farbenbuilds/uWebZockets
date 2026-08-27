@@ -130,7 +130,7 @@ pub const TcpConnection = struct {
                             handler(&self.req, &res);
                         }
                     } else {
-                        res.end("404 Not Found", "Route not found");
+                        res.end("404 Not Found", "Route not found") catch {};
                     }
                 }
             },

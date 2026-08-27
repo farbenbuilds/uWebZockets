@@ -33,7 +33,7 @@ pub const WebSocket = struct {
         self.behavior = behavior;
 
         const ws_key = req.get_header("Sec-WebSocket-Key") orelse {
-            res.end("400 Bad Request", "Missing Sec-WebSocket-Key");
+            res.end("400 Bad Request", "Missing Sec-WebSocket-Key") catch {};
             return;
         };
 
@@ -41,7 +41,7 @@ pub const WebSocket = struct {
         const accept_token = handshake.compute_accept_token(ws_key, &accept_token_buf);
 
         if (accept_token.len == 0) {
-            res.end("500 Internal Server Error", "Handshake failed");
+            res.end("500 Internal Server Error", "Handshake failed") catch {};
             return;
         }
 
@@ -59,7 +59,7 @@ pub const WebSocket = struct {
             "Connection: Upgrade\r\n" ++
             "Sec-WebSocket-Accept: {s}\r\n" ++
             "{s}\r\n", .{ accept_token, ext_header }) catch {
-            res.end("500 Internal Server Error", "Header too large");
+            res.end("500 Internal Server Error", "Header too large") catch {};
             return;
         };
 

@@ -8,15 +8,15 @@ const TcpConnection = tcp_mod.TcpConnection;
 pub const Response = struct {
     conn: *TcpConnection,
 
-    // sends a complete http response in one go using scatter-gather i/o.
-    pub fn end(self: *Response, status: []const u8, body: []const u8) void {
+    // sends a complete http response in one go using scatter-gather i/o
+    pub fn end(self: *Response, status: []const u8, body: []const u8) !void {
         const headers = std.fmt.bufPrint(
             &self.conn.write_buffer,
             "HTTP/1.1 {s}\r\nContent-Length: {d}\r\nConnection: keep-alive\r\n\r\n",
             .{ status, body.len },
         ) catch |err| {
             std.debug.print("header buffer overflow: {}\n", .{err});
-            return;
+            return error.BufferOverflow;
         };
 
         // libxev currently doesn't support writev. copy body if it fits!
@@ -26,12 +26,13 @@ pub const Response = struct {
             self.conn.write_data(self.conn.write_buffer[0..total_len]);
         } else {
             std.debug.print("response too large for write buffer\n", .{});
+            return error.BufferOverflow;
         }
     }
 
-    // sends an http response formatted as a chunk.
-    pub fn write_chunk(self: *Response, chunk: []const u8) void {
-        const ChunkedEncoder = @import("chunked.zig").ChunkedEncoder;
-        ChunkedEncoder.send_chunk(self.conn, chunk);
+    // sends an http response formatted as a chunk
+    pub fn write_chunk(self: *Response, chunk: []const u8) !void {
+        const chunked = @import("chunked.zig");
+        try chunked.send_chunk(self.conn, chunk);
     }
 };

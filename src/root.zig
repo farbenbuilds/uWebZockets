@@ -6,6 +6,7 @@ pub const Request = @import("http/request.zig").Request;
 pub const Response = @import("http/response.zig").Response;
 pub const end_response = Response.end;
 pub const write_chunk = Response.write_chunk;
+pub const chunked = @import("http/chunked.zig");
 
 pub const WebSocket = @import("ws/socket.zig").WebSocket;
 pub const WsBehavior = @import("router/radix.zig").WsBehavior;
