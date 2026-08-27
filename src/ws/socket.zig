@@ -28,6 +28,13 @@ pub const WebSocket = struct {
     // flag indicating if the client supports permessage-deflate
     permessage_deflate: bool = false,
 
+    // message assembly for fragmented websocket frames
+    msg_buffer: std.ArrayListUnmanaged(u8) = .empty,
+    current_opcode: ?zslay.Opcode = null,
+
+    // static buffer for control frame payloads (max 125 bytes per RFC 6455)
+    control_buffer: [125]u8 = undefined,
+
     // handles the protocol upgrade from http/1.1 to websocket.
     pub fn upgrade(self: *WebSocket, req: *const Request, res: *Response, behavior: @import("../router/radix.zig").WsBehavior) void {
         self.behavior = behavior;
@@ -74,6 +81,15 @@ pub const WebSocket = struct {
         if (self.behavior.open) |cb| cb(self);
     }
 
+    // helper to send a close frame
+    pub fn send_close(self: *WebSocket, code: u16, reason: []const u8) void {
+        var payload: [125]u8 = undefined;
+        std.mem.writeInt(u16, payload[0..2], code, .big);
+        const copy_len = @min(reason.len, 123);
+        @memcpy(payload[2 .. 2 + copy_len], reason[0..copy_len]);
+        self.send(payload[0 .. 2 + copy_len], .close);
+    }
+
     // application-facing api to send data back to the client.
     pub fn send(self: *WebSocket, data: []const u8, opcode: zslay.Opcode) void {
         var payload_to_send = data;
@@ -105,15 +121,19 @@ pub const WebSocket = struct {
 
         const header_len = zslay.encode_header(&frame_header, header_struct, payload_to_send.len, null) catch return;
 
-        // libxev currently doesn't support writev. copy to buffer if it fits!
+        // allocate dynamic buffer for sending to avoid dropping large frames
         const total_len = header_len + payload_to_send.len;
-        if (total_len <= self.conn.write_buffer.len) {
-            @memcpy(self.conn.write_buffer[0..header_len], frame_header[0..header_len]);
-            @memcpy(self.conn.write_buffer[header_len..total_len], payload_to_send);
-            self.conn.write_data(self.conn.write_buffer[0..total_len]);
-        } else {
-            std.debug.print("websocket frame too large for write buffer\n", .{});
-        }
+
+        var packet = std.heap.c_allocator.alloc(u8, total_len) catch {
+            std.debug.print("OOM allocating send buffer\n", .{});
+            return;
+        };
+
+        @memcpy(packet[0..header_len], frame_header[0..header_len]);
+        @memcpy(packet[header_len..total_len], payload_to_send);
+
+        // enqueue into tcp connection (write_data must handle dynamic slices and free them)
+        self.conn.write_data_dynamic(packet);
     }
 
     // processes raw byte stream when the connection is upgraded to websocket.
@@ -126,7 +146,7 @@ pub const WebSocket = struct {
         while (offset < data.len) {
             const action = self.z_conn.advance_rx() catch |err| {
                 std.debug.print("protocol error: {}\n", .{err});
-                // hacker sent malformed frame -> close immediately to protect server
+                self.send_close(1002, "Protocol error");
                 tcp.close_connection(self.conn);
                 return;
             };
@@ -154,26 +174,69 @@ pub const WebSocket = struct {
                         zslay.mask(chunk, mkey, self.z_conn.payload_bytes_processed);
                     }
 
+                    const op: zslay.Opcode = @enumFromInt(dh.header.opcode);
+                    const is_control = op.is_control();
+
+                    // fast path: entire unfragmented message fits in this TCP chunk. No alloc!
+                    const fast_path = !is_control and self.msg_buffer.items.len == 0 and self.z_conn.payload_bytes_processed == 0 and to_process == dh.extended_len and dh.header.fin;
+
+                    if (is_control) {
+                        const start = self.z_conn.payload_bytes_processed;
+                        if (start + to_process <= self.control_buffer.len) {
+                            @memcpy(self.control_buffer[start .. start + to_process], chunk);
+                        }
+                    } else if (!fast_path) {
+                        self.msg_buffer.appendSlice(std.heap.c_allocator, chunk) catch {
+                            self.send_close(1011, "Internal server error");
+                            tcp.close_connection(self.conn);
+                            return;
+                        };
+                    }
+
                     self.z_conn.payload_bytes_processed += to_process;
 
                     if (self.z_conn.payload_bytes_processed == dh.extended_len) {
-                        const op: zslay.Opcode = @enumFromInt(dh.header.opcode);
-
-                        if (op == .text or op == .binary) {
-                            if (self.behavior.message) |cb| {
-                                cb(self, chunk, op);
+                        if (is_control) {
+                            const ctrl_payload = self.control_buffer[0..@min(dh.extended_len, 125)];
+                            if (op == .ping) {
+                                self.send(ctrl_payload, .pong);
+                            } else if (op == .pong) {
+                                // update heartbeat/time-to-live to prevent timeout
+                            } else if (op == .close) {
+                                if (dh.extended_len >= 2) {
+                                    const code = std.mem.readInt(u16, ctrl_payload[0..2], .big);
+                                    const reason = ctrl_payload[2..];
+                                    self.send_close(code, reason);
+                                } else {
+                                    self.send(&.{}, .close);
+                                }
+                                if (self.behavior.close) |cb| cb(self);
+                                tcp.close_connection(self.conn);
+                                return;
                             }
-                        } else if (op == .ping) {
-                            // rfc 6455: must respond with pong immediately, including ping payload
-                            self.send(chunk, .pong);
-                        } else if (op == .pong) {
-                            // update heartbeat/time-to-live to prevent timeout
-                        } else if (op == .close) {
-                            if (self.behavior.close) |cb| cb(self);
-                            tcp.close_connection(self.conn);
-                            return;
-                        }
+                        } else {
+                            if (op != .continuation) {
+                                self.current_opcode = op;
+                            }
 
+                            if (dh.header.fin) {
+                                const final_op = self.current_opcode orelse .text;
+                                const full_msg = if (fast_path) chunk else self.msg_buffer.items;
+
+                                if (final_op == .text and !std.unicode.utf8ValidateSlice(full_msg)) {
+                                    self.send_close(1007, "Invalid UTF-8");
+                                    tcp.close_connection(self.conn);
+                                    return;
+                                }
+
+                                if (self.behavior.message) |cb| cb(self, full_msg, final_op);
+
+                                if (!fast_path) {
+                                    self.msg_buffer.clearRetainingCapacity();
+                                }
+                                self.current_opcode = null;
+                            }
+                        }
                         self.z_conn.complete_frame();
                     }
 
@@ -186,15 +249,30 @@ pub const WebSocket = struct {
                     if (op == .ping) {
                         self.send(&.{}, .pong);
                     } else if (op == .close) {
+                        self.send(&.{}, .close);
                         if (self.behavior.close) |cb| cb(self);
                         tcp.close_connection(self.conn);
                         return;
+                    } else if (op == .text or op == .binary or op == .continuation) {
+                        if (op != .continuation) {
+                            self.current_opcode = op;
+                        }
+                        if (dh.header.fin) {
+                            const final_op = self.current_opcode orelse .text;
+                            if (self.behavior.message) |cb| cb(self, self.msg_buffer.items, final_op);
+                            self.msg_buffer.clearRetainingCapacity();
+                            self.current_opcode = null;
+                        }
                     }
                     self.z_conn.complete_frame();
                 },
                 else => unreachable,
             }
         }
+    }
+
+    pub fn deinit(self: *WebSocket) void {
+        self.msg_buffer.deinit(std.heap.c_allocator);
     }
 
     // registers this client into a pub/sub topic
