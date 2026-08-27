@@ -22,7 +22,7 @@ pub fn App(comptime max_connections: usize) type {
         server: ?core_tcp.TcpServer = null,
         timer: ?core_timer.TimerContext = null,
         tls_ctx: ?TlsContext = null,
-        quic_engine: ?@import("../quic/engine.zig").QuicEngine = null,
+        quic_engine: ?*@import("../quic/engine.zig").QuicEngine = null,
         udp_socket: ?xev.UDP = null,
         udp_read_completion: xev.Completion = undefined,
         udp_read_state: xev.UDP.State = undefined,
@@ -64,7 +64,7 @@ pub fn App(comptime max_connections: usize) type {
         // initializes a new application with http/3 (quic) support.
         pub fn init_http3(cert_path: [:0]const u8, key_path: [:0]const u8) !Self {
             var app = try Self.init_https(cert_path, key_path);
-            app.quic_engine = try @import("../quic/engine.zig").QuicEngine.init(&app);
+            app.quic_engine = try @import("../quic/engine.zig").QuicEngine.init(app.tls_ctx.?.ctx);
             return app;
         }
 
@@ -143,7 +143,7 @@ pub fn App(comptime max_connections: usize) type {
             self.udp_socket = try xev.UDP.init(addr);
             try self.udp_socket.?.bind(addr);
 
-            if (self.quic_engine) |*quic| {
+            if (self.quic_engine) |quic| {
                 quic.udp_fd = self.udp_socket.?.fd;
             }
 
@@ -184,7 +184,7 @@ pub fn App(comptime max_connections: usize) type {
             };
 
             if (bytes_read > 0) {
-                if (self.quic_engine) |*quic| {
+                if (self.quic_engine) |quic| {
                     const datagram = self.udp_read_buf[0..bytes_read];
                     quic.process_datagram(datagram, addr);
                 }

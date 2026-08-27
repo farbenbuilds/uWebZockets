@@ -3,6 +3,18 @@ const c = @import("c");
 const lsquic_api = @import("lsquic_api.zig");
 pub const QuicStream = @import("stream.zig").QuicStream;
 
+export fn get_ssl_ctx(
+    peer_ctx: ?*anyopaque,
+    local: [*c]const c.struct_sockaddr,
+) callconv(.c) ?*c.struct_ssl_ctx_st {
+    _ = local;
+    if (peer_ctx) |ctx| {
+        const engine: *QuicEngine = @ptrCast(@alignCast(ctx));
+        return engine.ssl_ctx;
+    }
+    return null;
+}
+
 // callback invoked by lsquic when it needs to dispatch udp packets to the network.
 // the `specs` parameter is an array containing pre-encoded packets ready for dispatch.
 export fn on_packets_out(
@@ -41,10 +53,14 @@ export fn on_packets_out(
 }
 
 pub const QuicEngine = struct {
-    engine_ptr: *c.lsquic_engine,
+    engine_ptr: *c.lsquic_engine = undefined,
     udp_fd: std.posix.socket_t = -1,
+    ssl_ctx: *c.SSL_CTX,
 
-    pub fn init(ea_ctx: ?*anyopaque) !QuicEngine {
+    pub fn init(ssl_ctx: *c.SSL_CTX) !*QuicEngine {
+        const engine = try std.heap.c_allocator.create(QuicEngine);
+        engine.* = QuicEngine{ .ssl_ctx = ssl_ctx };
+
         // configure stream interface callbacks
         var stream_if = std.mem.zeroes(c.lsquic_stream_if);
         stream_if.on_new_stream = lsquic_api.on_new_stream;
@@ -58,13 +74,18 @@ pub const QuicEngine = struct {
 
         // register the data exhaust callback
         engine_api.ea_packets_out = on_packets_out;
-        engine_api.ea_packets_out_ctx = ea_ctx;
+        engine_api.ea_packets_out_ctx = engine;
+        engine_api.ea_get_ssl_ctx = get_ssl_ctx;
 
         // initialize the engine
         const ptr = c.lsquic_engine_new(c.LSENG_SERVER, &engine_api);
-        if (ptr == null) return error.EngineInitFailed;
+        if (ptr == null) {
+            std.heap.c_allocator.destroy(engine);
+            return error.EngineInitFailed;
+        }
 
-        return QuicEngine{ .engine_ptr = ptr.? };
+        engine.engine_ptr = ptr.?;
+        return engine;
     }
 
     // called by udp server to feed raw packets into the engine
@@ -99,7 +120,7 @@ pub const QuicEngine = struct {
         }
 
         // feed packet into engine -> if lsquic needs to ack, it automatically triggers on_packets_out
-        _ = c.lsquic_engine_packet_in(self.engine_ptr, data.ptr, data.len, @ptrCast(local_sa), @ptrCast(peer_sa), null, 0);
+        _ = c.lsquic_engine_packet_in(self.engine_ptr, data.ptr, data.len, @ptrCast(local_sa), @ptrCast(peer_sa), @ptrCast(self), 0);
 
         // wake up the engine to flush its queue
         c.lsquic_engine_process_conns(self.engine_ptr);
