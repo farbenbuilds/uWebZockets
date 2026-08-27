@@ -64,7 +64,7 @@ pub fn App(comptime max_connections: usize) type {
         // initializes a new application with http/3 (quic) support.
         pub fn init_http3(cert_path: [:0]const u8, key_path: [:0]const u8) !Self {
             var app = try Self.init_https(cert_path, key_path);
-            app.quic_engine = try @import("../quic/engine.zig").QuicEngine.init();
+            app.quic_engine = try @import("../quic/engine.zig").QuicEngine.init(&app);
             return app;
         }
 
@@ -143,6 +143,10 @@ pub fn App(comptime max_connections: usize) type {
             self.udp_socket = try xev.UDP.init(addr);
             try self.udp_socket.?.bind(addr);
 
+            if (self.quic_engine) |*quic| {
+                quic.udp_fd = self.udp_socket.?.fd;
+            }
+
             self.udp_socket.?.read(
                 &self.loop.xev_loop,
                 &self.udp_read_completion,
@@ -169,7 +173,6 @@ pub fn App(comptime max_connections: usize) type {
             _ = l;
             _ = c;
             _ = s;
-            _ = addr;
             _ = udp_socket;
             _ = b;
 
@@ -183,7 +186,7 @@ pub fn App(comptime max_connections: usize) type {
             if (bytes_read > 0) {
                 if (self.quic_engine) |*quic| {
                     const datagram = self.udp_read_buf[0..bytes_read];
-                    quic.process_datagram(datagram);
+                    quic.process_datagram(datagram, addr);
                 }
             }
 
