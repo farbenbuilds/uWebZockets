@@ -31,20 +31,7 @@ pub const Response = struct {
 
     // sends an http response formatted as a chunk.
     pub fn write_chunk(self: *Response, chunk: []const u8) void {
-        const header_chunk = std.fmt.bufPrint(
-            &self.conn.write_buffer,
-            "{x}\r\n",
-            .{chunk.len},
-        ) catch return;
-
-        // merge header and chunk
-        const total_len = header_chunk.len + chunk.len + 2;
-        if (total_len <= self.conn.write_buffer.len) {
-            @memcpy(self.conn.write_buffer[header_chunk.len .. header_chunk.len + chunk.len], chunk);
-            @memcpy(self.conn.write_buffer[header_chunk.len + chunk.len .. total_len], "\r\n");
-            self.conn.write_data(self.conn.write_buffer[0..total_len]);
-        } else {
-            std.debug.print("chunk too large for write buffer\n", .{});
-        }
+        const ChunkedEncoder = @import("chunked.zig").ChunkedEncoder;
+        ChunkedEncoder.send_chunk(self.conn, chunk);
     }
 };
