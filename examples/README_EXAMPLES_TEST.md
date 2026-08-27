@@ -1,6 +1,6 @@
-# uWebZockets Examples Testing Guide
+# µWebZockets Examples Testing Guide
 
-This document outlines how to compile and test the provided example applications in `uWebZockets`.
+This document outlines how to compile and test the provided example applications in `µWebZockets`.
 
 ## Build Instructions
 
@@ -27,7 +27,7 @@ curl -i http://127.0.0.1:3000/
 ```
 
 **Expected output:**
-You should receive an HTTP/1.1 200 OK response with the body "Hello from uWebZockets! Zero allocation achieved."
+You should receive an HTTP/1.1 200 OK response with the body "Hello from µWebZockets! Zero allocation achieved."
 
 ## 2. WebSocket Pub/Sub Server (`chat_server.zig`)
 

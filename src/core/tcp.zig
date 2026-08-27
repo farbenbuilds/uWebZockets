@@ -247,13 +247,15 @@ fn on_read_complete(
     const conn = user_data.?;
 
     const bytes_read = result catch |err| {
-        std.debug.print("read error: {}\n", .{err});
-        conn.deinit_tls();
+        if (err != error.EOF and err != error.ConnectionResetByPeer) {
+            std.debug.print("read error: {}\n", .{err});
+        }
+        close_connection(conn);
         return .disarm;
     };
 
     if (bytes_read == 0) {
-        conn.deinit_tls();
+        close_connection(conn);
         return .disarm;
     }
 
