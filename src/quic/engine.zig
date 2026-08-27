@@ -69,6 +69,7 @@ pub const QuicEngine = struct {
     udp_fd: std.posix.socket_t = -1,
     ssl_ctx: *c.SSL_CTX,
     router: *const @import("../router/radix.zig").Router = undefined,
+    stream_if: c.lsquic_stream_if = undefined,
 
     pub fn init(ssl_ctx: *c.SSL_CTX, router: *const @import("../router/radix.zig").Router) !*QuicEngine {
         const engine = try std.heap.c_allocator.create(QuicEngine);
@@ -79,18 +80,17 @@ pub const QuicEngine = struct {
             return error.GlobalInitFailed;
         }
 
-        // configure stream interface callbacks
-        var stream_if = std.mem.zeroes(c.lsquic_stream_if);
-        stream_if.on_new_conn = lsquic_api.on_new_conn;
-        stream_if.on_conn_closed = lsquic_api.on_conn_closed;
-        stream_if.on_new_stream = lsquic_api.on_new_stream;
-        stream_if.on_read = lsquic_api.on_read;
-        stream_if.on_write = lsquic_api.on_write;
-        stream_if.on_close = lsquic_api.on_close;
+        engine.stream_if = std.mem.zeroes(c.lsquic_stream_if);
+        engine.stream_if.on_new_conn = lsquic_api.on_new_conn;
+        engine.stream_if.on_conn_closed = lsquic_api.on_conn_closed;
+        engine.stream_if.on_new_stream = lsquic_api.on_new_stream;
+        engine.stream_if.on_read = lsquic_api.on_read;
+        engine.stream_if.on_write = lsquic_api.on_write;
+        engine.stream_if.on_close = lsquic_api.on_close;
 
         // configure engine to activate http/3
         var engine_api = std.mem.zeroes(c.lsquic_engine_api);
-        engine_api.ea_stream_if = &stream_if;
+        engine_api.ea_stream_if = &engine.stream_if;
         engine_api.ea_stream_if_ctx = engine;
         engine_api.ea_alpn = "h3";
 
