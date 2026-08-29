@@ -8,7 +8,11 @@ pub const ParserState = enum {
     protocol,
     headers,
     body,
-    body_chunked,
+    chunk_size,
+    chunk_ext,
+    chunk_data,
+    chunk_crlf,
+    chunk_trailer,
     done,
     error_invalid,
 };
@@ -25,11 +29,14 @@ pub const HttpParser = struct {
     state: ParserState = .method,
     mark: usize = 0,
     content_length: usize = 0,
+    chunk_length: usize = 0,
+    body_length: usize = 0,
+    body_start: usize = 0,
 };
 
 // consumes a chunk of bytes, maps them onto the request.
 // returns the number of bytes consumed.
-pub fn consume(parser: *HttpParser, req: *Request, buffer: []const u8) usize {
+pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
     var i: usize = parser.mark;
 
     while (i < buffer.len) {
@@ -192,8 +199,10 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []const u8) usize {
                     }
 
                     if (has_te) {
-                        parser.state = .body_chunked;
+                        parser.state = .chunk_size;
                         parser.mark = end + 4;
+                        parser.body_start = end + 4;
+                        parser.body_length = 0;
                         i = parser.mark;
                         continue;
                     }
@@ -221,19 +230,101 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []const u8) usize {
                     return buffer.len;
                 }
             },
-            .body_chunked => {
-                if (std.mem.indexOfPos(u8, buffer, parser.mark, "0\r\n\r\n")) |end_chunk| {
-                    if (std.mem.indexOfPos(u8, buffer, parser.mark, "\r\n")) |first_crlf| {
-                        if (first_crlf + 2 < end_chunk) {
-                            var actual_end = end_chunk;
-                            if (end_chunk >= 2 and buffer[end_chunk - 2] == '\r' and buffer[end_chunk - 1] == '\n') {
-                                actual_end -= 2;
+            .chunk_size => {
+                if (std.mem.indexOfAny(u8, buffer[parser.mark..], "\r;")) |offset| {
+                    const end_idx = parser.mark + offset;
+                    const hex_str = buffer[parser.mark .. end_idx];
+                    if (std.fmt.parseInt(usize, hex_str, 16)) |len| {
+                        parser.chunk_length = len;
+                        if (buffer[end_idx] == ';') {
+                            parser.state = .chunk_ext;
+                            parser.mark = end_idx + 1;
+                        } else {
+                            if (end_idx + 1 < buffer.len) {
+                                if (buffer[end_idx + 1] != '\n') {
+                                    parser.state = .error_invalid;
+                                    return buffer.len;
+                                }
+                                if (len == 0) {
+                                    parser.state = .chunk_trailer;
+                                } else {
+                                    parser.state = .chunk_data;
+                                }
+                                parser.mark = end_idx + 2;
+                            } else {
+                                return buffer.len; // need more data
                             }
-                            req.body = buffer[first_crlf + 2 .. actual_end];
                         }
+                        i = parser.mark;
+                        continue;
+                    } else |_| {
+                        parser.state = .error_invalid;
+                        return buffer.len;
                     }
-                    parser.state = .done;
-                    return end_chunk + 5;
+                }
+                return buffer.len;
+            },
+            .chunk_ext => {
+                if (std.mem.indexOfScalar(u8, buffer[parser.mark..], '\r')) |offset| {
+                    const end_idx = parser.mark + offset;
+                    if (end_idx + 1 < buffer.len) {
+                        if (buffer[end_idx + 1] != '\n') {
+                            parser.state = .error_invalid;
+                            return buffer.len;
+                        }
+                        if (parser.chunk_length == 0) {
+                            parser.state = .chunk_trailer;
+                        } else {
+                            parser.state = .chunk_data;
+                        }
+                        parser.mark = end_idx + 2;
+                        i = parser.mark;
+                        continue;
+                    } else {
+                        return buffer.len;
+                    }
+                }
+                return buffer.len;
+            },
+            .chunk_data => {
+                const available = buffer.len - parser.mark;
+                if (available >= parser.chunk_length) {
+                    const src = buffer[parser.mark .. parser.mark + parser.chunk_length];
+                    const dst = buffer[parser.body_start + parser.body_length .. parser.body_start + parser.body_length + parser.chunk_length];
+                    std.mem.copyForwards(u8, dst, src);
+                    parser.body_length += parser.chunk_length;
+                    parser.mark += parser.chunk_length;
+                    parser.state = .chunk_crlf;
+                    i = parser.mark;
+                    continue;
+                }
+                return buffer.len;
+            },
+            .chunk_crlf => {
+                if (buffer.len - parser.mark >= 2) {
+                    if (buffer[parser.mark] != '\r' or buffer[parser.mark + 1] != '\n') {
+                        parser.state = .error_invalid;
+                        return buffer.len;
+                    }
+                    parser.mark += 2;
+                    parser.state = .chunk_size;
+                    i = parser.mark;
+                    continue;
+                }
+                return buffer.len;
+            },
+            .chunk_trailer => {
+                if (buffer.len - parser.mark >= 2) {
+                    if (buffer[parser.mark] == '\r' and buffer[parser.mark + 1] == '\n') {
+                        req.body = buffer[parser.body_start .. parser.body_start + parser.body_length];
+                        parser.state = .done;
+                        return parser.mark + 2;
+                    }
+                    if (std.mem.indexOfPos(u8, buffer, parser.mark, "\r\n\r\n")) |end_idx| {
+                        req.body = buffer[parser.body_start .. parser.body_start + parser.body_length];
+                        parser.state = .done;
+                        return end_idx + 4;
+                    }
                 }
                 return buffer.len;
             },
@@ -249,4 +340,7 @@ pub fn reset(parser: *HttpParser) void {
     parser.state = .method;
     parser.mark = 0;
     parser.content_length = 0;
+    parser.chunk_length = 0;
+    parser.body_length = 0;
+    parser.body_start = 0;
 }
