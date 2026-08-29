@@ -25,7 +25,7 @@ pub const QuicStream = struct {
     }
 
     // receives clean (decrypted) bytes from lsquic engine.
-    pub fn on_data(self: *QuicStream, data: []const u8) void {
+    pub fn on_data(self: *QuicStream, data: []u8) void {
         // reuse static http parser.
         _ = http_parser.consume(&self.parser, &self.req, data);
 
