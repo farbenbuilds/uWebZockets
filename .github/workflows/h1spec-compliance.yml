@@ -26,7 +26,8 @@ jobs:
 
       - name: Build, Start Server, and Run h1spec tests
         run: |
-          nix develop -c bash -c "zig build && ./zig-out/bin/h1spec" &
+          nix develop -c bash -c "zig build"
+          nix develop -c bash -c "./zig-out/bin/h1spec" &
           sleep 5
           cd vendor/h1spec
           deno run --allow-net http_test.ts 127.0.0.1 8000
