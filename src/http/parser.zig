@@ -233,7 +233,7 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
             .chunk_size => {
                 if (std.mem.indexOfAny(u8, buffer[parser.mark..], "\r;")) |offset| {
                     const end_idx = parser.mark + offset;
-                    const hex_str = buffer[parser.mark .. end_idx];
+                    const hex_str = buffer[parser.mark..end_idx];
                     if (std.fmt.parseInt(usize, hex_str, 16)) |len| {
                         parser.chunk_length = len;
                         if (buffer[end_idx] == ';') {
