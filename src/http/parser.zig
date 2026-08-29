@@ -8,9 +8,17 @@ pub const ParserState = enum {
     protocol,
     headers,
     body,
+    body_chunked,
     done,
     error_invalid,
 };
+
+fn isTChar(c: u8) bool {
+    return switch (c) {
+        'a'...'z', 'A'...'Z', '0'...'9', '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~' => true,
+        else => false,
+    };
+}
 
 // http parser state data.
 pub const HttpParser = struct {
@@ -111,7 +119,7 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []const u8) usize {
                         if (std.mem.indexOf(u8, line, ":")) |colon| {
                             const name = line[0..colon];
                             for (name) |c| {
-                                if (c <= 32 or c == 127) {
+                                if (!isTChar(c)) {
                                     parser.state = .error_invalid;
                                     return buffer.len;
                                 }
@@ -184,8 +192,10 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []const u8) usize {
                     }
 
                     if (has_te) {
-                        parser.state = .error_invalid;
-                        return buffer.len;
+                        parser.state = .body_chunked;
+                        parser.mark = end + 4;
+                        i = parser.mark;
+                        continue;
                     }
 
                     if (parser.content_length > 0) {
@@ -210,6 +220,13 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []const u8) usize {
                 } else {
                     return buffer.len;
                 }
+            },
+            .body_chunked => {
+                if (std.mem.indexOfPos(u8, buffer, parser.mark, "0\r\n\r\n")) |end_chunk| {
+                    parser.state = .done;
+                    return end_chunk + 5;
+                }
+                return buffer.len;
             },
             .done, .error_invalid => return i,
         }
