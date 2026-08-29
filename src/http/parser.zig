@@ -223,6 +223,15 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []const u8) usize {
             },
             .body_chunked => {
                 if (std.mem.indexOfPos(u8, buffer, parser.mark, "0\r\n\r\n")) |end_chunk| {
+                    if (std.mem.indexOfPos(u8, buffer, parser.mark, "\r\n")) |first_crlf| {
+                        if (first_crlf + 2 < end_chunk) {
+                            var actual_end = end_chunk;
+                            if (end_chunk >= 2 and buffer[end_chunk - 2] == '\r' and buffer[end_chunk - 1] == '\n') {
+                                actual_end -= 2;
+                            }
+                            req.body = buffer[first_crlf + 2 .. actual_end];
+                        }
+                    }
                     parser.state = .done;
                     return end_chunk + 5;
                 }
