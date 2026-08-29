@@ -34,9 +34,10 @@ pilots. Its API may still change before 1.0.0.
   time
 - Native GNU/Linux, musl/Linux, and macOS release packages
 
-The bundled Autobahn server passes all enabled RFC 6455 cases: 298 strict
-passes and 3 informational results. RFC 7692 compression cases are excluded
-because per-message deflate is not exposed yet.
+The bundled Autobahn runner executes all 517 selected server cases. The
+verified alpha baseline is 298 strict passes, 3 informational results, and 216
+RFC 7692 compression cases reported as unimplemented. The strict CI gate stays
+red until per-message deflate is exposed; no compression cases are hidden.
 
 ## Requirements
 

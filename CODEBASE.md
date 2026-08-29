@@ -40,7 +40,7 @@ uWebZockets/
 │   ├── quic/                 # internal, fail-closed HTTP/3 stubs
 │   └── tests/                # unit and adversarial protocol tests
 ├── tests/
-│   ├── autobahn/             # RFC 6455 compliance target and config
+│   ├── autobahn/             # RFC 6455 target, Deno runner, and config
 │   └── h1spec/               # HTTP/1.1 compliance target
 ├── examples/                 # supported HTTP and WebSocket examples
 └── vendor/                   # pinned C/C++ and compliance submodules

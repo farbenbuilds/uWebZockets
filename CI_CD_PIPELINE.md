@@ -60,18 +60,24 @@ fragmented, malformed, and control-frame inputs.
 
 ## Autobahn WebSockets compliance
 
-The Autobahn job builds `autobahn_server` in ReleaseSafe, waits until port 9001
-is accepting connections, and runs the pinned
-`crossbario/autobahn-testsuite:25.10.1` container as a fuzzing client. It
-uploads the complete HTML/JSON report even when the gate fails.
+The Autobahn job builds `autobahn_server` in ReleaseSafe, then the Deno runner
+starts it, waits until port 9001 is accepting connections, and launches the
+digest-pinned
+`crossbario/autobahn-testsuite:0.8.2@sha256:519915fb568b04c9383f70a1c405ae3ff44ab9e35835b085239c258b6fac3074`
+container as a fuzzing client. The runner uses Deno's native process API and
+has no runtime JavaScript dependencies. It always terminates the server, and
+the container writes reports as the invoking POSIX user so repeated local runs
+can replace them safely. The workflow uploads the complete HTML/JSON report
+even when the gate fails.
 
-The configuration enables every server case except groups 12 and 13, which
-exercise RFC 7692 per-message deflate that the alpha does not negotiate. The
-report gate permits only `OK` and `INFORMATIONAL` results for both protocol and
-close behavior.
+The configuration selects groups 1-7, 9-13 with no exclusions. The report
+gate permits `OK`, `INFORMATIONAL`, and `NON-STRICT` for both protocol and close
+behavior; every other outcome fails the job.
 
-The verified alpha baseline is 301 enabled cases: 298 `OK`, 3
-`INFORMATIONAL`, and no failing or non-strict result.
+The verified alpha baseline covers 517 cases: 298 `OK`, 3 `INFORMATIONAL`, and
+216 RFC 7692 cases reported as `UNIMPLEMENTED`. Close behavior has 514 `OK` and
+3 `INFORMATIONAL` results. The workflow intentionally remains failing until
+per-message deflate is implemented; groups 12 and 13 are not suppressed.
 
 ## h1spec compliance
 

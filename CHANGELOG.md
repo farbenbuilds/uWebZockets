@@ -22,7 +22,9 @@ versions.
 - Added HTTPS with BoringSSL TLS 1.3 and HTTP/1.1 ALPN.
 - Added `ConfiguredAppWithTimeout`, a 120-second default idle policy, and the
   option to disable idle sweeping with a zero timeout.
-- Added Autobahn and h1spec compliance servers and GitHub Actions workflows.
+- Added Autobahn and h1spec compliance servers and GitHub Actions workflows,
+  including a Deno-orchestrated Autobahn runner with deterministic cleanup and
+  report gating.
 - Added bounded HTTP/zslay fuzz targets and a nightly/PR HTTP throughput
   regression workflow with a dedicated `Benchmarking` environment.
 - Added Nix native/musl packages, six-target publishing, checksums, deployment
@@ -44,6 +46,10 @@ versions.
   builds for BoringSSL, lsquic, and libdeflate.
 - Pinned Nixpkgs 26.05 so GNU/Linux, musl/Linux, Apple Silicon macOS, and Intel
   macOS release outputs evaluate from one flake.
+- Pinned the Autobahn image by digest and used Deno's native process API so the
+  compliance runner has no runtime JavaScript dependency graph.
+- Run the Autobahn container with the invoking POSIX UID/GID so generated
+  reports remain replaceable across repeated local runs.
 
 ### Fixed
 
@@ -103,6 +109,6 @@ versions.
 - RFC 7692 per-message deflate, HTTP/2, HTTP/3, Windows, route parameters,
   middleware, async handlers, and a stable C ABI are not available in this
   alpha.
-- Autobahn groups 12 and 13 are excluded because compression is not
-  negotiated. All 301 enabled cases complete with 298 strict passes and 3
-  informational results.
+- The no-exclusion Autobahn run covers 517 cases: 298 strict passes, 3
+  informational results, and 216 RFC 7692 cases reported as unimplemented.
+  The compliance gate remains failing until per-message deflate is available.

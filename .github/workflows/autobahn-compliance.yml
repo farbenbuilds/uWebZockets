@@ -35,62 +35,25 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
 
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.4
+
       - name: Build compliance server
         run: nix develop "path:." -c zig build -Doptimize=ReleaseSafe
 
-      - name: Start compliance server
-        shell: bash
-        run: |
-          ./zig-out/bin/autobahn_server >"$RUNNER_TEMP/autobahn_server.log" 2>&1 &
-          server_pid=$!
-          printf '%s\n' "$server_pid" >"$RUNNER_TEMP/autobahn_server.pid"
-
-          ready=false
-          for attempt in $(seq 1 100); do
-            if ! kill -0 "$server_pid" 2>/dev/null; then
-              cat "$RUNNER_TEMP/autobahn_server.log"
-              exit 1
-            fi
-            if (exec 3<>/dev/tcp/127.0.0.1/9001) 2>/dev/null; then
-              ready=true
-              break
-            fi
-            sleep 0.1
-          done
-          test "$ready" = true
-
       - name: Run Autobahn Testsuite
-        run: |
-          mkdir -p autobahn-reports
-          docker run --rm \
-            --add-host=host.docker.internal:host-gateway \
-            --volume "$PWD/tests/autobahn/fuzzingclient.json:/config/fuzzingclient.json:ro" \
-            --volume "$PWD/autobahn-reports:/reports" \
-            crossbario/autobahn-testsuite:25.10.1 \
-            wstest -m fuzzingclient -s /config/fuzzingclient.json
-
-      - name: Check compliance report
-        if: ${{ !cancelled() }}
         shell: bash
         run: |
-          report=$(find autobahn-reports -name index.json -print -quit)
-          test -n "$report"
-          jq -e '
-            [
-              .. | objects | to_entries[]
-              | select(
-                  (.key == "behavior" or .key == "behaviorClose")
-                  and (.value != "OK" and .value != "INFORMATIONAL")
-                )
-            ] | length == 0
-          ' "$report"
-
-      - name: Stop compliance server
-        if: ${{ always() }}
-        run: |
-          if test -f "$RUNNER_TEMP/autobahn_server.pid"; then
-            kill "$(cat "$RUNNER_TEMP/autobahn_server.pid")" 2>/dev/null || true
-          fi
+          deno run \
+            --no-prompt \
+            --allow-net=127.0.0.1:9001 \
+            --allow-read=tests/autobahn,zig-out/bin \
+            --allow-run=docker,zig-out/bin/autobahn_server \
+            --allow-write=tests/autobahn/reports \
+            tests/autobahn/server_test.js \
+            2>&1 | tee "$RUNNER_TEMP/autobahn_test.log"
 
       - name: Upload compliance report
         if: ${{ always() }}
@@ -98,7 +61,7 @@ jobs:
         with:
           name: autobahn-compliance-report
           path: |
-            autobahn-reports/
-            ${{ runner.temp }}/autobahn_server.log
+            tests/autobahn/reports/
+            ${{ runner.temp }}/autobahn_test.log
           if-no-files-found: error
           retention-days: 30
