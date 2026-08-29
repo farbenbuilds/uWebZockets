@@ -10,8 +10,8 @@ The following table maps our CI/CD strategy to specific GitHub Actions workflow 
 | --------------------------------- | ----------------------------------- | ----------------------------------------------- |
 | `.github/workflows/lint.yml`      | Pull request into `main`            | Code formatting (`zig fmt --check .`) and convention checks (emoji/`snake_case` scanner). |
 | `.github/workflows/test.yml`      | Pull request into `main`            | Native Zig unit tests (`zig build test`) with `std.testing.allocator` memory leak detection. |
-| `.github/workflows/compliance.yml`| Pull request into `main`            | Spins up target servers and runs Autobahn WS test suite. |
-| `.github/workflows/h1spec-test.yml`| Pull request into `main`           | Spins up target server and runs `h1spec` HTTP/1.1 test suite via Nix and Deno. |
+| `.github/workflows/autobahn-compliance.yml`| Pull request into `main`            | Spins up target servers and runs Autobahn WS test suite. |
+| `.github/workflows/h1spec-compliance.yml`| Pull request into `main`           | Spins up target server and runs `h1spec` HTTP/1.1 test suite via Nix and Deno. |
 | `.github/workflows/publish.yml`   | Push of a version tag matching `v*` | Cross-platform builds (Linux/macOS) via Nix and GitHub release binary distribution. |
 
 ## Pipeline Stages
@@ -38,8 +38,8 @@ To position `µWebZockets` as a commercial-grade alternative to `µWebSockets`, 
 - **Autobahn WebSockets Testsuite**:
   - *Action*: The pipeline spins up our `tests/autobahn/` target server in the background and runs the standard Python `wstest` docker container against it.
   - *Purpose*: Validates 100% strict compliance with RFC-6455 (WebSocket Protocol), including fragmentation, masking, per-message deflate, and control frames.
-- **h1spec (HTTP/1.1 Testsuite)** (via `h1spec-test.yml`):
-  - *Action*: The pipeline compiles our `tests/h1spec_test/` target server and runs the `h1spec` suite against it utilizing Deno and Nix.
+- **h1spec (HTTP/1.1 Testsuite)** (via `h1spec-compliance.yml`):
+  - *Action*: The pipeline compiles our `tests/h1spec/` target server and runs the `h1spec` suite against it utilizing Deno and Nix.
   - *Purpose*: Validates HTTP/1.1 edge cases, pipelining, chunked encoding, and malformed request handling to ensure our zero-alloc HTTP FSM parser never panics or hangs.
 
 ### 5. Performance Benchmarking (Nightly/PRs)
