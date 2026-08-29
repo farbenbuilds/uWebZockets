@@ -2,7 +2,7 @@
   description = "farbenbuilds/uWebZockets - A pure Zig WebSocket server (uWebSockets port)";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-parts.url = "github:hercules-ci/flake-parts";
     zig-overlay.url = "github:mitchellh/zig-overlay";
     zon2nix.url = "github:jcollie/zon2nix";
@@ -41,7 +41,6 @@
               p.ninja
               p.pkg-config
               p.go
-              p.deno
               p.gnutar
               p.bzip2
               p.gzip
@@ -58,7 +57,6 @@
           p.ninja
           p.pkg-config
           p.go
-          p.deno
           p.gnutar
           p.bzip2
           p.gzip

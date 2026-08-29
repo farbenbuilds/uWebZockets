@@ -24,7 +24,12 @@ jobs:
           nix develop -c bash -c "zig build && ./zig-out/bin/h1spec &"
           sleep 5
 
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
       - name: Run h1spec tests
         run: |
           cd vendor/h1spec
-          nix develop ../.. -c bash -c "deno run --allow-net http_test.ts 127.0.0.1 8000"
+          deno run --allow-net http_test.ts 127.0.0.1 8000
