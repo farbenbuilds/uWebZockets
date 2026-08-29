@@ -106,13 +106,14 @@ matrix.
 
 ## Performance regression
 
-The benchmark workflow builds the pull request and its `main` base with
-ReleaseFast on the same Ubuntu runner. It runs three 10-second `wrk` samples
-against each `hello_world` server, compares median requests per second, and
-fails when the candidate falls below 90 percent of the baseline. Raw latency
-and throughput reports are retained for 30 days. The tolerance accounts for
-shared-runner variance; benchmark results are regression evidence, not a
-portable capacity claim.
+The benchmark workflow checks the pull request and its `main` base out into
+separate directories, then builds each checkout from its own working directory
+with ReleaseFast on the same Ubuntu runner. It runs three 10-second `wrk`
+samples against each `hello_world` server, compares median requests per second,
+and fails when the candidate falls below 90 percent of the baseline. Raw
+latency and throughput reports are retained for 30 days. The tolerance
+accounts for shared-runner variance; benchmark results are regression evidence,
+not a portable capacity claim.
 
 ## Publishing
 

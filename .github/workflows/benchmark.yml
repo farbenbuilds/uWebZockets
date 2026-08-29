@@ -43,14 +43,16 @@ jobs:
             experimental-features = nix-command flakes
 
       - name: Build candidate
+        working-directory: candidate
         run: |
-          nix develop "path:./candidate" -c zig build \
+          nix develop "path:." -c zig build \
             -Doptimize=ReleaseFast \
             --prefix "$RUNNER_TEMP/candidate"
 
       - name: Build baseline
+        working-directory: baseline
         run: |
-          nix develop "path:./baseline" -c zig build \
+          nix develop "path:." -c zig build \
             -Doptimize=ReleaseFast \
             --prefix "$RUNNER_TEMP/baseline"
 

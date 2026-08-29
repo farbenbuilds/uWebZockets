@@ -60,6 +60,8 @@ versions.
   message storage, write storage, and pub/sub state.
 - Fixed a recurring io_uring timer rearm that reused an expired absolute
   deadline and could spin a CPU core.
+- Fixed benchmark candidate and baseline builds running from the parent
+  workspace where Zig could not discover either checkout's `build.zig`.
 - Fixed HTTP request accumulation, pipelining, partial writes, close-after-drain,
   duplicate framing headers, oversized metadata/body handling, and response
   header injection. Empty header names, invalid chunk-size grammar, oversized
