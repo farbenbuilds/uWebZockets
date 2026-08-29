@@ -4,7 +4,7 @@ const uz = @import("uWebZockets");
 // pure function handler for the root endpoint
 fn hello_handler(req: *uz.Request, res: *uz.Response) void {
     _ = req;
-    res.end("200 OK", "Hello from uWebZockets! Zero allocation achieved.") catch return;
+    res.end("200 OK", "Hello from µWebZockets! Zero allocation achieved.") catch return;
 }
 
 pub fn main(init: std.process.Init) !void {

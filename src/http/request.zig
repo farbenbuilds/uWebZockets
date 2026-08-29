@@ -4,6 +4,7 @@ const std = @import("std");
 pub const Request = struct {
     method: []const u8 = "",
     path: []const u8 = "",
+    body: []const u8 = "",
 
     header_names: [64][]const u8 = undefined,
     header_values: [64][]const u8 = undefined,

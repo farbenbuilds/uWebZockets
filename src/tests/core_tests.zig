@@ -21,7 +21,8 @@ test "core: bitset pool acquires and releases slots" {
 
 // test generic freelist pool logic.
 test "core: freelist pool acquires and releases slots" {
-    var pool = pool_mod.freelist_pool(usize, 10).init();
+    var pool = try pool_mod.freelist_pool(usize, 10).init();
+    defer pool.deinit();
     try std.testing.expectEqual(@as(usize, 0), pool.count_active());
 
     const item = pool.acquire();

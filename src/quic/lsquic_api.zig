@@ -12,8 +12,17 @@ fn acquire_stream(stream_ptr: *c.lsquic_stream, router: *const @import("../route
     for (&active_streams, 0..) |*is_active, i| {
         if (!is_active.*) {
             is_active.* = true;
-            stream_pool[i] = QuicStream.init(stream_ptr, router);
-            return &stream_pool[i];
+            const stream_obj = &stream_pool[i];
+            // initialize in-place to avoid returning a 10KB struct on the stack (which crashes on musl)
+            stream_obj.stream_ptr = stream_ptr;
+            stream_obj.router = router;
+            stream_obj.read_len = 0;
+            stream_obj.parser.state = .method;
+            stream_obj.parser.mark = 0;
+            stream_obj.req.method = "";
+            stream_obj.req.path = "";
+            stream_obj.req.header_count = 0;
+            return stream_obj;
         }
     }
     return null; // pool exhausted
@@ -31,8 +40,8 @@ fn release_stream(stream_obj: *QuicStream) void {
 
 // callback invoked when a new quic connection is established
 pub export fn on_new_conn(ea_ctx: ?*anyopaque, conn: ?*c.lsquic_conn) callconv(.c) ?*c.lsquic_conn_ctx {
-    _ = ea_ctx;
-    return @ptrCast(conn);
+    _ = conn;
+    return @ptrCast(ea_ctx);
 }
 
 // callback invoked when a quic connection is closed
@@ -68,14 +77,18 @@ pub export fn on_write(stream: ?*c.lsquic_stream, stream_ctx: ?*c.lsquic_stream_
 pub export fn on_read(stream: ?*c.lsquic_stream, stream_ctx: ?*c.lsquic_stream_ctx) callconv(.c) void {
     const stream_obj: *QuicStream = @ptrCast(@alignCast(stream_ctx orelse return));
 
-    // zero-allocation static buffer for the hot path
-    var buf: [8192]u8 = undefined;
+    if (stream_obj.read_len >= stream_obj.read_buf.len) {
+        // stream too large, close it
+        _ = c.lsquic_stream_close(stream);
+        return;
+    }
 
-    // read clean payload from the lsquic buffer
-    const read_bytes = c.lsquic_stream_read(stream, &buf, buf.len);
+    const available_space = stream_obj.read_buf[stream_obj.read_len..];
+    const read_bytes = c.lsquic_stream_read(stream, available_space.ptr, available_space.len);
 
     if (read_bytes > 0) {
-        const clean_data = buf[0..@intCast(read_bytes)];
+        stream_obj.read_len += @intCast(read_bytes);
+        const clean_data = stream_obj.read_buf[0..stream_obj.read_len];
         stream_obj.on_data(clean_data);
     } else if (read_bytes == 0) {
         _ = c.lsquic_stream_close(stream);

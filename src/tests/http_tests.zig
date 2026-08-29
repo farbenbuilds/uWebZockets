@@ -7,9 +7,9 @@ test "http: parse basic get request" {
     var p = parser.HttpParser{};
     var req = Request{};
 
-    const request_data = "GET /index.html HTTP/1.1\r\nHost: localhost\r\nUser-Agent: curl\r\n\r\n";
+    var request_data = "GET /index.html HTTP/1.1\r\nHost: localhost\r\nUser-Agent: curl\r\n\r\n".*;
 
-    const consumed = parser.consume(&p, &req, request_data);
+    const consumed = parser.consume(&p, &req, &request_data);
 
     try std.testing.expectEqual(request_data.len, consumed);
     try std.testing.expectEqual(parser.ParserState.done, p.state);

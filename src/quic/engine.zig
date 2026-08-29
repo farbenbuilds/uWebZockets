@@ -33,17 +33,33 @@ export fn on_packets_out(
 
     // iterate through each packet lsquic wants to send using functional slice iteration (dod)
     for (specs_slice) |spec| {
-        // extract the buffer containing the raw udp datagram
-        // (these are tls 1.3 encrypted bytes wrapped in a quic header)
-        const iov = spec.iov[0];
-        const datagram_ptr: [*]const u8 = @ptrCast(iov.iov_base);
-        const datagram = datagram_ptr[0..iov.iov_len];
-
         if (engine.udp_fd != -1) {
             const dest_addr = spec.dest_sa;
             const sa_len: u32 = if (dest_addr.*.sa_family == std.posix.AF.INET6) @sizeOf(std.posix.sockaddr.in6) else @sizeOf(std.posix.sockaddr.in);
-            std.debug.print("quic sending packet of {} bytes to {}\n", .{ datagram.len, dest_addr.*.sa_family });
-            _ = std.os.linux.sendto(engine.udp_fd, datagram.ptr, datagram.len, 0, @ptrCast(dest_addr), sa_len);
+
+            // accumulate total length for debug print
+            var total_len: usize = 0;
+            const iov_slice = @as([*]const c.iovec, @ptrCast(spec.iov))[0..spec.iovlen];
+            for (iov_slice) |v| total_len += v.iov_len;
+
+            std.debug.print("quic sending packet of {} bytes to {}\n", .{ total_len, dest_addr.*.sa_family });
+
+            const msg = std.os.linux.msghdr_const{
+                .name = @ptrCast(dest_addr),
+                .namelen = sa_len,
+                .iov = @ptrCast(spec.iov),
+                .iovlen = @intCast(spec.iovlen),
+                .control = null,
+                .controllen = 0,
+                .flags = 0,
+            };
+
+            if (@import("builtin").os.tag == .linux) {
+                _ = std.os.linux.sendmsg(engine.udp_fd, &msg, 0);
+            } else {
+                // macOS/Windows fallback (just simple sendto if iovlen == 1, or ignore for now)
+                std.debug.print("quic sendmsg not implemented for non-linux yet\n", .{});
+            }
         }
 
         sent += 1;
@@ -58,6 +74,7 @@ pub const QuicEngine = struct {
     udp_fd: std.posix.socket_t = -1,
     ssl_ctx: *c.SSL_CTX,
     router: *const @import("../router/radix.zig").Router = undefined,
+    stream_if: c.lsquic_stream_if = undefined,
 
     pub fn init(ssl_ctx: *c.SSL_CTX, router: *const @import("../router/radix.zig").Router) !*QuicEngine {
         const engine = try std.heap.c_allocator.create(QuicEngine);
@@ -68,18 +85,17 @@ pub const QuicEngine = struct {
             return error.GlobalInitFailed;
         }
 
-        // configure stream interface callbacks
-        var stream_if = std.mem.zeroes(c.lsquic_stream_if);
-        stream_if.on_new_conn = lsquic_api.on_new_conn;
-        stream_if.on_conn_closed = lsquic_api.on_conn_closed;
-        stream_if.on_new_stream = lsquic_api.on_new_stream;
-        stream_if.on_read = lsquic_api.on_read;
-        stream_if.on_write = lsquic_api.on_write;
-        stream_if.on_close = lsquic_api.on_close;
+        engine.stream_if = std.mem.zeroes(c.lsquic_stream_if);
+        engine.stream_if.on_new_conn = lsquic_api.on_new_conn;
+        engine.stream_if.on_conn_closed = lsquic_api.on_conn_closed;
+        engine.stream_if.on_new_stream = lsquic_api.on_new_stream;
+        engine.stream_if.on_read = lsquic_api.on_read;
+        engine.stream_if.on_write = lsquic_api.on_write;
+        engine.stream_if.on_close = lsquic_api.on_close;
 
         // configure engine to activate http/3
         var engine_api = std.mem.zeroes(c.lsquic_engine_api);
-        engine_api.ea_stream_if = &stream_if;
+        engine_api.ea_stream_if = &engine.stream_if;
         engine_api.ea_stream_if_ctx = engine;
         engine_api.ea_alpn = "h3";
 

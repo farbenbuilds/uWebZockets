@@ -7,7 +7,7 @@ pub fn send_chunk(conn: *TcpConnection, data: []const u8) !void {
 
     var hex_buf: [16]u8 = undefined;
     // format length as hex with crlf
-    const hex_len = std.fmt.bufPrint(&hex_buf, "{x}\r\n", .{data.len}) catch unreachable;
+    const hex_len = std.fmt.bufPrint(&hex_buf, "{x}\r\n", .{data.len}) catch return error.BufferOverflow;
 
     const total_len = hex_len.len + data.len + 2;
     if (total_len <= conn.write_buffer.len) {
@@ -29,7 +29,7 @@ pub fn send_chunks(conn: *TcpConnection, chunks: []const []const u8) !void {
         if (data.len == 0) continue;
 
         var hex_buf: [16]u8 = undefined;
-        const hex_len = std.fmt.bufPrint(&hex_buf, "{x}\r\n", .{data.len}) catch unreachable;
+        const hex_len = std.fmt.bufPrint(&hex_buf, "{x}\r\n", .{data.len}) catch return error.BufferOverflow;
 
         const chunk_total = hex_len.len + data.len + 2;
 

@@ -28,7 +28,7 @@ pub fn App(comptime max_connections: usize) type {
         udp_socket: ?xev.UDP = null,
         udp_read_completion: xev.Completion = undefined,
         udp_read_state: xev.UDP.State = undefined,
-        udp_read_buf: [65536]u8 = undefined,
+        udp_read_buf: [8192]u8 = undefined,
         reject_completions: [64]xev.Completion = undefined,
         reject_idx: usize = 0,
 
@@ -48,7 +48,7 @@ pub fn App(comptime max_connections: usize) type {
             return Self{
                 .io = io,
                 .loop = loop,
-                .pool = core_pool.freelist_pool(core_tcp.TcpConnection, max_connections).init(),
+                .pool = try core_pool.freelist_pool(core_tcp.TcpConnection, max_connections).init(),
                 .router = radix.Router.init(),
                 .pubsub = .{},
                 .reject_completions = undefined,
@@ -77,6 +77,7 @@ pub fn App(comptime max_connections: usize) type {
             if (self.sweeper) |*sw| sw.deinit();
             deflate.deinit_compressor(self.compressor);
             core_loop.deinit(&self.loop);
+            self.pool.deinit();
         }
 
         // registers an http get route with fluent chaining.
@@ -154,6 +155,8 @@ pub fn App(comptime max_connections: usize) type {
 
             if (self.quic_engine) |quic| {
                 quic.udp_fd = self.udp_socket.?.fd;
+                // update the router pointer since `self` now has a stable memory address
+                quic.router = &self.router;
             }
 
             self.udp_socket.?.read(

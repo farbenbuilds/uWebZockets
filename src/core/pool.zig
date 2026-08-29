@@ -7,22 +7,36 @@ pub fn freelist_pool(comptime T: type, comptime capacity: usize) type {
         const Self = @This();
 
         // 1. slab memory: contiguous memory storing all items.
-        storage: [capacity]T = undefined,
+        storage: []T = undefined,
 
         // 2. freelist (stack): stores the indices of available slots.
-        free_indices: [capacity]usize = undefined,
+        free_indices: []usize = undefined,
         free_count: usize = capacity,
 
         // initializes the pool. called once during setup.
-        pub fn init() Self {
+        pub fn init() !Self {
             var pool: Self = undefined;
             pool.free_count = capacity;
 
+            // allocate memory for the slab and freelist
+            pool.storage = try std.heap.page_allocator.alloc(T, capacity);
+
+            // strictly zero-initialize the slab to prevent garbage state on first use
+            const bytes = std.mem.sliceAsBytes(pool.storage);
+            @memset(bytes, 0);
+
+            pool.free_indices = try std.heap.page_allocator.alloc(usize, capacity);
+
             // push all indices from 0 to capacity-1 into the free stack
-            for (&pool.free_indices, 0..) |*item, i| {
+            for (pool.free_indices, 0..) |*item, i| {
                 item.* = i;
             }
             return pool;
+        }
+
+        pub fn deinit(self: *Self) void {
+            std.heap.page_allocator.free(self.storage);
+            std.heap.page_allocator.free(self.free_indices);
         }
 
         // acquires a memory slot from the pool (zero-allocation, o(1)).

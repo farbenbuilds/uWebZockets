@@ -13,6 +13,8 @@ pub const QuicStream = struct {
     // (note: http/3 actually uses qpack, but this architecture simulates l7 streams).
     parser: HttpParser = .{},
     req: Request = .{},
+    read_buf: [8192]u8 = undefined,
+    read_len: usize = 0,
     router: *const @import("../router/radix.zig").Router = undefined,
 
     pub fn init(stream: *c.lsquic_stream, router: *const @import("../router/radix.zig").Router) QuicStream {
@@ -23,7 +25,7 @@ pub const QuicStream = struct {
     }
 
     // receives clean (decrypted) bytes from lsquic engine.
-    pub fn on_data(self: *QuicStream, data: []const u8) void {
+    pub fn on_data(self: *QuicStream, data: []u8) void {
         // reuse static http parser.
         _ = http_parser.consume(&self.parser, &self.req, data);
 

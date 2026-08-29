@@ -162,6 +162,24 @@ pub fn build(b: *std.Build) void {
     const http3_server_step = b.step("http3_server", "Run the http3_server example");
     http3_server_step.dependOn(&run_http3_server.step);
 
+    const h1spec_exe = b.addExecutable(.{
+        .name = "h1spec",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/h1spec/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    h1spec_exe.root_module.addImport("uWebZockets", mod);
+    h1spec_exe.step.dependOn(&bssl_ninja.step);
+    h1spec_exe.step.dependOn(&lsquic_ninja.step);
+    h1spec_exe.step.dependOn(&deflate_ninja.step);
+    b.installArtifact(h1spec_exe);
+
+    const run_h1spec = b.addRunArtifact(h1spec_exe);
+    const h1spec_step = b.step("h1spec", "Run the h1spec compliance server");
+    h1spec_step.dependOn(&run_h1spec.step);
+
     const mod_tests = b.addTest(.{
         .root_module = mod,
     });
