@@ -125,6 +125,12 @@ pub const TcpConnection = struct {
             .http => {
                 _ = http_parser.consume(&self.parser, &self.req, data);
 
+                if (self.parser.state == .error_invalid) {
+                    var res = Response{ .target = .{ .tcp = self } };
+                    res.end("400 Bad Request", "Bad Request") catch {};
+                    return;
+                }
+
                 if (self.parser.state == .done) {
                     var res = Response{ .target = .{ .tcp = self } };
 
