@@ -44,7 +44,7 @@ export fn on_packets_out(
 
             std.debug.print("quic sending packet of {} bytes to {}\n", .{ total_len, dest_addr.*.sa_family });
 
-            const msg = std.os.linux.msghdr_const{
+            const msg = std.posix.msghdr_const{
                 .name = @ptrCast(dest_addr),
                 .namelen = sa_len,
                 .iov = @ptrCast(spec.iov),
@@ -54,7 +54,7 @@ export fn on_packets_out(
                 .flags = 0,
             };
 
-            _ = std.os.linux.sendmsg(engine.udp_fd, &msg, 0);
+            _ = std.posix.sendmsg(engine.udp_fd, &msg, 0) catch {};
         }
 
         sent += 1;

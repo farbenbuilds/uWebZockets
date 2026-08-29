@@ -7,6 +7,7 @@ pub const ParserState = enum {
     path,
     protocol,
     headers,
+    body,
     done,
     error_invalid,
 };
@@ -15,6 +16,7 @@ pub const ParserState = enum {
 pub const HttpParser = struct {
     state: ParserState = .method,
     mark: usize = 0,
+    content_length: usize = 0,
 };
 
 // consumes a chunk of bytes, maps them onto the request.
@@ -69,8 +71,33 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []const u8) usize {
                             }
                         }
                     }
+                    if (req.get_header("Content-Length")) |cl| {
+                        if (std.fmt.parseInt(usize, cl, 10)) |len| {
+                            parser.content_length = len;
+                        } else |_| {}
+                    } else {
+                        parser.content_length = 0;
+                    }
+
+                    if (parser.content_length > 0) {
+                        parser.state = .body;
+                        parser.mark = end + 4;
+                        i = parser.mark;
+                        continue;
+                    }
+
                     parser.state = .done;
                     return end + 4;
+                } else {
+                    return buffer.len;
+                }
+            },
+            .body => {
+                const remaining = buffer.len - parser.mark;
+                if (remaining >= parser.content_length) {
+                    req.body = buffer[parser.mark .. parser.mark + parser.content_length];
+                    parser.state = .done;
+                    return parser.mark + parser.content_length;
                 } else {
                     return buffer.len;
                 }
@@ -86,4 +113,5 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []const u8) usize {
 pub fn reset(parser: *HttpParser) void {
     parser.state = .method;
     parser.mark = 0;
+    parser.content_length = 0;
 }

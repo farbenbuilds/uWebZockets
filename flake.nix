@@ -41,6 +41,7 @@
               p.ninja
               p.pkg-config
               p.go
+              p.deno
               p.gnutar
               p.bzip2
               p.gzip
@@ -57,6 +58,7 @@
           p.ninja
           p.pkg-config
           p.go
+          p.deno
           p.gnutar
           p.bzip2
           p.gzip

@@ -1,0 +1,27 @@
+name: h1spec-test
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v26
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - name: Build and Start Server
+        run: |
+          nix develop -c bash -c "zig build && ./zig-out/bin/h1spec_test &"
+          sleep 5
+
+      - name: Run h1spec tests
+        run: |
+          cd vendor/h1spec
+          nix develop ../.. -c bash -c "deno run --allow-net http_test.ts 127.0.0.1 8000"
