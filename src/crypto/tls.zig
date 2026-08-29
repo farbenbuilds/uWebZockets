@@ -15,8 +15,12 @@ pub const TlsContext = struct {
         };
         errdefer c.SSL_CTX_free(ctx);
 
-        _ = c.SSL_CTX_set_min_proto_version(ctx, c.TLS1_3_VERSION);
-        _ = c.SSL_CTX_set_max_proto_version(ctx, c.TLS1_3_VERSION);
+        if (c.SSL_CTX_set_min_proto_version(ctx, c.TLS1_3_VERSION) != 1) {
+            return error.ProtocolConfigurationFailed;
+        }
+        if (c.SSL_CTX_set_max_proto_version(ctx, c.TLS1_3_VERSION) != 1) {
+            return error.ProtocolConfigurationFailed;
+        }
         c.SSL_CTX_set_alpn_select_cb(ctx, select_alpn, null);
 
         if (c.SSL_CTX_use_certificate_chain_file(ctx, cert_path.ptr) != 1) {
@@ -51,9 +55,9 @@ export fn select_alpn(
     _ = ssl;
     _ = arg;
 
-    const alpn_h3 = "\x02h3";
+    const protocols = "\x08http/1.1";
 
-    if (c.SSL_select_next_proto(@ptrCast(out), outlen, alpn_h3, 3, in, inlen) != c.OPENSSL_NPN_NEGOTIATED) {
+    if (c.SSL_select_next_proto(@ptrCast(out), outlen, protocols, protocols.len, in, inlen) != c.OPENSSL_NPN_NEGOTIATED) {
         return c.SSL_TLSEXT_ERR_ALERT_FATAL;
     }
     return c.SSL_TLSEXT_ERR_OK;

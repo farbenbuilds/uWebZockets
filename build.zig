@@ -3,6 +3,28 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const zlib_prefix = b.option(
+        []const u8,
+        "zlib-prefix",
+        "Path containing zlib include/ and lib/ directories",
+    );
+    const cmake_exe = b.option([]const u8, "cmake", "CMake executable") orelse "cmake";
+    const ninja_exe = b.option([]const u8, "ninja", "Ninja executable") orelse "ninja";
+    const c_compiler = b.option(
+        []const u8,
+        "c-compiler",
+        "C compiler used for vendored dependencies",
+    ) orelse b.pathFromRoot("zig-cc");
+    const cxx_compiler = b.option(
+        []const u8,
+        "cxx-compiler",
+        "C++ compiler used for vendored dependencies",
+    ) orelse b.pathFromRoot("zig-c++");
+    const asm_compiler = b.option(
+        []const u8,
+        "asm-compiler",
+        "Assembler compiler used for vendored dependencies",
+    ) orelse c_compiler;
 
     const mod = b.addModule("uWebZockets", .{
         .root_source_file = b.path("src/root.zig"),
@@ -12,11 +34,6 @@ pub fn build(b: *std.Build) void {
 
     mod.link_libc = true;
     mod.link_libcpp = true;
-    mod.addCSourceFile(.{
-        .file = b.path("src/quic/http3_helpers.c"),
-        .flags = &[_][]const u8{},
-    });
-
     // --- Zig Dependencies ---
     const zslay_dep = b.dependency("zslay", .{
         .target = target,
@@ -37,29 +54,51 @@ pub fn build(b: *std.Build) void {
     });
 
     // --- Vendor Dependencies Orchestration ---
-    const vendor_build = ".zig-cache/vendor-build";
-    const zig_cc = b.fmt("-DCMAKE_C_COMPILER={s}", .{b.pathFromRoot("zig-cc")});
-    const zig_cxx = b.fmt("-DCMAKE_CXX_COMPILER={s}", .{b.pathFromRoot("zig-c++")});
-    const zig_asm = b.fmt("-DCMAKE_ASM_COMPILER={s}", .{b.pathFromRoot("zig-cc")});
+    const target_triple = target.result.zigTriple(b.allocator) catch @panic("out of memory");
+    const target_key = b.fmt(
+        "{s}-{s}-{s}",
+        .{
+            @tagName(target.result.cpu.arch),
+            @tagName(target.result.os.tag),
+            @tagName(target.result.abi),
+        },
+    );
+    const cmake_build_type = cmake_build_type_name(optimize);
+    const vendor_build = b.fmt(
+        ".zig-cache/vendor-build/{s}-{s}",
+        .{ target_key, @tagName(optimize) },
+    );
+    const cmake_c = b.fmt("-DCMAKE_C_COMPILER={s}", .{c_compiler});
+    const cmake_cxx = b.fmt("-DCMAKE_CXX_COMPILER={s}", .{cxx_compiler});
+    const cmake_asm = b.fmt("-DCMAKE_ASM_COMPILER={s}", .{asm_compiler});
+    const cmake_type = b.fmt("-DCMAKE_BUILD_TYPE={s}", .{cmake_build_type});
 
     // 1. BoringSSL
     const bssl_src = "vendor/boringssl";
     const bssl_build_dir = b.pathJoin(&.{ vendor_build, "boringssl" });
-    const bssl_cmake = b.addSystemCommand(&.{ "cmake", "-B", bssl_build_dir, "-S", bssl_src, "-GNinja", "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_SHARED_LIBS=OFF", zig_cc, zig_cxx, zig_asm });
-    const bssl_ninja = b.addSystemCommand(&.{ "ninja", "-C", bssl_build_dir, "ssl", "crypto" });
+    const bssl_cmake = b.addSystemCommand(&.{ cmake_exe, "-B", bssl_build_dir, "-S", bssl_src, "-GNinja", cmake_type, "-DBUILD_SHARED_LIBS=OFF", "-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON", cmake_c, cmake_cxx, cmake_asm });
+    add_cross_cmake_args(b, bssl_cmake, target);
+    set_vendor_environment(b, bssl_cmake, target, target_triple);
+    const bssl_ninja = b.addSystemCommand(&.{ ninja_exe, "-C", bssl_build_dir, "ssl", "crypto" });
+    set_vendor_environment(b, bssl_ninja, target, target_triple);
     bssl_ninja.step.dependOn(&bssl_cmake.step);
 
     // 2. lsquic
     const lsquic_src = "vendor/lsquic";
     const lsquic_build_dir = b.pathJoin(&.{ vendor_build, "lsquic" });
     const lsquic_cmake = b.addSystemCommand(&.{
-        "cmake",   "-B",                                                      lsquic_build_dir,          "-S",   lsquic_src,
-        "-GNinja", "-DCMAKE_BUILD_TYPE=Release",                              "-DBUILD_SHARED_LIBS=OFF", zig_cc, zig_cxx,
-        zig_asm,
-        // Give lsquic the path to boringssl so it finds the headers and libs
-          b.fmt("-DBORINGSSL_DIR={s}", .{b.pathFromRoot(bssl_src)}),
+        cmake_exe, "-B",               lsquic_build_dir,          "-S",                                                      lsquic_src,
+        "-GNinja", cmake_type,         "-DBUILD_SHARED_LIBS=OFF", cmake_c,                                                   cmake_cxx,
+        cmake_asm, "-DLSQUIC_BIN=OFF", "-DLSQUIC_TESTS=OFF",      b.fmt("-DBORINGSSL_DIR={s}", .{b.pathFromRoot(bssl_src)}),
     });
-    const lsquic_ninja = b.addSystemCommand(&.{ "ninja", "-C", lsquic_build_dir });
+    add_cross_cmake_args(b, lsquic_cmake, target);
+    set_vendor_environment(b, lsquic_cmake, target, target_triple);
+    if (zlib_prefix) |prefix| {
+        lsquic_cmake.addArg(b.fmt("-DZLIB_INCLUDE_DIR={s}/include", .{prefix}));
+        lsquic_cmake.addArg(b.fmt("-DZLIB_LIB={s}/lib/libz.a", .{prefix}));
+    }
+    const lsquic_ninja = b.addSystemCommand(&.{ ninja_exe, "-C", lsquic_build_dir });
+    set_vendor_environment(b, lsquic_ninja, target, target_triple);
     lsquic_cmake.step.dependOn(&bssl_ninja.step);
     lsquic_ninja.step.dependOn(&lsquic_cmake.step);
     lsquic_ninja.step.dependOn(&bssl_ninja.step);
@@ -67,8 +106,11 @@ pub fn build(b: *std.Build) void {
     // 3. libdeflate
     const deflate_src = "vendor/libdeflate";
     const deflate_build_dir = b.pathJoin(&.{ vendor_build, "libdeflate" });
-    const deflate_cmake = b.addSystemCommand(&.{ "cmake", "-B", deflate_build_dir, "-S", deflate_src, "-GNinja", "-DCMAKE_BUILD_TYPE=Release", "-DLIBDEFLATE_BUILD_GZIP=OFF", "-DLIBDEFLATE_BUILD_SHARED_LIB=OFF", "-DCMAKE_C_FLAGS=-DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_VPCLMULQDQ -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_AVX512VNNI", zig_cc, zig_cxx, zig_asm });
-    const deflate_ninja = b.addSystemCommand(&.{ "ninja", "-C", deflate_build_dir });
+    const deflate_cmake = b.addSystemCommand(&.{ cmake_exe, "-B", deflate_build_dir, "-S", deflate_src, "-GNinja", cmake_type, "-DLIBDEFLATE_BUILD_GZIP=OFF", "-DLIBDEFLATE_BUILD_TESTS=OFF", "-DLIBDEFLATE_BUILD_SHARED_LIB=OFF", "-DCMAKE_C_FLAGS=-DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_VPCLMULQDQ -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_AVX512VNNI", cmake_c, cmake_cxx, cmake_asm });
+    add_cross_cmake_args(b, deflate_cmake, target);
+    set_vendor_environment(b, deflate_cmake, target, target_triple);
+    const deflate_ninja = b.addSystemCommand(&.{ ninja_exe, "-C", deflate_build_dir });
+    set_vendor_environment(b, deflate_ninja, target, target_triple);
     deflate_ninja.step.dependOn(&deflate_cmake.step);
 
     // --- Linking to uWebZockets ---
@@ -80,6 +122,9 @@ pub fn build(b: *std.Build) void {
     mod.addLibraryPath(b.path(bssl_build_dir));
     mod.addLibraryPath(b.path(b.pathJoin(&.{ lsquic_build_dir, "src", "liblsquic" })));
     mod.addLibraryPath(b.path(deflate_build_dir));
+    if (zlib_prefix) |prefix| {
+        mod.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "lib" }) });
+    }
 
     // System libraries
     mod.linkSystemLibrary("ssl", .{});
@@ -101,9 +146,45 @@ pub fn build(b: *std.Build) void {
     mod.addIncludePath(b.path(b.pathJoin(&.{ lsquic_src, "include" })));
     mod.addIncludePath(b.path(deflate_src));
 
-    mod.addImport("c", translate_c.createModule());
+    const c_module = translate_c.createModule();
+    mod.addImport("c", c_module);
 
-    b.installArtifact(lib);
+    const install_lib = b.addInstallArtifact(lib, .{});
+    b.getInstallStep().dependOn(&install_lib.step);
+    const library_step = b.step("lib", "Build and install only the static library");
+    library_step.dependOn(&install_lib.step);
+
+    const install_ssl = b.addInstallLibFile(
+        .{ .cwd_relative = b.pathFromRoot(b.pathJoin(&.{ bssl_build_dir, "libssl.a" })) },
+        "libssl.a",
+    );
+    install_ssl.step.dependOn(&bssl_ninja.step);
+    b.getInstallStep().dependOn(&install_ssl.step);
+    library_step.dependOn(&install_ssl.step);
+
+    const install_crypto = b.addInstallLibFile(
+        .{ .cwd_relative = b.pathFromRoot(b.pathJoin(&.{ bssl_build_dir, "libcrypto.a" })) },
+        "libcrypto.a",
+    );
+    install_crypto.step.dependOn(&bssl_ninja.step);
+    b.getInstallStep().dependOn(&install_crypto.step);
+    library_step.dependOn(&install_crypto.step);
+
+    const install_lsquic = b.addInstallLibFile(
+        .{ .cwd_relative = b.pathFromRoot(b.pathJoin(&.{ lsquic_build_dir, "src", "liblsquic", "liblsquic.a" })) },
+        "liblsquic.a",
+    );
+    install_lsquic.step.dependOn(&lsquic_ninja.step);
+    b.getInstallStep().dependOn(&install_lsquic.step);
+    library_step.dependOn(&install_lsquic.step);
+
+    const install_deflate = b.addInstallLibFile(
+        .{ .cwd_relative = b.pathFromRoot(b.pathJoin(&.{ deflate_build_dir, "libdeflate.a" })) },
+        "libdeflate.a",
+    );
+    install_deflate.step.dependOn(&deflate_ninja.step);
+    b.getInstallStep().dependOn(&install_deflate.step);
+    library_step.dependOn(&install_deflate.step);
 
     // --- Examples ---
     const hello_world_exe = b.addExecutable(.{
@@ -133,8 +214,6 @@ pub fn build(b: *std.Build) void {
         }),
     });
     chat_server_exe.root_module.addImport("uWebZockets", mod);
-    // Note: mod's C library links and paths are transitive, but we must ensure ninja runs first.
-    chat_server_exe.root_module.addImport("zslay", zslay_dep.module("zslay"));
     chat_server_exe.step.dependOn(&bssl_ninja.step);
     chat_server_exe.step.dependOn(&lsquic_ninja.step);
     chat_server_exe.step.dependOn(&deflate_ninja.step);
@@ -156,10 +235,8 @@ pub fn build(b: *std.Build) void {
     http3_server_exe.step.dependOn(&bssl_ninja.step);
     http3_server_exe.step.dependOn(&lsquic_ninja.step);
     http3_server_exe.step.dependOn(&deflate_ninja.step);
-    b.installArtifact(http3_server_exe);
-
     const run_http3_server = b.addRunArtifact(http3_server_exe);
-    const http3_server_step = b.step("http3_server", "Run the http3_server example");
+    const http3_server_step = b.step("http3_server", "Report that HTTP/3 is unavailable");
     http3_server_step.dependOn(&run_http3_server.step);
 
     const h1spec_exe = b.addExecutable(.{
@@ -180,6 +257,24 @@ pub fn build(b: *std.Build) void {
     const h1spec_step = b.step("h1spec", "Run the h1spec compliance server");
     h1spec_step.dependOn(&run_h1spec.step);
 
+    const autobahn_exe = b.addExecutable(.{
+        .name = "autobahn_server",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/autobahn/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    autobahn_exe.root_module.addImport("uWebZockets", mod);
+    autobahn_exe.step.dependOn(&bssl_ninja.step);
+    autobahn_exe.step.dependOn(&lsquic_ninja.step);
+    autobahn_exe.step.dependOn(&deflate_ninja.step);
+    b.installArtifact(autobahn_exe);
+
+    const run_autobahn = b.addRunArtifact(autobahn_exe);
+    const autobahn_step = b.step("autobahn", "Run the Autobahn compliance server");
+    autobahn_step.dependOn(&run_autobahn.step);
+
     const mod_tests = b.addTest(.{
         .root_module = mod,
     });
@@ -199,4 +294,74 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_lib_tests.step);
+
+    const test_compile_step = b.step("test-compile", "Compile tests without running them");
+    test_compile_step.dependOn(&mod_tests.step);
+    test_compile_step.dependOn(&lib_tests.step);
+
+    const fuzz_mod = b.createModule(.{
+        .root_source_file = b.path("tests/fuzz/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const fuzz_parser_mod = b.createModule(.{
+        .root_source_file = b.path("src/http/parser.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    fuzz_mod.addImport("http_parser", fuzz_parser_mod);
+    fuzz_mod.addImport("zslay", zslay_dep.module("zslay"));
+
+    const fuzz_tests = b.addTest(.{
+        .root_module = fuzz_mod,
+    });
+    const run_fuzz_tests = b.addRunArtifact(fuzz_tests);
+    const fuzz_step = b.step("fuzz", "Fuzz HTTP and WebSocket parsers");
+    fuzz_step.dependOn(&run_fuzz_tests.step);
+}
+
+fn cmake_build_type_name(optimize: std.builtin.OptimizeMode) []const u8 {
+    return switch (optimize) {
+        .Debug => "Debug",
+        .ReleaseSafe => "RelWithDebInfo",
+        .ReleaseFast, .ReleaseSmall => "Release",
+    };
+}
+
+fn add_cross_cmake_args(
+    b: *std.Build,
+    command: *std.Build.Step.Run,
+    target: std.Build.ResolvedTarget,
+) void {
+    if (target.query.isNative()) return;
+
+    const system_name: []const u8 = switch (target.result.os.tag) {
+        .linux => "Linux",
+        .macos => "Darwin",
+        .windows => "Windows",
+        else => return,
+    };
+    const processor: []const u8 = switch (target.result.cpu.arch) {
+        .x86 => "x86",
+        .x86_64 => "x86_64",
+        .arm => "arm",
+        .aarch64 => "aarch64",
+        else => @tagName(target.result.cpu.arch),
+    };
+
+    command.addArg(b.fmt("-DCMAKE_SYSTEM_NAME={s}", .{system_name}));
+    command.addArg(b.fmt("-DCMAKE_SYSTEM_PROCESSOR={s}", .{processor}));
+    command.addArg("-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY");
+}
+
+fn set_vendor_environment(
+    b: *std.Build,
+    command: *std.Build.Step.Run,
+    target: std.Build.ResolvedTarget,
+    target_triple: []const u8,
+) void {
+    command.setEnvironmentVariable("UWEBZOCKETS_ZIG", b.graph.zig_exe);
+    if (!target.query.isNative()) {
+        command.setEnvironmentVariable("UWEBZOCKETS_TARGET", target_triple);
+    }
 }

@@ -14,5 +14,7 @@ Please describe the changes this PR makes and why it should be merged.
 
 - [ ] I have read the [Contributing Guidelines](../CONTRIBUTE.md)
 - [ ] My code follows the code style of this project
-- [ ] I have run `zig fmt --check .` and all checks pass
-- [ ] I have tested my changes locally
+- [ ] I have run `zig fmt --check build.zig src examples tests`
+- [ ] I have run `sh scripts/check_conventions.sh`
+- [ ] I have run the relevant Debug, ReleaseSafe, and compliance tests
+- [ ] I documented API, limit, dependency, and compatibility changes

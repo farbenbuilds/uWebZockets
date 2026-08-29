@@ -45,9 +45,6 @@ fn on_timer_tick(
     completion: *xev.Completion,
     result: anyerror!void,
 ) xev.CallbackAction {
-    _ = loop;
-    _ = completion;
-
     _ = result catch |err| {
         std.debug.print("timer error: {}\n", .{err});
         return .disarm;
@@ -56,21 +53,25 @@ fn on_timer_tick(
     const ctx = user_data.?;
     ctx.tick_cb();
 
-    return .rearm;
+    // io_uring rearms the original absolute timeout, which is already expired.
+    ctx.timer.run(loop, completion, ctx.interval_ms, TimerContext, ctx, on_timer_tick);
+    return .disarm;
 }
 
 // connection sweeper, generic over pool type to prevent import loops
-pub fn ConnectionSweeper(comptime PoolType: type) type {
+pub fn ConnectionSweeper(comptime PoolType: type, comptime idle_timeout_ms: u64) type {
+    if (idle_timeout_ms > std.math.maxInt(i64)) {
+        @compileError("idle timeout exceeds the monotonic clock representation");
+    }
+
     return struct {
         const Self = @This();
+        const timeout_ms: i64 = @intCast(idle_timeout_ms);
 
         timer: xev.Timer,
         completion: xev.Completion = undefined,
         pool: *PoolType,
         io: std.Io,
-
-        // timeout 30 seconds (30,000 ms)
-        const timeout_ms: i64 = 30_000;
 
         pub fn init(io: std.Io, pool: *PoolType) !Self {
             return Self{
@@ -103,7 +104,6 @@ pub fn ConnectionSweeper(comptime PoolType: type) type {
             completion: *xev.Completion,
             result: anyerror!void,
         ) xev.CallbackAction {
-            _ = completion;
             _ = result catch |err| {
                 std.debug.print("sweeper timer error: {}\n", .{err});
                 return .disarm;
@@ -115,23 +115,20 @@ pub fn ConnectionSweeper(comptime PoolType: type) type {
 
             // sweep through contiguous storage array (data-oriented design)
             // contiguous memory ensures cpu cache processes all items in microseconds
-            for (self.pool.storage) |*conn| {
-                if (conn.last_active_ms > 0) {
-                    const idle_time = current_time - conn.last_active_ms;
+            for (self.pool.storage, 0..) |*conn, index| {
+                if (!self.pool.is_active(index) or conn.closing) continue;
+                if (conn.last_active_ms <= 0) continue;
 
-                    if (idle_time > timeout_ms) {
-                        std.debug.print("disconnecting due to timeout (slowloris)!\n", .{});
-                        // graceful async close via tcp core
-                        tcp.close_connection(conn);
-                        // reset active state to prevent double closing
-                        conn.last_active_ms = 0;
-                    }
-                }
+                const idle_time = current_time - conn.last_active_ms;
+                if (idle_time <= timeout_ms) continue;
+
+                conn.last_active_ms = 0;
+                tcp.close_connection(conn);
             }
 
-            // rearm timer for another 5 seconds
-            self.timer.run(loop, &self.completion, 5000, Self, self, on_tick);
-            return .rearm;
+            // Schedule a new relative timeout instead of reusing an expired one.
+            self.timer.run(loop, completion, 5000, Self, self, on_tick);
+            return .disarm;
         }
     };
 }
