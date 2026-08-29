@@ -54,7 +54,12 @@ export fn on_packets_out(
                 .flags = 0,
             };
 
-            _ = std.posix.sendmsg(engine.udp_fd, &msg, 0) catch {};
+            if (@import("builtin").os.tag == .linux) {
+                _ = std.os.linux.sendmsg(engine.udp_fd, &msg, 0);
+            } else {
+                // macOS/Windows fallback (just simple sendto if iovlen == 1, or ignore for now)
+                std.debug.print("quic sendmsg not implemented for non-linux yet\n", .{});
+            }
         }
 
         sent += 1;
