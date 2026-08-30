@@ -2,8 +2,17 @@ const std = @import("std");
 const tcp = @import("../core/tcp.zig");
 const TcpConnection = tcp.TcpConnection;
 
-pub const ConnectionTarget = struct {
+pub const Http3Target = struct {
+    context: *anyopaque,
+    end_fn: *const fn (*anyopaque, []const u8, []const u8, []const u8) anyerror!void,
+    begin_fn: *const fn (*anyopaque, []const u8, []const u8) anyerror!void,
+    write_fn: *const fn (*anyopaque, []const u8) anyerror!void,
+    finish_fn: *const fn (*anyopaque) anyerror!void,
+};
+
+pub const ConnectionTarget = union(enum) {
     tcp: *TcpConnection,
+    http3: Http3Target,
 };
 
 pub const ResponseState = enum(u8) {
@@ -32,30 +41,35 @@ pub const Response = struct {
         if (!valid_headers(headers)) return error.InvalidHeaders;
         if (status_forbids_body(code) and body.len != 0) return error.BodyNotAllowed;
 
-        const close_requested = headers_have_token(headers, "Connection", "close");
+        switch (self.target) {
+            .tcp => |conn| {
+                const close_requested = headers_have_token(headers, "Connection", "close");
+                var header_buffer: [1024]u8 = undefined;
+                const formatted_headers = if (status_forbids_body(code))
+                    std.fmt.bufPrint(
+                        &header_buffer,
+                        "HTTP/1.1 {s}\r\n{s}\r\n",
+                        .{ status, headers },
+                    ) catch return error.BufferOverflow
+                else
+                    std.fmt.bufPrint(
+                        &header_buffer,
+                        "HTTP/1.1 {s}\r\nContent-Length: {d}\r\n{s}\r\n",
+                        .{ status, body.len, headers },
+                    ) catch return error.BufferOverflow;
 
-        const conn = self.target.tcp;
-        var header_buffer: [1024]u8 = undefined;
-        const formatted_headers = if (status_forbids_body(code))
-            std.fmt.bufPrint(
-                &header_buffer,
-                "HTTP/1.1 {s}\r\n{s}\r\n",
-                .{ status, headers },
-            ) catch return error.BufferOverflow
-        else
-            std.fmt.bufPrint(
-                &header_buffer,
-                "HTTP/1.1 {s}\r\nContent-Length: {d}\r\n{s}\r\n",
-                .{ status, body.len, headers },
-            ) catch return error.BufferOverflow;
-
-        if (conn.suppress_response_body or status_forbids_body(code)) {
-            try conn.write_data(formatted_headers);
-        } else {
-            try conn.write_data_parts(&.{ formatted_headers, body });
+                if (conn.suppress_response_body or status_forbids_body(code)) {
+                    try conn.write_data(formatted_headers);
+                } else {
+                    try conn.write_data_parts(&.{ formatted_headers, body });
+                }
+                if (close_requested) tcp.close_after_flush(conn);
+            },
+            .http3 => |target| {
+                try target.end_fn(target.context, status, headers, body);
+            },
         }
         self.state = .ended;
-        if (close_requested) tcp.close_after_flush(conn);
     }
 
     pub fn begin_chunked(
@@ -68,34 +82,46 @@ pub const Response = struct {
         if (!valid_headers(headers)) return error.InvalidHeaders;
         if (status_forbids_body(code)) return error.BodyNotAllowed;
 
-        self.close_after_end = headers_have_token(headers, "Connection", "close");
+        switch (self.target) {
+            .tcp => |conn| {
+                self.close_after_end = headers_have_token(headers, "Connection", "close");
+                if (conn.suppress_response_body) return error.BodyNotAllowed;
 
-        const conn = self.target.tcp;
-        if (conn.suppress_response_body) return error.BodyNotAllowed;
-
-        var header_buffer: [1024]u8 = undefined;
-        const formatted_headers = std.fmt.bufPrint(
-            &header_buffer,
-            "HTTP/1.1 {s}\r\nTransfer-Encoding: chunked\r\n{s}\r\n",
-            .{ status, headers },
-        ) catch return error.BufferOverflow;
-        try conn.write_data(formatted_headers);
+                var header_buffer: [1024]u8 = undefined;
+                const formatted_headers = std.fmt.bufPrint(
+                    &header_buffer,
+                    "HTTP/1.1 {s}\r\nTransfer-Encoding: chunked\r\n{s}\r\n",
+                    .{ status, headers },
+                ) catch return error.BufferOverflow;
+                try conn.write_data(formatted_headers);
+            },
+            .http3 => |target| {
+                try target.begin_fn(target.context, status, headers);
+            },
+        }
         self.state = .streaming;
     }
 
     pub fn write_chunk(self: *Response, chunk: []const u8) !void {
         if (self.state != .streaming) return error.ResponseNotStreaming;
 
-        try @import("chunked.zig").send_chunk(self.target.tcp, chunk);
+        switch (self.target) {
+            .tcp => |conn| try @import("chunked.zig").send_chunk(conn, chunk),
+            .http3 => |target| try target.write_fn(target.context, chunk),
+        }
     }
 
     pub fn end_chunks(self: *Response) !void {
         if (self.state != .streaming) return error.ResponseNotStreaming;
 
-        const conn = self.target.tcp;
-        try @import("chunked.zig").end(conn);
+        switch (self.target) {
+            .tcp => |conn| {
+                try @import("chunked.zig").end(conn);
+                if (self.close_after_end) tcp.close_after_flush(conn);
+            },
+            .http3 => |target| try target.finish_fn(target.context),
+        }
         self.state = .ended;
-        if (self.close_after_end) tcp.close_after_flush(conn);
     }
 
     pub fn is_complete(self: *const Response) bool {

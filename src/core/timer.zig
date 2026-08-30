@@ -6,9 +6,12 @@ const Loop = @import("loop.zig").Loop;
 // a lightweight, zero-allocation timer context for the event loop.
 pub const TimerContext = struct {
     timer: xev.Timer,
-    completion: xev.Completion = undefined,
+    completion: xev.Completion = .{},
+    cancel_completion: xev.Completion = .{},
     interval_ms: u64,
     tick_cb: *const fn () void,
+    active: bool = false,
+    stopping: bool = false,
 };
 
 // initializes a recurring timer.
@@ -28,6 +31,8 @@ pub fn deinit_timer(ctx: *TimerContext) void {
 
 // arms the timer on the provided event loop.
 pub fn start_timer(ctx: *TimerContext, loop: *Loop) void {
+    if (ctx.active or ctx.stopping) return;
+    ctx.active = true;
     ctx.timer.run(
         loop.get_xev_loop(),
         &ctx.completion,
@@ -38,6 +43,19 @@ pub fn start_timer(ctx: *TimerContext, loop: *Loop) void {
     );
 }
 
+pub fn stop_timer(ctx: *TimerContext, loop: *Loop) void {
+    if (!ctx.active or ctx.stopping) return;
+    ctx.stopping = true;
+    ctx.timer.cancel(
+        loop.get_xev_loop(),
+        &ctx.completion,
+        &ctx.cancel_completion,
+        TimerContext,
+        ctx,
+        on_timer_cancel,
+    );
+}
+
 // callback triggered by libxev when the interval elapses.
 fn on_timer_tick(
     user_data: ?*TimerContext,
@@ -45,16 +63,36 @@ fn on_timer_tick(
     completion: *xev.Completion,
     result: anyerror!void,
 ) xev.CallbackAction {
+    const ctx = user_data.?;
     _ = result catch |err| {
+        ctx.active = false;
+        if (err == error.Canceled) return .disarm;
         std.debug.print("timer error: {}\n", .{err});
         return .disarm;
     };
 
-    const ctx = user_data.?;
+    ctx.active = false;
+    if (ctx.stopping) return .disarm;
     ctx.tick_cb();
 
     // io_uring rearms the original absolute timeout, which is already expired.
     ctx.timer.run(loop, completion, ctx.interval_ms, TimerContext, ctx, on_timer_tick);
+    ctx.active = true;
+    return .disarm;
+}
+
+fn on_timer_cancel(
+    user_data: ?*TimerContext,
+    _: *xev.Loop,
+    _: *xev.Completion,
+    result: xev.CancelError!void,
+) xev.CallbackAction {
+    const ctx = user_data.?;
+    _ = result catch |err| {
+        if (err != error.NotFound) std.debug.print("timer cancel error: {}\n", .{err});
+        return .disarm;
+    };
+    ctx.active = false;
     return .disarm;
 }
 
@@ -69,9 +107,12 @@ pub fn ConnectionSweeper(comptime PoolType: type, comptime idle_timeout_ms: u64)
         const timeout_ms: i64 = @intCast(idle_timeout_ms);
 
         timer: xev.Timer,
-        completion: xev.Completion = undefined,
+        completion: xev.Completion = .{},
+        cancel_completion: xev.Completion = .{},
         pool: *PoolType,
         io: std.Io,
+        active: bool = false,
+        stopping: bool = false,
 
         pub fn init(io: std.Io, pool: *PoolType) !Self {
             return Self{
@@ -86,6 +127,8 @@ pub fn ConnectionSweeper(comptime PoolType: type, comptime idle_timeout_ms: u64)
         }
 
         pub fn start(self: *Self, loop: *Loop) void {
+            if (self.active or self.stopping) return;
+            self.active = true;
             // run callback every 5000ms (5 seconds)
             self.timer.run(
                 loop.get_xev_loop(),
@@ -97,6 +140,19 @@ pub fn ConnectionSweeper(comptime PoolType: type, comptime idle_timeout_ms: u64)
             );
         }
 
+        pub fn stop(self: *Self, loop: *Loop) void {
+            if (!self.active or self.stopping) return;
+            self.stopping = true;
+            self.timer.cancel(
+                loop.get_xev_loop(),
+                &self.completion,
+                &self.cancel_completion,
+                Self,
+                self,
+                on_cancel,
+            );
+        }
+
         // callback triggered by libxev every 5 seconds
         fn on_tick(
             user_data: ?*Self,
@@ -104,12 +160,16 @@ pub fn ConnectionSweeper(comptime PoolType: type, comptime idle_timeout_ms: u64)
             completion: *xev.Completion,
             result: anyerror!void,
         ) xev.CallbackAction {
+            const self = user_data.?;
             _ = result catch |err| {
+                self.active = false;
+                if (err == error.Canceled) return .disarm;
                 std.debug.print("sweeper timer error: {}\n", .{err});
                 return .disarm;
             };
 
-            const self = user_data.?;
+            self.active = false;
+            if (self.stopping) return .disarm;
             const now = std.Io.Clock.now(.awake, self.io);
             const current_time: i64 = @intCast(@divTrunc(now.nanoseconds, 1000000));
 
@@ -128,7 +188,39 @@ pub fn ConnectionSweeper(comptime PoolType: type, comptime idle_timeout_ms: u64)
 
             // Schedule a new relative timeout instead of reusing an expired one.
             self.timer.run(loop, completion, 5000, Self, self, on_tick);
+            self.active = true;
+            return .disarm;
+        }
+
+        fn on_cancel(
+            user_data: ?*Self,
+            _: *xev.Loop,
+            _: *xev.Completion,
+            result: xev.CancelError!void,
+        ) xev.CallbackAction {
+            const self = user_data.?;
+            _ = result catch |err| {
+                if (err != error.NotFound) std.debug.print("sweeper cancel error: {}\n", .{err});
+                return .disarm;
+            };
+            self.active = false;
             return .disarm;
         }
     };
+}
+
+test "timer: stop drains the active completion" {
+    const Tick = struct {
+        fn callback() void {}
+    };
+
+    var loop = try @import("loop.zig").init();
+    defer @import("loop.zig").deinit(&loop);
+    var timer = try init_timer(60_000, Tick.callback);
+    defer deinit_timer(&timer);
+
+    start_timer(&timer, &loop);
+    stop_timer(&timer, &loop);
+    try @import("loop.zig").run(&loop);
+    try std.testing.expect(!timer.active);
 }

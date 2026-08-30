@@ -18,13 +18,13 @@ pub fn freelist_pool(comptime T: type, comptime capacity: usize) type {
         // 2. freelist (stack): stores the indices of available slots.
         free_indices: []usize = undefined,
         free_count: usize = capacity,
-        active: [capacity]bool = .{false} ** capacity,
+        active: std.StaticBitSet(capacity) = .empty,
 
         // initializes the pool. called once during setup.
         pub fn init() !Self {
             var pool: Self = undefined;
             pool.free_count = capacity;
-            pool.active = .{false} ** capacity;
+            pool.active = .empty;
 
             // allocate memory for the slab and freelist
             pool.storage = try std.heap.page_allocator.alloc(T, capacity);
@@ -57,8 +57,8 @@ pub fn freelist_pool(comptime T: type, comptime capacity: usize) type {
             // pop index from the top of the stack
             self.free_count -= 1;
             const index = self.free_indices[self.free_count];
-            std.debug.assert(!self.active[index]);
-            self.active[index] = true;
+            std.debug.assert(!self.active.isSet(index));
+            self.active.set(index);
 
             return &self.storage[index];
         }
@@ -74,11 +74,11 @@ pub fn freelist_pool(comptime T: type, comptime capacity: usize) type {
 
             if (offset % @sizeOf(T) != 0) return false;
             const index = offset / @sizeOf(T);
-            if (index >= capacity or !self.active[index]) return false;
+            if (index >= capacity or !self.active.isSet(index)) return false;
             if (self.free_count >= capacity) return false;
 
             // push index back onto the stack
-            self.active[index] = false;
+            self.active.unset(index);
             self.free_indices[self.free_count] = index;
             self.free_count += 1;
             return true;
@@ -90,7 +90,7 @@ pub fn freelist_pool(comptime T: type, comptime capacity: usize) type {
         }
 
         pub fn is_active(self: *const Self, index: usize) bool {
-            return index < capacity and self.active[index];
+            return index < capacity and self.active.isSet(index);
         }
 
         pub fn index_of(self: *const Self, item: *const T) ?usize {

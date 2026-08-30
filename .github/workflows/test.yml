@@ -43,6 +43,12 @@ jobs:
       - name: Run debug tests
         run: nix develop "path:." -c zig build test --summary all
 
+      - name: Run ASan and UBSan tests
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:strict_string_checks=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: nix develop "path:." -c zig build test -Dsanitize=true -Doptimize=ReleaseSafe --summary all
+
       - name: Compile ReleaseSafe tests
         run: nix develop "path:." -c zig build test-compile -Doptimize=ReleaseSafe --summary all
 

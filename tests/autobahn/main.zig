@@ -16,6 +16,7 @@ pub fn main(init: std.process.Init) !void {
 
     _ = try app.ws("/", .{
         .message = echo_message,
+        .compression = .permessage_deflate,
         .max_frame_size = max_message_size,
         .max_message_size = max_message_size,
     });

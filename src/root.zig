@@ -12,6 +12,7 @@ pub const chunked = @import("http/chunked.zig");
 
 pub const WebSocket = @import("ws/socket.zig").WebSocket;
 pub const WsBehavior = @import("router/radix.zig").WsBehavior;
+pub const WsCompression = @import("router/radix.zig").WsCompression;
 pub const Opcode = @import("zslay").Opcode;
 pub const websocket_mask = @import("ws/mask.zig");
 

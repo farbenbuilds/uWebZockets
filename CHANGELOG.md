@@ -6,7 +6,7 @@ versions.
 
 ## [Unreleased]
 
-## [1.0.0-alpha] - 2026-08-30
+## [1.0.0-alpha] - 2026-08-31
 
 ### Added
 
@@ -19,16 +19,26 @@ versions.
 - Added WebSocket upgrade authorization, frame/message limits, close handling,
   drain notification, buffered-byte reporting, streaming UTF-8 validation, and
   SIMD masking.
+- Added RFC 7692 per-message deflate with strict offer parsing, mandatory
+  client/server no-context-takeover, 9-15 bit server and 8-15 bit client window
+  negotiation, bounded decompression, and startup-allocated per-connection
+  scratch storage.
 - Added HTTPS with BoringSSL TLS 1.3 and HTTP/1.1 ALPN.
+- Added a bounded HTTP/3 server adapter over lsquic with direct QPACK-to-Request
+  decoding, structured response headers, fixed stream/header/packet pools,
+  partial-write handling, and shared HTTP route dispatch.
 - Added `ConfiguredAppWithTimeout`, a 120-second default idle policy, and the
   option to disable idle sweeping with a zero timeout.
 - Added Autobahn and h1spec compliance servers and GitHub Actions workflows,
   including a Deno-orchestrated Autobahn runner with deterministic cleanup and
   report gating.
-- Added bounded HTTP/zslay fuzz targets and a nightly/PR HTTP throughput
-  regression workflow with a dedicated `Benchmarking` environment.
+- Added bounded HTTP, HTTP/3 metadata, zslay, and WebSocket extension fuzz
+  targets, plus a nightly/PR HTTP throughput regression workflow with a
+  dedicated `Benchmarking` environment.
 - Added Nix native/musl packages, six-target publishing, checksums, deployment
   environments, and third-party license packaging.
+- Added native-Linux ASan, UBSan, LeakSanitizer, and Zig C-UB test mode for the
+  Zig/C/C++ graph, with an isolated sanitizer vendor cache.
 
 ### Changed
 
@@ -37,8 +47,12 @@ versions.
   and error APIs.
 - Reworked connection ownership into a contiguous slab with an activity bitmap
   and deterministic release.
+- Reworked application shutdown into an idempotent completion-driven drain;
+  new work is rejected before accept, TCP, timer, UDP, and QUIC resources are
+  stopped and released in ownership order.
 - Reworked routing as fixed-capacity parallel arrays and made duplicate,
-  invalid, or excessive routes return errors.
+  invalid, or excessive routes return errors. Route mutation is locked after
+  either listener starts.
 - Reworked TCP and TLS writes to preserve partial writes in bounded queues and
   signal backpressure.
 - Reworked pub/sub to own bounded topic names and remove stale subscribers.
@@ -50,6 +64,8 @@ versions.
   compliance runner has no runtime JavaScript dependency graph.
 - Run the Autobahn container with the invoking POSIX UID/GID so generated
   reports remain replaceable across repeated local runs.
+- Disabled BoringSSL's unused test/benchmark targets in the embedded build and
+  passed the selected Ninja executable directly to every CMake configure.
 
 ### Fixed
 
@@ -58,6 +74,9 @@ versions.
   write, and close completions.
 - Fixed application teardown leaks across sockets, TLS objects, timers,
   message storage, write storage, and pub/sub state.
+- Fixed a high-severity use-after-free where application teardown could free
+  the connection slab, timers, event loop, and I/O buffers while libxev
+  completions still retained pointers into them.
 - Fixed a recurring io_uring timer rearm that reused an expired absolute
   deadline and could spin a CPU core.
 - Fixed benchmark candidate and baseline builds running from the parent
@@ -77,6 +96,16 @@ versions.
 - Fixed outbound WebSocket UTF-8, control-length, close-code, and close-reason
   validation, including the RFC 6455 distinction between protocol errors and
   invalid UTF-8 close reasons.
+- Fixed compressed fragmented messages, RSV1 validation, malformed extension
+  alternatives, compressed expansion bombs, and negotiated small-window
+  server output.
+- Separated inbound and outbound compression scratch so a drain callback or
+  pub/sub send cannot overwrite a fragmented compressed message in progress.
+- Closed TCP descriptors when listener binding or activation fails.
+- Fixed HTTP/3 header ordering, duplicate pseudo-headers and content lengths,
+  URI target and authority validation, connection-specific metadata,
+  request-body framing, bounded response buffering, packet ownership, and
+  global lsquic initialization lifetime.
 
 ### Security
 
@@ -86,14 +115,19 @@ versions.
   by the public server path.
 - Reject ambiguous HTTP framing and control characters in response status or
   header metadata.
-- Disabled the incomplete HTTP/3 adapter and removed raw QUIC internals from
-  the supported public API and live application state. Unsafe raw callbacks
-  were replaced with fail-closed stubs.
+- Added strict HTTP/3 pseudo-header, lowercase-name, connection-metadata,
+  content-length, QPACK storage, request-body, response, and UDP packet bounds.
+- Added sanitizer CI with leak detection across the connection slab,
+  completion-driven teardown, compression engines, and C/C++ FFI boundaries.
+- Added strict RFC 7692 negotiation and no-context-takeover so compressed state
+  is never retained across application messages.
 
 ### Breaking changes
 
 - Route and WebSocket registration return errors and must be called with
   `try`, `catch`, or equivalent handling.
+- Route registration returns `error.RoutesLocked` after `listen` or
+  `listen_udp` succeeds.
 - Applications that need messages larger than 16 KiB must use
   `ConfiguredApp` and set matching `WsBehavior` limits.
 - Output can now return `error.WouldBlock`; WebSocket producers should resume
@@ -101,16 +135,23 @@ versions.
 - `WebSocket.send` rejects continuation opcodes because the public API emits
   complete final messages. `send_close` closes the transport after the close
   frame drains; use `terminate` for an immediate close.
-- HTTP/3 initialization now fails explicitly with
-  `error.Http3NotImplemented`, and raw QUIC internals are no longer exported.
+- `http3_available` is now true. `init_http3` creates transport-isolated
+  HTTP/1.1 and HTTP/3 TLS contexts, and HTTP/3 servers must call `listen_udp`
+  before `run`.
+- `WsBehavior` now exposes `.compression`; its default remains `.disabled`.
 - Request route matching uses `Request.path`; the original request target and
   query are available separately as `Request.target` and `Request.query`.
 
 ### Known limitations
 
-- RFC 7692 per-message deflate, HTTP/2, HTTP/3, Windows, route parameters,
-  middleware, async handlers, and a stable C ABI are not available in this
-  alpha.
-- The no-exclusion Autobahn run covers 517 cases: 298 strict passes, 3
-  informational results, and 216 RFC 7692 cases reported as unimplemented.
-  The compliance gate remains failing until per-message deflate is available.
+- HTTP/2, Windows, route parameters, middleware, async handlers, and a stable C
+  ABI are not available in this alpha.
+- HTTP/3 does not yet expose WebSocket extended CONNECT, server push,
+  WebTransport, 0-RTT application handling, or a cross-implementation
+  compliance gate.
+- RFC 7692 deliberately requires no-context-takeover and declines offers that
+  require an 8-bit server compression window. An 8-bit client window remains
+  supported for bounded decompression.
+- The no-exclusion Autobahn run covers all 517 selected cases with 514 `OK`
+  and 3 `INFORMATIONAL` results for both protocol and close behavior. The
+  compliance gate passes groups 1-7 and 9-13, including compression.

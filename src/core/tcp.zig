@@ -10,6 +10,7 @@ const WebSocket = @import("../ws/socket.zig").WebSocket;
 const radix = @import("../router/radix.zig");
 const Router = radix.Router;
 const handshake = @import("../crypto/handshake.zig");
+const DeflateContext = @import("../ws/deflate.zig").Context;
 
 pub const socket_read_capacity = 8192;
 pub const request_buffer_capacity = http_parser.max_request_line_size +
@@ -34,10 +35,15 @@ pub const TcpConnection = struct {
     io: std.Io = undefined,
     socket: xev.TCP,
     ws_message_buffer: []u8 = &.{},
+    ws_compression_buffer: []u8 = &.{},
+    ws_compression_output_buffer: []u8 = &.{},
+    ws_deflate: ?*DeflateContext = null,
 
-    read_completion: xev.Completion = undefined,
-    write_completion: xev.Completion = undefined,
-    close_completion: xev.Completion = undefined,
+    read_completion: xev.Completion = .{},
+    write_completion: xev.Completion = .{},
+    close_completion: xev.Completion = .{},
+    read_cancel_completion: xev.Completion = .{},
+    write_cancel_completion: xev.Completion = .{},
 
     req: Request = .{},
     parser: HttpParser = .{},
@@ -56,6 +62,8 @@ pub const TcpConnection = struct {
     tls_shutdown_started: bool = false,
     read_active: bool = false,
     is_writing: bool = false,
+    read_cancel_active: bool = false,
+    write_cancel_active: bool = false,
     close_complete: bool = false,
     was_backpressured: bool = false,
     close_when_drained: bool = false,
@@ -663,6 +671,27 @@ pub fn close_connection(conn: *TcpConnection) void {
     if (conn.protocol_state == .websocket) conn.ws.deinit();
     conn.deinit_tls();
 
+    if (conn.read_active) {
+        conn.read_cancel_active = true;
+        conn.loop.cancel(
+            &conn.read_completion,
+            &conn.read_cancel_completion,
+            TcpConnection,
+            conn,
+            on_read_cancel_complete,
+        );
+    }
+    if (conn.is_writing) {
+        conn.write_cancel_active = true;
+        conn.loop.cancel(
+            &conn.write_completion,
+            &conn.write_cancel_completion,
+            TcpConnection,
+            conn,
+            on_write_cancel_complete,
+        );
+    }
+
     conn.socket.close(
         conn.loop,
         &conn.close_completion,
@@ -693,9 +722,40 @@ pub fn close_connection(conn: *TcpConnection) void {
     );
 }
 
+fn on_read_cancel_complete(
+    user_data: ?*TcpConnection,
+    _: *xev.Loop,
+    _: *xev.Completion,
+    result: xev.CancelError!void,
+) xev.CallbackAction {
+    const conn = user_data.?;
+    _ = result catch |err| {
+        if (err != error.NotFound) std.debug.print("read cancel error: {}\n", .{err});
+    };
+    conn.read_cancel_active = false;
+    release_closed_connection(conn);
+    return .disarm;
+}
+
+fn on_write_cancel_complete(
+    user_data: ?*TcpConnection,
+    _: *xev.Loop,
+    _: *xev.Completion,
+    result: xev.CancelError!void,
+) xev.CallbackAction {
+    const conn = user_data.?;
+    _ = result catch |err| {
+        if (err != error.NotFound) std.debug.print("write cancel error: {}\n", .{err});
+    };
+    conn.write_cancel_active = false;
+    release_closed_connection(conn);
+    return .disarm;
+}
+
 fn release_closed_connection(conn: *TcpConnection) void {
     if (!conn.closing or !conn.close_complete) return;
     if (conn.read_active or conn.is_writing) return;
+    if (conn.read_cancel_active or conn.write_cancel_active) return;
 
     const callback = conn.on_close_cb orelse return;
     const pool = conn.pool_ptr orelse return;
@@ -714,15 +774,20 @@ fn release_closed_connection(conn: *TcpConnection) void {
 pub const AcceptCallback = *const fn (socket: xev.TCP, user_data: ?*anyopaque) void;
 
 pub const TcpServer = struct {
-    accept_completion: xev.Completion = undefined,
+    accept_completion: xev.Completion = .{},
+    close_completion: xev.Completion = .{},
+    accept_cancel_completion: xev.Completion = .{},
     listener: xev.TCP,
     on_connection: AcceptCallback,
     user_data: ?*anyopaque,
+    closing: bool = false,
+    close_complete: bool = false,
 };
 
 pub fn init_server(address: []const u8, port: u16, callback: AcceptCallback, user_data: ?*anyopaque) !TcpServer {
     const parsed_address = try std.Io.net.IpAddress.parse(address, port);
     var listener = try xev.TCP.init(parsed_address);
+    errdefer close_unregistered_socket(listener);
     try listener.bind(parsed_address);
     try listener.listen(128);
 
@@ -734,6 +799,7 @@ pub fn init_server(address: []const u8, port: u16, callback: AcceptCallback, use
 }
 
 pub fn accept_start(server: *TcpServer, loop: *Loop) void {
+    if (server.closing) return;
     server.listener.accept(
         loop.get_xev_loop(),
         &server.accept_completion,
@@ -741,6 +807,39 @@ pub fn accept_start(server: *TcpServer, loop: *Loop) void {
         server,
         on_accept_complete,
     );
+}
+
+pub fn close_server(server: *TcpServer, loop: *Loop) void {
+    if (server.closing) return;
+    server.closing = true;
+    if (server.accept_completion.state() == .active) {
+        loop.get_xev_loop().cancel(
+            &server.accept_completion,
+            &server.accept_cancel_completion,
+            void,
+            null,
+            on_accept_cancel_complete,
+        );
+    }
+    server.listener.close(
+        loop.get_xev_loop(),
+        &server.close_completion,
+        TcpServer,
+        server,
+        on_server_close_complete,
+    );
+}
+
+fn on_accept_cancel_complete(
+    _: ?*void,
+    _: *xev.Loop,
+    _: *xev.Completion,
+    result: xev.CancelError!void,
+) xev.CallbackAction {
+    _ = result catch |err| {
+        if (err != error.NotFound) std.debug.print("accept cancel error: {}\n", .{err});
+    };
+    return .disarm;
 }
 
 fn on_accept_complete(
@@ -754,12 +853,41 @@ fn on_accept_complete(
 
     const server = user_data.?;
     const accepted_socket = result catch |err| {
+        if (server.closing) return .disarm;
         std.debug.print("accept error: {}\n", .{err});
         return .rearm;
     };
 
+    if (server.closing) {
+        close_unregistered_socket(accepted_socket);
+        return .disarm;
+    }
+
     server.on_connection(accepted_socket, server.user_data);
     return .rearm;
+}
+
+fn on_server_close_complete(
+    user_data: ?*TcpServer,
+    _: *xev.Loop,
+    _: *xev.Completion,
+    _: xev.TCP,
+    result: xev.CloseError!void,
+) xev.CallbackAction {
+    const server = user_data.?;
+    _ = result catch |err| {
+        std.debug.print("listener close error: {}\n", .{err});
+    };
+    server.close_complete = true;
+    return .disarm;
+}
+
+fn close_unregistered_socket(socket: xev.TCP) void {
+    if (@import("builtin").os.tag == .windows) {
+        _ = std.os.windows.ws2_32.closesocket(@ptrCast(socket.fd));
+        return;
+    }
+    _ = std.posix.system.close(socket.fd);
 }
 
 test "tcp: multipart ring writes preserve order across wrap" {
@@ -803,4 +931,21 @@ test "tcp: closed connection waits for active completions" {
     release_closed_connection(&conn);
     release_closed_connection(&conn);
     try std.testing.expectEqual(@as(usize, 1), Release.count);
+}
+
+test "tcp: server close drains an outstanding accept" {
+    const Accept = struct {
+        fn callback(socket: xev.TCP, _: ?*anyopaque) void {
+            close_unregistered_socket(socket);
+        }
+    };
+
+    var loop = try @import("loop.zig").init();
+    defer @import("loop.zig").deinit(&loop);
+    var server = try init_server("127.0.0.1", 0, Accept.callback, null);
+
+    accept_start(&server, &loop);
+    close_server(&server, &loop);
+    try @import("loop.zig").run(&loop);
+    try std.testing.expect(server.close_complete);
 }

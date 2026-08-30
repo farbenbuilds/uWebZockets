@@ -6,8 +6,8 @@ Build the supported examples with Zig 0.16.0 and all recursive submodules:
 zig build -Doptimize=ReleaseSafe
 ```
 
-The default install contains `hello_world`, `chat_server`, `h1spec`, and
-`autobahn_server` under `zig-out/bin`.
+The default install contains `hello_world`, `chat_server`, `http3_server`,
+`h1spec`, and `autobahn_server` under `zig-out/bin`.
 
 ## HTTP/1.1 server
 
@@ -67,9 +67,22 @@ vendored HTTP/1.1 suite. Use the GitHub workflows or the commands documented in
 [CI_CD_PIPELINE.md](../CI_CD_PIPELINE.md) so readiness checks and report gates
 are applied consistently.
 
-## HTTP/3 status
+## HTTP/3 server
 
-`http3_server.zig` is retained only as an explicit unavailable-feature target.
-Running `zig build http3_server` returns `error.Http3NotImplemented`. The Zig
-transport is a fail-closed stub with no raw callbacks; the lsquic vendor archive
-is built only to keep dependency integration tested.
+Place a PEM certificate and matching private key at `certs/cert.pem` and
+`certs/key.pem`, then build and start the bounded lsquic server:
+
+```sh
+zig build http3_server -Doptimize=ReleaseSafe
+./zig-out/bin/http3_server
+```
+
+The server listens for QUIC on UDP port 8443 and routes `GET /` through the
+same `Request` and `Response` API as HTTP/1.1. A client with HTTP/3 support can
+request `https://127.0.0.1:8443/`; configure trust appropriately for a local
+self-signed certificate.
+
+The example uses a capacity of 128 connections/active streams. QPACK headers,
+request bodies, response metadata, response bodies, and outgoing UDP packets
+all use fixed startup-allocated pools. WebSocket extended CONNECT is not part
+of the alpha HTTP/3 adapter.

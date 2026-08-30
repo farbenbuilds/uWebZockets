@@ -9,11 +9,11 @@
 [![h1spec Compliance](https://github.com/kiensony/uWebZockets/actions/workflows/h1spec-compliance.yml/badge.svg)](https://github.com/kiensony/uWebZockets/actions/workflows/h1spec-compliance.yml)
 [![Benchmark](https://github.com/kiensony/uWebZockets/actions/workflows/benchmark.yml/badge.svg)](https://github.com/kiensony/uWebZockets/actions/workflows/benchmark.yml)
 
-µWebZockets is a bounded-memory, event-driven WebSocket and HTTP/1.1 server
-library for Zig 0.16.0. The request, response, frame parsing, masking, routing,
-and connection I/O paths use fixed-capacity storage after application startup.
-BoringSSL provides TLS, libxev drives non-blocking POSIX I/O, and zslay 0.1.5
-provides the WebSocket frame state machine.
+µWebZockets is a bounded-memory, event-driven WebSocket, HTTP/1.1, and HTTP/3
+server library for Zig 0.16.0. The request, response, frame parsing, masking,
+routing, and connection I/O paths use fixed-capacity storage after application
+startup. BoringSSL provides TLS, libxev drives non-blocking POSIX I/O, zslay
+0.1.5 provides the WebSocket frame state machine, and lsquic provides QUIC.
 
 Version `1.0.0-alpha` is intended for evaluation and controlled production
 pilots. Its API may still change before 1.0.0.
@@ -27,17 +27,23 @@ pilots. Its API may still change before 1.0.0.
 - Fixed-capacity, backpressure-aware response queues and chunked responses
 - RFC 6455 server framing, fragmentation, masking, close handling, and
   streaming UTF-8 validation
+- RFC 7692 per-message deflate with strict extension parsing, bounded expansion,
+  and mandatory client/server no-context-takeover
 - SIMD WebSocket masking with a scalar tail
 - Bounded WebSocket messages, frames, subscriptions, and topic ownership
 - HTTPS with BoringSSL TLS 1.3 and HTTP/1.1 ALPN
+- Alpha HTTP/3 request/response routing over lsquic with bounded QPACK, stream,
+  body, response, and packet storage
 - Contiguous connection pools and per-connection storage selected at compile
   time
+- Completion-driven shutdown that drains accept, read, write, close, timer,
+  and UDP operations before releasing their slabs
 - Native GNU/Linux, musl/Linux, and macOS release packages
 
 The bundled Autobahn runner executes all 517 selected server cases. The
-verified alpha baseline is 298 strict passes, 3 informational results, and 216
-RFC 7692 compression cases reported as unimplemented. The strict CI gate stays
-red until per-message deflate is exposed; no compression cases are hidden.
+verified alpha baseline is 514 `OK` and 3 `INFORMATIONAL` results for both
+protocol and close behavior. The strict gate accepts all 517 cases, including
+RFC 7692 groups 12 and 13, with no exclusions.
 
 ## Requirements
 
@@ -60,6 +66,17 @@ nix develop
 zig build test --summary all
 zig build -Doptimize=ReleaseSafe
 ```
+
+The Nix shell also exposes the native sanitizer runtime. Run the complete test
+graph with ASan, UBSan, LeakSanitizer, Zig C-UB checks, and frame pointers:
+
+```sh
+zig build test -Dsanitize=true -Doptimize=ReleaseSafe --summary all
+```
+
+Outside Nix, also pass `-Dsanitizer-lib-dir=/path/to/compiler/runtime/lib`.
+Sanitizer builds are intentionally restricted to native Linux and use a
+separate vendor cache.
 
 Without Nix, install the requirements above and run the same Zig commands. If
 zlib is not in the compiler's default search path, pass a prefix containing
@@ -124,8 +141,9 @@ pub fn main(init: std.process.Init) !void {
 ```
 
 Route strings are borrowed for the application's lifetime. Register static or
-otherwise long-lived strings before calling `listen`. Do not move the `App`
-value after `listen`; event-loop callbacks retain its address.
+otherwise long-lived strings before calling `listen` or `listen_udp`; route
+registration returns `error.RoutesLocked` after either listener starts. Do not
+move the `App` value after listening; event-loop callbacks retain its address.
 
 For incremental HTTP output, call `begin_chunked`, `write_chunk` as needed,
 then `end_chunks`. A handler must finish one response before returning; async
@@ -155,6 +173,7 @@ pub fn main(init: std.process.Init) !void {
 
     _ = try server.ws("/echo", .{
         .message = echo,
+        .compression = .permessage_deflate,
         .max_frame_size = max_message_size,
         .max_message_size = max_message_size,
     });
@@ -170,6 +189,14 @@ the WebSocket `drain` callback and `buffered_amount` to resume producers.
 Incoming `message` slices are valid only for the duration of the callback.
 Outgoing text and close data are validated; `send_close` closes after the
 frame drains, while `terminate` performs an immediate transport close.
+
+Compression is opt-in per WebSocket route. Enabling `.permessage_deflate`
+allocates separate bounded receive and send scratch slices per connection
+during route registration; message processing itself does not allocate.
+Negotiation always selects
+`server_no_context_takeover` and `client_no_context_takeover`, accepts window
+sizes 9 through 15 for server output and 8 through 15 for client input, and
+rejects compressed expansion beyond `max_message_size`.
 
 The default idle timeout is 120 seconds and is refreshed by successful reads
 and writes. Use `ConfiguredAppWithTimeout` to select another compile-time
@@ -198,6 +225,31 @@ var server = try uz.App(1024).init_https(
 
 The server negotiates TLS 1.3 and advertises only `http/1.1`.
 
+## HTTP/3
+
+`init_http3` creates isolated TLS 1.3 contexts: TCP advertises only
+`http/1.1`, while QUIC advertises only `h3`. Register the same HTTP handlers,
+then bind the QUIC endpoint with `listen_udp`:
+
+```zig
+var server = try uz.App(128).init_http3(
+    init.io,
+    "certs/cert.pem",
+    "certs/key.pem",
+);
+defer server.deinit();
+
+_ = try server.get("/", hello);
+try server.listen_udp("0.0.0.0", 8443);
+try server.run();
+```
+
+The adapter decodes HTTP/3 pseudo-headers directly into the existing `Request`
+shape and writes structured QPACK response headers without converting through
+HTTP/1.1 text. QUIC connections, streams, header sets, packet buffers, request
+bodies, and responses come from startup-allocated contiguous pools. The `App`
+value must remain at a stable address after `listen_udp`.
+
 ## Capacity and protocol limits
 
 The alpha defaults are deliberately finite:
@@ -211,6 +263,12 @@ The alpha defaults are deliberately finite:
 | Route path | 2 KiB |
 | WebSocket message | 16 KiB with `App` |
 | WebSocket control payload | 125 bytes |
+| HTTP/3 decoded headers | 16 KiB total, 64 fields |
+| HTTP/3 request body | 16 KiB |
+| HTTP/3 response metadata | 4 KiB, 64 fields |
+| HTTP/3 response body | configured write-queue capacity |
+| QUIC UDP payload | 2 KiB |
+| QUIC connections and active streams | configured connection capacity |
 | Write queue | fixed per connection |
 | Idle timeout | 120 seconds by default |
 
@@ -218,11 +276,14 @@ Oversized or ambiguous input is rejected rather than expanded dynamically.
 
 ## Current limitations
 
-- HTTP/2 and HTTP/3 are unavailable. The Zig adapter is a fail-closed stub,
-  raw callbacks are absent, and `init_http3` returns
-  `error.Http3NotImplemented`. The lsquic vendor build remains packaged for
-  integration testing only.
-- RFC 7692 per-message deflate is not negotiated.
+- HTTP/2 is unavailable.
+- HTTP/3 is an alpha server adapter. WebSocket extended CONNECT, server push,
+  WebTransport, 0-RTT application handling, and a cross-implementation HTTP/3
+  compliance gate are not yet exposed.
+- Per-message deflate deliberately uses no-context-takeover. An offered 8-bit
+  server compression window is declined because zlib cannot emit it reliably;
+  8-bit client compression is accepted and decoded within the configured
+  output bound.
 - Windows is not a supported alpha target.
 - Route parameters, middleware, async handlers, and a stable C ABI are not yet
   exposed.

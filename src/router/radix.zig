@@ -6,15 +6,27 @@ const zslay = @import("zslay");
 
 pub const Handler = *const fn (req: *Request, res: *Response) void;
 
+pub const WsCompression = enum(u8) {
+    disabled,
+    permessage_deflate,
+};
+
 pub const WsBehavior = struct {
     upgrade: ?*const fn (req: *const Request) bool = null,
     open: ?*const fn (ws: *WebSocket) void = null,
     message: ?*const fn (ws: *WebSocket, message: []const u8, opcode: zslay.Opcode) void = null,
     drain: ?*const fn (ws: *WebSocket) void = null,
     close: ?*const fn (ws: *WebSocket) void = null,
+    compression: WsCompression = .disabled,
     max_frame_size: u64 = 16 * 1024,
     max_message_size: u64 = 16 * 1024,
 };
+
+pub fn valid_ws_limits(behavior: WsBehavior, message_capacity: usize) bool {
+    if (behavior.max_frame_size == 0 or behavior.max_message_size == 0) return false;
+    if (behavior.max_frame_size > behavior.max_message_size) return false;
+    return behavior.max_message_size <= @as(u64, @intCast(message_capacity));
+}
 
 pub const HttpMethod = enum(u8) {
     get,
@@ -316,4 +328,14 @@ pub fn format_allowed_methods(mask: u16, buffer: []u8) ![]const u8 {
 fn method_bit(method: HttpMethod) u16 {
     std.debug.assert(method != .any);
     return @as(u16, 1) << @as(u4, @intCast(@intFromEnum(method)));
+}
+
+test "router: websocket limits must fit the configured slab" {
+    try std.testing.expect(valid_ws_limits(.{}, 16 * 1024));
+    try std.testing.expect(!valid_ws_limits(.{ .max_frame_size = 0 }, 16 * 1024));
+    try std.testing.expect(!valid_ws_limits(.{ .max_message_size = 32 * 1024 }, 16 * 1024));
+    try std.testing.expect(!valid_ws_limits(.{
+        .max_frame_size = 1024,
+        .max_message_size = 512,
+    }, 16 * 1024));
 }

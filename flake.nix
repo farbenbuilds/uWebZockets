@@ -164,6 +164,9 @@
               packagePkgs.zlib
               packagePkgs.wrk
             ];
+            shellHook = lib.optionalString isLinux ''
+              export UWEBZOCKETS_SANITIZER_LIB_DIR="${packagePkgs.stdenv.cc.cc.lib}/lib"
+            '';
           };
       in {
         formatter = pkgs.alejandra;

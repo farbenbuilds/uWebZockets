@@ -2,6 +2,8 @@ const std = @import("std");
 const parser = @import("http_parser");
 const Request = parser.Request;
 const zslay = @import("zslay");
+const ws_handshake = @import("ws_handshake");
+const quic_validation = @import("quic_validation");
 
 test "fuzz: protocol parsers preserve bounded state" {
     try std.testing.fuzz({}, fuzz_protocol_parsers, .{
@@ -22,6 +24,36 @@ fn fuzz_protocol_parsers(_: void, smith: *std.testing.Smith) !void {
     @disableInstrumentation();
     try fuzz_http_parser(smith);
     try fuzz_zslay_receive(smith);
+    fuzz_extension_negotiation(smith);
+    fuzz_http3_validation(smith);
+}
+
+fn fuzz_http3_validation(smith: *std.testing.Smith) void {
+    var input: [1024]u8 = undefined;
+    const input_len: usize = @intCast(smith.slice(&input));
+    const split = smith.index(input_len + 1);
+    const first = input[0..split];
+    const second = input[split..input_len];
+
+    _ = quic_validation.valid_method(first);
+    _ = quic_validation.valid_target(first);
+    _ = quic_validation.valid_authority(first);
+    _ = quic_validation.valid_http3_name(first);
+    _ = quic_validation.valid_header_value(second);
+    _ = quic_validation.connection_specific_header(first);
+    _ = quic_validation.parse_decimal(second);
+}
+
+fn fuzz_extension_negotiation(smith: *std.testing.Smith) void {
+    var input: [512]u8 = undefined;
+    const input_len: usize = @intCast(smith.sliceWeightedBytes(&input, &.{
+        .rangeAtMost(u8, 0x20, 0x7e, 4),
+        .value(u8, ';', 8),
+        .value(u8, ',', 8),
+        .value(u8, '=', 8),
+        .value(u8, '"', 4),
+    }));
+    _ = ws_handshake.negotiate_permessage_deflate(input[0..input_len]);
 }
 
 fn fuzz_http_parser(smith: *std.testing.Smith) !void {

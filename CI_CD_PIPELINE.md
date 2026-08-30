@@ -10,7 +10,7 @@ it is not a proof that all memory or security defects are absent.
 | Workflow | Trigger | Environment | Purpose |
 | --- | --- | --- | --- |
 | `lint.yml` | pushes and pull requests to `main`, manual | `Linting` | Zig formatting and repository conventions |
-| `test.yml` | pushes and pull requests to `main`, manual | `Testing` | Debug tests, ReleaseSafe test compilation, ReleaseFast library build |
+| `test.yml` | pushes and pull requests to `main`, manual | `Testing` | Debug, sanitizer, fuzz, ReleaseSafe, and ReleaseFast verification |
 | `autobahn-compliance.yml` | pushes and pull requests to `main`, manual | `autobahn Compliance` | RFC 6455 server compliance |
 | `h1spec-compliance.yml` | pushes and pull requests to `main`, manual | `h1spec Compliance` | HTTP/1.1 compliance |
 | `benchmark.yml` | pull requests to `main`, nightly, manual | `Benchmarking` | HTTP throughput regression |
@@ -39,7 +39,9 @@ It then runs:
 
 ```sh
 zig build test --summary all
+zig build test -Dsanitize=true -Doptimize=ReleaseSafe --summary all
 zig build test-compile -Doptimize=ReleaseSafe --summary all
+zig build fuzz --fuzz=100K -Doptimize=ReleaseSafe
 zig build lib -Doptimize=ReleaseFast --summary all
 ```
 
@@ -54,9 +56,15 @@ ReleaseSafe compiles the same test graph with safety checks and optimization.
 ReleaseFast proves the production static-library graph and all vendored C/C++
 dependencies compile at the speed-oriented mode.
 
+The sanitizer pass is native Linux only. The Nix shell supplies the GCC
+sanitizer runtime directory, while `build.zig` instruments BoringSSL, lsquic,
+libdeflate, and the local C ABI shim with ASan/UBSan, enables Zig's full C-UB
+checks, preserves frame pointers, and isolates the vendor cache. CI enables
+ASan leak detection and makes both ASan and UBSan fail fast.
+
 The test job also runs Zig's native fuzzer for 100,000 iterations over bounded
-HTTP parsing and zslay receive-state targets. Seed corpora include valid,
-fragmented, malformed, and control-frame inputs.
+HTTP, HTTP/3 metadata, WebSocket extension, and zslay receive-state targets.
+Seed corpora include valid, fragmented, malformed, and control-frame inputs.
 
 ## Autobahn WebSockets compliance
 
@@ -74,10 +82,10 @@ The configuration selects groups 1-7, 9-13 with no exclusions. The report
 gate permits `OK`, `INFORMATIONAL`, and `NON-STRICT` for both protocol and close
 behavior; every other outcome fails the job.
 
-The verified alpha baseline covers 517 cases: 298 `OK`, 3 `INFORMATIONAL`, and
-216 RFC 7692 cases reported as `UNIMPLEMENTED`. Close behavior has 514 `OK` and
-3 `INFORMATIONAL` results. The workflow intentionally remains failing until
-per-message deflate is implemented; groups 12 and 13 are not suppressed.
+The verified alpha baseline covers all 517 cases with 514 `OK` and 3
+`INFORMATIONAL` results for both protocol and close behavior. RFC 7692 groups
+12 and 13 pass through negotiated no-context-takeover per-message deflate; no
+case is excluded or suppressed.
 
 ## h1spec compliance
 
@@ -103,6 +111,10 @@ matrix runs natively on these GitHub-hosted architectures:
 
 Windows is not supported in `1.0.0-alpha` and is intentionally absent from the
 matrix.
+
+The default build also compiles the bounded `http3_server` example, and inline
+tests cover QPACK header validation and HTTP/3 framing. A cross-implementation
+HTTP/3 compliance job is not yet part of the alpha gate.
 
 ## Performance regression
 
@@ -139,6 +151,7 @@ replaces assets with the same names.
 - Update `build.zig.zon`, `flake.nix`, and `CHANGELOG.md` to the same version.
 - Run formatting and convention checks.
 - Run Debug tests and ReleaseSafe/ReleaseFast build checks.
+- Run the native Linux ASan/UBSan/LeakSanitizer pass.
 - Run Autobahn and h1spec compliance.
 - Verify third-party revisions and licenses.
 - Create and push `v<version>` only after the release commit is final.
