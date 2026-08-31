@@ -56,11 +56,12 @@ ReleaseSafe compiles the same test graph with safety checks and optimization.
 ReleaseFast proves the production static-library graph and all vendored C/C++
 dependencies compile at the speed-oriented mode.
 
-The sanitizer pass is native Linux only. The Nix shell supplies the GCC
-sanitizer runtime directory, while `build.zig` instruments BoringSSL, lsquic,
-libdeflate, and the local C ABI shim with ASan/UBSan, enables Zig's full C-UB
-checks, preserves frame pointers, and isolates the vendor cache. CI enables
-ASan leak detection and makes both ASan and UBSan fail fast.
+The sanitizer pass is native Linux only. The Nix shell supplies matching LLVM
+sanitizer, glibc, and dynamic-linker paths. `build.zig` sets coherent RPATHs
+and launches sanitizer executables through that matching loader, instruments
+BoringSSL, lsquic, libdeflate, and the local C ABI shim with ASan/UBSan, enables
+Zig's full C-UB checks, preserves frame pointers, and isolates the vendor cache.
+CI enables ASan leak detection and makes both ASan and UBSan fail fast.
 
 The test job also runs Zig's native fuzzer for 100,000 iterations over bounded
 HTTP, HTTP/3 metadata, WebSocket extension, and zslay receive-state targets.

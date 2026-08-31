@@ -36,7 +36,7 @@ jobs:
           path: |
             ~/.cache/zig
             .zig-cache/vendor-build
-          key: ${{ runner.os }}-zig-v5-${{ hashFiles('build.zig', 'build.zig.zon', 'vendor/**/CMakeLists.txt') }}
+          key: ${{ runner.os }}-zig-v5-${{ hashFiles('build.zig', 'build.zig.zon', 'flake.nix', 'flake.lock', 'vendor/**/CMakeLists.txt') }}
           restore-keys: |
             ${{ runner.os }}-zig-v5-
 

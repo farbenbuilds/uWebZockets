@@ -56,9 +56,11 @@ zig build fuzz --fuzz=100K -Doptimize=ReleaseSafe
 zig build lib -Doptimize=ReleaseFast --summary all
 ```
 
-The sanitizer command requires native Linux. `nix develop` exports the runtime
-directory automatically; non-Nix setups must pass
-`-Dsanitizer-lib-dir=/path/to/compiler/runtime/lib`.
+The sanitizer command requires native Linux. `nix develop` exports matching
+sanitizer, glibc, and dynamic-linker paths automatically. Non-Nix setups must
+pass `-Dsanitizer-lib-dir=/path/to/compiler/runtime/lib`. When that runtime
+uses a different glibc than the host, also pass matching
+`-Dsanitizer-libc-dir` and `-Dsanitizer-dynamic-linker` paths.
 
 Changes to WebSocket parsing or I/O must also run the Autobahn target. Changes
 to HTTP parsing, dispatch, or response framing must run h1spec. Changes to

@@ -1,7 +1,15 @@
 const std = @import("std");
 
+const SanitizerRunConfig = struct {
+    enabled: bool,
+    dynamic_linker: ?[]const u8,
+    library_path: []const u8,
+    shared_object: []const u8,
+};
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
+    const target_is_native = target.query.isNative();
     const optimize = b.standardOptimizeOption(.{});
     const sanitize = b.option(
         bool,
@@ -11,14 +19,54 @@ pub fn build(b: *std.Build) void {
     const sanitizer_lib_dir = b.option(
         []const u8,
         "sanitizer-lib-dir",
-        "Directory containing the ASan and UBSan runtime libraries",
+        "Directory containing the LLVM ASan runtime library",
     ) orelse b.graph.environ_map.get("UWEBZOCKETS_SANITIZER_LIB_DIR");
-    if (sanitize and (!target.query.isNative() or target.result.os.tag != .linux)) {
+    const sanitizer_libc_dir = b.option(
+        []const u8,
+        "sanitizer-libc-dir",
+        "Directory containing the libc used by the sanitizer runtimes",
+    ) orelse b.graph.environ_map.get("UWEBZOCKETS_SANITIZER_LIBC_DIR");
+    const sanitizer_dynamic_linker = b.option(
+        []const u8,
+        "sanitizer-dynamic-linker",
+        "Dynamic linker used by native sanitizer executables",
+    ) orelse b.graph.environ_map.get("UWEBZOCKETS_SANITIZER_DYNAMIC_LINKER");
+    if (sanitize and (!target_is_native or target.result.os.tag != .linux)) {
         @panic("-Dsanitize=true requires a native Linux target");
     }
     if (sanitize and sanitizer_lib_dir == null) {
         @panic("-Dsanitize=true requires -Dsanitizer-lib-dir or UWEBZOCKETS_SANITIZER_LIB_DIR");
     }
+    if (sanitize and (sanitizer_libc_dir == null) != (sanitizer_dynamic_linker == null)) {
+        @panic("sanitizer libc directory and dynamic linker must be configured together");
+    }
+    const sanitizer_runtime_name = if (sanitize)
+        switch (target.result.cpu.arch) {
+            .x86_64 => "clang_rt.asan-x86_64",
+            .aarch64 => "clang_rt.asan-aarch64",
+            else => @panic("-Dsanitize=true supports x86_64 and aarch64"),
+        }
+    else
+        "";
+    const sanitizer_shared_object = if (sanitize)
+        b.pathJoin(&.{
+            sanitizer_lib_dir.?,
+            b.fmt("lib{s}.so", .{sanitizer_runtime_name}),
+        })
+    else
+        "";
+    const sanitizer_library_path = if (!sanitize)
+        ""
+    else if (sanitizer_libc_dir) |libc_dir|
+        b.fmt("{s}:{s}", .{ sanitizer_lib_dir.?, libc_dir })
+    else
+        sanitizer_lib_dir.?;
+    const sanitizer_run_config: SanitizerRunConfig = .{
+        .enabled = sanitize,
+        .dynamic_linker = sanitizer_dynamic_linker,
+        .library_path = sanitizer_library_path,
+        .shared_object = sanitizer_shared_object,
+    };
     const zlib_prefix = b.option(
         []const u8,
         "zlib-prefix",
@@ -97,13 +145,23 @@ pub fn build(b: *std.Build) void {
     const cmake_asm = b.fmt("-DCMAKE_ASM_COMPILER={s}", .{asm_compiler});
     const cmake_type = b.fmt("-DCMAKE_BUILD_TYPE={s}", .{cmake_build_type});
     const cmake_make = b.fmt("-DCMAKE_MAKE_PROGRAM={s}", .{ninja_exe});
-    const sanitizer_link_flags = if (sanitize)
+    const sanitizer_link_flags = if (!sanitize)
+        ""
+    else if (sanitizer_libc_dir) |libc_dir|
         b.fmt(
-            "-DCMAKE_EXE_LINKER_FLAGS=-L{s} -Wl,--no-as-needed -lasan -lubsan",
-            .{sanitizer_lib_dir.?},
+            "-DCMAKE_EXE_LINKER_FLAGS=-L{s} -Wl,-rpath,{s} -Wl,-rpath,{s} -Wl,--no-as-needed -l{s}",
+            .{
+                sanitizer_lib_dir.?,
+                sanitizer_lib_dir.?,
+                libc_dir,
+                sanitizer_runtime_name,
+            },
         )
     else
-        "";
+        b.fmt(
+            "-DCMAKE_EXE_LINKER_FLAGS=-L{s} -Wl,-rpath,{s} -Wl,--no-as-needed -l{s}",
+            .{ sanitizer_lib_dir.?, sanitizer_lib_dir.?, sanitizer_runtime_name },
+        );
 
     // 1. BoringSSL
     const bssl_src = "vendor/boringssl";
@@ -117,10 +175,10 @@ pub fn build(b: *std.Build) void {
             sanitizer_link_flags,
         });
     }
-    add_cross_cmake_args(b, bssl_cmake, target);
-    set_vendor_environment(b, bssl_cmake, target, target_triple);
+    add_cross_cmake_args(b, bssl_cmake, target, target_is_native, sanitize);
+    set_vendor_environment(b, bssl_cmake, target_is_native, target_triple);
     const bssl_ninja = b.addSystemCommand(&.{ ninja_exe, "-C", bssl_build_dir, "ssl", "crypto" });
-    set_vendor_environment(b, bssl_ninja, target, target_triple);
+    set_vendor_environment(b, bssl_ninja, target_is_native, target_triple);
     bssl_ninja.step.dependOn(&bssl_cmake.step);
 
     // 2. lsquic
@@ -134,19 +192,19 @@ pub fn build(b: *std.Build) void {
     if (sanitize) {
         lsquic_cmake.addArgs(&.{
             "-DLSQUIC_ASAN=OFF",
-            "-DCMAKE_C_FLAGS=-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer",
-            "-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer",
+            "-DCMAKE_C_FLAGS=-fsanitize=address -fsanitize=undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer",
+            "-DCMAKE_CXX_FLAGS=-fsanitize=address -fsanitize=undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer",
             sanitizer_link_flags,
         });
     }
-    add_cross_cmake_args(b, lsquic_cmake, target);
-    set_vendor_environment(b, lsquic_cmake, target, target_triple);
+    add_cross_cmake_args(b, lsquic_cmake, target, target_is_native, sanitize);
+    set_vendor_environment(b, lsquic_cmake, target_is_native, target_triple);
     if (zlib_prefix) |prefix| {
         lsquic_cmake.addArg(b.fmt("-DZLIB_INCLUDE_DIR={s}/include", .{prefix}));
         lsquic_cmake.addArg(b.fmt("-DZLIB_LIB={s}/lib/libz.a", .{prefix}));
     }
     const lsquic_ninja = b.addSystemCommand(&.{ ninja_exe, "-C", lsquic_build_dir });
-    set_vendor_environment(b, lsquic_ninja, target, target_triple);
+    set_vendor_environment(b, lsquic_ninja, target_is_native, target_triple);
     lsquic_cmake.step.dependOn(&bssl_ninja.step);
     lsquic_ninja.step.dependOn(&lsquic_cmake.step);
     lsquic_ninja.step.dependOn(&bssl_ninja.step);
@@ -155,15 +213,15 @@ pub fn build(b: *std.Build) void {
     const deflate_src = "vendor/libdeflate";
     const deflate_build_dir = b.pathJoin(&.{ vendor_build, "libdeflate" });
     const deflate_c_flags = if (sanitize)
-        "-DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_VPCLMULQDQ -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_AVX512VNNI -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer"
+        "-DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_VPCLMULQDQ -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_AVX512VNNI -fsanitize=address -fsanitize=undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer"
     else
         "-DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_VPCLMULQDQ -DLIBDEFLATE_ASSEMBLER_DOES_NOT_SUPPORT_AVX512VNNI";
     const deflate_cmake = b.addSystemCommand(&.{ cmake_exe, "-B", deflate_build_dir, "-S", deflate_src, "-GNinja", cmake_make, cmake_type, "-DLIBDEFLATE_BUILD_GZIP=OFF", "-DLIBDEFLATE_BUILD_TESTS=OFF", "-DLIBDEFLATE_BUILD_SHARED_LIB=OFF", b.fmt("-DCMAKE_C_FLAGS={s}", .{deflate_c_flags}), cmake_c, cmake_cxx, cmake_asm });
     if (sanitize) deflate_cmake.addArg(sanitizer_link_flags);
-    add_cross_cmake_args(b, deflate_cmake, target);
-    set_vendor_environment(b, deflate_cmake, target, target_triple);
+    add_cross_cmake_args(b, deflate_cmake, target, target_is_native, sanitize);
+    set_vendor_environment(b, deflate_cmake, target_is_native, target_triple);
     const deflate_ninja = b.addSystemCommand(&.{ ninja_exe, "-C", deflate_build_dir });
-    set_vendor_environment(b, deflate_ninja, target, target_triple);
+    set_vendor_environment(b, deflate_ninja, target_is_native, target_triple);
     deflate_ninja.step.dependOn(&deflate_cmake.step);
 
     // --- Linking to uWebZockets ---
@@ -179,13 +237,22 @@ pub fn build(b: *std.Build) void {
         mod.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "lib" }) });
     }
 
-    // Sanitizer runtimes must precede libc and every instrumented dependency.
+    // LLVM ASan must precede libc and every instrumented dependency.
     if (sanitize) {
         const runtime_path: std.Build.LazyPath = .{ .cwd_relative = sanitizer_lib_dir.? };
         mod.addLibraryPath(runtime_path);
         mod.addRPath(runtime_path);
-        mod.linkSystemLibrary("asan", .{ .needed = true, .use_pkg_config = .no });
-        mod.linkSystemLibrary("ubsan", .{ .needed = true, .use_pkg_config = .no });
+        if (sanitizer_libc_dir) |libc_dir| {
+            const libc_path: std.Build.LazyPath = .{ .cwd_relative = libc_dir };
+            mod.addLibraryPath(libc_path);
+            mod.addRPath(libc_path);
+        }
+        mod.linkSystemLibrary(sanitizer_runtime_name, .{
+            .needed = true,
+            .use_pkg_config = .no,
+            .preferred_link_mode = .dynamic,
+            .search_strategy = .no_fallback,
+        });
     }
 
     // System libraries
@@ -216,7 +283,7 @@ pub fn build(b: *std.Build) void {
     mod.addCSourceFile(.{
         .file = b.path("src/quic/lsquic_shim.c"),
         .flags = if (sanitize)
-            &.{ "-std=c11", "-fsanitize=address,undefined", "-fno-sanitize-recover=undefined", "-fno-omit-frame-pointer" }
+            &.{ "-std=c11", "-fsanitize=address", "-fsanitize=undefined", "-fno-sanitize-recover=undefined", "-fno-omit-frame-pointer" }
         else
             &.{"-std=c11"},
     });
@@ -276,7 +343,7 @@ pub fn build(b: *std.Build) void {
     hello_world_exe.step.dependOn(&deflate_ninja.step);
     b.installArtifact(hello_world_exe);
 
-    const run_hello_world = b.addRunArtifact(hello_world_exe);
+    const run_hello_world = add_run_artifact(b, hello_world_exe, sanitizer_run_config);
     const hello_world_step = b.step("hello_world", "Run the hello_world example");
     hello_world_step.dependOn(&run_hello_world.step);
 
@@ -294,7 +361,7 @@ pub fn build(b: *std.Build) void {
     chat_server_exe.step.dependOn(&deflate_ninja.step);
     b.installArtifact(chat_server_exe);
 
-    const run_chat_server = b.addRunArtifact(chat_server_exe);
+    const run_chat_server = add_run_artifact(b, chat_server_exe, sanitizer_run_config);
     const chat_server_step = b.step("chat_server", "Run the chat_server example");
     chat_server_step.dependOn(&run_chat_server.step);
 
@@ -311,7 +378,7 @@ pub fn build(b: *std.Build) void {
     http3_server_exe.step.dependOn(&lsquic_ninja.step);
     http3_server_exe.step.dependOn(&deflate_ninja.step);
     b.installArtifact(http3_server_exe);
-    const run_http3_server = b.addRunArtifact(http3_server_exe);
+    const run_http3_server = add_run_artifact(b, http3_server_exe, sanitizer_run_config);
     const http3_server_step = b.step("http3_server", "Run the HTTP/3 example server");
     http3_server_step.dependOn(&run_http3_server.step);
 
@@ -329,7 +396,7 @@ pub fn build(b: *std.Build) void {
     h1spec_exe.step.dependOn(&deflate_ninja.step);
     b.installArtifact(h1spec_exe);
 
-    const run_h1spec = b.addRunArtifact(h1spec_exe);
+    const run_h1spec = add_run_artifact(b, h1spec_exe, sanitizer_run_config);
     const h1spec_step = b.step("h1spec", "Run the h1spec compliance server");
     h1spec_step.dependOn(&run_h1spec.step);
 
@@ -347,7 +414,7 @@ pub fn build(b: *std.Build) void {
     autobahn_exe.step.dependOn(&deflate_ninja.step);
     b.installArtifact(autobahn_exe);
 
-    const run_autobahn = b.addRunArtifact(autobahn_exe);
+    const run_autobahn = add_run_artifact(b, autobahn_exe, sanitizer_run_config);
     const autobahn_step = b.step("autobahn", "Run the Autobahn compliance server");
     autobahn_step.dependOn(&run_autobahn.step);
 
@@ -357,7 +424,7 @@ pub fn build(b: *std.Build) void {
     mod_tests.step.dependOn(&bssl_ninja.step);
     mod_tests.step.dependOn(&lsquic_ninja.step);
     mod_tests.step.dependOn(&deflate_ninja.step);
-    const run_mod_tests = b.addRunArtifact(mod_tests);
+    const run_mod_tests = add_run_artifact(b, mod_tests, sanitizer_run_config);
 
     const lib_tests = b.addTest(.{
         .root_module = lib.root_module,
@@ -365,7 +432,7 @@ pub fn build(b: *std.Build) void {
     lib_tests.step.dependOn(&bssl_ninja.step);
     lib_tests.step.dependOn(&lsquic_ninja.step);
     lib_tests.step.dependOn(&deflate_ninja.step);
-    const run_lib_tests = b.addRunArtifact(lib_tests);
+    const run_lib_tests = add_run_artifact(b, lib_tests, sanitizer_run_config);
 
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
@@ -405,7 +472,7 @@ pub fn build(b: *std.Build) void {
     const fuzz_tests = b.addTest(.{
         .root_module = fuzz_mod,
     });
-    const run_fuzz_tests = b.addRunArtifact(fuzz_tests);
+    const run_fuzz_tests = add_run_artifact(b, fuzz_tests, sanitizer_run_config);
     const fuzz_step = b.step("fuzz", "Fuzz HTTP and WebSocket parsers");
     fuzz_step.dependOn(&run_fuzz_tests.step);
 }
@@ -422,8 +489,13 @@ fn add_cross_cmake_args(
     b: *std.Build,
     command: *std.Build.Step.Run,
     target: std.Build.ResolvedTarget,
+    target_is_native: bool,
+    sanitize: bool,
 ) void {
-    if (target.query.isNative()) return;
+    if (target_is_native) {
+        if (sanitize) command.addArg("-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY");
+        return;
+    }
 
     const system_name: []const u8 = switch (target.result.os.tag) {
         .linux => "Linux",
@@ -447,11 +519,46 @@ fn add_cross_cmake_args(
 fn set_vendor_environment(
     b: *std.Build,
     command: *std.Build.Step.Run,
-    target: std.Build.ResolvedTarget,
+    target_is_native: bool,
     target_triple: []const u8,
 ) void {
     command.setEnvironmentVariable("UWEBZOCKETS_ZIG", b.graph.zig_exe);
-    if (!target.query.isNative()) {
+    if (!target_is_native) {
         command.setEnvironmentVariable("UWEBZOCKETS_TARGET", target_triple);
     }
+}
+
+fn add_run_artifact(
+    b: *std.Build,
+    artifact: *std.Build.Step.Compile,
+    sanitizer: SanitizerRunConfig,
+) *std.Build.Step.Run {
+    if (!sanitizer.enabled) return b.addRunArtifact(artifact);
+
+    const dynamic_linker = sanitizer.dynamic_linker orelse {
+        const command = b.addRunArtifact(artifact);
+        command.setEnvironmentVariable("LD_PRELOAD", sanitizer.shared_object);
+        return command;
+    };
+    if (artifact.kind == .@"test") {
+        artifact.setExecCmd(&.{
+            dynamic_linker,
+            "--library-path",
+            sanitizer.library_path,
+            "--preload",
+            sanitizer.shared_object,
+            null,
+        });
+        return b.addRunArtifact(artifact);
+    }
+
+    const command = b.addSystemCommand(&.{
+        dynamic_linker,
+        "--library-path",
+        sanitizer.library_path,
+        "--preload",
+        sanitizer.shared_object,
+    });
+    command.addArtifactArg(artifact);
+    return command;
 }

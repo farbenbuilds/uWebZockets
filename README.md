@@ -67,16 +67,19 @@ zig build test --summary all
 zig build -Doptimize=ReleaseSafe
 ```
 
-The Nix shell also exposes the native sanitizer runtime. Run the complete test
-graph with ASan, UBSan, LeakSanitizer, Zig C-UB checks, and frame pointers:
+The Nix shell also exposes a coherent LLVM sanitizer runtime, matching glibc,
+and dynamic linker. Run the complete test graph with ASan, UBSan,
+LeakSanitizer, Zig C-UB checks, and frame pointers:
 
 ```sh
 zig build test -Dsanitize=true -Doptimize=ReleaseSafe --summary all
 ```
 
-Outside Nix, also pass `-Dsanitizer-lib-dir=/path/to/compiler/runtime/lib`.
-Sanitizer builds are intentionally restricted to native Linux and use a
-separate vendor cache.
+Outside Nix, also pass `-Dsanitizer-lib-dir=/path/to/compiler/runtime/lib`. If
+that runtime requires a different glibc than the host, pass the matching
+`-Dsanitizer-libc-dir` and `-Dsanitizer-dynamic-linker` paths together.
+Sanitizer builds are intentionally restricted to native Linux, set coherent
+runtime RPATHs, and use a separate vendor cache.
 
 Without Nix, install the requirements above and run the same Zig commands. If
 zlib is not in the compiler's default search path, pass a prefix containing

@@ -46,7 +46,16 @@ while [ "$attempt" -lt 100 ]; do
         cat "$server_log" >&2
         exit 1
     fi
-    if python3 -c 'import socket; s = socket.create_connection(("127.0.0.1", 3000), 0.1); s.close()' 2>/dev/null; then
+    if python3 -c '
+import http.client
+connection = http.client.HTTPConnection("127.0.0.1", 3000, timeout=0.5)
+connection.request("GET", "/", headers={"Connection": "close"})
+response = connection.getresponse()
+response.read()
+connection.close()
+if response.status != 200:
+    raise SystemExit(1)
+' 2>/dev/null; then
         ready=true
         break
     fi
