@@ -45,16 +45,40 @@ jobs:
       - name: Build candidate
         working-directory: candidate
         run: |
-          nix develop "path:." -c zig build \
-            -Doptimize=ReleaseFast \
-            --prefix "$RUNNER_TEMP/candidate"
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if nix develop "path:." -c zig build \
+              -Doptimize=ReleaseFast \
+              --prefix "$RUNNER_TEMP/candidate"; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            retry_delay=$((attempt * 10))
+            printf 'Candidate build attempt %s failed; retrying in %s seconds\n' \
+              "$attempt" "$retry_delay"
+            sleep "$retry_delay"
+          done
 
       - name: Build baseline
         working-directory: baseline
         run: |
-          nix develop "path:." -c zig build \
-            -Doptimize=ReleaseFast \
-            --prefix "$RUNNER_TEMP/baseline"
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if nix develop "path:." -c zig build \
+              -Doptimize=ReleaseFast \
+              --prefix "$RUNNER_TEMP/baseline"; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            retry_delay=$((attempt * 10))
+            printf 'Baseline build attempt %s failed; retrying in %s seconds\n' \
+              "$attempt" "$retry_delay"
+            sleep "$retry_delay"
+          done
 
       - name: Compare HTTP throughput
         id: benchmark
