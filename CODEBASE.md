@@ -105,10 +105,12 @@ outlive the application.
 
 Response metadata is validated against control-character injection and
 ambiguous `Content-Length` or `Transfer-Encoding`. Writes enter a bounded ring
-queue and handle partial kernel writes. Producers observe `error.WouldBlock`
-instead of causing unbounded memory growth. Chunk headers, bodies, and
-terminators are copied into that ring as parts, so no per-connection chunk
-scratch allocation or fixed 8 KiB chunk ceiling is needed.
+queue and handle partial kernel writes. A fully drained ring normalizes its head
+to keep the next logical write contiguous instead of creating a delayed-ACK
+wrap split. Producers observe `error.WouldBlock` instead of causing unbounded
+memory growth. Chunk headers, bodies, and terminators are copied into that ring
+as parts, so no per-connection chunk scratch allocation or fixed 8 KiB chunk
+ceiling is needed.
 
 ## WebSocket
 

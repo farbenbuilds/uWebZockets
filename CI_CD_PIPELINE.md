@@ -121,12 +121,14 @@ HTTP/3 compliance job is not yet part of the alpha gate.
 
 The benchmark workflow checks the pull request and its `main` base out into
 separate directories, then builds each checkout from its own working directory
-with ReleaseFast on the same Ubuntu runner. It runs three 10-second `wrk`
-samples against each `hello_world` server, compares median requests per second,
-and fails when the candidate falls below 90 percent of the baseline. Raw
-latency and throughput reports are retained for 30 days. The tolerance
-accounts for shared-runner variance; benchmark results are regression evidence,
-not a portable capacity claim.
+with ReleaseFast on the same Ubuntu runner. Candidate and baseline builds use
+three bounded attempts with 10- and 20-second backoff so a transient immutable
+dependency fetch does not discard the comparison. The workflow runs three
+10-second `wrk` samples against each `hello_world` server, compares median
+requests per second, and fails when the candidate falls below 90 percent of the
+baseline. Raw latency and throughput reports are retained for 30 days. The
+tolerance accounts for shared-runner variance; benchmark results are regression
+evidence, not a portable capacity claim.
 
 ## Publishing
 

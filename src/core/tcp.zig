@@ -618,8 +618,13 @@ fn on_write_complete(
     const now = std.Io.Clock.now(.awake, conn.io);
     conn.last_active_ms = @intCast(@divTrunc(now.nanoseconds, std.time.ns_per_ms));
 
-    conn.write_head = (conn.write_head + written) % conn.write_queue.len;
     conn.write_len -= written;
+    conn.write_head = advance_write_head(
+        conn.write_head,
+        written,
+        conn.write_len,
+        conn.write_queue.len,
+    );
     conn.write_in_flight_len = 0;
 
     conn.flush_tls_out() catch {
@@ -647,6 +652,17 @@ fn on_write_complete(
 
     conn.start_write();
     return .disarm;
+}
+
+fn advance_write_head(
+    current_head: usize,
+    written: usize,
+    remaining: usize,
+    capacity: usize,
+) usize {
+    std.debug.assert(capacity != 0);
+    if (remaining == 0) return 0;
+    return (current_head + written) % capacity;
 }
 
 pub fn close_after_flush(conn: *TcpConnection) void {
@@ -897,6 +913,12 @@ test "tcp: multipart ring writes preserve order across wrap" {
     try std.testing.expectEqual(@as(usize, 3), tail);
     try std.testing.expectEqualStrings("cde", buffer[0..3]);
     try std.testing.expectEqualStrings("ab", buffer[6..8]);
+}
+
+test "tcp: drained write ring normalizes its head" {
+    try std.testing.expectEqual(@as(usize, 0), advance_write_head(65_504, 32, 0, 65_536));
+    try std.testing.expectEqual(@as(usize, 0), advance_write_head(65_504, 32, 57, 65_536));
+    try std.testing.expectEqual(@as(usize, 25), advance_write_head(10, 15, 20, 65_536));
 }
 
 test "tcp: closed connection waits for active completions" {

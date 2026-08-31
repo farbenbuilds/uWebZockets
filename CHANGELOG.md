@@ -81,6 +81,10 @@ versions.
   deadline and could spin a CPU core.
 - Fixed benchmark candidate and baseline builds running from the parent
   workspace where Zig could not discover either checkout's `build.zig`.
+- Fixed drained TCP write rings retaining a tail offset that split later small
+  responses across the wrap boundary and triggered delayed-ACK stalls.
+- Added bounded benchmark build retries for transient immutable dependency
+  fetch failures.
 - Fixed HTTP request accumulation, pipelining, partial writes, close-after-drain,
   duplicate framing headers, oversized metadata/body handling, and response
   header injection. Empty header names, invalid chunk-size grammar, oversized
