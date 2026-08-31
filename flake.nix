@@ -146,7 +146,15 @@
             '';
           };
 
-        mkDevShell = packagePkgs:
+        mkDevShell = packagePkgs: let
+          zlibPrefix = packagePkgs.symlinkJoin {
+            name = "uwebzockets-zlib-dev";
+            paths = [
+              packagePkgs.zlib.dev
+              packagePkgs.zlib.static
+            ];
+          };
+        in
           packagePkgs.mkShell {
             packages = [
               zig
@@ -164,6 +172,7 @@
               packagePkgs.zlib
               packagePkgs.wrk
             ];
+            UWEBZOCKETS_ZLIB_PREFIX = zlibPrefix;
             shellHook = lib.optionalString isLinux ''
               export UWEBZOCKETS_SANITIZER_LIB_DIR="${packagePkgs.stdenv.cc.cc.lib}/lib"
             '';

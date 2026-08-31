@@ -23,7 +23,7 @@ pub fn build(b: *std.Build) void {
         []const u8,
         "zlib-prefix",
         "Path containing zlib include/ and lib/ directories",
-    );
+    ) orelse b.graph.environ_map.get("UWEBZOCKETS_ZLIB_PREFIX");
     const cmake_exe = b.option([]const u8, "cmake", "CMake executable") orelse "cmake";
     const ninja_exe = b.option([]const u8, "ninja", "Ninja executable") orelse "ninja";
     const c_compiler = b.option(
