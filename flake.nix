@@ -138,7 +138,7 @@
         in
           packagePkgs.stdenv.mkDerivation {
             pname = "uwebzockets-compile-tests";
-            version = "1.0.0";
+            version = "1.0.1";
             src = source;
             strictDeps = true;
             inherit nativeBuildInputs;

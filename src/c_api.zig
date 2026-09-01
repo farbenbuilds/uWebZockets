@@ -110,7 +110,7 @@ const CreateMode = enum {
 
 /// Returns the versioned C ABI string.
 pub export fn uwz_version() [*c]const u8 {
-    return "1.0.0";
+    return "1.0.1";
 }
 
 /// Returns a static name for a versioned C error code.
