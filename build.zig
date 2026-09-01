@@ -829,6 +829,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("fuzz/http_framing.zig"),
         .target = target,
         .optimize = optimize,
+        .stack_check = false,
     });
     http_fuzz_mod.addImport("fuzz_support", fuzz_support_mod);
     const http_fuzz_object = b.addObject(.{
@@ -841,6 +842,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("fuzz/ws_masking.zig"),
         .target = target,
         .optimize = optimize,
+        .stack_check = false,
     });
     ws_fuzz_mod.addImport("fuzz_support", fuzz_support_mod);
     const ws_fuzz_object = b.addObject(.{
@@ -853,6 +855,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("fuzz/quic_packets.zig"),
         .target = target,
         .optimize = optimize,
+        .stack_check = false,
     });
     quic_fuzz_mod.addImport("fuzz_support", fuzz_support_mod);
     const quic_fuzz_object = b.addObject(.{
