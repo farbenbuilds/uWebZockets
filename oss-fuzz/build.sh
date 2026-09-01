@@ -23,6 +23,7 @@ for target in http_framing ws_masking quic_packets; do
     # OSS-Fuzz exposes compiler arguments as space-delimited strings.
     # shellcheck disable=SC2086
     "$CXX" $CXXFLAGS \
+        -no-pie \
         "$install_dir/oss-fuzz/${target}.o" \
         $LIB_FUZZING_ENGINE \
         -o "$OUT/$target"

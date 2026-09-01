@@ -113,8 +113,8 @@ jobs:
 
           cpu_model=$(lscpu | awk -F: '/^Model name:/ { sub(/^[[:space:]]+/, "", $2); print $2; exit }')
           runner_image="${ImageOS:-unknown}/${ImageVersion:-unknown}"
-          zig_version=$(nix develop "path:./candidate" -c zig version)
-          wrk_version=$(nix develop "path:./candidate" -c sh -c 'wrk --version 2>&1' | sed -n '1p')
+          zig_version=$(nix develop "path:./candidate" -c zig version) || zig_version=unknown
+          wrk_version=$(nix develop "path:./candidate" -c sh -c 'wrk --version 2>&1' | sed -n '1p') || wrk_version=unknown
           python3 candidate/scripts/create_benchmark_record.py \
             --contract candidate/benchmarks/http_throughput_v1.env \
             --candidate-rates "$result_directory/candidate-rates.txt" \
