@@ -7,6 +7,8 @@ uses Semantic Versioning.
 
 ### Fixed
 
+- Fixed macOS release builds by routing TCP, UDP, and listener cancellation
+  through a kqueue-compatible libxev adapter.
 - Fixed Nix dev-shell evaluation by using the package set supplied by
   `flake-parts` instead of recursively replacing its compiler stdenv.
 - Fixed macOS release metadata validation by replacing the Bash 4-only

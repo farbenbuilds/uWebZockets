@@ -2,6 +2,7 @@ const std = @import("std");
 const xev = @import("xev");
 const c = @import("c");
 const Loop = @import("loop.zig").Loop;
+const core_loop = @import("loop.zig");
 const http_parser = @import("../http/parser.zig");
 const HttpParser = http_parser.HttpParser;
 const Request = @import("../http/request.zig").Request;
@@ -1144,7 +1145,8 @@ pub fn close_connection(conn: *TcpConnection) void {
 
     if (conn.read_active) {
         conn.read_cancel_active = true;
-        conn.loop.cancel(
+        core_loop.cancel(
+            conn.loop,
             &conn.read_completion,
             &conn.read_cancel_completion,
             TcpConnection,
@@ -1154,7 +1156,8 @@ pub fn close_connection(conn: *TcpConnection) void {
     }
     if (conn.is_writing) {
         conn.write_cancel_active = true;
-        conn.loop.cancel(
+        core_loop.cancel(
+            conn.loop,
             &conn.write_completion,
             &conn.write_cancel_completion,
             TcpConnection,
@@ -1293,7 +1296,8 @@ pub fn close_server(server: *TcpServer, loop: *Loop) void {
     if (server.closing) return;
     server.closing = true;
     if (server.accept_completion.state() == .active) {
-        loop.get_xev_loop().cancel(
+        core_loop.cancel(
+            loop.get_xev_loop(),
             &server.accept_completion,
             &server.accept_cancel_completion,
             void,
