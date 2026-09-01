@@ -42,7 +42,8 @@
           else null;
 
         zig = inputs.zig-overlay.packages.${system}."0.16.0" or pkgs.zig;
-        zon2nixPackage = inputs.zon2nix.packages.${system}.zon2nix;
+        # zon2nix does not publish packages for every supported Darwin system.
+        zon2nixPackage = (inputs.zon2nix.packages.${system} or {}).zon2nix or null;
         zigPackages = pkgs.callPackage ./build.zig.zon.nix {
           zig_0_16 = zig;
         };
@@ -181,7 +182,6 @@
                 [
                   zig
                   packagePkgs.zls
-                  zon2nixPackage
                   pkgs.cmake
                   pkgs.ninja
                   pkgs.pkg-config
@@ -195,8 +195,8 @@
                   packagePkgs.xz
                   packagePkgs.zlib
                   packagePkgs.wrk
-                  packagePkgs.deno
                 ]
+                ++ lib.optional (zon2nixPackage != null) zon2nixPackage
                 ++ lib.optional supportsSanitizers llvmCompilerRt;
               UWEBZOCKETS_ZLIB_PREFIX = zlibPrefix;
               UWEBZOCKETS_DEFAULT_TARGET = targetTriple;
