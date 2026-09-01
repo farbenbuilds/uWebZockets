@@ -9,6 +9,13 @@ uses Semantic Versioning.
 
 - Fixed Nix dev-shell evaluation by using the package set supplied by
   `flake-parts` instead of recursively replacing its compiler stdenv.
+- Fixed macOS release metadata validation by replacing the Bash 4-only
+  `mapfile` builtin with Bash 3.2-compatible version parsing.
+- Removed Deno from the Nix dev shell and made `zon2nix` conditional on
+  platform support, preventing unnecessary `rusty-v8`/glibc builds and
+  unsupported Darwin shell evaluation.
+- Kept host utilities native in the musl dev shell so `direnv` does not
+  rebuild target-libc copies of unrelated development tools.
 
 ## [1.0.0] - 2026-09-01
 
