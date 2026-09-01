@@ -7,8 +7,8 @@ uses Semantic Versioning.
 
 ### Fixed
 
-- Fixed Nix dev-shell evaluation with current Nixpkgs by selecting its dedicated
-  `gcc14Stdenv` when available and retaining the default stdenv otherwise.
+- Fixed Nix dev-shell evaluation by using the package set supplied by
+  `flake-parts` instead of recursively replacing its compiler stdenv.
 
 ## [1.0.0] - 2026-09-01
 

@@ -26,14 +26,6 @@
         system,
         ...
       }: let
-        pkgs = import inputs.nixpkgs {
-          inherit system;
-          overlays = [
-            (final: prev: {
-              stdenv = if prev ? gcc14Stdenv then prev.gcc14Stdenv else prev.stdenv;
-            })
-          ];
-        };
         lib = pkgs.lib;
         isLinux = pkgs.stdenv.hostPlatform.isLinux;
         pkgsMusl =
