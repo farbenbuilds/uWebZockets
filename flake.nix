@@ -30,7 +30,7 @@
           inherit system;
           overlays = [
             (final: prev: {
-              stdenv = prev.stdenvAdapters.overrideCC prev.stdenv (if prev ? gcc14 then prev.gcc14 else prev.stdenv.cc);
+              stdenv = if prev ? gcc14Stdenv then prev.gcc14Stdenv else prev.stdenv;
             })
           ];
         };
