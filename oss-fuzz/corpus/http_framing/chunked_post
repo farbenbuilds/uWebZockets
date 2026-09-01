@@ -1,0 +1,13 @@
+POST /upload HTTP/1.1
+Host: example.test
+Transfer-Encoding: chunked
+
+4
+test
+0
+
+POST /tail HTTP/1.1
+Host: example.test
+Content-Length: 1
+
+x

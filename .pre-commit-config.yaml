@@ -7,14 +7,16 @@ repos:
     rev: v6.0.0
     hooks:
       - id: trailing-whitespace
+        exclude: ^(patches/.*\.patch|oss-fuzz/corpus/)
       - id: end-of-file-fixer
+        exclude: ^oss-fuzz/corpus/
       - id: check-yaml
       - id: check-added-large-files
   - repo: local
     hooks:
       - id: zon2nix
         name: zon2nix
-        entry: bash -c 'if command -v nix >/dev/null 2>&1; then nix develop -c zon2nix --nix=build.zig.zon.nix --json=build.zig.zon.json --txt=build.zig.zon.txt "$@"; else echo "nix not found, skipping zon2nix"; exit 0; fi' --
+        entry: bash scripts/update_zon_files.sh
         language: system
         files: ^build\.zig\.zon$
-        pass_filenames: true
+        pass_filenames: false

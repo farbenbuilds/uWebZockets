@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "endpoint": "https://127.0.0.1:8443/",
+  "clients": {
+    "curl": {
+      "version": "8.21.0",
+      "quic": "ngtcp2/1.22.1",
+      "http3": "nghttp3/1.15.0"
+    },
+    "aioquic": {
+      "version": "1.3.0"
+    }
+  },
+  "response": {
+    "status": 200,
+    "http_version": "3",
+    "body": "Hello from bounded HTTP/3",
+    "body_sha256": "8f737cb0263db526cf6986f67f158b0b73f24738da1ec6fe31fee37c146191e8"
+  },
+  "malformed_cases": [
+    "duplicate_method",
+    "connection_specific_header",
+    "pseudo_header_after_regular"
+  ],
+  "accepted_rejections": [
+    "stream_reset"
+  ],
+  "malformed_stream_error": 270,
+  "excluded_runtime_features": [
+    "server_push",
+    "webtransport"
+  ]
+}

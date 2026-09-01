@@ -5,27 +5,49 @@ const Loop = @import("loop.zig").Loop;
 const http_parser = @import("../http/parser.zig");
 const HttpParser = http_parser.HttpParser;
 const Request = @import("../http/request.zig").Request;
-const Response = @import("../http/response.zig").Response;
+const http_response = @import("../http/response.zig");
+const Response = http_response.Response;
 const WebSocket = @import("../ws/socket.zig").WebSocket;
 const radix = @import("../router/radix.zig");
 const Router = radix.Router;
 const handshake = @import("../crypto/handshake.zig");
+const tls = @import("../crypto/tls.zig");
 const DeflateContext = @import("../ws/deflate.zig").Context;
+const http2_server = @import("../http2/server.zig");
 
+/// Bytes read from one POSIX socket completion at a time.
 pub const socket_read_capacity = 8192;
+/// Maximum buffered HTTP/1 request bytes per TCP connection.
 pub const request_buffer_capacity = http_parser.max_request_line_size +
     http_parser.max_header_size + http_parser.max_body_size + 1024;
+/// Default bounded pending-output capacity per TCP connection.
 pub const default_write_queue_capacity = 64 * 1024;
+/// Maximum simultaneous HTTP/2 request streams per TCP connection.
+pub const max_http2_streams = 8;
 
 const tls_bio_capacity = 32 * 1024;
 const tls_plaintext_record_capacity = 16 * 1024;
 const tls_record_overhead = 64;
+const Http2Session = http2_server.server_session(
+    max_http2_streams,
+    http_parser.max_header_size,
+    http_parser.max_header_size,
+    http_parser.max_body_size,
+);
+const Http2AsyncContext = struct {
+    connection: *TcpConnection = undefined,
+    stream_id: u32 = 0,
+};
 
+/// Plaintext protocol selected for one TCP connection.
 pub const ProtocolState = enum(u8) {
+    detect,
     http,
+    http2,
     websocket,
 };
 
+/// Event-loop-confined TCP/TLS connection with bounded protocol storage.
 pub const TcpConnection = struct {
     router: *const Router = undefined,
     pubsub: ?*@import("../ws/pubsub.zig").PubSubEngine = null,
@@ -48,6 +70,10 @@ pub const TcpConnection = struct {
     req: Request = .{},
     parser: HttpParser = .{},
     ws: WebSocket = undefined,
+    h2: Http2Session = .{},
+    h2_async_states: [max_http2_streams]http_response.AsyncResponseState =
+        .{http_response.AsyncResponseState{}} ** max_http2_streams,
+    h2_async_contexts: [max_http2_streams]Http2AsyncContext = undefined,
 
     last_active_ms: i64 = 0,
     request_len: usize = 0,
@@ -57,7 +83,7 @@ pub const TcpConnection = struct {
 
     ssl: ?*c.SSL = null,
     network_bio: ?*c.BIO = null,
-    protocol_state: ProtocolState = .http,
+    protocol_state: ProtocolState = .detect,
     is_tls_handshake_done: bool = false,
     tls_shutdown_started: bool = false,
     read_active: bool = false,
@@ -70,12 +96,31 @@ pub const TcpConnection = struct {
     closing: bool = false,
     expect_continue_sent: bool = false,
     suppress_response_body: bool = false,
+    dispatch_suspended: bool = false,
+    pending_close_requested: bool = false,
+
+    pending_request_consumed: usize = 0,
+    protocol_probe_len: usize = 0,
+    async_response_state: http_response.AsyncResponseState = .{},
 
     read_buffer: [socket_read_capacity]u8 = undefined,
     request_buffer: [request_buffer_capacity]u8 = undefined,
     tls_write_buffer: [8192]u8 = undefined,
+    protocol_probe: [@import("../http2/connection.zig").client_preface.len]u8 = undefined,
     write_queue: []u8 = &.{},
 
+    /// Resets protocol detection and bounded HTTP/2 state after pool acquire.
+    pub fn reset_protocol(self: *TcpConnection) !void {
+        self.protocol_state = .detect;
+        self.protocol_probe_len = 0;
+        try self.h2.reset();
+        for (&self.h2_async_states, &self.h2_async_contexts) |*state, *context| {
+            state.cancel();
+            context.* = .{ .connection = self };
+        }
+    }
+
+    /// Allocates BoringSSL state and attaches bounded paired memory BIOs.
     pub fn init_tls(self: *TcpConnection, ssl_ctx: *c.SSL_CTX) !void {
         if (self.ssl != null or self.network_bio != null) return error.TlsAlreadyInitialized;
 
@@ -106,6 +151,7 @@ pub const TcpConnection = struct {
         self.tls_shutdown_started = false;
     }
 
+    /// Releases BoringSSL and network BIO state when present.
     pub fn deinit_tls(self: *TcpConnection) void {
         const ssl = self.ssl orelse return;
         c.SSL_free(ssl);
@@ -116,6 +162,7 @@ pub const TcpConnection = struct {
         self.tls_shutdown_started = false;
     }
 
+    /// Feeds encrypted bytes through the handshake and plaintext dispatcher.
     pub fn process_tls_data(self: *TcpConnection, ssl: *c.SSL, encrypted_data: []const u8) void {
         const network_bio = self.network_bio orelse {
             close_connection(self);
@@ -142,8 +189,42 @@ pub const TcpConnection = struct {
             if (!self.is_tls_handshake_done) return;
         }
 
+        self.drain_tls_plaintext(ssl);
+    }
+
+    fn drive_tls_handshake(self: *TcpConnection, ssl: *c.SSL) !void {
+        var attempts: usize = 0;
+        while (attempts < 8) : (attempts += 1) {
+            const status = handshake.step(ssl);
+            try self.flush_tls_out();
+
+            switch (status) {
+                .success => {
+                    self.is_tls_handshake_done = true;
+                    self.protocol_probe_len = 0;
+                    switch (tls.negotiated_protocol(ssl)) {
+                        .http2 => {
+                            try self.h2.reset();
+                            self.protocol_state = .http2;
+                        },
+                        .http1, .none => self.protocol_state = .http,
+                    }
+                    return;
+                },
+                .want_read => return,
+                .want_write => {
+                    const network_bio = self.network_bio orelse return error.TlsUnavailable;
+                    if (c.BIO_ctrl_pending(network_bio) != 0) return;
+                },
+                .failed => return error.TlsHandshakeFailed,
+            }
+        }
+        return error.TlsHandshakeStalled;
+    }
+
+    fn drain_tls_plaintext(self: *TcpConnection, ssl: *c.SSL) void {
         var plain_buffer: [socket_read_capacity]u8 = undefined;
-        while (!self.closing) {
+        while (!self.closing and !self.dispatch_suspended) {
             const read_bytes = c.SSL_read(ssl, &plain_buffer, plain_buffer.len);
             if (read_bytes > 0) {
                 self.route_decrypted_data(plain_buffer[0..@intCast(read_bytes)]);
@@ -162,36 +243,251 @@ pub const TcpConnection = struct {
         self.flush_tls_out() catch close_connection(self);
     }
 
-    fn drive_tls_handshake(self: *TcpConnection, ssl: *c.SSL) !void {
-        var attempts: usize = 0;
-        while (attempts < 8) : (attempts += 1) {
-            const status = handshake.step(ssl);
-            try self.flush_tls_out();
-
-            switch (status) {
-                .success => {
-                    self.is_tls_handshake_done = true;
-                    return;
-                },
-                .want_read => return,
-                .want_write => {
-                    const network_bio = self.network_bio orelse return error.TlsUnavailable;
-                    if (c.BIO_ctrl_pending(network_bio) != 0) return;
-                },
-                .failed => return error.TlsHandshakeFailed,
-            }
-        }
-        return error.TlsHandshakeStalled;
-    }
-
+    /// Routes mutable plaintext to HTTP/1, HTTP/2, or WebSocket state.
     pub fn route_decrypted_data(self: *TcpConnection, data: []u8) void {
         switch (self.protocol_state) {
+            .detect => self.route_detect_data(data),
             .http => self.route_http_data(data),
+            .http2 => self.route_http2_data(data),
             .websocket => self.ws.on_data(data),
         }
     }
 
+    fn route_detect_data(self: *TcpConnection, data: []const u8) void {
+        const preface = @import("../http2/connection.zig").client_preface;
+        var offset: usize = 0;
+        while (offset < data.len and self.protocol_probe_len < preface.len) {
+            self.protocol_probe[self.protocol_probe_len] = data[offset];
+            self.protocol_probe_len += 1;
+            offset += 1;
+
+            const probe = self.protocol_probe[0..self.protocol_probe_len];
+            if (std.mem.eql(u8, probe, preface[0..probe.len])) continue;
+
+            self.protocol_state = .http;
+            self.route_http_data(probe);
+            self.protocol_probe_len = 0;
+            if (offset < data.len and !self.closing) self.route_http_data(data[offset..]);
+            return;
+        }
+
+        if (self.protocol_probe_len != preface.len) return;
+        self.protocol_state = .http2;
+        self.route_http2_data(self.protocol_probe[0..self.protocol_probe_len]);
+        self.protocol_probe_len = 0;
+        if (offset < data.len and !self.closing) self.route_http2_data(data[offset..]);
+    }
+
+    fn route_http2_data(self: *TcpConnection, data: []const u8) void {
+        const callbacks = self.http2_callbacks();
+        self.h2.receive(data, callbacks) catch {
+            close_connection(self);
+            return;
+        };
+        if (self.h2.is_closed()) close_after_flush(self);
+    }
+
+    fn http2_callbacks(self: *TcpConnection) http2_server.Callbacks {
+        return .{
+            .context = self,
+            .write_fn = write_http2_parts,
+            .request_fn = dispatch_http2_request,
+            .stream_closed_fn = close_http2_stream,
+            .max_frame_payload = http2_frame_payload_capacity(
+                self.write_queue.len,
+                self.ssl != null,
+            ),
+        };
+    }
+
+    fn close_http2_stream(context: *anyopaque, stream_id: u32, index: u16) void {
+        const self: *TcpConnection = @ptrCast(@alignCast(context));
+        if (index >= self.h2_async_states.len) return;
+        if (self.h2_async_contexts[index].stream_id != stream_id) return;
+        self.h2_async_states[index].cancel();
+        self.h2_async_contexts[index].stream_id = 0;
+    }
+
+    fn write_http2_parts(context: *anyopaque, parts: []const []const u8) !void {
+        const self: *TcpConnection = @ptrCast(@alignCast(context));
+        try self.write_data_parts(parts);
+    }
+
+    fn dispatch_http2_request(
+        context: *anyopaque,
+        request: *Request,
+        stream_id: u32,
+    ) !void {
+        const self: *TcpConnection = @ptrCast(@alignCast(context));
+        var response = Response{ .target = .{ .http2 = .{
+            .context = self,
+            .router = self.router,
+            .stream_id = stream_id,
+            .end_fn = end_http2_response,
+            .begin_fn = begin_http2_response,
+            .write_fn = write_http2_response,
+            .finish_fn = finish_http2_response,
+        } } };
+        const method = radix.HttpMethod.parse(request.method);
+        if (!request.valid_query_content_type()) {
+            try response.end("400 Bad Request", "QUERY requires a valid Content-Type");
+            return;
+        }
+        const route = self.router.match_request(request, method);
+        if (self.router.run_middleware(request, &response) == .stop) {
+            try self.finish_http2_dispatch(&response);
+            return;
+        }
+        if (method == .options and std.mem.eql(u8, request.path, "*")) {
+            try response.end("204 No Content", "");
+            return;
+        }
+
+        const matched_route = route orelse {
+            try response.end("404 Not Found", "Route not found");
+            return;
+        };
+        const handler = matched_route.handler orelse {
+            if (method == .options) {
+                self.send_method_response(
+                    &response,
+                    matched_route.allowed_methods,
+                    "204 No Content",
+                    "",
+                );
+                return;
+            }
+            if (matched_route.ws_behavior != null) {
+                try response.end("501 Not Implemented", "HTTP/2 WebSocket dispatch is unavailable");
+                return;
+            }
+            self.send_method_response(
+                &response,
+                matched_route.allowed_methods,
+                "405 Method Not Allowed",
+                "Method Not Allowed",
+            );
+            return;
+        };
+
+        switch (handler) {
+            .synchronous => |callback| callback(request, &response),
+            .contextual => |binding| binding.callback(binding.context, request, &response),
+            .asynchronous => |callback| {
+                const token = try self.arm_http2_async(stream_id);
+                callback(request, token);
+                return;
+            },
+            .contextual_async => |binding| {
+                const token = try self.arm_http2_async(stream_id);
+                binding.callback(binding.context, request, token);
+                return;
+            },
+        }
+        try self.finish_http2_dispatch(&response);
+    }
+
+    fn finish_http2_dispatch(self: *TcpConnection, response: *Response) !void {
+        _ = self;
+        if (response.is_complete()) return;
+        if (response.is_started()) {
+            try response.end_chunks();
+            return;
+        }
+        try response.end("500 Internal Server Error", "Handler did not complete the response");
+    }
+
+    fn end_http2_response(
+        context: *anyopaque,
+        stream_id: u32,
+        status: []const u8,
+        headers: []const u8,
+        body: []const u8,
+    ) !void {
+        const self: *TcpConnection = @ptrCast(@alignCast(context));
+        const callbacks = self.http2_callbacks();
+        try self.h2.send_response(stream_id, status, headers, body, callbacks);
+    }
+
+    fn begin_http2_response(
+        context: *anyopaque,
+        stream_id: u32,
+        status: []const u8,
+        headers: []const u8,
+    ) !void {
+        const self: *TcpConnection = @ptrCast(@alignCast(context));
+        const callbacks = self.http2_callbacks();
+        try self.h2.begin_response(stream_id, status, headers, callbacks);
+    }
+
+    fn write_http2_response(
+        context: *anyopaque,
+        stream_id: u32,
+        bytes: []const u8,
+    ) !void {
+        const self: *TcpConnection = @ptrCast(@alignCast(context));
+        const callbacks = self.http2_callbacks();
+        try self.h2.write_response_data(stream_id, bytes, callbacks);
+    }
+
+    fn finish_http2_response(context: *anyopaque, stream_id: u32) !void {
+        const self: *TcpConnection = @ptrCast(@alignCast(context));
+        const callbacks = self.http2_callbacks();
+        try self.h2.finish_response(stream_id, callbacks);
+    }
+
+    fn arm_http2_async(
+        self: *TcpConnection,
+        stream_id: u32,
+    ) !http_response.AsyncResponse {
+        const index = self.h2.connection.streams.find(stream_id) orelse
+            return error.StreamClosed;
+        self.h2_async_contexts[index] = .{
+            .connection = self,
+            .stream_id = stream_id,
+        };
+        return self.h2_async_states[index].arm(.{
+            .context = &self.h2_async_contexts[index],
+            .complete_fn = complete_http2_async_response,
+            .wake_fn = wake_http2_async_response,
+        });
+    }
+
+    fn complete_http2_async_response(
+        context: *anyopaque,
+        status: []const u8,
+        headers: []const u8,
+        body: []const u8,
+    ) !void {
+        const async_context: *Http2AsyncContext = @ptrCast(@alignCast(context));
+        const self = async_context.connection;
+        if (self.closing or self.close_complete) return error.ConnectionClosed;
+        const callbacks = self.http2_callbacks();
+        self.h2.send_response(
+            async_context.stream_id,
+            status,
+            headers,
+            body,
+            callbacks,
+        ) catch |err| {
+            self.h2.reset_stream(
+                async_context.stream_id,
+                .internal_error,
+                callbacks,
+            ) catch close_connection(self);
+            return err;
+        };
+    }
+
+    fn wake_http2_async_response(_: *anyopaque) void {
+        // HTTP/2 reads remain armed while other streams await completion.
+    }
+
     fn route_http_data(self: *TcpConnection, data: []const u8) void {
+        if (self.dispatch_suspended) {
+            close_connection(self);
+            return;
+        }
         const available = self.request_buffer.len - self.request_len;
         if (data.len > available) {
             const status = switch (self.parser.state) {
@@ -232,6 +528,11 @@ pub const TcpConnection = struct {
             const close_requested = self.req.header_has_token("Connection", "close");
             self.dispatch_request();
             if (self.closing or self.close_when_drained) return;
+            if (self.dispatch_suspended) {
+                self.pending_request_consumed = consumed;
+                self.pending_close_requested = close_requested;
+                return;
+            }
 
             if (self.protocol_state == .websocket) {
                 if (consumed < self.request_len) {
@@ -265,37 +566,46 @@ pub const TcpConnection = struct {
         const method = radix.HttpMethod.parse(self.req.method);
         self.suppress_response_body = method == .head;
 
-        const route = self.router.match(self.req.path, method) orelse {
+        if (!self.req.valid_query_content_type()) {
+            response.end("400 Bad Request", "QUERY requires a valid Content-Type") catch
+                close_connection(self);
+            return;
+        }
+        const route = self.router.match_request(&self.req, method);
+        if (self.router.run_middleware(&self.req, &response) == .stop) {
+            self.finish_sync_dispatch(&response);
+            return;
+        }
+
+        if (method == .options and std.mem.eql(u8, self.req.path, "*")) {
+            response.end("204 No Content", "") catch close_connection(self);
+            return;
+        }
+
+        const matched_route = route orelse {
             response.end("404 Not Found", "Route not found") catch close_connection(self);
             return;
         };
 
-        const websocket_intent = route.ws_behavior != null and method == .get and
+        const websocket_intent = matched_route.ws_behavior != null and method == .get and
             (self.req.get_header("Upgrade") != null or self.req.header_has_token("Connection", "upgrade"));
         if (websocket_intent) {
             self.ws = WebSocket{ .conn = self, .pubsub = self.pubsub };
-            self.ws.upgrade(&self.req, &response, route.ws_behavior.?);
+            self.ws.upgrade(&self.req, &response, matched_route.ws_behavior.?);
             return;
         }
 
-        if (route.http_handler) |handler| {
-            handler(&self.req, &response);
-            if (response.is_complete()) return;
-
-            if (response.is_started()) {
-                close_after_flush(self);
-                return;
-            }
-            response.end("500 Internal Server Error", "Handler did not complete the response") catch close_connection(self);
+        if (matched_route.handler) |handler| {
+            self.invoke_handler(handler, &response);
             return;
         }
 
         if (method == .options) {
-            self.send_method_response(&response, route.allowed_methods, "204 No Content", "");
+            self.send_method_response(&response, matched_route.allowed_methods, "204 No Content", "");
             return;
         }
 
-        if (route.ws_behavior != null and method == .get) {
+        if (matched_route.ws_behavior != null and method == .get) {
             response.end_with_headers(
                 "426 Upgrade Required",
                 "Connection: close\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\n",
@@ -308,7 +618,124 @@ pub const TcpConnection = struct {
             return;
         }
 
-        self.send_method_response(&response, route.allowed_methods, "405 Method Not Allowed", "Method Not Allowed");
+        self.send_method_response(&response, matched_route.allowed_methods, "405 Method Not Allowed", "Method Not Allowed");
+    }
+
+    fn invoke_handler(self: *TcpConnection, handler: radix.RouteHandler, response: *Response) void {
+        switch (handler) {
+            .synchronous => |callback| {
+                callback(&self.req, response);
+                self.finish_sync_dispatch(response);
+            },
+            .contextual => |binding| {
+                binding.callback(binding.context, &self.req, response);
+                self.finish_sync_dispatch(response);
+            },
+            .asynchronous => |callback| {
+                const token = self.async_response_state.arm(self.async_target());
+                callback(&self.req, token);
+                self.dispatch_suspended = token.is_pending();
+            },
+            .contextual_async => |binding| {
+                const token = self.async_response_state.arm(self.async_target());
+                binding.callback(binding.context, &self.req, token);
+                self.dispatch_suspended = token.is_pending();
+            },
+        }
+    }
+
+    fn finish_sync_dispatch(self: *TcpConnection, response: *Response) void {
+        if (response.is_complete()) return;
+        if (response.is_started()) {
+            close_after_flush(self);
+            return;
+        }
+        response.end("500 Internal Server Error", "Handler did not complete the response") catch
+            close_connection(self);
+    }
+
+    fn async_target(self: *TcpConnection) http_response.AsyncTarget {
+        return .{
+            .context = self,
+            .complete_fn = complete_async_response,
+            .wake_fn = wake_async_dispatch,
+        };
+    }
+
+    fn complete_async_response(
+        context: *anyopaque,
+        status: []const u8,
+        headers: []const u8,
+        body: []const u8,
+    ) !void {
+        const self: *TcpConnection = @ptrCast(@alignCast(context));
+        if (self.closing or self.close_complete) return error.ConnectionClosed;
+        var response = Response{ .target = .{ .tcp = self } };
+        response.end_with_headers(status, headers, body) catch |err| {
+            close_connection(self);
+            return err;
+        };
+    }
+
+    fn wake_async_dispatch(context: *anyopaque) void {
+        const self: *TcpConnection = @ptrCast(@alignCast(context));
+        if (!self.dispatch_suspended or self.closing) return;
+        self.resume_async_dispatch();
+    }
+
+    fn resume_async_dispatch(self: *TcpConnection) void {
+        self.dispatch_suspended = false;
+        const consumed = self.pending_request_consumed;
+        self.pending_request_consumed = 0;
+        if (self.close_when_drained) {
+            self.pending_close_requested = false;
+            return;
+        }
+        if (consumed > self.request_len) {
+            close_connection(self);
+            return;
+        }
+        if (self.pending_close_requested) {
+            self.pending_close_requested = false;
+            close_after_flush(self);
+            return;
+        }
+
+        const remaining = self.request_len - consumed;
+        std.mem.copyForwards(
+            u8,
+            self.request_buffer[0..remaining],
+            self.request_buffer[consumed..self.request_len],
+        );
+        self.request_len = remaining;
+        self.req = .{};
+        http_parser.reset(&self.parser);
+        self.expect_continue_sent = false;
+        self.suppress_response_body = false;
+        self.route_http_data(&.{});
+
+        if (!self.dispatch_suspended and !self.closing and !self.close_when_drained) {
+            if (self.ssl) |ssl| self.drain_tls_plaintext(ssl);
+        }
+
+        if (!self.dispatch_suspended and !self.closing and !self.close_when_drained and
+            !self.read_active)
+        {
+            self.arm_read();
+        }
+    }
+
+    fn arm_read(self: *TcpConnection) void {
+        if (self.read_active or self.dispatch_suspended or self.closing) return;
+        self.read_active = true;
+        self.socket.read(
+            self.loop,
+            &self.read_completion,
+            .{ .slice = &self.read_buffer },
+            TcpConnection,
+            self,
+            on_read_complete,
+        );
     }
 
     fn send_method_response(
@@ -483,22 +910,28 @@ pub const TcpConnection = struct {
         );
     }
 
+    /// Copies one plaintext slice into the bounded transport write path.
     pub fn write_data(self: *TcpConnection, data: []const u8) !void {
         try self.write_data_parts(&.{data});
     }
 
+    /// Copies scatter/gather plaintext parts atomically into the write path.
     pub fn write_data_parts(self: *TcpConnection, parts: []const []const u8) !void {
         if (self.closing or self.close_when_drained) return error.ConnectionClosed;
         if (self.ssl != null) return self.write_tls_parts(parts);
         return self.enqueue_plain_parts(parts);
     }
 
+    /// Returns encrypted or plaintext bytes queued for the socket.
     pub fn buffered_amount(self: *const TcpConnection) usize {
         return self.write_len;
     }
 };
 
-fn copy_parts_to_ring(buffer: []u8, initial_tail: usize, parts: []const []const u8) usize {
+/// Copies ordered parts into a caller-owned ring and returns the new tail.
+///
+/// `initial_tail` must be in range and the aggregate parts must fit `buffer`.
+pub fn copy_parts_to_ring(buffer: []u8, initial_tail: usize, parts: []const []const u8) usize {
     std.debug.assert(buffer.len > 0);
     var tail = initial_tail;
 
@@ -513,17 +946,23 @@ fn copy_parts_to_ring(buffer: []u8, initial_tail: usize, parts: []const []const 
     return tail;
 }
 
+/// Returns the largest nonempty HTTP/2 payload that always fits an empty queue.
+pub fn http2_frame_payload_capacity(queue_capacity: usize, encrypted: bool) usize {
+    const frame_header_size = 9;
+    if (!encrypted) return queue_capacity -| frame_header_size;
+
+    const record_overhead = 2 * tls_record_overhead;
+    const fixed_cost = frame_header_size + record_overhead;
+    return @min(
+        queue_capacity -| fixed_cost,
+        tls_plaintext_record_capacity,
+    );
+}
+
+/// Arms the first asynchronous socket read for a prepared connection.
 pub fn read_start(conn: *TcpConnection, loop: *Loop) void {
     conn.loop = loop.get_xev_loop();
-    conn.read_active = true;
-    conn.socket.read(
-        conn.loop,
-        &conn.read_completion,
-        .{ .slice = &conn.read_buffer },
-        TcpConnection,
-        conn,
-        on_read_complete,
-    );
+    conn.arm_read();
 }
 
 fn on_read_complete(
@@ -576,6 +1015,7 @@ fn on_read_complete(
         release_closed_connection(conn);
         return .disarm;
     }
+    if (conn.dispatch_suspended) return .disarm;
     conn.read_active = true;
     return .rearm;
 }
@@ -639,6 +1079,12 @@ fn on_write_complete(
             };
         }
     }
+    if (conn.protocol_state == .http2 and !conn.close_when_drained) {
+        conn.h2.flush_pending(conn.http2_callbacks()) catch {
+            close_connection(conn);
+            return .disarm;
+        };
+    }
 
     if (conn.was_backpressured and conn.write_len < conn.write_queue.len / 2) {
         conn.was_backpressured = false;
@@ -654,7 +1100,8 @@ fn on_write_complete(
     return .disarm;
 }
 
-fn advance_write_head(
+/// Advances a ring head after a completed partial or full write.
+pub fn advance_write_head(
     current_head: usize,
     written: usize,
     remaining: usize,
@@ -665,6 +1112,7 @@ fn advance_write_head(
     return (current_head + written) % capacity;
 }
 
+/// Closes plaintext or gracefully shuts down TLS after queued bytes drain.
 pub fn close_after_flush(conn: *TcpConnection) void {
     if (conn.closing) return;
     conn.begin_tls_shutdown() catch {
@@ -679,10 +1127,17 @@ pub fn close_after_flush(conn: *TcpConnection) void {
     if (conn.write_len == 0 and !conn.is_writing) close_connection(conn);
 }
 
+/// Cancels active completions and begins idempotent socket teardown.
 pub fn close_connection(conn: *TcpConnection) void {
     if (conn.closing) return;
     conn.closing = true;
     conn.close_when_drained = false;
+    conn.dispatch_suspended = false;
+    conn.pending_request_consumed = 0;
+    conn.pending_close_requested = false;
+    conn.protocol_probe_len = 0;
+    conn.async_response_state.cancel();
+    for (&conn.h2_async_states) |*state| state.cancel();
 
     if (conn.protocol_state == .websocket) conn.ws.deinit();
     conn.deinit_tls();
@@ -768,7 +1223,8 @@ fn on_write_cancel_complete(
     return .disarm;
 }
 
-fn release_closed_connection(conn: *TcpConnection) void {
+/// Returns a fully closed connection to its owning fixed-capacity pool.
+pub fn release_closed_connection(conn: *TcpConnection) void {
     if (!conn.closing or !conn.close_complete) return;
     if (conn.read_active or conn.is_writing) return;
     if (conn.read_cancel_active or conn.write_cancel_active) return;
@@ -782,13 +1238,18 @@ fn release_closed_connection(conn: *TcpConnection) void {
     conn.write_len = 0;
     conn.write_in_flight_len = 0;
     conn.was_backpressured = false;
+    conn.dispatch_suspended = false;
+    conn.pending_request_consumed = 0;
+    conn.pending_close_requested = false;
     conn.on_close_cb = null;
     conn.pool_ptr = null;
     callback(pool, conn);
 }
 
+/// Callback invoked for each accepted POSIX TCP descriptor.
 pub const AcceptCallback = *const fn (socket: xev.TCP, user_data: ?*anyopaque) void;
 
+/// Completion state for one bounded asynchronous TCP listener.
 pub const TcpServer = struct {
     accept_completion: xev.Completion = .{},
     close_completion: xev.Completion = .{},
@@ -800,6 +1261,7 @@ pub const TcpServer = struct {
     close_complete: bool = false,
 };
 
+/// Binds a non-blocking TCP listener without starting accept completions.
 pub fn init_server(address: []const u8, port: u16, callback: AcceptCallback, user_data: ?*anyopaque) !TcpServer {
     const parsed_address = try std.Io.net.IpAddress.parse(address, port);
     var listener = try xev.TCP.init(parsed_address);
@@ -814,6 +1276,7 @@ pub fn init_server(address: []const u8, port: u16, callback: AcceptCallback, use
     };
 }
 
+/// Arms the listener's recurring accept completion.
 pub fn accept_start(server: *TcpServer, loop: *Loop) void {
     if (server.closing) return;
     server.listener.accept(
@@ -825,6 +1288,7 @@ pub fn accept_start(server: *TcpServer, loop: *Loop) void {
     );
 }
 
+/// Cancels accept and asynchronously closes the listener once.
 pub fn close_server(server: *TcpServer, loop: *Loop) void {
     if (server.closing) return;
     server.closing = true;
@@ -899,75 +1363,5 @@ fn on_server_close_complete(
 }
 
 fn close_unregistered_socket(socket: xev.TCP) void {
-    if (@import("builtin").os.tag == .windows) {
-        _ = std.os.windows.ws2_32.closesocket(@ptrCast(socket.fd));
-        return;
-    }
     _ = std.posix.system.close(socket.fd);
-}
-
-test "tcp: multipart ring writes preserve order across wrap" {
-    var buffer = [_]u8{0} ** 8;
-    const tail = copy_parts_to_ring(&buffer, 6, &.{ "ab", "cde" });
-
-    try std.testing.expectEqual(@as(usize, 3), tail);
-    try std.testing.expectEqualStrings("cde", buffer[0..3]);
-    try std.testing.expectEqualStrings("ab", buffer[6..8]);
-}
-
-test "tcp: drained write ring normalizes its head" {
-    try std.testing.expectEqual(@as(usize, 0), advance_write_head(65_504, 32, 0, 65_536));
-    try std.testing.expectEqual(@as(usize, 0), advance_write_head(65_504, 32, 57, 65_536));
-    try std.testing.expectEqual(@as(usize, 25), advance_write_head(10, 15, 20, 65_536));
-}
-
-test "tcp: closed connection waits for active completions" {
-    const Release = struct {
-        var count: usize = 0;
-
-        fn callback(_: *anyopaque, _: *TcpConnection) void {
-            count += 1;
-        }
-    };
-
-    var pool_token: u8 = 0;
-    var conn = TcpConnection{
-        .socket = undefined,
-        .closing = true,
-        .close_complete = true,
-        .read_active = true,
-        .is_writing = true,
-        .pool_ptr = &pool_token,
-        .on_close_cb = Release.callback,
-    };
-
-    Release.count = 0;
-    release_closed_connection(&conn);
-    try std.testing.expectEqual(@as(usize, 0), Release.count);
-
-    conn.read_active = false;
-    release_closed_connection(&conn);
-    try std.testing.expectEqual(@as(usize, 0), Release.count);
-
-    conn.is_writing = false;
-    release_closed_connection(&conn);
-    release_closed_connection(&conn);
-    try std.testing.expectEqual(@as(usize, 1), Release.count);
-}
-
-test "tcp: server close drains an outstanding accept" {
-    const Accept = struct {
-        fn callback(socket: xev.TCP, _: ?*anyopaque) void {
-            close_unregistered_socket(socket);
-        }
-    };
-
-    var loop = try @import("loop.zig").init();
-    defer @import("loop.zig").deinit(&loop);
-    var server = try init_server("127.0.0.1", 0, Accept.callback, null);
-
-    accept_start(&server, &loop);
-    close_server(&server, &loop);
-    try @import("loop.zig").run(&loop);
-    try std.testing.expect(server.close_complete);
 }

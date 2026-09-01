@@ -1,7 +1,9 @@
 const std = @import("std");
 
-// a generic fixed-size memory pool using a stack-based freelist.
-// achieves strict o(1) acquire/release times without loops, ideal for zero-allocation hot paths.
+/// Returns a page-backed fixed-capacity pool with O(1) acquire and release.
+///
+/// The generated type allocates its slab only during `init`; steady-state slot
+/// operations do not allocate.
 pub fn freelist_pool(comptime T: type, comptime capacity: usize) type {
     if (capacity == 0) @compileError("pool capacity must be greater than zero");
     if (@sizeOf(T) == 0) @compileError("pool element type must have non-zero size");
@@ -20,7 +22,7 @@ pub fn freelist_pool(comptime T: type, comptime capacity: usize) type {
         free_count: usize = capacity,
         active: std.StaticBitSet(capacity) = .empty,
 
-        // initializes the pool. called once during setup.
+        /// Allocates and zeroes the slab and freelist storage.
         pub fn init() !Self {
             var pool: Self = undefined;
             pool.free_count = capacity;
@@ -43,12 +45,13 @@ pub fn freelist_pool(comptime T: type, comptime capacity: usize) type {
             return pool;
         }
 
+        /// Releases the slab and freelist; no acquired slot may be used afterward.
         pub fn deinit(self: *Self) void {
             std.heap.page_allocator.free(self.storage);
             std.heap.page_allocator.free(self.free_indices);
         }
 
-        // acquires a memory slot from the pool (zero-allocation, o(1)).
+        /// Acquires a slot, or returns null when all `capacity` slots are active.
         pub fn acquire(self: *Self) ?*T {
             if (self.free_count == 0) {
                 return null;
@@ -63,7 +66,7 @@ pub fn freelist_pool(comptime T: type, comptime capacity: usize) type {
             return &self.storage[index];
         }
 
-        // returns a memory slot back to the pool (o(1)).
+        /// Releases an active slot and rejects foreign, misaligned, or free pointers.
         pub fn release(self: *Self, item: *T) bool {
             // pointer arithmetic to calculate the index from the ram address
             const start_ptr = @intFromPtr(&self.storage[0]);
@@ -84,15 +87,17 @@ pub fn freelist_pool(comptime T: type, comptime capacity: usize) type {
             return true;
         }
 
-        // returns the current number of active items.
+        /// Returns the number of currently acquired slots.
         pub fn count_active(self: *const Self) usize {
             return capacity - self.free_count;
         }
 
+        /// Reports whether `index` names an acquired slot.
         pub fn is_active(self: *const Self, index: usize) bool {
             return index < capacity and self.active.isSet(index);
         }
 
+        /// Returns the slab index for an aligned in-range pointer.
         pub fn index_of(self: *const Self, item: *const T) ?usize {
             const start_ptr = @intFromPtr(&self.storage[0]);
             const item_ptr = @intFromPtr(item);

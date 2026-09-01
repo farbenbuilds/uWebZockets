@@ -2,11 +2,12 @@
 
 ## Scope
 
-µWebZockets is a Zig 0.16.0 HTTP/1.1, WebSocket, and alpha HTTP/3 server
-library. It combines an event-driven POSIX transport, fixed-capacity protocol
-state, a data-oriented router, and C libraries for TLS, compression, and QUIC.
+µWebZockets 1.0.0 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
+server library with bounded HPACK protocol storage. It combines an
+event-driven POSIX transport, fixed-capacity protocol state, a data-oriented
+router, and C libraries for TLS, compression, and QUIC.
 
-The alpha release makes bounded resource use explicit. Startup allocates one
+The 1.0.0 design makes bounded resource use explicit. Startup allocates one
 contiguous connection slab, one WebSocket message region, and one output region.
 Network callbacks then reuse those regions without general-purpose allocation.
 WebSocket compression and HTTP/3 allocate their fixed slabs when the feature is
@@ -33,15 +34,21 @@ uWebZockets/
 ├── build.zig                 # Zig and C/C++ build graph
 ├── build.zig.zon             # Zig 0.16 package manifest
 ├── flake.nix                 # native GNU/musl and macOS packages
+├── include/uWebZockets.h     # versioned C ABI declarations
 ├── src/
 │   ├── root.zig              # supported public API
+│   ├── c_api.zig             # exported C ABI implementation
+│   ├── udp.zig               # completion-owned UDP/QUIC transport
 │   ├── core/                 # libxev loop, TCP, pool, context, timer
 │   ├── crypto/               # bounded BoringSSL TLS adapter
 │   ├── http/                 # strict HTTP/1.1 parser and response writer
+│   ├── http2/                # bounded frames, stream slab, and HPACK
 │   ├── router/               # fixed-capacity radix router and App API
 │   ├── ws/                   # zslay integration, masking, UTF-8, pub/sub
-│   ├── quic/                 # bounded internal lsquic/HTTP/3 adapter
-│   └── tests/                # retained aggregate tests for existing modules
+│   ├── quic/                 # lsquic HTTP/3 and extension primitives
+│   └── tests/                # centralized ordinary Zig unit tests
+├── fuzz/                     # libFuzzer ABI targets and local smoke drivers
+├── oss-fuzz/                 # Google OSS-Fuzz build and corpus metadata
 ├── tests/
 │   ├── autobahn/             # RFC 6455 target, Deno runner, and config
 │   └── h1spec/               # HTTP/1.1 compliance target
@@ -58,9 +65,10 @@ libxev accept/read
 fixed connection slot ----> optional bounded TLS BIO pair
       |
       v
-HTTP request accumulator --> strict parser --> radix route
-                                      |             |
-                                      |             +--> bounded HTTP writer
+HTTP request accumulator --> strict parser --> middleware --> radix route
+                                      |                       |
+                                      |                       +--> bounded HTTP writer
+                                      |                       +--> one-shot async token
                                       v
                              WebSocket upgrade
                                       |
@@ -72,7 +80,7 @@ HTTP request accumulator --> strict parser --> radix route
                                       v
                          callback / bounded pub-sub
 
-UDP read --> lsquic engine --> bounded QPACK header set --> same radix route
+UDP read/timer --> lsquic engine --> bounded QPACK header set --> same router
                                    |                           |
                                    v                           v
                             bounded body slab          structured H3 response
@@ -88,7 +96,9 @@ old completion from observing a reused connection.
 Shutdown reverses that ownership graph. The application first rejects new
 work, stops recurring timers, cancels accept/read/write/UDP completions, closes
 descriptors through libxev, and runs the loop until every callback is disarmed.
-Only then are TLS state, QUIC state, the loop, and contiguous slabs released.
+`src/udp.zig` owns its fixed receive buffer, QUIC engine, read, timer,
+cancellation, and close completions as one unit. Only after both transports
+drain are TLS state, QUIC state, the loop, and contiguous slabs released.
 
 ## HTTP/1.1
 
@@ -99,9 +109,22 @@ are retained and parsed again after a response completes.
 
 The router is a fixed-capacity runtime radix tree represented by parallel
 arrays for segments, child/sibling links, route bits, method handlers, and
-WebSocket behaviors. It supports method-specific handlers, HEAD fallback,
-OPTIONS, `Allow`, and an `any` fallback. Route strings are borrowed and must
-outlive the application.
+WebSocket behaviors. Exact routes retain the radix fast path. Up to 64 pattern
+routes accept `:name` for one nonempty segment and a terminal `*name` for the
+remaining path, including an empty remainder. A request owns 16 borrowed
+capture slots and exposes them
+through `Request.get_param`. Static specificity wins over parameter and
+wildcard matches; malformed patterns and duplicate names fail registration.
+
+Up to 32 global middleware callbacks execute in registration order and stop
+explicitly or when a response starts. Routes can use the original synchronous
+callback, an explicit context pointer, or a generation-checked asynchronous
+token. A pending token prevents request-buffer or HTTP/3 stream reuse and can
+complete exactly once on its owning event loop. The router also supports HEAD
+fallback, OPTIONS, `Allow`, and an `any` fallback. Route strings and callback
+contexts have different ownership: route strings are copied during
+registration, while callback contexts remain borrowed and must outlive the
+application.
 
 Response metadata is validated against control-character injection and
 ambiguous `Content-Length` or `Transfer-Encoding`. Writes enter a bounded ring
@@ -136,29 +159,68 @@ Pub/sub copies topic names into fixed internal storage, caps subscriptions, and
 removes connection references during close. Published message bytes are never
 retained after the callback returns.
 
-## TLS and HTTP/3
+## HTTP/2 and HPACK
+
+`src/http2/connection.zig` provides a server-side frame state machine with a
+fixed-capacity structure-of-arrays stream slab. It validates the client
+preface, frame sizes and stream identifiers, CONTINUATION sequencing, padding,
+SETTINGS, connection and stream flow-control windows, resets, ping, and GOAWAY.
+Unknown extension frames are ignored according to HTTP/2 rules, while illegal
+client push and state transitions fail closed.
+
+`src/http2/hpack.zig` decodes HPACK requests and encodes responses into
+caller-owned header, byte, entry, and dynamic-table storage. Integer and
+Huffman decoding, table-size changes, pseudo-header ordering, field names,
+connection-specific metadata, and header-list limits are checked before
+dispatch. No HTTP/2 parser input is retained after its caller storage is
+reused.
+
+`src/core/tcp.zig` embeds one eight-stream server session per connection and
+routes decoded requests through the same middleware and sync/async handlers as
+HTTP/1.1. Plaintext sockets recognize the prior-knowledge preface; TLS prefers
+ALPN `h2` and falls back to `http/1.1`. Peer resets invalidate retained async
+tokens. RFC 8441 WebSocket tunneling is not advertised.
+
+## TLS, UDP, and HTTP/3
 
 HTTPS uses BoringSSL TLS 1.3 with an in-memory BIO pair sized to match the
 bounded output policy. The adapter validates context creation, propagates
-backpressure, performs shutdown, and advertises HTTP/1.1 through ALPN.
+backpressure, performs shutdown, and prefers HTTP/2 through ALPN.
 
 `init_http3` creates transport-isolated TLS 1.3 contexts: the TCP context
-advertises only `http/1.1`, and the QUIC context advertises only `h3`.
-`listen_udp` constructs the lsquic engine in place only after the `App` has a
-stable address. The engine uses contiguous freelist pools for streams, header
-sets, and outgoing packets, plus parallel byte regions for decoded QPACK data,
-request bodies, response headers, and response bodies. Pool capacity is the
-configured connection count; packet capacity is
+advertises `h2` and `http/1.1`, and the QUIC context advertises only `h3`.
+`listen_udp` constructs the completion-driven UDP transport and lsquic engine
+in place only after the `App` has a stable address. The engine uses contiguous
+freelist pools for streams, header sets, and outgoing packets, plus parallel
+byte regions for decoded QPACK data, request bodies, response headers, and
+response bodies. Pool capacity is the configured connection count; packet
+capacity is
 `max(16, connections * 4)`.
 
 The header decoder validates pseudo-header ordering and uniqueness, lowercase
 HTTP/3 names, URI targets, authority/Host agreement, connection-specific
 fields, and content-length. It fills the existing `Request` directly rather
 than producing temporary HTTP/1.1 text. Responses reuse the public `Response`
-API and emit structured QPACK headers while preserving partial stream writes. QUIC global
-initialization is reference-counted under a small atomic lock. HTTP/3 internals
-remain unexported so applications use only `init_http3`, `listen_udp`, routes,
-and `Response`.
+API and emit structured QPACK headers while preserving partial stream writes.
+The QUIC TLS context explicitly disables 0-RTT, so replayable application data
+is rejected before route dispatch.
+QUIC global initialization is reference-counted under a small atomic lock. The
+pinned curl/ngtcp2 and aioquic gate verifies a successful request, a valid
+trailing field section, and `H3_MESSAGE_ERROR` rejection of malformed headers
+while a healthy sibling stream completes on the same connection. Server push
+and WebTransport are deliberately excluded.
+
+`http3_extensions` exposes pure validators and bounded bookkeeping for RFC
+9220 WebSocket extended CONNECT, server push IDs, and replay-aware early-data
+policy. `webtransport` exposes draft-16 settings, CONNECT/origin checks,
+sessions, stream and datagram association, capsules, flow control, and error
+mapping. The pinned lsquic backend advertises only raw datagrams from the
+required capability set, so these helpers are not connected to the live
+HTTP/3 listener. The WebTransport constants model
+draft-ietf-webtrans-http3-16 and do not claim live interoperability. RFC 10008
+is the separate HTTP `QUERY` method supported by the router. All live
+transports reject QUERY requests without a syntactically valid `Content-Type`;
+the selected route enforces resource-specific media-type and content rules.
 
 ## Build graph
 
@@ -166,23 +228,56 @@ and `Response`.
 for BoringSSL, lsquic, and libdeflate. The `zig-cc` and `zig-c++` wrappers pass
 the selected target triple to cross builds. Vendor caches are separated by
 target and optimization mode. Sanitizer mode adds another isolated cache,
-instruments BoringSSL, lsquic, libdeflate, and the ABI shim with ASan/UBSan,
-enables Zig's full C-UB checks, and preserves frame pointers.
+instruments BoringSSL, lsquic, libdeflate, and the local C shim with ASan/UBSan,
+enables Zig's full C-UB checks, and preserves frame pointers. A mutually
+exclusive x86_64 Linux MemorySanitizer mode rebuilds the pinned C/C++ graph
+and local C shim with origin tracking in a separate cache, then runs a focused
+C dependency-boundary smoke. It does not instrument Zig code or execute the
+complete C ABI test graph.
 
 The Nix flake pins Nixpkgs 26.05, seeds Zig package dependencies
-deterministically, and defines native and musl compile checks. Release archives
-contain the µWebZockets, BoringSSL, lsquic, and libdeflate static libraries plus
-their license texts.
+deterministically, and defines native and musl compile checks. `build.zig.zon`
+pins zslay, libxev, BoringSSL, lsquic, ls-qpack, ls-hpack, and libdeflate by
+immutable URL or commit plus Zig package hash. A downstream project can pin an
+exact checkout at a local path without inheriting the repository's vendor
+submodules. Release archives contain the µWebZockets, BoringSSL, lsquic, and
+libdeflate static libraries, `uWebZockets.h`, and their license texts.
+`tests/package_consumer` imports the public module from a pinned local path in
+CI. That module carries native link metadata and a clean static-library edge
+that orders vendor builds without nesting dependency archives. The fixture
+catches package-root and exported-name drift.
+The build rejects any non-object member in the µWebZockets static archive.
+
+Unit tests live only under `src/tests/`; `src/tests/main.zig` imports every
+test file for `zig build test`. Its `fuzz_main.zig` Smith corpus also serves as
+the dedicated root for extended `zig build fuzz` runs. Three
+`LLVMFuzzerTestOneInput` targets cover HTTP framing, WebSocket masking, and
+QUIC/WebTransport packet boundaries. `oss-fuzz/build.sh` links them with the
+Google-provided fuzzing engine, while `zig build oss-fuzz-smoke` exercises
+fixed local seeds. The reusable ClusterFuzzLite gate runs the OSS-Fuzz builder,
+bad-build validation, and bounded execution for all three targets without
+assuming hosted-service enrollment. It advertises address builds only: Zig
+objects carry sanitizer coverage and `ReleaseSafe` checks, while the separate
+library sanitizer matrix instruments the C/C++ graph with ASan/UBSan/MSan.
 
 ## Supported and internal API
 
-The supported surface is exported from `src/root.zig`: `App`, `ConfiguredApp`,
+The Zig surface exported from `src/root.zig` includes `App`, `ConfiguredApp`,
 `ConfiguredAppWithTimeout`, `Request`, `Response`, `WebSocket`, `WsBehavior`,
 `Opcode`, TLS configuration, chunked HTTP helpers, and WebSocket masking. The
-surface also includes `WsCompression`, `http3_available`, `init_http3`, and
-`listen_udp` through the application type. Files under `src/quic` are internal
-and must not be imported by consumers.
+surface also includes `WsCompression`, completion-driven `udp`, bounded
+`http2`, `http2_hpack`, `http3_extensions`, `webtransport`, `http3_available`,
+`init_http3`, and `listen_udp` through the application type. Live lsquic
+engine, stream, packet, and QPACK callbacks remain internal.
 
-New Zig tests live inline beside the implementation they validate. The
-existing `src/tests` aggregate remains for compatibility and is not a target
-for moving inline tests.
+The C ABI is declared by `include/uWebZockets.h` and implemented by
+`src/c_api.zig`. It provides versioned opaque handles, versioned integer error
+codes, explicit create/shutdown/destroy, synchronous and one-shot asynchronous
+HTTP, ordered middleware, borrowed route parameters, bounded response,
+WebSocket, TLS, HTTP/3, and publish operations. The ABI uses fixed capacities
+of 1,024 connections, 64 copied route paths, and 32 middleware callbacks.
+Async response tokens carry a generation and can complete exactly once on the
+owning event loop.
+This is a high-level server ABI rather than a one-to-one projection of the Zig
+surface. Compile-time application configuration and the low-level `udp`,
+HTTP/2, HPACK, HTTP/3-extension, and WebTransport helpers remain Zig-only.

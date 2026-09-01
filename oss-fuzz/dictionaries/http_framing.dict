@@ -1,0 +1,8 @@
+method_get="GET"
+method_post="POST"
+http_11="HTTP/1.1"
+content_length="Content-Length:"
+transfer_encoding="Transfer-Encoding:"
+chunked="chunked"
+header_end="\r\n\r\n"
+line_end="\r\n"

@@ -1,3 +1,9 @@
 # Keep GitHub Linguist from scanning massive C/C++ vendor dependencies.
 # This keeps the repository clean and ensures Zig is displayed as the primary language.
 vendor/** linguist-vendored
+
+# Protocol corpus fixtures retain the terminal empty line consumed by parsers.
+oss-fuzz/corpus/** -text -whitespace
+
+# Unified diffs encode blank context lines as one leading space.
+patches/*.patch whitespace=-blank-at-eol

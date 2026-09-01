@@ -1,12 +1,15 @@
 const std = @import("std");
 const c = @import("c");
 
+/// Reports that the build includes the lsquic support layer.
 pub const available = true;
+/// Maximum UDP payload accepted by the packet adapter.
 pub const max_udp_payload_size: usize = 2048;
 
 var global_lock: std.atomic.Mutex = .unlocked;
 var global_references: usize = 0;
 
+/// Acquires one process-wide lsquic server initialization reference.
 pub fn acquire_global() !void {
     lock_global();
     defer global_lock.unlock();
@@ -22,6 +25,7 @@ pub fn acquire_global() !void {
     global_references += 1;
 }
 
+/// Releases one initialization reference and cleans up at zero references.
 pub fn release_global() void {
     lock_global();
     defer global_lock.unlock();
@@ -35,10 +39,12 @@ fn lock_global() void {
     while (!global_lock.tryLock()) std.atomic.spinLoopHint();
 }
 
+/// Inline native socket-address storage accepted by lsquic.
 pub const Sockaddr = struct {
     storage: std.posix.sockaddr.storage = std.mem.zeroes(std.posix.sockaddr.storage),
     length: c.socklen_t = 0,
 
+    /// Encodes an IPv4 or IPv6 address into native socket storage.
     pub fn init(address: std.Io.net.IpAddress) Sockaddr {
         var result = Sockaddr{};
 
@@ -63,11 +69,15 @@ pub const Sockaddr = struct {
         return result;
     }
 
+    /// Returns a borrowed C socket-address pointer valid while `self` lives.
     pub fn ptr(self: *const Sockaddr) [*c]const c.struct_sockaddr {
         return @ptrCast(&self.storage);
     }
 };
 
+/// Sends a batch of lsquic packet specifications on a non-blocking UDP socket.
+///
+/// Returns the number sent, or -1 with `errno` set when no packet was sent.
 pub fn send_packets(
     fd: std.posix.socket_t,
     specs: [*c]const c.lsquic_out_spec,
@@ -110,7 +120,7 @@ pub fn send_packets(
             .msg_name = @ptrCast(@constCast(spec.dest_sa)),
             .msg_namelen = address_length,
             .msg_iov = spec.iov,
-            .msg_iovlen = spec.iovlen,
+            .msg_iovlen = @intCast(spec.iovlen),
         };
         const written = c.sendmsg(fd, &message, c.MSG_DONTWAIT | c.MSG_NOSIGNAL);
         if (written < 0) break;
@@ -131,14 +141,4 @@ fn fail_with_errno(err: std.c.E) c_int {
 
 fn set_errno(err: std.c.E) void {
     std.c._errno().* = @intFromEnum(err);
-}
-
-test "quic: sockaddr conversion preserves address family and port" {
-    const input = try std.Io.net.IpAddress.parse("127.0.0.1", 8443);
-    const address = Sockaddr.init(input);
-    const sockaddr: *const std.posix.sockaddr.in = @ptrCast(@alignCast(&address.storage));
-
-    try std.testing.expectEqual(std.posix.AF.INET, sockaddr.family);
-    try std.testing.expectEqual(@as(u16, 8443), std.mem.bigToNative(u16, sockaddr.port));
-    try std.testing.expectEqual(@as(c.socklen_t, @sizeOf(std.posix.sockaddr.in)), address.length);
 }

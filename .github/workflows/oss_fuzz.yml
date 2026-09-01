@@ -1,0 +1,45 @@
+name: OSS-Fuzz Compatibility
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: oss-fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: ClusterFuzzLite ASan/libFuzzer
+    runs-on: ubuntu-24.04
+    environment: Testing
+    timeout-minutes: 45
+
+    steps:
+      - name: Build and validate all fuzz targets
+        id: build
+        uses: google/clusterfuzzlite/actions/build_fuzzers@82652fb49e77bc29c35da1167bb286e93c6bcc05 # v1
+        with:
+          allowed-broken-targets-percentage: 0
+          bad-build-check: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          keep-unaffected-fuzz-targets: true
+          language: c++
+          sanitizer: address
+
+      - name: Exercise all fuzz targets
+        uses: google/clusterfuzzlite/actions/run_fuzzers@82652fb49e77bc29c35da1167bb286e93c6bcc05 # v1
+        with:
+          fuzz-seconds: 60
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          mode: batch
+          sanitizer: address

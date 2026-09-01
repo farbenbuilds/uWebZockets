@@ -3,6 +3,7 @@ const std = @import("std");
 // globally unique identifier required by rfc 6455 for websocket upgrades.
 const websocket_magic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
+/// Reasons an RFC 6455 upgrade request is rejected.
 pub const ValidationError = error{
     InvalidMethod,
     MissingConnectionUpgrade,
@@ -13,11 +14,15 @@ pub const ValidationError = error{
     InvalidKey,
 };
 
+/// Negotiated RFC 7692 window constraints for no-context-takeover operation.
 pub const PerMessageDeflate = struct {
+    /// Server compression window, or the 15-bit default when absent.
     server_max_window_bits: ?u4 = null,
+    /// Maximum accepted client compression window, or the default when absent.
     client_max_window_bits: ?u4 = null,
 };
 
+/// Reports whether a comma-delimited field contains `expected`.
 pub fn has_token(value: []const u8, expected: []const u8) bool {
     var tokens = std.mem.splitScalar(u8, value, ',');
     while (tokens.next()) |token| {
@@ -27,6 +32,7 @@ pub fn has_token(value: []const u8, expected: []const u8) bool {
     return false;
 }
 
+/// Validates required RFC 6455 request fields and returns the borrowed key.
 pub fn validate_request(
     method: []const u8,
     connection: ?[]const u8,
@@ -54,6 +60,7 @@ pub fn validate_request(
     return client_key;
 }
 
+/// Reports whether a key is canonical-length base64 encoding of 16 bytes.
 pub fn valid_client_key(client_key: []const u8) bool {
     if (client_key.len != 24) return false;
 
@@ -65,8 +72,7 @@ pub fn valid_client_key(client_key: []const u8) bool {
     return true;
 }
 
-// computes the sec-websocket-accept token strictly on the stack.
-// returns a slice pointing to the base64 encoded data inside out_buffer.
+/// Writes the Sec-WebSocket-Accept token and returns a slice into `out_buffer`.
 pub fn compute_accept_token(client_key: []const u8, out_buffer: *[28]u8) []const u8 {
     // concatenate client key and magic string in a fixed 64-byte stack buffer.
     var combined: [64]u8 = undefined;
@@ -85,8 +91,10 @@ pub fn compute_accept_token(client_key: []const u8, out_buffer: *[28]u8) []const
     return std.base64.standard.Encoder.encode(out_buffer, &hash);
 }
 
-// Selects the first compatible permessage-deflate offer. Invalid offers are
-// ignored independently so one malformed alternative cannot poison another.
+/// Selects the first compatible no-context-takeover permessage-deflate offer.
+///
+/// An 8-bit server window is rejected because zlib cannot encode it reliably;
+/// bounded 8-bit client windows remain valid for decompression.
 pub fn negotiate_permessage_deflate(value: []const u8) ?PerMessageDeflate {
     var offers = std.mem.splitScalar(u8, value, ',');
     while (offers.next()) |offer| {
@@ -95,6 +103,7 @@ pub fn negotiate_permessage_deflate(value: []const u8) ?PerMessageDeflate {
     return null;
 }
 
+/// Formats negotiated extension response fields into caller storage.
 pub fn format_permessage_deflate_response(
     negotiated: PerMessageDeflate,
     output: []u8,
@@ -183,48 +192,4 @@ fn parse_window_bits(raw_value: []const u8) ?u4 {
     const parsed = std.fmt.parseInt(u8, value, 10) catch return null;
     if (parsed < 8 or parsed > 15) return null;
     return @intCast(parsed);
-}
-
-test "handshake: negotiates bounded no-context permessage-deflate" {
-    const negotiated = negotiate_permessage_deflate(
-        "foo, permessage-deflate; client_max_window_bits=12; server_max_window_bits=15",
-    ) orelse return error.TestUnexpectedResult;
-
-    try std.testing.expectEqual(@as(?u4, 15), negotiated.server_max_window_bits);
-    try std.testing.expectEqual(@as(?u4, 12), negotiated.client_max_window_bits);
-
-    var output: [192]u8 = undefined;
-    const response = try format_permessage_deflate_response(negotiated, &output);
-    try std.testing.expectEqualStrings(
-        "Sec-WebSocket-Extensions: permessage-deflate" ++
-            "; server_no_context_takeover" ++
-            "; client_no_context_takeover" ++
-            "; server_max_window_bits=15" ++
-            "; client_max_window_bits=12\r\n",
-        response,
-    );
-}
-
-test "handshake: ignores malformed permessage-deflate offers" {
-    try std.testing.expectEqual(
-        null,
-        negotiate_permessage_deflate("permessage-deflate; client_max_window_bits=7"),
-    );
-    try std.testing.expectEqual(
-        null,
-        negotiate_permessage_deflate(
-            "permessage-deflate; client_no_context_takeover; client_no_context_takeover",
-        ),
-    );
-    try std.testing.expectEqual(
-        null,
-        negotiate_permessage_deflate("permessage-deflate; unknown=value"),
-    );
-}
-
-test "handshake: later compatible extension offer remains usable" {
-    const negotiated = negotiate_permessage_deflate(
-        "permessage-deflate; server_max_window_bits=8, permessage-deflate",
-    );
-    try std.testing.expect(negotiated != null);
 }

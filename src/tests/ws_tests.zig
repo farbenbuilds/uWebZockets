@@ -1,11 +1,28 @@
 const std = @import("std");
-const handshake = @import("../ws/handshake.zig");
-const PubSubEngine = @import("../ws/pubsub.zig").PubSubEngine;
-const WebSocket = @import("../ws/socket.zig").WebSocket;
-const TcpConnection = @import("../core/tcp.zig").TcpConnection;
-const mask = @import("../ws/mask.zig");
-const utf8 = @import("../ws/utf8.zig");
+const support = @import("test_support");
+const deflate = support.ws_deflate;
+const handshake = support.ws_handshake;
+const PubSubEngine = support.ws_pubsub.PubSubEngine;
+const ws_socket = support.ws_socket;
+const WebSocket = ws_socket.WebSocket;
+const TcpConnection = support.tcp.TcpConnection;
+const mask = support.ws_mask;
+const utf8 = support.ws_utf8;
 const zslay = @import("zslay");
+
+test "ws: scalar and SIMD masking paths are equivalent" {
+    const key: zslay.MaskingKey = .{ 0x12, 0x34, 0x56, 0x78 };
+    const input = "unaligned masking payload spanning several vectors";
+    var scalar: [input.len]u8 = input.*;
+    var simd: [input.len]u8 = input.*;
+
+    mask.apply_scalar(&scalar, key, 7);
+    mask.apply_simd(&simd, key, 7);
+    try std.testing.expectEqualSlices(u8, &scalar, &simd);
+
+    mask.apply_scalar(&scalar, key, 7);
+    try std.testing.expectEqualStrings(input, &scalar);
+}
 
 // tests websocket accept token computation based on rfc 6455
 test "ws: compute_accept_token" {
@@ -113,6 +130,23 @@ test "ws: SIMD mask preserves key position across chunks" {
     try std.testing.expectEqualSlices(u8, &whole, &split);
 }
 
+test "ws: masking position wraps across fragmented chunks" {
+    const key = [_]u8{ 1, 2, 3, 4 };
+    const position = std.math.maxInt(u64) - 2;
+    var whole = "0123456789abcdefghijklmnop".*;
+    var split = whole;
+    const split_at = 7;
+
+    mask.apply(&whole, key, position);
+    mask.apply(split[0..split_at], key, position);
+    mask.apply(
+        split[split_at..],
+        key,
+        position +% @as(u64, @intCast(split_at)),
+    );
+    try std.testing.expectEqualSlices(u8, &whole, &split);
+}
+
 test "ws: streaming UTF-8 validation fails at the offending byte" {
     var state = utf8.validate_chunk(.{}, &.{ 0xf0, 0x90 }) orelse unreachable;
     try std.testing.expect(!utf8.is_complete(state));
@@ -145,7 +179,7 @@ test "ws: pubsub owns topics and reclaims subscriptions" {
 test "ws: full subscription storage does not leak empty topics" {
     var engine = PubSubEngine{};
     var socket: WebSocket = undefined;
-    engine.sub_count = @import("../ws/pubsub.zig").max_subscriptions;
+    engine.sub_count = support.ws_pubsub.max_subscriptions;
 
     try std.testing.expectError(
         error.SubscriptionCapacityReached,
@@ -233,4 +267,182 @@ test "ws: fragmented message completes with an empty continuation" {
     try std.testing.expectEqual(@as(usize, 1), Capture.calls);
     try std.testing.expectEqual(message_size, Capture.message_len);
     try std.testing.expectEqual(zslay.Opcode.text, Capture.opcode);
+}
+
+test "handshake: negotiates bounded no-context permessage-deflate" {
+    const negotiated = handshake.negotiate_permessage_deflate(
+        "foo, permessage-deflate; client_max_window_bits=12; server_max_window_bits=15",
+    ) orelse return error.TestUnexpectedResult;
+
+    try std.testing.expectEqual(@as(?u4, 15), negotiated.server_max_window_bits);
+    try std.testing.expectEqual(@as(?u4, 12), negotiated.client_max_window_bits);
+
+    var output: [192]u8 = undefined;
+    const response = try handshake.format_permessage_deflate_response(negotiated, &output);
+    try std.testing.expectEqualStrings(
+        "Sec-WebSocket-Extensions: permessage-deflate" ++
+            "; server_no_context_takeover" ++
+            "; client_no_context_takeover" ++
+            "; server_max_window_bits=15" ++
+            "; client_max_window_bits=12\r\n",
+        response,
+    );
+}
+
+test "handshake: ignores malformed permessage-deflate offers" {
+    try std.testing.expectEqual(
+        null,
+        handshake.negotiate_permessage_deflate("permessage-deflate; client_max_window_bits=7"),
+    );
+    try std.testing.expectEqual(
+        null,
+        handshake.negotiate_permessage_deflate(
+            "permessage-deflate; client_no_context_takeover; client_no_context_takeover",
+        ),
+    );
+    try std.testing.expectEqual(
+        null,
+        handshake.negotiate_permessage_deflate("permessage-deflate; unknown=value"),
+    );
+}
+
+test "handshake: declines an 8-bit server compression window" {
+    try std.testing.expectEqual(
+        null,
+        handshake.negotiate_permessage_deflate(
+            "permessage-deflate; server_max_window_bits=8",
+        ),
+    );
+
+    const fallback = handshake.negotiate_permessage_deflate(
+        "permessage-deflate; server_max_window_bits=8, permessage-deflate",
+    );
+    try std.testing.expect(fallback != null);
+}
+
+test "deflate: accepts client window 8 and bounds decoded output" {
+    const negotiated = handshake.negotiate_permessage_deflate(
+        "permessage-deflate; client_max_window_bits=8",
+    ) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(?u4, 8), negotiated.client_max_window_bits);
+
+    const expected = "client-window-eight-" ** 8;
+    const compressed = [_]u8{
+        0x4a, 0xce, 0xc9, 0x4c, 0xcd, 0x2b, 0xd1, 0x2d, 0xcf,
+        0xcc, 0x4b, 0xc9, 0x2f, 0xd7, 0x4d, 0xcd, 0x4c, 0xcf,
+        0x28, 0xd1, 0x4d, 0x1e, 0x44, 0x62, 0x00, 0x00,
+    };
+
+    var context = try deflate.Context.init(6);
+    defer context.deinit();
+    var scratch: [compressed.len + deflate.decode_tail_len]u8 = undefined;
+    @memcpy(scratch[0..compressed.len], &compressed);
+    var output: [expected.len]u8 = undefined;
+    const restored = try context.decompress_message(
+        scratch[0..compressed.len],
+        &scratch,
+        &output,
+    );
+    try std.testing.expectEqualStrings(expected, restored);
+
+    @memcpy(scratch[0..compressed.len], &compressed);
+    var bounded_output: [expected.len - 1]u8 = undefined;
+    try std.testing.expectError(
+        error.OutputTooLarge,
+        context.decompress_message(
+            scratch[0..compressed.len],
+            &scratch,
+            &bounded_output,
+        ),
+    );
+}
+
+test "deflate: per-message round trip uses caller-owned storage" {
+    var context = try deflate.Context.init(6);
+    defer context.deinit();
+
+    const input = "bounded per-message deflate payload" ** 8;
+    const bound = try context.scratch_bound(input.len);
+    const scratch = try std.testing.allocator.alloc(u8, bound);
+    defer std.testing.allocator.free(scratch);
+    const output = try std.testing.allocator.alloc(u8, input.len);
+    defer std.testing.allocator.free(output);
+
+    const compressed = try context.compress_message(input, scratch);
+    const restored = try context.decompress_message(compressed, scratch, output);
+    try std.testing.expectEqualStrings(input, restored);
+}
+
+test "deflate: negotiated small windows use preallocated zlib streams" {
+    var context = try deflate.Context.init(6);
+    defer context.deinit();
+
+    const input = "small-window payload" ** 32;
+    const bound = try context.scratch_bound(input.len);
+    const scratch = try std.testing.allocator.alloc(u8, bound);
+    defer std.testing.allocator.free(scratch);
+    const output = try std.testing.allocator.alloc(u8, input.len);
+    defer std.testing.allocator.free(output);
+
+    var window_bits: u4 = 9;
+    while (window_bits <= 14) : (window_bits += 1) {
+        const compressed = try context.compress_message_window(input, scratch, window_bits);
+        const restored = try context.decompress_message(compressed, scratch, output);
+        try std.testing.expectEqualStrings(input, restored);
+    }
+}
+
+test "deflate: expansion is bounded by output capacity" {
+    var context = try deflate.Context.init(6);
+    defer context.deinit();
+
+    const input = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const bound = try context.scratch_bound(input.len);
+    const scratch = try std.testing.allocator.alloc(u8, bound);
+    defer std.testing.allocator.free(scratch);
+
+    const compressed = try context.compress_message(input, scratch);
+    var output: [4]u8 = undefined;
+    try std.testing.expectError(
+        error.OutputTooLarge,
+        context.decompress_message(compressed, scratch, &output),
+    );
+}
+
+test "deflate: malformed input is rejected" {
+    var context = try deflate.Context.init(6);
+    defer context.deinit();
+
+    var scratch: [64]u8 = undefined;
+    @memcpy(scratch[0..4], &[_]u8{ 0xff, 0xff, 0xff, 0xff });
+    var output: [64]u8 = undefined;
+    try std.testing.expectError(
+        error.InvalidCompressedData,
+        context.decompress_message(scratch[0..4], &scratch, &output),
+    );
+}
+
+test "websocket validates outgoing application frames" {
+    try ws_socket.validate_outgoing_payload("valid", .text);
+    try ws_socket.validate_outgoing_payload("", .close);
+    try std.testing.expectError(
+        error.InvalidUtf8,
+        ws_socket.validate_outgoing_payload(&.{ 0xc0, 0x80 }, .text),
+    );
+    try std.testing.expectError(
+        error.InvalidOpcode,
+        ws_socket.validate_outgoing_payload("", .continuation),
+    );
+    try std.testing.expectError(
+        error.InvalidCloseFrame,
+        ws_socket.validate_outgoing_payload(&.{0x03}, .close),
+    );
+    try std.testing.expectError(
+        error.InvalidUtf8,
+        ws_socket.validate_outgoing_payload(&.{ 0x03, 0xe8, 0xc0, 0x80 }, .close),
+    );
+    try std.testing.expectError(
+        error.ControlFrameTooLarge,
+        ws_socket.validate_outgoing_payload(&([_]u8{0} ** 126), .ping),
+    );
 }

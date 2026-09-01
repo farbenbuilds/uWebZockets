@@ -3,7 +3,7 @@ const xev = @import("xev");
 const tcp = @import("tcp.zig");
 const Loop = @import("loop.zig").Loop;
 
-// a lightweight, zero-allocation timer context for the event loop.
+/// Repeating libxev timer with inline completion storage.
 pub const TimerContext = struct {
     timer: xev.Timer,
     completion: xev.Completion = .{},
@@ -14,7 +14,7 @@ pub const TimerContext = struct {
     stopping: bool = false,
 };
 
-// initializes a recurring timer.
+/// Initializes a recurring timer without arming it.
 pub fn init_timer(interval_ms: u64, tick_callback: *const fn () void) !TimerContext {
     const t = try xev.Timer.init();
     return TimerContext{
@@ -24,12 +24,12 @@ pub fn init_timer(interval_ms: u64, tick_callback: *const fn () void) !TimerCont
     };
 }
 
-// dismantles the timer.
+/// Releases timer resources after the timer has stopped.
 pub fn deinit_timer(ctx: *TimerContext) void {
     ctx.timer.deinit();
 }
 
-// arms the timer on the provided event loop.
+/// Arms an inactive timer on `loop`; repeated starts are ignored.
 pub fn start_timer(ctx: *TimerContext, loop: *Loop) void {
     if (ctx.active or ctx.stopping) return;
     ctx.active = true;
@@ -43,6 +43,7 @@ pub fn start_timer(ctx: *TimerContext, loop: *Loop) void {
     );
 }
 
+/// Requests asynchronous cancellation of an active timer.
 pub fn stop_timer(ctx: *TimerContext, loop: *Loop) void {
     if (!ctx.active or ctx.stopping) return;
     ctx.stopping = true;
@@ -96,8 +97,11 @@ fn on_timer_cancel(
     return .disarm;
 }
 
-// connection sweeper, generic over pool type to prevent import loops
-pub fn ConnectionSweeper(comptime PoolType: type, comptime idle_timeout_ms: u64) type {
+/// Returns a five-second connection sweeper for a compatible fixed pool.
+///
+/// `PoolType` must expose contiguous `storage`, `is_active`, and connections
+/// with `closing` and `last_active_ms` fields.
+pub fn connection_sweeper(comptime PoolType: type, comptime idle_timeout_ms: u64) type {
     if (idle_timeout_ms > std.math.maxInt(i64)) {
         @compileError("idle timeout exceeds the monotonic clock representation");
     }
@@ -114,6 +118,7 @@ pub fn ConnectionSweeper(comptime PoolType: type, comptime idle_timeout_ms: u64)
         active: bool = false,
         stopping: bool = false,
 
+        /// Initializes an unarmed sweeper borrowing `pool` for its lifetime.
         pub fn init(io: std.Io, pool: *PoolType) !Self {
             return Self{
                 .timer = try xev.Timer.init(),
@@ -122,10 +127,12 @@ pub fn ConnectionSweeper(comptime PoolType: type, comptime idle_timeout_ms: u64)
             };
         }
 
+        /// Releases timer resources after the sweeper has stopped.
         pub fn deinit(self: *Self) void {
             self.timer.deinit();
         }
 
+        /// Starts periodic idle-connection scans; repeated starts are ignored.
         pub fn start(self: *Self, loop: *Loop) void {
             if (self.active or self.stopping) return;
             self.active = true;
@@ -140,6 +147,7 @@ pub fn ConnectionSweeper(comptime PoolType: type, comptime idle_timeout_ms: u64)
             );
         }
 
+        /// Requests asynchronous cancellation of the periodic scan.
         pub fn stop(self: *Self, loop: *Loop) void {
             if (!self.active or self.stopping) return;
             self.stopping = true;
@@ -207,20 +215,4 @@ pub fn ConnectionSweeper(comptime PoolType: type, comptime idle_timeout_ms: u64)
             return .disarm;
         }
     };
-}
-
-test "timer: stop drains the active completion" {
-    const Tick = struct {
-        fn callback() void {}
-    };
-
-    var loop = try @import("loop.zig").init();
-    defer @import("loop.zig").deinit(&loop);
-    var timer = try init_timer(60_000, Tick.callback);
-    defer deinit_timer(&timer);
-
-    start_timer(&timer, &loop);
-    stop_timer(&timer, &loop);
-    try @import("loop.zig").run(&loop);
-    try std.testing.expect(!timer.active);
 }

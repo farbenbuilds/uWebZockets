@@ -7,14 +7,21 @@ const stream = @import("stream.zig");
 const HeaderSet = stream.HeaderSet;
 const QuicStream = stream.QuicStream;
 
+/// Reports that the build includes the lsquic-backed QUIC engine.
 pub const available = true;
 
+/// Returns a bounded QUIC server engine type.
+///
+/// `capacity` bounds concurrent connections and request streams;
+/// `response_capacity` reserves response body bytes per stream during `init`.
 pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) type {
     if (capacity == 0) @compileError("QUIC capacity must be greater than zero");
     if (capacity > std.math.maxInt(c_uint)) @compileError("QUIC capacity exceeds lsquic limits");
     if (response_capacity == 0) @compileError("HTTP/3 response capacity must be greater than zero");
     if (capacity > std.math.maxInt(usize) / 4) @compileError("QUIC packet capacity overflows usize");
-    if (capacity > std.math.maxInt(usize) / stream.header_capacity) {
+    if (capacity > std.math.maxInt(usize) / 2) @compileError("HTTP/3 header slot count overflows usize");
+    const header_slot_count = capacity * 2;
+    if (header_slot_count > std.math.maxInt(usize) / stream.header_capacity) {
         @compileError("HTTP/3 header storage size overflows usize");
     }
     if (capacity > std.math.maxInt(usize) / stream.request_body_capacity) {
@@ -36,7 +43,7 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
         bytes: [api.max_udp_payload_size]u8,
     };
     const StreamPool = pool.freelist_pool(QuicStream, capacity);
-    const HeaderPool = pool.freelist_pool(HeaderSet, capacity);
+    const HeaderPool = pool.freelist_pool(HeaderSet, header_slot_count);
     const PacketPool = pool.freelist_pool(PacketSlot, packet_slot_count);
 
     return struct {
@@ -62,6 +69,7 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
         active_connections: usize = 0,
         global_acquired: bool = false,
 
+        /// Allocates all stream, header, packet, and payload slabs.
         pub fn init() !Self {
             var stream_pool = try StreamPool.init();
             errdefer stream_pool.deinit();
@@ -72,7 +80,7 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
 
             const header_storage = try std.heap.page_allocator.alloc(
                 u8,
-                capacity * stream.header_capacity,
+                header_slot_count * stream.header_capacity,
             );
             errdefer std.heap.page_allocator.free(header_storage);
             const request_body_storage = try std.heap.page_allocator.alloc(
@@ -102,6 +110,7 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
             };
         }
 
+        /// Starts the engine and borrows its TLS context and router until `deinit`.
         pub fn start(
             self: *Self,
             ssl_ctx: *c.SSL_CTX,
@@ -139,6 +148,8 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
             self.settings.es_base_plpmtu = 1200;
             self.settings.es_max_plpmtu = 1472;
             self.settings.es_max_batch_size = 16;
+            // TLS rejects 0-RTT, so retaining replayable packets has no application value.
+            self.settings.es_max_delayed_0rtt_packets = 0;
             self.settings.es_rw_once = 1;
             self.settings.es_proc_time_thresh = 10_000;
 
@@ -187,6 +198,7 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
             };
         }
 
+        /// Destroys the engine and releases every setup-time slab.
         pub fn deinit(self: *Self) void {
             if (self.engine) |engine| c.lsquic_engine_destroy(engine);
             self.engine = null;
@@ -208,6 +220,7 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
             self.stream_pool.deinit();
         }
 
+        /// Submits one peer datagram and immediately services ready connections.
         pub fn process_datagram(self: *Self, data: []const u8, peer: std.Io.net.IpAddress) void {
             const engine = self.engine orelse return;
             if (data.len == 0 or data.len > api.max_udp_payload_size) return;
@@ -225,6 +238,7 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
             self.process();
         }
 
+        /// Flushes pending packets and advances ready lsquic connections.
         pub fn process(self: *Self) void {
             const engine = self.engine orelse return;
             if (c.lsquic_engine_has_unsent_packets(engine) != 0) {
@@ -233,12 +247,14 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
             c.lsquic_engine_process_conns(engine);
         }
 
+        /// Begins graceful engine shutdown and advances affected connections.
         pub fn cooldown(self: *Self) void {
             const engine = self.engine orelse return;
             c.lsquic_engine_cooldown(engine);
             c.lsquic_engine_process_conns(engine);
         }
 
+        /// Returns a bounded delay until the next engine service call.
         pub fn next_timeout_ms(self: *Self) u64 {
             const engine = self.engine orelse return 50;
             var microseconds: c_int = 0;
@@ -248,15 +264,16 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
             return std.math.clamp(rounded, 1, 50);
         }
 
-        fn acquire_header_set(self: *Self) ?*HeaderSet {
+        fn acquire_header_set(self: *Self, is_trailer: bool) ?*HeaderSet {
             const header_set = self.header_pool.acquire() orelse return null;
             const index = self.header_pool.index_of(header_set) orelse unreachable;
             const storage_start = index * stream.header_capacity;
-            header_set.reset(
-                self,
-                release_header_set,
-                self.header_storage[storage_start .. storage_start + stream.header_capacity],
-            );
+            const storage = self.header_storage[storage_start .. storage_start + stream.header_capacity];
+            if (is_trailer) {
+                header_set.reset_trailer(self, release_header_set, storage);
+            } else {
+                header_set.reset(self, release_header_set, storage);
+            }
             return header_set;
         }
 
@@ -349,12 +366,17 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
 
         fn create_header_set(
             context: ?*anyopaque,
-            _: ?*c.lsquic_stream,
+            lsquic_stream: ?*c.lsquic_stream,
             is_push_promise: c_int,
         ) callconv(.c) ?*anyopaque {
             if (is_push_promise != 0) return null;
             const self: *Self = @ptrCast(@alignCast(context orelse return null));
-            return self.acquire_header_set();
+            const is_trailer = if (lsquic_stream) |raw_stream| blk: {
+                const raw_context = c.lsquic_stream_get_ctx(raw_stream) orelse break :blk false;
+                const quic_stream: *QuicStream = @ptrCast(@alignCast(raw_context));
+                break :blk quic_stream.request_phase != .waiting_headers;
+            } else false;
+            return self.acquire_header_set(is_trailer);
         }
 
         fn prepare_header_decode(

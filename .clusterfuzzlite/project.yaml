@@ -1,0 +1,2 @@
+# OSS-Fuzz has no Zig language key. C++ selects its Clang linker environment.
+language: c++

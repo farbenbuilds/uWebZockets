@@ -1,7 +1,9 @@
 const std = @import("std");
 
-// a generic fixed-size memory pool using a bitset.
-// excellent for scenarios where you need to check if a specific index is active in o(1) time.
+/// Returns an inline fixed-capacity pool tracked by a bitset.
+///
+/// The generated type never allocates and invalidates a slot pointer when that
+/// slot is released.
 pub fn bitset_pool(comptime T: type, comptime capacity: usize) type {
     if (capacity == 0) @compileError("pool capacity must be greater than zero");
     if (@sizeOf(T) == 0) @compileError("pool element type must have non-zero size");
@@ -18,20 +20,19 @@ pub fn bitset_pool(comptime T: type, comptime capacity: usize) type {
         // bitset tracking which slots are available (1) or active (0).
         available_mask: std.StaticBitSet(capacity) = std.StaticBitSet(capacity).initFull(),
 
-        // initializes the static pool.
+        /// Initializes every slot as available.
         pub fn init() Self {
             return .{};
         }
 
-        // acquires an unused slot from the pool in o(1) amortized time.
-        // returns null if the pool is completely exhausted.
+        /// Acquires an uninitialized slot, or returns null when exhausted.
         pub fn acquire(self: *Self) ?*T {
             const free_index = self.available_mask.findFirstSet() orelse return null;
             self.available_mask.unset(free_index);
             return &self.storage[free_index];
         }
 
-        // releases an active slot back into the pool.
+        /// Releases an active slot and rejects foreign, misaligned, or free pointers.
         pub fn release(self: *Self, item: *const T) bool {
             const ptr_int = @intFromPtr(item);
             const base_int = @intFromPtr(&self.storage[0]);
@@ -48,7 +49,7 @@ pub fn bitset_pool(comptime T: type, comptime capacity: usize) type {
             return true;
         }
 
-        // returns the current number of active items.
+        /// Returns the number of currently acquired slots.
         pub fn count_active(self: *const Self) usize {
             return capacity - self.available_mask.count();
         }

@@ -6,7 +6,7 @@
   fetchurl,
   fetchgit,
   runCommandLocal,
-  zig_0_15,
+  zig_0_16,
   zstd,
   name ? "zig-packages",
 }:
@@ -18,11 +18,14 @@ let
     }:
     runCommandLocal name
       {
-        nativeBuildInputs = [ zig_0_15 ];
+        nativeBuildInputs = [ zig_0_16 ];
       }
       ''
+        # workaround https://codeberg.org/ziglang/zig/issues/31866
+        # https://github.com/Cloudef/zig2nix/issues/54
+        touch "$TMPDIR/build.zig"
         hash="$(cd "$TMPDIR" && zig fetch --global-cache-dir "$TMPDIR" ${artifact})"
-        mv "$TMPDIR/p/$hash" "$out"
+        mv "$TMPDIR/p/$hash.tar.gz" "$out"
         chmod 755 "$out"
       '';
 
@@ -100,11 +103,56 @@ let
 in
 linkFarm name [
   {
+    name = "N-V-__8AAEhRag6gHL85MNqOxGFtJs5Lu9fK22BDYLMwOJs6";
+    path = fetchZigArtifact {
+      name = "boringssl";
+      url = "git+https://github.com/google/boringssl#7c1efd8d6ffb36a57feba44e8c73cf674801f3cb";
+      hash = "sha256-AWR4kyG7NTmp8ZVbF1St3RzoVsfpwBXjWHcCai3qx1Q=";
+      unpack = true;
+    };
+  }
+  {
+    name = "N-V-__8AAEaRCwCsYb_rSsH72Pb6DNFQLSjdRzTFOVsJWcoB";
+    path = fetchZigArtifact {
+      name = "libdeflate";
+      url = "git+https://github.com/ebiggers/libdeflate#92e6a0db9fa848d742f9eb286c92afc60f2c3dda";
+      hash = "sha256-QVF2XL8Qu3mTszKKtx+8BExkTGkpMANXjkAe3XXPUJQ=";
+      unpack = true;
+    };
+  }
+  {
     name = "libxev-0.0.0-86vtcwIRFADbH4hk-EjROXxlrKIRPQdA41XiTSytYO-F";
     path = fetchZigArtifact {
       name = "libxev";
       url = "git+https://github.com/mitchellh/libxev#9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf";
       hash = "sha256-fOU1oxIxfoEgoLuWz7fVX6M+zmqpo7gqZObWiH/aDE0=";
+      unpack = true;
+    };
+  }
+  {
+    name = "N-V-__8AADNAVQBZXGMh1JSQZTQy_atNLBkNpWHtvEykxldT";
+    path = fetchZigArtifact {
+      name = "lshpack";
+      url = "git+https://github.com/litespeedtech/ls-hpack#cf0f70dd10b352194c97448eb5d00b4aa484f531";
+      hash = "sha256-ffNVUXDK76tBx+4j5otg3zji1s1VF5t0YsGpgK7xzis=";
+      unpack = true;
+    };
+  }
+  {
+    name = "N-V-__8AANUVVwDVcoOf9vCuxr9NUBhMvdV-XuREQFIxja8H";
+    path = fetchZigArtifact {
+      name = "lsqpack";
+      url = "git+https://github.com/litespeedtech/ls-qpack#91567706c41c0d97ab8dc576873ecd472d7869fa";
+      hash = "sha256-kbwtvlEmWBA+qUUwYhpZuh5rvNxBum30d6RQDbAF5AM=";
+      unpack = true;
+    };
+  }
+  {
+    name = "N-V-__8AAEX0ZgBgVniQX-qATrDP4ov_8tG_hi3LzhSAHPX-";
+    path = fetchZigArtifact {
+      name = "lsquic";
+      url = "git+https://github.com/litespeedtech/lsquic#19547405c24f60c4537478d38f4214e990be1f95";
+      hash = "sha256-vOlglXcMRTsnnSvYuwzqUVBSfsykzJ+I4UkRRa1bz5w=";
       unpack = true;
     };
   }
