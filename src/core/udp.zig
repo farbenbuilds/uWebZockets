@@ -1,6 +1,7 @@
 const std = @import("std");
 const c = @import("c");
 const xev = @import("xev");
+const core_loop = @import("loop.zig");
 const Router = @import("../router/radix.zig").Router;
 const max_udp_payload_size = @import("../quic/lsquic_api.zig").max_udp_payload_size;
 
@@ -193,7 +194,8 @@ pub fn quic_transport(comptime Engine: type) type {
 
             if (self.read_active and !self.read_cancel_active) {
                 self.read_cancel_active = true;
-                loop.cancel(
+                core_loop.cancel(
+                    loop,
                     &self.read_completion,
                     &self.read_cancel_completion,
                     Self,

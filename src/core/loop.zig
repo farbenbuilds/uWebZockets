@@ -10,6 +10,57 @@ pub const Loop = struct {
     }
 };
 
+/// Cancels a completion across libxev backends.
+pub fn cancel(
+    loop: *xev.Loop,
+    completion: *xev.Completion,
+    cancel_completion: *xev.Completion,
+    comptime Userdata: type,
+    userdata: ?*Userdata,
+    comptime callback: *const fn (
+        userdata: ?*Userdata,
+        loop: *xev.Loop,
+        completion: *xev.Completion,
+        result: xev.CancelError!void,
+    ) xev.CallbackAction,
+) void {
+    if (xev.backend != .kqueue) {
+        loop.cancel(
+            completion,
+            cancel_completion,
+            Userdata,
+            userdata,
+            callback,
+        );
+        return;
+    }
+
+    cancel_completion.* = .{
+        .op = .{ .cancel = .{ .c = completion } },
+        .userdata = userdata,
+        .callback = (struct {
+            fn callback_inner(
+                raw_userdata: ?*anyopaque,
+                inner_loop: *xev.Loop,
+                inner_completion: *xev.Completion,
+                result: xev.Result,
+            ) xev.CallbackAction {
+                const typed_userdata: ?*Userdata = if (Userdata == void)
+                    null
+                else
+                    @ptrCast(@alignCast(raw_userdata));
+                return @call(.always_inline, callback, .{
+                    typed_userdata,
+                    inner_loop,
+                    inner_completion,
+                    if (result.cancel) |_| {} else |err| err,
+                });
+            }
+        }).callback_inner,
+    };
+    loop.add(cancel_completion);
+}
+
 /// Initializes an event loop sized for 4096 completion entries.
 pub fn init() !Loop {
     return .{
