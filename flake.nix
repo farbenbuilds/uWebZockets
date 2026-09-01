@@ -26,6 +26,14 @@
         system,
         ...
       }: let
+        pkgs = import inputs.nixpkgs {
+          inherit system;
+          overlays = [
+            (final: prev: {
+              stdenv = prev.stdenvAdapters.overrideCC prev.stdenv (if prev ? gcc14 then prev.gcc14 else prev.stdenv.cc);
+            })
+          ];
+        };
         lib = pkgs.lib;
         isLinux = pkgs.stdenv.hostPlatform.isLinux;
         pkgsMusl =
@@ -104,7 +112,7 @@
         in
           packagePkgs.stdenv.mkDerivation {
             pname = "uwebzockets";
-            version = "1.0.0";
+            version = "1.0.1";
             src = source;
             strictDeps = true;
             inherit nativeBuildInputs;

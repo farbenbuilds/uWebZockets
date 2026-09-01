@@ -3,6 +3,13 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.0.1] - 2026-09-01
+
+### Fixed
+
+- Fixed Nix dev-shell evaluation with current Nixpkgs by using the supported
+  `stdenvAdapters.overrideCC` API and a valid compiler fallback.
+
 ## [1.0.0] - 2026-09-01
 
 ### Added
