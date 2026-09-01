@@ -159,9 +159,32 @@ the platform networking libraries required by those dependencies.
 
 ## Use as a Zig dependency
 
-Use a released tag as an immutable dependency. For current development changes,
-pin an exact commit in your repository and reference that immutable checkout by
-path:
+### Zig package manager
+
+From the consuming project, fetch an immutable release tag or commit:
+
+```sh
+zig fetch --save 'git+https://github.com/farbenbuilds/uWebZockets#<tag-or-commit>'
+```
+
+This adds the package to `build.zig.zon` under the `uWebZockets` name. Import it
+from `build.zig`:
+
+```zig
+const uz = b.dependency("uWebZockets", .{
+    .target = target,
+    .optimize = optimize,
+});
+const uz_module = uz.module("uWebZockets");
+exe.root_module.addImport("uWebZockets", uz_module);
+```
+
+Pin a tag or full commit rather than a moving branch so dependency resolution
+remains reproducible.
+
+### Local path dependency
+
+For local development changes, reference an immutable checkout by path:
 
 ```sh
 git submodule add https://github.com/farbenbuilds/uWebZockets.git vendor/uWebZockets
