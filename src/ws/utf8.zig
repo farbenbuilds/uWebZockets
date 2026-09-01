@@ -1,9 +1,11 @@
+/// Incremental UTF-8 continuation state between frame fragments.
 pub const State = struct {
     remaining: u3 = 0,
     lower: u8 = 0x80,
     upper: u8 = 0xbf,
 };
 
+/// Validates one byte chunk and returns the next state, or null on failure.
 pub fn validate_chunk(state: State, input: []const u8) ?State {
     var next = state;
 
@@ -54,6 +56,7 @@ pub fn validate_chunk(state: State, input: []const u8) ?State {
     return next;
 }
 
+/// Reports whether the state ends on a complete code point.
 pub fn is_complete(state: State) bool {
     return state.remaining == 0;
 }

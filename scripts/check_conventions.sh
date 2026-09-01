@@ -1,12 +1,22 @@
 #!/usr/bin/env sh
 set -eu
 
+if ! command -v rg >/dev/null 2>&1; then
+    printf '%s\n' "ripgrep is required for convention checks" >&2
+    exit 1
+fi
+
 failed=0
 
 bad_files=$(
-    rg --files src examples tests scripts |
+    rg --files .github src examples tests scripts fuzz oss-fuzz benchmarks include misc patches |
         while IFS= read -r file; do
             base=${file##*/}
+            case "$base" in
+                build.zig | build.zig.zon | *.schema.json | CODE_OF_CONDUCT.md | COMMIT_CONVENTION.md | Dockerfile | PULL_REQUEST_TEMPLATE.md | README.md | uWebZockets.h)
+                    continue
+                    ;;
+            esac
             stem=${base%.*}
             case "$stem" in
                 *[!a-z0-9_]*)
@@ -22,12 +32,12 @@ if [ -n "$bad_files" ]; then
     failed=1
 fi
 
-if rg -n --pcre2 '\b(?:pub\s+)?fn\s+[a-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*\b' build.zig src examples tests; then
+if rg -n --pcre2 '\b(?:(?:pub|export|inline|noinline)\s+)*fn\s+(?!LLVMFuzzerTestOneInput\b)[A-Za-z_][A-Za-z0-9]*[A-Z][A-Za-z0-9]*\b' build.zig src examples tests fuzz; then
     printf '%s\n' "function names must use snake_case"
     failed=1
 fi
 
-if rg -n --pcre2 '\b(?:const|var)\s+[a-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*\b' build.zig src examples tests; then
+if rg -n --pcre2 '\b(?:const|var)\s+[a-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*\b' build.zig src examples tests fuzz; then
     printf '%s\n' "variable names must use snake_case"
     failed=1
 fi

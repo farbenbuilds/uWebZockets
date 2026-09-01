@@ -2,10 +2,14 @@ const std = @import("std");
 const WebSocket = @import("socket.zig").WebSocket;
 const zslay = @import("zslay");
 
+/// Maximum number of active topic names.
 pub const max_topics = 1024;
+/// Maximum number of socket-to-topic subscriptions.
 pub const max_subscriptions = 8192;
+/// Maximum topic name length in bytes.
 pub const max_topic_length = 127;
 
+/// Allocation-free WebSocket topic registry with fixed SoA storage.
 pub const PubSubEngine = struct {
     topic_names: [max_topics][max_topic_length]u8 = undefined,
     topic_name_lengths: [max_topics]u8 = .{0} ** max_topics,
@@ -40,6 +44,7 @@ pub const PubSubEngine = struct {
         return topic_id;
     }
 
+    /// Adds an idempotent socket subscription, copying the topic name if new.
     pub fn subscribe(self: *PubSubEngine, socket: *WebSocket, topic: []const u8) !void {
         const existing_topic_id = self.find_topic(topic);
 
@@ -65,6 +70,7 @@ pub const PubSubEngine = struct {
         self.topic_subscriber_counts[topic_id] += 1;
     }
 
+    /// Removes one socket subscription and reports whether it existed.
     pub fn unsubscribe(self: *PubSubEngine, socket: *WebSocket, topic: []const u8) bool {
         const topic_id = self.find_topic(topic) orelse return false;
 
@@ -79,6 +85,7 @@ pub const PubSubEngine = struct {
         return false;
     }
 
+    /// Removes every subscription owned by `socket`.
     pub fn unsubscribe_all(self: *PubSubEngine, socket: *WebSocket) void {
         var subscription_id: usize = 0;
         while (subscription_id < self.sub_count) {
@@ -99,6 +106,7 @@ pub const PubSubEngine = struct {
         }
     }
 
+    /// Sends to current subscribers and returns the successful delivery count.
     pub fn publish(self: *PubSubEngine, topic: []const u8, message: []const u8, is_text: bool) usize {
         const topic_id = self.find_topic(topic) orelse return 0;
         const opcode: zslay.Opcode = if (is_text) .text else .binary;

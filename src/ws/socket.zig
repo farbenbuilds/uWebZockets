@@ -12,6 +12,7 @@ const mask = @import("mask.zig");
 const utf8 = @import("utf8.zig");
 const PubSubEngine = @import("pubsub.zig").PubSubEngine;
 
+/// Event-loop-confined server WebSocket borrowing its TCP connection.
 pub const WebSocket = struct {
     conn: *TcpConnection,
     pubsub: ?*PubSubEngine = null,
@@ -32,6 +33,7 @@ pub const WebSocket = struct {
     initialized: bool = false,
     control_buffer: [125]u8 = undefined,
 
+    /// Validates and performs an HTTP/1.1 upgrade using `behavior` callbacks.
     pub fn upgrade(self: *WebSocket, req: *const Request, res: *Response, behavior: WsBehavior) void {
         self.behavior = behavior;
 
@@ -133,6 +135,7 @@ pub const WebSocket = struct {
         if (self.behavior.open) |callback| callback(self);
     }
 
+    /// Sends one validated close frame and schedules connection shutdown.
     pub fn send_close(self: *WebSocket, code: u16, reason: []const u8) !void {
         if (self.close_sent) return;
         if (!valid_close_code(code)) return error.InvalidCloseCode;
@@ -145,6 +148,9 @@ pub const WebSocket = struct {
         try self.send(payload[0 .. 2 + reason.len], .close);
     }
 
+    /// Frames and queues one complete text, binary, control, or close message.
+    ///
+    /// The connection write queue copies bytes before this function returns.
     pub fn send(self: *WebSocket, data: []const u8, opcode: zslay.Opcode) !void {
         if (!self.initialized or self.conn.closing) {
             return error.ConnectionClosed;
@@ -177,10 +183,12 @@ pub const WebSocket = struct {
         }
     }
 
+    /// Returns bytes waiting in the bounded connection write queue.
     pub fn buffered_amount(self: *const WebSocket) usize {
         return self.conn.buffered_amount();
     }
 
+    /// Consumes mutable network bytes, unmasking client payloads in place.
     pub fn on_data(self: *WebSocket, data: []u8) void {
         var offset: usize = 0;
 
@@ -514,15 +522,18 @@ pub const WebSocket = struct {
         if (self.behavior.close) |callback| callback(self);
     }
 
+    /// Invokes the drain callback when the upgraded connection can accept data.
     pub fn notify_drain(self: *WebSocket) void {
         if (!self.initialized or self.conn.closing) return;
         if (self.behavior.drain) |callback| callback(self);
     }
 
+    /// Immediately closes the underlying TCP connection.
     pub fn terminate(self: *WebSocket) void {
         tcp.close_connection(self.conn);
     }
 
+    /// Releases subscriptions and notifies close at most once.
     pub fn deinit(self: *WebSocket) void {
         if (!self.initialized) return;
         self.notify_close();
@@ -534,16 +545,19 @@ pub const WebSocket = struct {
         self.frame_compression_checked = false;
     }
 
+    /// Subscribes this socket to a bounded topic registry.
     pub fn subscribe(self: *WebSocket, topic: []const u8) !void {
         const engine = self.pubsub orelse return error.PubSubUnavailable;
         try engine.subscribe(self, topic);
     }
 
+    /// Removes this socket's subscription and reports whether it existed.
     pub fn unsubscribe(self: *WebSocket, topic: []const u8) bool {
         const engine = self.pubsub orelse return false;
         return engine.unsubscribe(self, topic);
     }
 
+    /// Publishes through this socket's registry and returns deliveries.
     pub fn publish(self: *WebSocket, topic: []const u8, message: []const u8, is_text: bool) usize {
         const engine = self.pubsub orelse return 0;
         return engine.publish(topic, message, is_text);
@@ -558,7 +572,8 @@ fn negotiate_permessage_deflate(req: *const Request) ?handshake.PerMessageDeflat
     return null;
 }
 
-fn validate_outgoing_payload(data: []const u8, opcode: zslay.Opcode) !void {
+/// Validates opcode-specific payload constraints before framing.
+pub fn validate_outgoing_payload(data: []const u8, opcode: zslay.Opcode) !void {
     switch (opcode) {
         .continuation => return error.InvalidOpcode,
         .text => if (!std.unicode.utf8ValidateSlice(data)) return error.InvalidUtf8,
@@ -623,29 +638,4 @@ fn valid_close_code(code: u16) bool {
         1000...1003, 1007...1014, 3000...4999 => true,
         else => false,
     };
-}
-
-test "websocket validates outgoing application frames" {
-    try validate_outgoing_payload("valid", .text);
-    try validate_outgoing_payload("", .close);
-    try std.testing.expectError(
-        error.InvalidUtf8,
-        validate_outgoing_payload(&.{ 0xc0, 0x80 }, .text),
-    );
-    try std.testing.expectError(
-        error.InvalidOpcode,
-        validate_outgoing_payload("", .continuation),
-    );
-    try std.testing.expectError(
-        error.InvalidCloseFrame,
-        validate_outgoing_payload(&.{0x03}, .close),
-    );
-    try std.testing.expectError(
-        error.InvalidUtf8,
-        validate_outgoing_payload(&.{ 0x03, 0xe8, 0xc0, 0x80 }, .close),
-    );
-    try std.testing.expectError(
-        error.ControlFrameTooLarge,
-        validate_outgoing_payload(&([_]u8{0} ** 126), .ping),
-    );
 }

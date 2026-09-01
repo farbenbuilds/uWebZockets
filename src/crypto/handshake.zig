@@ -1,7 +1,7 @@
 const std = @import("std");
 const c = @import("c");
 
-// possible states during an asynchronous tls handshake
+/// Non-blocking TLS handshake outcome for one BoringSSL step.
 pub const HandshakeStatus = enum {
     success, // handshake complete, ready for cleartext data
     want_read, // tcp needs to read more bytes from network into rbio
@@ -9,8 +9,7 @@ pub const HandshakeStatus = enum {
     failed, // certificate error, protocol mismatch, or fatal error
 };
 
-// executes a single step in tls negotiation.
-// called continuously when new bytes arrive until it returns .success.
+/// Advances `ssl` once without waiting for socket readiness.
 pub fn step(ssl: *c.SSL) HandshakeStatus {
     const ret = c.SSL_do_handshake(ssl);
 

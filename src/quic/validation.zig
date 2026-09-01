@@ -1,5 +1,6 @@
 const std = @import("std");
 
+/// Validates a non-empty HTTP method token.
 pub fn valid_method(method: []const u8) bool {
     if (method.len == 0) return false;
     for (method) |byte| {
@@ -8,6 +9,7 @@ pub fn valid_method(method: []const u8) bool {
     return true;
 }
 
+/// Validates an HTTP/3 origin-form target or the OPTIONS asterisk form.
 pub fn valid_target(target: []const u8) bool {
     if (std.mem.eql(u8, target, "*")) return true;
     if (target.len == 0 or target[0] != '/') return false;
@@ -25,6 +27,7 @@ pub fn valid_target(target: []const u8) bool {
     return true;
 }
 
+/// Validates a host authority without user information.
 pub fn valid_authority(authority: []const u8) bool {
     if (authority.len == 0 or std.mem.indexOfScalar(u8, authority, '@') != null) return false;
 
@@ -44,6 +47,7 @@ pub fn valid_authority(authority: []const u8) bool {
     return if (colon) |offset| valid_port(authority[offset + 1 ..]) else true;
 }
 
+/// Validates a lowercase HTTP/3 field name.
 pub fn valid_http3_name(name: []const u8) bool {
     if (name.len == 0) return false;
     for (name) |byte| {
@@ -52,6 +56,7 @@ pub fn valid_http3_name(name: []const u8) bool {
     return true;
 }
 
+/// Rejects control bytes forbidden in an HTTP field value.
 pub fn valid_header_value(value: []const u8) bool {
     for (value) |byte| {
         if ((byte < 32 and byte != '\t') or byte == 127) return false;
@@ -59,6 +64,7 @@ pub fn valid_header_value(value: []const u8) bool {
     return true;
 }
 
+/// Reports whether a field is forbidden on HTTP/2 and HTTP/3 connections.
 pub fn connection_specific_header(name: []const u8) bool {
     return std.ascii.eqlIgnoreCase(name, "connection") or
         std.ascii.eqlIgnoreCase(name, "keep-alive") or
@@ -67,6 +73,7 @@ pub fn connection_specific_header(name: []const u8) bool {
         std.ascii.eqlIgnoreCase(name, "upgrade");
 }
 
+/// Parses a non-empty decimal usize, returning null on syntax or overflow.
 pub fn parse_decimal(value: []const u8) ?usize {
     if (value.len == 0) return null;
 
@@ -148,24 +155,4 @@ fn is_sub_delim(byte: u8) bool {
         '!', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=' => true,
         else => false,
     };
-}
-
-test "quic: pure header validation rejects malformed metadata" {
-    try std.testing.expect(valid_method("PATCH"));
-    try std.testing.expect(!valid_method("BAD METHOD"));
-    try std.testing.expect(valid_target("/path?value=1"));
-    try std.testing.expect(!valid_target("/path#fragment"));
-    try std.testing.expect(!valid_target("/bad path"));
-    try std.testing.expect(!valid_target("/bad%2"));
-    try std.testing.expect(valid_target("*"));
-    try std.testing.expect(valid_authority("example.com:443"));
-    try std.testing.expect(valid_authority("[::1]:443"));
-    try std.testing.expect(!valid_authority("user@example.com"));
-    try std.testing.expect(!valid_authority("example.com/path"));
-    try std.testing.expect(valid_http3_name("content-type"));
-    try std.testing.expect(!valid_http3_name("Content-Type"));
-    try std.testing.expect(!valid_header_value("value\r\ninjected"));
-    try std.testing.expect(connection_specific_header("Connection"));
-    try std.testing.expectEqual(@as(?usize, 4096), parse_decimal("4096"));
-    try std.testing.expect(parse_decimal("184467440737095516160") == null);
 }

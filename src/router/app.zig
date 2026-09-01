@@ -10,16 +10,23 @@ const PubSubEngine = @import("../ws/pubsub.zig").PubSubEngine;
 const DeflateContext = @import("../ws/deflate.zig").Context;
 const TlsContext = @import("../crypto/tls.zig").TlsContext;
 const quic = @import("../quic/engine.zig");
+const udp = @import("../core/udp.zig");
 
+/// Default maximum complete WebSocket message size per connection.
 pub const default_max_ws_message_size = 16 * 1024;
+/// Default bounded pending-output capacity per TCP connection.
 pub const default_write_queue_size = core_tcp.default_write_queue_capacity;
+/// Default inactivity timeout before an idle connection is closed.
 pub const default_idle_timeout_ms: u64 = 120_000;
+/// Reports whether the compiled lsquic transport is available.
 pub const http3_available = quic.available;
 
+/// Returns the default fixed-capacity application type.
 pub fn app(comptime max_connections: usize) type {
     return configured_app(max_connections, default_max_ws_message_size, default_write_queue_size);
 }
 
+/// Returns an application type with explicit message and write capacities.
 pub fn configured_app(
     comptime max_connections: usize,
     comptime max_ws_message_size: usize,
@@ -33,6 +40,7 @@ pub fn configured_app(
     );
 }
 
+/// Returns an application type with an explicit idle timeout policy.
 pub fn configured_app_with_timeout(
     comptime max_connections: usize,
     comptime max_ws_message_size: usize,
@@ -53,6 +61,7 @@ pub fn configured_app_with_timeout(
         const Self = @This();
         const Pool = core_pool.freelist_pool(core_tcp.TcpConnection, max_connections);
         const QuicEngine = quic.quic_engine(max_connections, write_queue_size);
+        const QuicTransport = udp.quic_transport(QuicEngine);
 
         io: std.Io,
         loop: core_loop.Loop,
@@ -64,33 +73,20 @@ pub fn configured_app_with_timeout(
         write_queue_storage: []u8,
         router: radix.Router,
         server: ?core_tcp.TcpServer = null,
-        sweeper: ?core_timer.ConnectionSweeper(Pool, idle_timeout_ms) = null,
+        sweeper: ?core_timer.connection_sweeper(Pool, idle_timeout_ms) = null,
         tls_ctx: ?TlsContext = null,
         quic_tls_ctx: ?TlsContext = null,
-        quic_engine: ?QuicEngine = null,
-        udp_socket: ?xev.UDP = null,
-        quic_timer: ?xev.Timer = null,
-        udp_read_completion: xev.Completion = .{},
-        udp_read_cancel_completion: xev.Completion = .{},
-        udp_close_completion: xev.Completion = .{},
-        quic_timer_completion: xev.Completion = .{},
-        quic_timer_cancel_completion: xev.Completion = .{},
-        udp_read_state: xev.UDP.State = undefined,
-        udp_read_buffer: [@import("../quic/lsquic_api.zig").max_udp_payload_size]u8 = undefined,
+        quic_transport: ?QuicTransport = null,
         http3_enabled: bool = false,
-        udp_read_active: bool = false,
-        udp_read_cancel_active: bool = false,
-        udp_close_complete: bool = false,
-        quic_timer_active: bool = false,
-        quic_timer_cancel_active: bool = false,
         routes_locked: bool = false,
         shutting_down: bool = false,
+        running: bool = false,
         deinitialized: bool = false,
 
         // embeds the pub/sub engine directly into the app
         pubsub: PubSubEngine,
 
-        // initializes a new application.
+        /// Initializes a plaintext application and its fixed-capacity slabs.
         pub fn init(io: std.Io) !Self {
             var loop = try core_loop.init();
             errdefer core_loop.deinit(&loop);
@@ -117,7 +113,7 @@ pub fn configured_app_with_timeout(
             };
         }
 
-        // initializes a new application with https support.
+        /// Initializes an HTTPS application from NUL-terminated certificate paths.
         pub fn init_https(io: std.Io, cert_path: [:0]const u8, key_path: [:0]const u8) !Self {
             var instance = try Self.init(io);
             errdefer instance.deinit();
@@ -125,7 +121,7 @@ pub fn configured_app_with_timeout(
             return instance;
         }
 
-        // initializes a new application with http/3 (quic) support.
+        /// Initializes isolated TCP/TLS and HTTP/3/QUIC server contexts.
         pub fn init_http3(io: std.Io, cert_path: [:0]const u8, key_path: [:0]const u8) !Self {
             var instance = try Self.init(io);
             errdefer instance.deinit();
@@ -135,9 +131,12 @@ pub fn configured_app_with_timeout(
             return instance;
         }
 
-        // deinitializes the application and releases os resources.
+        /// Releases all application resources after shutdown has drained completions.
         pub fn deinit(self: *Self) void {
             if (self.deinitialized) return;
+            if (self.running) {
+                std.debug.panic("cannot deinitialize an application from its event loop", .{});
+            }
             self.shutdown() catch |err| {
                 // Returning would leave kernel completions pointing at storage
                 // the caller is about to release.
@@ -150,11 +149,8 @@ pub fn configured_app_with_timeout(
             self.sweeper = null;
             self.server = null;
 
-            if (self.quic_engine) |*engine| engine.deinit();
-            self.quic_engine = null;
-            if (self.quic_timer) |*timer| timer.deinit();
-            self.quic_timer = null;
-            self.udp_socket = null;
+            if (self.quic_transport) |*transport| transport.deinit();
+            self.quic_transport = null;
             if (self.quic_tls_ctx) |*tls| tls.deinit();
             self.quic_tls_ctx = null;
             if (self.tls_ctx) |*tls| tls.deinit();
@@ -172,91 +168,195 @@ pub fn configured_app_with_timeout(
             self.deinitialized = true;
         }
 
-        // Stops recurring work and drains every completion that may reference
-        // the application's contiguous slabs.
+        /// Stops recurring work and drains completions that borrow application slabs.
         pub fn shutdown(self: *Self) !void {
             if (self.deinitialized) return error.ApplicationDeinitialized;
 
-            if (!self.shutting_down) {
-                self.shutting_down = true;
-                if (self.sweeper) |*sw| sw.stop(&self.loop);
-                if (self.server) |*server| core_tcp.close_server(server, &self.loop);
-                if (self.quic_engine) |*engine| engine.cooldown();
-                self.stop_quic_timer();
-                self.close_udp();
+            self.begin_shutdown();
+            if (self.running) return;
 
-                for (self.pool.storage, 0..) |*conn, index| {
-                    if (!self.pool.is_active(index)) continue;
-                    core_tcp.close_connection(conn);
-                }
+            try self.drive_shutdown();
+        }
+
+        /// Reports whether this application currently owns an active loop run.
+        pub fn is_running(self: *const Self) bool {
+            return self.running;
+        }
+
+        fn begin_shutdown(self: *Self) void {
+            if (self.shutting_down) return;
+
+            self.shutting_down = true;
+            if (self.sweeper) |*sw| sw.stop(&self.loop);
+            if (self.server) |*server| core_tcp.close_server(server, &self.loop);
+            if (self.quic_transport) |*transport| transport.shutdown();
+
+            for (self.pool.storage, 0..) |*conn, index| {
+                if (!self.pool.is_active(index)) continue;
+                core_tcp.close_connection(conn);
             }
+        }
 
+        fn drive_shutdown(self: *Self) !void {
+            std.debug.assert(!self.running);
+            self.running = true;
+            defer self.running = false;
             try core_loop.run(&self.loop);
+            try self.verify_shutdown();
+        }
+
+        fn verify_shutdown(self: *const Self) !void {
             if (self.pool.count_active() != 0) return error.ShutdownIncomplete;
             if (self.server) |server| {
                 if (!server.close_complete) return error.ShutdownIncomplete;
             }
-            if (self.udp_socket != null and !self.udp_close_complete) {
+            if (self.quic_transport) |*transport| if (!transport.is_drained()) {
                 return error.ShutdownIncomplete;
-            }
-            if (self.udp_read_active or self.udp_read_cancel_active) {
-                return error.ShutdownIncomplete;
-            }
-            if (self.quic_timer_active or self.quic_timer_cancel_active) {
-                return error.ShutdownIncomplete;
-            }
+            };
         }
 
-        // registers an http get route with fluent chaining.
+        /// Registers a synchronous GET route with fluent chaining.
         pub fn get(self: *Self, path: []const u8, handler: radix.Handler) !*Self {
             try self.ensure_routes_mutable();
             try self.router.get(path, handler);
             return self;
         }
 
+        /// Registers a synchronous HEAD route.
         pub fn head(self: *Self, path: []const u8, handler: radix.Handler) !*Self {
             try self.ensure_routes_mutable();
             try self.router.head(path, handler);
             return self;
         }
 
+        /// Registers a synchronous POST route.
         pub fn post(self: *Self, path: []const u8, handler: radix.Handler) !*Self {
             try self.ensure_routes_mutable();
             try self.router.post(path, handler);
             return self;
         }
 
+        /// Registers a synchronous PUT route.
         pub fn put(self: *Self, path: []const u8, handler: radix.Handler) !*Self {
             try self.ensure_routes_mutable();
             try self.router.put(path, handler);
             return self;
         }
 
+        /// Registers a synchronous DELETE route.
         pub fn delete(self: *Self, path: []const u8, handler: radix.Handler) !*Self {
             try self.ensure_routes_mutable();
             try self.router.delete(path, handler);
             return self;
         }
 
+        /// Registers a synchronous PATCH route.
         pub fn patch(self: *Self, path: []const u8, handler: radix.Handler) !*Self {
             try self.ensure_routes_mutable();
             try self.router.patch(path, handler);
             return self;
         }
 
+        /// Registers a synchronous OPTIONS route.
         pub fn options(self: *Self, path: []const u8, handler: radix.Handler) !*Self {
             try self.ensure_routes_mutable();
             try self.router.options(path, handler);
             return self;
         }
 
+        /// Registers a safe, idempotent RFC 10008 QUERY route.
+        pub fn query(self: *Self, path: []const u8, handler: radix.Handler) !*Self {
+            try self.ensure_routes_mutable();
+            try self.router.query(path, handler);
+            return self;
+        }
+
+        /// Registers a synchronous fallback-method route.
         pub fn any(self: *Self, path: []const u8, handler: radix.Handler) !*Self {
             try self.ensure_routes_mutable();
             try self.router.any(path, handler);
             return self;
         }
 
-        // registers a websocket route with event callbacks.
+        /// Appends one ordered global middleware callback.
+        pub fn use(
+            self: *Self,
+            context: *anyopaque,
+            middleware: radix.MiddlewareHandler,
+        ) !*Self {
+            try self.ensure_routes_mutable();
+            try self.router.use(context, middleware);
+            return self;
+        }
+
+        /// Registers a context-aware callback for one method.
+        pub fn route_context(
+            self: *Self,
+            method: radix.HttpMethod,
+            path: []const u8,
+            context: *anyopaque,
+            handler: radix.ContextHandler,
+        ) !*Self {
+            try self.ensure_routes_mutable();
+            try self.router.route_context(method, path, context, handler);
+            return self;
+        }
+
+        /// Registers a deferred callback for one method.
+        pub fn route_async(
+            self: *Self,
+            method: radix.HttpMethod,
+            path: []const u8,
+            handler: radix.AsyncHandler,
+        ) !*Self {
+            try self.ensure_routes_mutable();
+            try self.router.route_async(method, path, handler);
+            return self;
+        }
+
+        /// Registers a context-aware deferred callback for one method.
+        pub fn route_async_context(
+            self: *Self,
+            method: radix.HttpMethod,
+            path: []const u8,
+            context: *anyopaque,
+            handler: radix.ContextAsyncHandler,
+        ) !*Self {
+            try self.ensure_routes_mutable();
+            try self.router.route_async_context(method, path, context, handler);
+            return self;
+        }
+
+        /// Registers a context-aware GET route.
+        pub fn get_context(
+            self: *Self,
+            path: []const u8,
+            context: *anyopaque,
+            handler: radix.ContextHandler,
+        ) !*Self {
+            return self.route_context(.get, path, context, handler);
+        }
+
+        /// Registers a deferred GET route.
+        pub fn get_async(
+            self: *Self,
+            path: []const u8,
+            handler: radix.AsyncHandler,
+        ) !*Self {
+            return self.route_async(.get, path, handler);
+        }
+
+        /// Registers a context-aware deferred GET route.
+        pub fn get_async_context(
+            self: *Self,
+            path: []const u8,
+            context: *anyopaque,
+            handler: radix.ContextAsyncHandler,
+        ) !*Self {
+            return self.route_async_context(.get, path, context, handler);
+        }
+
+        /// Registers a WebSocket route with event callbacks.
         pub fn ws(self: *Self, path: []const u8, behavior: radix.WsBehavior) !*Self {
             try self.ensure_routes_mutable();
             if (!radix.valid_ws_limits(behavior, max_ws_message_size)) {
@@ -310,7 +410,11 @@ pub fn configured_app_with_timeout(
 
             conn.req = .{};
             conn.parser = .{};
-            conn.protocol_state = .http;
+            conn.reset_protocol() catch {
+                _ = self.pool.release(conn);
+                close_rejected_socket(socket);
+                return;
+            };
             conn.ssl = null;
             conn.network_bio = null;
             conn.is_tls_handshake_done = false;
@@ -329,6 +433,10 @@ pub fn configured_app_with_timeout(
             conn.closing = false;
             conn.expect_continue_sent = false;
             conn.suppress_response_body = false;
+            conn.dispatch_suspended = false;
+            conn.pending_request_consumed = 0;
+            conn.pending_close_requested = false;
+            conn.async_response_state.cancel();
 
             const now = std.Io.Clock.now(.awake, self.io);
             conn.last_active_ms = @intCast(@divTrunc(now.nanoseconds, std.time.ns_per_ms));
@@ -375,6 +483,7 @@ pub fn configured_app_with_timeout(
             core_tcp.read_start(conn, &self.loop);
         }
 
+        /// Binds and starts the POSIX TCP listener, locking route mutation.
         pub fn listen(self: *Self, address: []const u8, port: u16) !void {
             if (self.shutting_down or self.deinitialized) return error.ApplicationUnavailable;
             if (self.server != null) return error.AlreadyListening;
@@ -382,9 +491,9 @@ pub fn configured_app_with_timeout(
             const server = try core_tcp.init_server(address, port, on_new_connection, self);
             errdefer close_socket_now(server.listener);
 
-            var sweeper: ?core_timer.ConnectionSweeper(Pool, idle_timeout_ms) = null;
+            var sweeper: ?core_timer.connection_sweeper(Pool, idle_timeout_ms) = null;
             if (idle_timeout_ms != 0) {
-                sweeper = try core_timer.ConnectionSweeper(Pool, idle_timeout_ms).init(self.io, &self.pool);
+                sweeper = try core_timer.connection_sweeper(Pool, idle_timeout_ms).init(self.io, &self.pool);
             }
 
             self.routes_locked = true;
@@ -398,216 +507,59 @@ pub fn configured_app_with_timeout(
             std.debug.print("server listening on {s}:{d}\n", .{ address, port });
         }
 
-        // binds the server to a udp socket for quic/http3.
+        /// Binds and starts the UDP/QUIC listener, locking route mutation.
         pub fn listen_udp(self: *Self, address: []const u8, port: u16) !void {
             if (self.shutting_down or self.deinitialized) return error.ApplicationUnavailable;
             if (!self.http3_enabled or self.quic_tls_ctx == null) return error.Http3NotInitialized;
-            if (self.udp_socket != null or self.quic_engine != null) return error.AlreadyListening;
+            if (self.quic_transport != null) return error.AlreadyListening;
 
-            const parsed_address = try std.Io.net.IpAddress.parse(address, port);
-            var socket = try xev.UDP.init(parsed_address);
-            errdefer close_socket_now(socket);
-            try socket.bind(parsed_address);
-
-            self.quic_engine = try QuicEngine.init();
-            errdefer {
-                self.quic_engine.?.deinit();
-                self.quic_engine = null;
-            }
-            try self.quic_engine.?.start(
+            self.quic_transport = try QuicTransport.init(
                 self.quic_tls_ctx.?.ctx,
                 &self.router,
-                socket.fd,
-                parsed_address,
+                address,
+                port,
             );
-
-            self.quic_timer = try xev.Timer.init();
             errdefer {
-                self.quic_timer.?.deinit();
-                self.quic_timer = null;
+                if (self.quic_transport) |*transport| transport.deinit();
+                self.quic_transport = null;
             }
+            if (self.quic_transport) |*transport| {
+                try transport.start(self.loop.get_xev_loop());
+            } else unreachable;
+
             self.routes_locked = true;
-            self.udp_socket = socket;
-            self.udp_close_complete = false;
-            self.udp_read_active = true;
-            self.udp_socket.?.read(
-                self.loop.get_xev_loop(),
-                &self.udp_read_completion,
-                &self.udp_read_state,
-                .{ .slice = &self.udp_read_buffer },
-                Self,
-                self,
-                on_udp_read,
-            );
-            self.start_quic_timer();
 
             std.debug.print("http/3 server listening on {s}:{d}\n", .{ address, port });
         }
 
-        fn on_udp_read(
-            user_data: ?*Self,
-            _: *xev.Loop,
-            _: *xev.Completion,
-            _: *xev.UDP.State,
-            peer: std.Io.net.IpAddress,
-            _: xev.UDP,
-            _: xev.ReadBuffer,
-            result: xev.ReadError!usize,
-        ) xev.CallbackAction {
-            const self = user_data.?;
-            self.udp_read_active = false;
-
-            const bytes_read = result catch |err| {
-                if (self.shutting_down or err == error.Canceled) return .disarm;
-                std.debug.print("udp read error: {}\n", .{err});
-                self.udp_read_active = true;
-                return .rearm;
-            };
-            if (self.shutting_down) return .disarm;
-            if (bytes_read != 0) {
-                if (self.quic_engine) |*engine| {
-                    engine.process_datagram(self.udp_read_buffer[0..bytes_read], peer);
-                }
-            }
-            self.udp_read_active = true;
-            return .rearm;
-        }
-
-        fn close_udp(self: *Self) void {
-            const socket = self.udp_socket orelse return;
-            if (self.udp_close_complete) return;
-
-            if (self.udp_read_active and !self.udp_read_cancel_active) {
-                self.udp_read_cancel_active = true;
-                self.loop.get_xev_loop().cancel(
-                    &self.udp_read_completion,
-                    &self.udp_read_cancel_completion,
-                    Self,
-                    self,
-                    on_udp_read_cancel,
-                );
-            }
-            socket.close(
-                self.loop.get_xev_loop(),
-                &self.udp_close_completion,
-                Self,
-                self,
-                on_udp_close,
-            );
-        }
-
-        fn on_udp_read_cancel(
-            user_data: ?*Self,
-            _: *xev.Loop,
-            _: *xev.Completion,
-            result: xev.CancelError!void,
-        ) xev.CallbackAction {
-            const self = user_data.?;
-            _ = result catch |err| {
-                if (err != error.NotFound) std.debug.print("udp read cancel error: {}\n", .{err});
-            };
-            self.udp_read_cancel_active = false;
-            return .disarm;
-        }
-
-        fn on_udp_close(
-            user_data: ?*Self,
-            _: *xev.Loop,
-            _: *xev.Completion,
-            _: xev.UDP,
-            result: xev.CloseError!void,
-        ) xev.CallbackAction {
-            const self = user_data.?;
-            _ = result catch |err| std.debug.print("udp close error: {}\n", .{err});
-            self.udp_close_complete = true;
-            return .disarm;
-        }
-
-        fn start_quic_timer(self: *Self) void {
-            if (self.quic_timer_active or self.shutting_down) return;
-            const timer = self.quic_timer orelse return;
-            const timeout = if (self.quic_engine) |*engine| engine.next_timeout_ms() else 50;
-            self.quic_timer_active = true;
-            timer.run(
-                self.loop.get_xev_loop(),
-                &self.quic_timer_completion,
-                timeout,
-                Self,
-                self,
-                on_quic_timer,
-            );
-        }
-
-        fn stop_quic_timer(self: *Self) void {
-            const timer = self.quic_timer orelse return;
-            if (!self.quic_timer_active or self.quic_timer_cancel_active) return;
-            self.quic_timer_cancel_active = true;
-            timer.cancel(
-                self.loop.get_xev_loop(),
-                &self.quic_timer_completion,
-                &self.quic_timer_cancel_completion,
-                Self,
-                self,
-                on_quic_timer_cancel,
-            );
-        }
-
-        fn on_quic_timer(
-            user_data: ?*Self,
-            loop: *xev.Loop,
-            completion: *xev.Completion,
-            result: anyerror!void,
-        ) xev.CallbackAction {
-            const self = user_data.?;
-            self.quic_timer_active = false;
-            _ = result catch |err| {
-                if (self.shutting_down or err == error.Canceled) return .disarm;
-                std.debug.print("quic timer error: {}\n", .{err});
-                return .disarm;
-            };
-            if (self.shutting_down) return .disarm;
-
-            if (self.quic_engine) |*engine| engine.process();
-            const timer = self.quic_timer orelse return .disarm;
-            const timeout = if (self.quic_engine) |*engine| engine.next_timeout_ms() else 50;
-            self.quic_timer_active = true;
-            timer.run(loop, completion, timeout, Self, self, on_quic_timer);
-            return .disarm;
-        }
-
-        fn on_quic_timer_cancel(
-            user_data: ?*Self,
-            _: *xev.Loop,
-            _: *xev.Completion,
-            result: xev.CancelError!void,
-        ) xev.CallbackAction {
-            const self = user_data.?;
-            _ = result catch |err| {
-                if (err != error.NotFound) std.debug.print("quic timer cancel error: {}\n", .{err});
-            };
-            self.quic_timer_cancel_active = false;
-            return .disarm;
-        }
-
-        // blocks the current thread and enters the event loop.
+        /// Runs the event loop until shutdown completes or no work remains.
         pub fn run(self: *Self) !void {
             if (self.shutting_down or self.deinitialized) return error.ApplicationUnavailable;
+            if (self.running) return error.ApplicationAlreadyRunning;
+
+            self.running = true;
+            defer self.running = false;
             try core_loop.run(&self.loop);
+            if (self.shutting_down) try self.verify_shutdown();
         }
 
-        // global publish from the server side.
+        /// Publishes one message to every matching bounded subscription.
         pub fn publish(self: *Self, topic: []const u8, message: []const u8, is_text: bool) usize {
             return self.pubsub.publish(topic, message, is_text);
         }
     };
 }
 
-const CompressionBuffers = struct {
+/// Separate borrowed scratch slices for inbound and outbound compression.
+pub const CompressionBuffers = struct {
+    /// Scratch storage for compressed client messages and decode tails.
     incoming: []u8,
+    /// Scratch storage for compressed server messages.
     outgoing: []u8,
 };
 
-fn compression_buffers(
+/// Selects one connection's disjoint compression buffers from caller storage.
+pub fn compression_buffers(
     storage: []u8,
     direction_capacity: usize,
     connection_index: usize,
@@ -630,33 +582,5 @@ fn close_rejected_socket(socket: xev.TCP) void {
 }
 
 fn close_socket_now(socket: anytype) void {
-    if (@import("builtin").os.tag == .windows) {
-        _ = std.os.windows.ws2_32.closesocket(@ptrCast(socket.fd));
-        return;
-    }
     _ = std.posix.system.close(socket.fd);
-}
-
-test "router: compression scratch separates receive and send state" {
-    var storage = [_]u8{0} ** 32;
-    const buffers = compression_buffers(&storage, 8, 1) orelse {
-        return error.TestUnexpectedResult;
-    };
-
-    @memset(buffers.incoming, 0xa5);
-    try std.testing.expectEqualSlices(u8, &([_]u8{0xa5} ** 8), buffers.incoming);
-    try std.testing.expectEqualSlices(u8, &([_]u8{0} ** 8), buffers.outgoing);
-    try std.testing.expect(compression_buffers(&storage, 8, 2) == null);
-}
-
-test "router: route registration locks before callbacks can observe mutation" {
-    const TestApp = app(1);
-    var server = try TestApp.init(std.testing.io);
-    defer server.deinit();
-    server.routes_locked = true;
-
-    const Handler = struct {
-        fn handle(_: *@import("../http/request.zig").Request, _: *@import("../http/response.zig").Response) void {}
-    };
-    try std.testing.expectError(error.RoutesLocked, server.get("/", Handler.handle));
 }

@@ -1,0 +1,16 @@
+.{
+    .name = .uwebzockets_package_consumer,
+    .version = "1.0.0",
+    .fingerprint = 0x91a317583ef01831,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .uwebzockets = .{
+            .path = "../..",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "main.zig",
+    },
+}

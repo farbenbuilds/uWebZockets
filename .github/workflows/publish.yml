@@ -9,8 +9,85 @@ permissions:
   contents: read
 
 jobs:
+  autobahn:
+    name: Autobahn compliance
+    uses: ./.github/workflows/autobahn_compliance.yml
+
+  h1spec:
+    name: h1spec compliance
+    uses: ./.github/workflows/h1spec_compliance.yml
+
+  http3:
+    name: HTTP/3 cross-implementation compliance
+    uses: ./.github/workflows/http3_compliance.yml
+
+  oss_fuzz:
+    name: OSS-Fuzz compatibility
+    uses: ./.github/workflows/oss_fuzz.yml
+
+  verify:
+    name: Verify tagged source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: recursive
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Cache Zig and C/C++ build artifacts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.cache/zig
+            .zig-cache/vendor-build-v2
+          key: ${{ runner.os }}-publish-zig-v5-${{ hashFiles('build.zig', 'build.zig.zon', 'flake.nix', 'flake.lock', 'vendor/**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-publish-zig-v5-
+
+      - name: Check formatting and conventions
+        run: |
+          nix develop "path:." -c zig fmt --check build.zig build.zig.zon src examples tests fuzz
+          nix develop "path:." -c sh scripts/check_conventions.sh
+
+      - name: Run centralized tests
+        run: nix develop "path:." -c zig build test --summary all
+
+      - name: Run ASan and UBSan tests
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:strict_string_checks=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: nix develop "path:." -c zig build test -Dsanitize=true -Doptimize=ReleaseSafe --summary all
+
+      - name: Run MemorySanitizer tests
+        env:
+          MSAN_OPTIONS: halt_on_error=1:track_origins=2
+        run: nix develop "path:." -c zig build msan -Dmemory-sanitize=true -Doptimize=ReleaseSafe --summary all
+
+      - name: Compile ReleaseSafe tests and OSS-Fuzz ABI objects
+        run: |
+          nix develop "path:." -c zig build test-compile -Doptimize=ReleaseSafe --summary all
+          nix develop "path:." -c zig build oss-fuzz-objects -Doptimize=ReleaseSafe --summary all
+
+      - name: Compile downstream package consumer
+        working-directory: tests/package_consumer
+        run: nix develop "path:../.." -c zig build check -Doptimize=ReleaseSafe --summary all
+
   build:
     name: Build ${{ matrix.target }}
+    needs:
+      - autobahn
+      - h1spec
+      - http3
+      - oss_fuzz
+      - verify
     runs-on: ${{ matrix.runner }}
     environment: Publish
     timeout-minutes: 90
@@ -39,13 +116,13 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           submodules: recursive
 
       - name: Install Nix
-        uses: cachix/install-nix-action@v31
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
@@ -53,12 +130,31 @@ jobs:
       - name: Validate release metadata
         shell: bash
         run: |
+          set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
+          version_core=${version%%[-+]*}
           manifest_version=$(sed -n 's/^[[:space:]]*\.version = "\([^"]*\)",/\1/p' build.zig.zon)
+          mapfile -t flake_versions < <(
+            sed -n 's/^[[:space:]]*version = "\([^"]*\)";/\1/p' flake.nix
+          )
+          abi_major=$(sed -n 's/^#define UWZ_VERSION_MAJOR \([0-9][0-9]*\)$/\1/p' include/uWebZockets.h)
+          abi_minor=$(sed -n 's/^#define UWZ_VERSION_MINOR \([0-9][0-9]*\)$/\1/p' include/uWebZockets.h)
+          abi_patch=$(sed -n 's/^#define UWZ_VERSION_PATCH \([0-9][0-9]*\)$/\1/p' include/uWebZockets.h)
+          abi_version="${abi_major}.${abi_minor}.${abi_patch}"
+          c_api_version=$(
+            sed -n '/^pub export fn uwz_version()/,/^}/s/^[[:space:]]*return "\([^"]*\)";/\1/p' \
+              src/c_api.zig
+          )
           test -n "$version"
           printf '%s\n' "$version" | grep -Eq \
             '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
           test "$version" = "$manifest_version"
+          test "${#flake_versions[@]}" -eq 2
+          for flake_version in "${flake_versions[@]}"; do
+            test "$version" = "$flake_version"
+          done
+          test "$version_core" = "$abi_version"
+          test "$version" = "$c_api_version"
           grep -F "## [$version]" CHANGELOG.md
 
       - name: Build static library
@@ -71,20 +167,25 @@ jobs:
         shell: bash
         run: |
           archive_root="$RUNNER_TEMP/uWebZockets-${{ matrix.target }}"
-          mkdir -p "$archive_root/lib"
+          mkdir -p "$archive_root/lib" "$archive_root/include"
           cp "result-${{ matrix.target }}"/lib/*.a "$archive_root/lib/"
+          cp "result-${{ matrix.target }}"/include/uWebZockets.h "$archive_root/include/"
           cp CHANGELOG.md LICENSE README.md THIRD_PARTY_NOTICES.md build.zig.zon "$archive_root/"
           cp -R licenses "$archive_root/"
           mkdir -p "$archive_root/licenses/vendor"
           cp vendor/boringssl/LICENSE "$archive_root/licenses/vendor/boringssl_license.txt"
+          cp vendor/boringssl/third_party/fiat/LICENSE "$archive_root/licenses/vendor/fiat_crypto_license.txt"
+          cp vendor/boringssl/third_party/fiat/AUTHORS "$archive_root/licenses/vendor/fiat_crypto_authors.txt"
           cp vendor/libdeflate/COPYING "$archive_root/licenses/vendor/libdeflate_license.txt"
           cp vendor/lsquic/LICENSE "$archive_root/licenses/vendor/lsquic_license.txt"
           cp vendor/lsquic/LICENSE.chrome "$archive_root/licenses/vendor/lsquic_chrome_license.txt"
+          cp vendor/lsquic/src/liblsquic/ls-qpack/LICENSE "$archive_root/licenses/vendor/ls_qpack_license.txt"
+          cp vendor/lsquic/src/lshpack/LICENSE "$archive_root/licenses/vendor/ls_hpack_license.txt"
           tar -C "$RUNNER_TEMP" -czf "uWebZockets-${{ matrix.target }}.tar.gz" \
             "uWebZockets-${{ matrix.target }}"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: uwebzockets-${{ matrix.target }}
           path: uWebZockets-${{ matrix.target }}.tar.gz
@@ -102,12 +203,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
       - name: Download artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: artifacts
           merge-multiple: true

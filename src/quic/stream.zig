@@ -2,20 +2,26 @@ const std = @import("std");
 const c = @import("c");
 const http_parser = @import("../http/parser.zig");
 const Request = @import("../http/request.zig").Request;
-const Response = @import("../http/response.zig").Response;
+const http_response = @import("../http/response.zig");
+const Response = http_response.Response;
 const Router = @import("../router/radix.zig").Router;
 const radix = @import("../router/radix.zig");
 const validation = @import("validation.zig");
 
+/// Reports that HTTP/3 stream support is compiled in.
 pub const available = true;
+/// Per-stream decoded request-header storage capacity.
 pub const header_capacity = http_parser.max_header_size;
+/// Per-stream request body capacity.
 pub const request_body_capacity = http_parser.max_body_size;
+/// Per-stream encoded response-header storage capacity.
 pub const response_header_capacity: usize = 4096;
 const max_headers = 64;
 
 const HeaderReleaseFn = *const fn (*anyopaque, *HeaderSet) void;
 const StreamReleaseFn = *const fn (*anyopaque, *QuicStream) void;
 
+/// Bounded lsquic header decoder state for one HTTP/3 request.
 pub const HeaderSet = struct {
     owner: *anyopaque = undefined,
     release_fn: ?HeaderReleaseFn = null,
@@ -30,9 +36,11 @@ pub const HeaderSet = struct {
     write_offset: usize = 0,
     regular_headers_seen: bool = false,
     host_seen: bool = false,
+    is_trailer: bool = false,
     finished: bool = false,
     claimed: bool = false,
 
+    /// Reinitializes the header set with borrowed owner and decode storage.
     pub fn reset(
         self: *HeaderSet,
         owner: *anyopaque,
@@ -46,6 +54,18 @@ pub const HeaderSet = struct {
         };
     }
 
+    /// Reinitializes the header set for a trailing field section.
+    pub fn reset_trailer(
+        self: *HeaderSet,
+        owner: *anyopaque,
+        release_fn: HeaderReleaseFn,
+        storage: []u8,
+    ) void {
+        self.reset(owner, release_fn, storage);
+        self.is_trailer = true;
+    }
+
+    /// Prepares inline storage for one lsquic-decoded field.
     pub fn prepare_decode(
         self: *HeaderSet,
         existing: ?*c.lsxpack_header,
@@ -65,6 +85,7 @@ pub const HeaderSet = struct {
         return @ptrCast(&self.decoded);
     }
 
+    /// Validates and records a decoded field, or finalizes on null.
     pub fn process_header(self: *HeaderSet, decoded: ?*c.lsxpack_header) bool {
         const raw_header = decoded orelse return self.finish();
         if (@intFromPtr(raw_header) != @intFromPtr(&self.decoded)) return false;
@@ -97,6 +118,7 @@ pub const HeaderSet = struct {
         return true;
     }
 
+    /// Returns this header set to its owner at most once.
     pub fn release(self: *HeaderSet) void {
         const callback = self.release_fn orelse return;
         self.release_fn = null;
@@ -104,7 +126,7 @@ pub const HeaderSet = struct {
     }
 
     fn process_pseudo_header(self: *HeaderSet, name: []const u8, value: []const u8) bool {
-        if (self.regular_headers_seen) return false;
+        if (self.is_trailer or self.regular_headers_seen) return false;
 
         if (std.mem.eql(u8, name, ":method")) {
             if (self.method != null or !validation.valid_method(value)) return false;
@@ -132,6 +154,7 @@ pub const HeaderSet = struct {
     fn process_regular_header(self: *HeaderSet, name: []const u8, value: []const u8) bool {
         if (!validation.valid_http3_name(name)) return false;
         if (validation.connection_specific_header(name)) return false;
+        if (self.is_trailer and forbidden_trailer_field(name)) return false;
         if (std.mem.eql(u8, name, "te") and !std.ascii.eqlIgnoreCase(value, "trailers")) {
             return false;
         }
@@ -161,12 +184,23 @@ pub const HeaderSet = struct {
 
     fn finish(self: *HeaderSet) bool {
         if (self.finished) return false;
-        const method = self.method orelse return false;
-        _ = self.scheme orelse return false;
-        const target = self.path orelse return false;
-        if (std.mem.eql(u8, target, "*") and !std.mem.eql(u8, method, "OPTIONS")) {
-            return false;
+        if (self.is_trailer) {
+            self.finished = true;
+            return true;
         }
+        const method = self.method orelse return false;
+        const is_connect = std.mem.eql(u8, method, "CONNECT");
+        const target = if (is_connect) blk: {
+            if (self.scheme != null or self.path != null) return false;
+            break :blk self.authority orelse return false;
+        } else blk: {
+            _ = self.scheme orelse return false;
+            const path = self.path orelse return false;
+            if (std.mem.eql(u8, path, "*") and !std.mem.eql(u8, method, "OPTIONS")) {
+                return false;
+            }
+            break :blk path;
+        };
 
         if (!self.host_seen) {
             const authority = self.authority orelse return false;
@@ -179,6 +213,12 @@ pub const HeaderSet = struct {
 
         self.request.method = method;
         self.request.target = target;
+        if (is_connect) {
+            self.request.path = "";
+            self.request.query = "";
+            self.finished = true;
+            return true;
+        }
         if (std.mem.indexOfScalar(u8, target, '?')) |query_start| {
             self.request.path = target[0..query_start];
             self.request.query = target[query_start + 1 ..];
@@ -199,6 +239,14 @@ const ResponsePhase = enum(u8) {
     done,
 };
 
+const RequestPhase = enum(u8) {
+    waiting_headers,
+    body,
+    trailers,
+    complete,
+};
+
+/// Connection-owned, fixed-buffer HTTP/3 request stream state.
 pub const QuicStream = struct {
     owner: *anyopaque = undefined,
     release_fn: ?StreamReleaseFn = null,
@@ -219,10 +267,14 @@ pub const QuicStream = struct {
     response_header_length: usize = 0,
     response_header_count: usize = 0,
     response_phase: ResponsePhase = .idle,
+    request_phase: RequestPhase = .waiting_headers,
     headers_sent: bool = false,
     suppress_body: bool = false,
     dispatched: bool = false,
+    dispatch_suspended: bool = false,
+    async_response_state: http_response.AsyncResponseState = .{},
 
+    /// Reinitializes a pooled stream with borrowed transport and storage.
     pub fn reset(
         self: *QuicStream,
         owner: *anyopaque,
@@ -233,6 +285,8 @@ pub const QuicStream = struct {
         response_body_storage: []u8,
         response_header_storage: []u8,
     ) void {
+        var next_generation = self.async_response_state.generation +% 1;
+        if (next_generation == 0) next_generation = 1;
         self.* = .{
             .owner = owner,
             .release_fn = release_fn,
@@ -242,18 +296,41 @@ pub const QuicStream = struct {
             .response_body_storage = response_body_storage,
             .response_header_storage = response_header_storage,
         };
+        self.async_response_state.generation = next_generation;
+        self.async_response_state.state = .cancelled;
     }
 
+    /// Claims a finished header set or closes on invalid ownership state.
     pub fn attach_headers(self: *QuicStream, header_set: *HeaderSet) void {
-        if (self.header_set != null or !header_set.finished or header_set.claimed) {
+        if (!header_set.finished or header_set.claimed) {
+            header_set.release();
+            _ = c.lsquic_stream_close(self.stream);
+            return;
+        }
+
+        if (header_set.is_trailer) {
+            if (self.header_set == null or self.request_phase != .body) {
+                header_set.release();
+                _ = c.lsquic_stream_close(self.stream);
+                return;
+            }
+            header_set.claimed = true;
+            self.request_phase = .trailers;
+            header_set.release();
+            return;
+        }
+
+        if (self.header_set != null or self.request_phase != .waiting_headers) {
             header_set.release();
             _ = c.lsquic_stream_close(self.stream);
             return;
         }
         header_set.claimed = true;
         self.header_set = header_set;
+        self.request_phase = .body;
     }
 
+    /// Drains readable request bytes and dispatches a complete request.
     pub fn on_read(self: *QuicStream) void {
         if (self.header_set == null or self.dispatched) {
             _ = c.lsquic_stream_close(self.stream);
@@ -295,6 +372,7 @@ pub const QuicStream = struct {
         }
     }
 
+    /// Flushes queued response fields and body bytes without blocking.
     pub fn on_write(self: *QuicStream) void {
         if (self.response_phase != .ready and self.response_phase != .sending) {
             _ = c.lsquic_stream_wantwrite(self.stream, 0);
@@ -326,7 +404,10 @@ pub const QuicStream = struct {
         self.response_phase = .done;
     }
 
+    /// Cancels deferred dispatch and returns pooled state to its owner.
     pub fn on_close(self: *QuicStream) void {
+        self.dispatch_suspended = false;
+        self.async_response_state.cancel();
         if (self.header_set) |header_set| header_set.release();
         self.header_set = null;
 
@@ -338,6 +419,7 @@ pub const QuicStream = struct {
     fn dispatch(self: *QuicStream) void {
         if (self.dispatched) return;
         self.dispatched = true;
+        self.request_phase = .complete;
         _ = c.lsquic_stream_wantread(self.stream, 0);
 
         const header_set = self.header_set.?;
@@ -352,35 +434,111 @@ pub const QuicStream = struct {
         const method = radix.HttpMethod.parse(header_set.request.method);
         self.suppress_body = method == .head;
         var response = Response{ .target = .{ .http3 = self.response_target() } };
+        if (std.mem.eql(u8, header_set.request.method, "CONNECT")) {
+            response.end("501 Not Implemented", "HTTP/3 CONNECT is not supported") catch
+                self.close_now();
+            return;
+        }
+        if (!header_set.request.valid_query_content_type()) {
+            response.end("400 Bad Request", "QUERY requires a valid Content-Type") catch
+                self.close_now();
+            return;
+        }
+        const route = self.router.match_request(&header_set.request, method);
+        if (self.router.run_middleware(&header_set.request, &response) == .stop) {
+            self.finish_sync_dispatch(&response);
+            return;
+        }
+
         if (method == .options and std.mem.eql(u8, header_set.request.path, "*")) {
             response.end("204 No Content", "") catch self.close_now();
             return;
         }
-        const route = self.router.match(header_set.request.path, method) orelse {
+
+        const matched_route = route orelse {
             response.end("404 Not Found", "Route not found") catch self.close_now();
             return;
         };
 
-        if (route.http_handler) |handler| {
-            handler(&header_set.request, &response);
-            if (response.is_complete()) return;
-            if (!response.is_started()) {
-                response.end("500 Internal Server Error", "Handler did not complete response") catch self.close_now();
-                return;
-            }
-            self.close_now();
+        if (matched_route.handler) |handler| {
+            self.invoke_handler(handler, &header_set.request, &response);
             return;
         }
 
         if (method == .options) {
-            self.send_method_response(&response, route.allowed_methods, "204 No Content", "");
+            self.send_method_response(&response, matched_route.allowed_methods, "204 No Content", "");
             return;
         }
-        if (route.ws_behavior != null and method == .get) {
+        if (matched_route.ws_behavior != null and method == .get) {
             response.end("426 Upgrade Required", "WebSocket over HTTP/3 is not supported") catch self.close_now();
             return;
         }
-        self.send_method_response(&response, route.allowed_methods, "405 Method Not Allowed", "Method Not Allowed");
+        self.send_method_response(&response, matched_route.allowed_methods, "405 Method Not Allowed", "Method Not Allowed");
+    }
+
+    fn invoke_handler(
+        self: *QuicStream,
+        handler: radix.RouteHandler,
+        request: *Request,
+        response: *Response,
+    ) void {
+        switch (handler) {
+            .synchronous => |callback| {
+                callback(request, response);
+                self.finish_sync_dispatch(response);
+            },
+            .contextual => |binding| {
+                binding.callback(binding.context, request, response);
+                self.finish_sync_dispatch(response);
+            },
+            .asynchronous => |callback| {
+                const token = self.async_response_state.arm(self.async_target());
+                callback(request, token);
+                self.dispatch_suspended = token.is_pending();
+            },
+            .contextual_async => |binding| {
+                const token = self.async_response_state.arm(self.async_target());
+                binding.callback(binding.context, request, token);
+                self.dispatch_suspended = token.is_pending();
+            },
+        }
+    }
+
+    fn finish_sync_dispatch(self: *QuicStream, response: *Response) void {
+        if (response.is_complete()) return;
+        if (response.is_started()) {
+            self.close_now();
+            return;
+        }
+        response.end("500 Internal Server Error", "Handler did not complete response") catch
+            self.close_now();
+    }
+
+    fn async_target(self: *QuicStream) http_response.AsyncTarget {
+        return .{
+            .context = self,
+            .complete_fn = complete_async_response,
+            .wake_fn = wake_async_dispatch,
+        };
+    }
+
+    fn complete_async_response(
+        context: *anyopaque,
+        status: []const u8,
+        headers: []const u8,
+        body: []const u8,
+    ) !void {
+        const self: *QuicStream = @ptrCast(@alignCast(context));
+        if (self.release_fn == null) return error.StreamClosed;
+        end_response(self, status, headers, body) catch |err| {
+            self.close_now();
+            return err;
+        };
+    }
+
+    fn wake_async_dispatch(context: *anyopaque) void {
+        const self: *QuicStream = @ptrCast(@alignCast(context));
+        self.dispatch_suspended = false;
     }
 
     fn send_method_response(
@@ -539,9 +697,19 @@ pub const QuicStream = struct {
     }
 
     fn close_now(self: *QuicStream) void {
+        self.dispatch_suspended = false;
+        self.async_response_state.cancel();
         _ = c.lsquic_stream_close(self.stream);
     }
 };
+
+fn forbidden_trailer_field(name: []const u8) bool {
+    return std.mem.eql(u8, name, "content-length") or
+        std.mem.eql(u8, name, "host") or
+        std.mem.eql(u8, name, "te") or
+        std.mem.eql(u8, name, "trailer") or
+        std.mem.eql(u8, name, "transfer-encoding");
+}
 
 fn set_xpack_header(
     header: *c.struct_uz_lsxpack_header,
@@ -557,69 +725,4 @@ fn set_xpack_header(
     header.name_len = @intCast(name_length);
     header.val_offset = @intCast(value_offset);
     header.val_len = @intCast(value_length);
-}
-
-test "quic: bounded header set validates pseudo headers and framing" {
-    var storage: [header_capacity]u8 = undefined;
-    var header_set = HeaderSet{};
-    const Owner = struct {
-        fn release(_: *anyopaque, _: *HeaderSet) void {}
-    };
-    var owner: u8 = 0;
-    header_set.reset(&owner, Owner.release, &storage);
-
-    try std.testing.expect(add_test_header(&header_set, ":method", "GET"));
-    try std.testing.expect(add_test_header(&header_set, ":scheme", "https"));
-    try std.testing.expect(add_test_header(&header_set, ":authority", "localhost"));
-    try std.testing.expect(add_test_header(&header_set, ":path", "/hello?name=zig"));
-    try std.testing.expect(add_test_header(&header_set, "content-length", "4"));
-    try std.testing.expect(header_set.process_header(null));
-    try std.testing.expectEqualStrings("/hello", header_set.request.path);
-    try std.testing.expectEqualStrings("name=zig", header_set.request.query);
-    try std.testing.expectEqual(@as(?usize, 4), header_set.content_length);
-    try std.testing.expectEqualStrings("localhost", header_set.request.get_header("host").?);
-}
-
-test "quic: header set rejects forbidden connection metadata" {
-    var storage: [header_capacity]u8 = undefined;
-    var header_set = HeaderSet{};
-    const Owner = struct {
-        fn release(_: *anyopaque, _: *HeaderSet) void {}
-    };
-    var owner: u8 = 0;
-    header_set.reset(&owner, Owner.release, &storage);
-
-    try std.testing.expect(!add_test_header(&header_set, "connection", "close"));
-    try std.testing.expect(!validation.valid_target("/path#fragment"));
-    try std.testing.expect(validation.parse_decimal("184467440737095516160") == null);
-
-    header_set.reset(&owner, Owner.release, &storage);
-    try std.testing.expect(add_test_header(&header_set, ":method", "GET"));
-    try std.testing.expect(add_test_header(&header_set, ":scheme", "https"));
-    try std.testing.expect(add_test_header(&header_set, ":authority", "localhost"));
-    try std.testing.expect(add_test_header(&header_set, ":path", "*"));
-    try std.testing.expect(!header_set.process_header(null));
-
-    header_set.reset(&owner, Owner.release, &storage);
-    try std.testing.expect(add_test_header(&header_set, ":method", "OPTIONS"));
-    try std.testing.expect(add_test_header(&header_set, ":scheme", "https"));
-    try std.testing.expect(add_test_header(&header_set, ":authority", "localhost"));
-    try std.testing.expect(add_test_header(&header_set, ":path", "*"));
-    try std.testing.expect(header_set.process_header(null));
-}
-
-fn add_test_header(header_set: *HeaderSet, name: []const u8, value: []const u8) bool {
-    const start = header_set.write_offset;
-    if (name.len + value.len > header_set.storage.len - start) return false;
-    @memcpy(header_set.storage[start .. start + name.len], name);
-    @memcpy(header_set.storage[start + name.len .. start + name.len + value.len], value);
-
-    var header = std.mem.zeroes(c.struct_uz_lsxpack_header);
-    header.buf = @ptrCast(header_set.storage.ptr);
-    header.name_offset = @intCast(start);
-    header.name_len = @intCast(name.len);
-    header.val_offset = @intCast(start + name.len);
-    header.val_len = @intCast(value.len);
-    header_set.decoded = header;
-    return header_set.process_header(@ptrCast(&header_set.decoded));
 }

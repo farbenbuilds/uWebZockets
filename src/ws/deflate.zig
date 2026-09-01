@@ -5,8 +5,10 @@ const c = @import("c");
 // then append a final empty block so libdeflate can process it as one block.
 const sync_flush_tail = [_]u8{ 0x00, 0x00, 0xff, 0xff };
 const final_empty_block = [_]u8{ 0x01, 0x00, 0x00, 0xff, 0xff };
+/// Scratch bytes reserved after a compressed message for decode finalization.
 pub const decode_tail_len = sync_flush_tail.len + final_empty_block.len;
 
+/// Setup and bounded per-message compression failures.
 pub const Error = error{
     OutOfMemory,
     InitFailed,
@@ -16,13 +18,15 @@ pub const Error = error{
     OutputTooLarge,
 };
 
-// The engines allocate once during application setup. Compression and
-// decompression themselves only touch caller-owned buffers.
+/// Reusable per-message DEFLATE engines allocated during application setup.
+///
+/// Compression and decompression use only caller-owned buffers after `init`.
 pub const Context = struct {
     compressor: *c.libdeflate_compressor,
     decompressor: *c.libdeflate_decompressor,
     window_compressors: [window_compressor_count]WindowCompressor,
 
+    /// Allocates reusable compression engines for window sizes 9 through 15.
     pub fn init(level: i32) Error!Context {
         const compressor = c.libdeflate_alloc_compressor(level) orelse return error.InitFailed;
         errdefer c.libdeflate_free_compressor(compressor);
@@ -50,6 +54,7 @@ pub const Context = struct {
         };
     }
 
+    /// Releases every compression engine and invalidates the context.
     pub fn deinit(self: *Context) void {
         for (&self.window_compressors) |*compressor| compressor.deinit();
         c.libdeflate_free_decompressor(self.decompressor);
@@ -57,6 +62,7 @@ pub const Context = struct {
         self.* = undefined;
     }
 
+    /// Returns worst-case scratch bytes for any supported negotiated window.
     pub fn scratch_bound(self: *const Context, input_len: usize) Error!usize {
         if (input_len > std.math.maxInt(c_ulong)) return error.SizeOverflow;
 
@@ -71,8 +77,10 @@ pub const Context = struct {
         return std.math.add(usize, compressed_bound, decode_tail_len) catch error.SizeOverflow;
     }
 
-    // RFC 7692 permits a compressor to finish the DEFLATE stream. The extra
-    // zero byte supplies an empty non-final block header for compatibility.
+    /// Compresses one no-context-takeover message into `scratch`.
+    ///
+    /// The returned slice borrows `scratch` and includes a compatibility byte
+    /// used to expose a non-final RFC 7692 payload.
     pub fn compress_message(
         self: *Context,
         input: []const u8,
@@ -93,6 +101,7 @@ pub const Context = struct {
         return scratch[0 .. compressed_len + 1];
     }
 
+    /// Compresses one message using a negotiated 9-through-15-bit window.
     pub fn compress_message_window(
         self: *Context,
         input: []const u8,
@@ -108,8 +117,10 @@ pub const Context = struct {
         return self.window_compressors[index].compress_message(input, scratch);
     }
 
-    // `input` must be the prefix of `scratch`; the tail is appended in place.
-    // The caller-provided output boundary rejects compressed expansion bombs.
+    /// Decompresses one message into bounded caller storage.
+    ///
+    /// `input` must begin at `scratch.ptr`; decode finalization bytes are
+    /// appended in place. Exhausting `output` reports `OutputTooLarge`.
     pub fn decompress_message(
         self: *Context,
         input: []const u8,
@@ -269,28 +280,33 @@ fn zlib_alloc(user_data: ?*anyopaque, item_count: c_uint, item_size: c_uint) cal
 
 fn zlib_free(_: ?*anyopaque, _: ?*anyopaque) callconv(.c) void {}
 
-// Compatibility wrappers for users of the pre-alpha module API.
+/// Legacy owning libdeflate compressor handle.
 pub const Compressor = struct {
     engine_ptr: *c.libdeflate_compressor,
 };
 
+/// Legacy owning libdeflate decompressor handle.
 pub const Decompressor = struct {
     engine_ptr: *c.libdeflate_decompressor,
 };
 
+/// Allocates a legacy compressor at `level`.
 pub fn init_compressor(level: i32) !Compressor {
     const ptr = c.libdeflate_alloc_compressor(level) orelse return error.InitFailed;
     return .{ .engine_ptr = ptr };
 }
 
+/// Releases a legacy compressor handle.
 pub fn deinit_compressor(comp: Compressor) void {
     c.libdeflate_free_compressor(comp.engine_ptr);
 }
 
+/// Returns libdeflate's worst-case output size for `input_len`.
 pub fn get_compress_bound(comp: Compressor, input_len: usize) usize {
     return c.libdeflate_deflate_compress_bound(comp.engine_ptr, input_len);
 }
 
+/// Compresses into caller storage and returns its initialized prefix.
 pub fn compress(comp: Compressor, input: []const u8, output: []u8) ![]u8 {
     const output_len = c.libdeflate_deflate_compress(
         comp.engine_ptr,
@@ -303,15 +319,18 @@ pub fn compress(comp: Compressor, input: []const u8, output: []u8) ![]u8 {
     return output[0..output_len];
 }
 
+/// Allocates a legacy decompressor.
 pub fn init_decompressor() !Decompressor {
     const ptr = c.libdeflate_alloc_decompressor() orelse return error.InitFailed;
     return .{ .engine_ptr = ptr };
 }
 
+/// Releases a legacy decompressor handle.
 pub fn deinit_decompressor(decomp: Decompressor) void {
     c.libdeflate_free_decompressor(decomp.engine_ptr);
 }
 
+/// Decompresses into bounded caller storage and returns its initialized prefix.
 pub fn decompress(decomp: Decompressor, input: []const u8, output: []u8) ![]u8 {
     var output_len: usize = 0;
     const result = c.libdeflate_deflate_decompress(
@@ -324,69 +343,4 @@ pub fn decompress(decomp: Decompressor, input: []const u8, output: []u8) ![]u8 {
     );
     if (result != c.LIBDEFLATE_SUCCESS) return error.DecompressionFailed;
     return output[0..output_len];
-}
-
-test "deflate: per-message round trip uses caller-owned storage" {
-    var context = try Context.init(6);
-    defer context.deinit();
-
-    const input = "bounded per-message deflate payload" ** 8;
-    const bound = try context.scratch_bound(input.len);
-    const scratch = try std.testing.allocator.alloc(u8, bound);
-    defer std.testing.allocator.free(scratch);
-    const output = try std.testing.allocator.alloc(u8, input.len);
-    defer std.testing.allocator.free(output);
-
-    const compressed = try context.compress_message(input, scratch);
-    const restored = try context.decompress_message(compressed, scratch, output);
-    try std.testing.expectEqualStrings(input, restored);
-}
-
-test "deflate: negotiated small windows use preallocated zlib streams" {
-    var context = try Context.init(6);
-    defer context.deinit();
-
-    const input = "small-window payload" ** 32;
-    const bound = try context.scratch_bound(input.len);
-    const scratch = try std.testing.allocator.alloc(u8, bound);
-    defer std.testing.allocator.free(scratch);
-    const output = try std.testing.allocator.alloc(u8, input.len);
-    defer std.testing.allocator.free(output);
-
-    var window_bits: u4 = 9;
-    while (window_bits <= 14) : (window_bits += 1) {
-        const compressed = try context.compress_message_window(input, scratch, window_bits);
-        const restored = try context.decompress_message(compressed, scratch, output);
-        try std.testing.expectEqualStrings(input, restored);
-    }
-}
-
-test "deflate: expansion is bounded by output capacity" {
-    var context = try Context.init(6);
-    defer context.deinit();
-
-    const input = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    const bound = try context.scratch_bound(input.len);
-    const scratch = try std.testing.allocator.alloc(u8, bound);
-    defer std.testing.allocator.free(scratch);
-
-    const compressed = try context.compress_message(input, scratch);
-    var output: [4]u8 = undefined;
-    try std.testing.expectError(
-        error.OutputTooLarge,
-        context.decompress_message(compressed, scratch, &output),
-    );
-}
-
-test "deflate: malformed input is rejected" {
-    var context = try Context.init(6);
-    defer context.deinit();
-
-    var scratch: [64]u8 = undefined;
-    @memcpy(scratch[0..4], &[_]u8{ 0xff, 0xff, 0xff, 0xff });
-    var output: [64]u8 = undefined;
-    try std.testing.expectError(
-        error.InvalidCompressedData,
-        context.decompress_message(scratch[0..4], &scratch, &output),
-    );
 }

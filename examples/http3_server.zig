@@ -6,7 +6,7 @@ fn index(_: *uz.Request, response: *uz.Response) void {
         "200 OK",
         "Content-Type: text/plain\r\n",
         "Hello from bounded HTTP/3",
-    ) catch return;
+    ) catch |err| std.log.err("response failed: {}", .{err});
 }
 
 pub fn main(init: std.process.Init) !void {

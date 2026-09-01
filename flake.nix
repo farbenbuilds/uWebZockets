@@ -44,7 +44,7 @@
         zig = inputs.zig-overlay.packages.${system}."0.16.0" or pkgs.zig;
         zon2nixPackage = inputs.zon2nix.packages.${system}.zon2nix;
         zigPackages = pkgs.callPackage ./build.zig.zon.nix {
-          zig_0_15 = zig;
+          zig_0_16 = zig;
         };
 
         source = lib.cleanSourceWith {
@@ -68,13 +68,28 @@
           pkgs.pkg-config
           pkgs.go
           pkgs.perl
+          pkgs.patch
           pkgs.python3
         ];
 
         seedZigCache = ''
           export ZIG_GLOBAL_CACHE_DIR="$TMPDIR/zig-cache"
           mkdir -p "$ZIG_GLOBAL_CACHE_DIR/p"
-          cp -RL ${zigPackages}/. "$ZIG_GLOBAL_CACHE_DIR/p/"
+
+          for package in ${zigPackages}/*; do
+            package_name="$(basename "$package")"
+            if [ -d "$package" ]; then
+              fetched_hash="$(zig fetch \
+                --global-cache-dir "$ZIG_GLOBAL_CACHE_DIR" \
+                "$package")"
+              test "$fetched_hash" = "$package_name"
+              continue
+            fi
+
+            cp -L "$package" \
+              "$ZIG_GLOBAL_CACHE_DIR/p/$package_name.tar.gz"
+          done
+
           chmod -R u+w "$ZIG_GLOBAL_CACHE_DIR"
         '';
 
@@ -89,7 +104,7 @@
         in
           packagePkgs.stdenv.mkDerivation {
             pname = "uwebzockets";
-            version = "1.0.0-alpha";
+            version = "1.0.0";
             src = source;
             strictDeps = true;
             inherit nativeBuildInputs;
@@ -101,6 +116,7 @@
             buildPhase = ''
               runHook preBuild
               ${seedZigCache}
+              patchShebangs zig-cc zig-c++
               zig build lib \
                 -Doptimize=ReleaseFast \
                 -Dtarget=${targetTriple} \
@@ -122,7 +138,7 @@
         in
           packagePkgs.stdenv.mkDerivation {
             pname = "uwebzockets-compile-tests";
-            version = "1.0.0-alpha";
+            version = "1.0.0";
             src = source;
             strictDeps = true;
             inherit nativeBuildInputs;
@@ -134,6 +150,7 @@
             buildPhase = ''
               runHook preBuild
               ${seedZigCache}
+              patchShebangs zig-cc zig-c++
               zig build test-compile \
                 -Doptimize=ReleaseSafe \
                 -Dtarget=${targetTriple} \
@@ -146,7 +163,7 @@
             '';
           };
 
-        mkDevShell = packagePkgs: let
+        mkDevShell = packagePkgs: targetTriple: let
           llvmCompilerRt = packagePkgs.llvmPackages_21.compiler-rt;
           zlibPrefix = packagePkgs.symlinkJoin {
             name = "uwebzockets-zlib-dev";
@@ -160,32 +177,40 @@
         in
           packagePkgs.mkShell (
             {
-              packages = [
-                zig
-                packagePkgs.zls
-                zon2nixPackage
-                pkgs.cmake
-                pkgs.ninja
-                pkgs.pkg-config
-                pkgs.go
-                pkgs.perl
-                pkgs.python3
-                packagePkgs.gnutar
-                packagePkgs.gzip
-                packagePkgs.xz
-                packagePkgs.zlib
-                packagePkgs.wrk
-              ]
-              ++ lib.optional supportsSanitizers llvmCompilerRt;
+              packages =
+                [
+                  zig
+                  packagePkgs.zls
+                  zon2nixPackage
+                  pkgs.cmake
+                  pkgs.ninja
+                  pkgs.pkg-config
+                  pkgs.go
+                  pkgs.perl
+                  pkgs.python3
+                  packagePkgs.ripgrep
+                  packagePkgs.gnutar
+                  packagePkgs.gzip
+                  packagePkgs.patch
+                  packagePkgs.xz
+                  packagePkgs.zlib
+                  packagePkgs.wrk
+                  packagePkgs.deno
+                ]
+                ++ lib.optional supportsSanitizers llvmCompilerRt;
               UWEBZOCKETS_ZLIB_PREFIX = zlibPrefix;
+              UWEBZOCKETS_DEFAULT_TARGET = targetTriple;
+            }
+            // lib.optionalAttrs isLinux {
+              UWEBZOCKETS_RUNTIME_DYNAMIC_LINKER =
+                packagePkgs.stdenv.cc.bintools.dynamicLinker;
+              UWEBZOCKETS_RUNTIME_LIBRARY_PATH = "${lib.getLib packagePkgs.stdenv.cc.libc}/lib";
             }
             // lib.optionalAttrs supportsSanitizers {
               UWEBZOCKETS_SANITIZER_DYNAMIC_LINKER =
                 packagePkgs.stdenv.cc.bintools.dynamicLinker;
-              UWEBZOCKETS_SANITIZER_LIB_DIR =
-                "${lib.getLib llvmCompilerRt}/lib/linux";
-              UWEBZOCKETS_SANITIZER_LIBC_DIR =
-                "${lib.getLib packagePkgs.stdenv.cc.libc}/lib";
+              UWEBZOCKETS_SANITIZER_LIB_DIR = "${lib.getLib llvmCompilerRt}/lib/linux";
+              UWEBZOCKETS_SANITIZER_LIBC_DIR = "${lib.getLib packagePkgs.stdenv.cc.libc}/lib";
             }
           );
       in {
@@ -210,10 +235,10 @@
 
         devShells =
           {
-            default = mkDevShell pkgs;
+            default = mkDevShell pkgs nativeTarget;
           }
           // lib.optionalAttrs isLinux {
-            musl = mkDevShell pkgsMusl;
+            musl = mkDevShell pkgsMusl muslTarget;
           };
       };
     };

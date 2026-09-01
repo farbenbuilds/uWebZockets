@@ -21,26 +21,37 @@ jobs:
     runs-on: ubuntu-24.04
     environment: Benchmarking
     timeout-minutes: 90
+    outputs:
+      candidate_sha: ${{ steps.revisions.outputs.candidate_sha }}
+      record_created: ${{ steps.benchmark.outputs.record_created }}
 
     steps:
       - name: Checkout candidate
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: candidate
           submodules: recursive
 
       - name: Checkout main baseline
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: baseline
           ref: ${{ github.event.pull_request.base.sha || 'main' }}
           submodules: recursive
 
       - name: Install Nix
-        uses: cachix/install-nix-action@v31
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
+
+      - name: Capture benchmark revisions
+        id: revisions
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'candidate_sha=%s\n' "$(git -C candidate rev-parse HEAD)" >>"$GITHUB_OUTPUT"
+          printf 'baseline_sha=%s\n' "$(git -C baseline rev-parse HEAD)" >>"$GITHUB_OUTPUT"
 
       - name: Build candidate
         working-directory: candidate
@@ -85,6 +96,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          source candidate/benchmarks/http_throughput_v1.env
           result_directory="$RUNNER_TEMP/benchmark-results"
           candidate_rate=$(
             nix develop "path:./candidate" -c sh candidate/scripts/benchmark_http.sh \
@@ -94,7 +106,40 @@ jobs:
             nix develop "path:./candidate" -c sh candidate/scripts/benchmark_http.sh \
               baseline "$RUNNER_TEMP/baseline/bin/hello_world" "$result_directory"
           )
-          minimum_rate=$(awk -v baseline="$baseline_rate" 'BEGIN { printf "%.2f", baseline * 0.90 }')
+          minimum_rate=$(awk -v baseline="$baseline_rate" -v ratio="$MINIMUM_BASELINE_RATIO" \
+            'BEGIN { printf "%.2f", baseline * ratio }')
+          minimum_percent=$(awk -v ratio="$MINIMUM_BASELINE_RATIO" \
+            'BEGIN { printf "%.0f", ratio * 100 }')
+
+          cpu_model=$(lscpu | awk -F: '/^Model name:/ { sub(/^[[:space:]]+/, "", $2); print $2; exit }')
+          runner_image="${ImageOS:-unknown}/${ImageVersion:-unknown}"
+          zig_version=$(nix develop "path:./candidate" -c zig version) || zig_version=unknown
+          wrk_version=$(nix develop "path:./candidate" -c sh -c 'wrk --version 2>&1' | sed -n '1p') || wrk_version=unknown
+          python3 candidate/scripts/create_benchmark_record.py \
+            --contract candidate/benchmarks/http_throughput_v1.env \
+            --candidate-rates "$result_directory/candidate-rates.txt" \
+            --baseline-rates "$result_directory/baseline-rates.txt" \
+            --candidate-flake-lock candidate/flake.lock \
+            --baseline-flake-lock baseline/flake.lock \
+            --output "$result_directory/http-throughput-v1.json" \
+            --repository "$GITHUB_REPOSITORY" \
+            --event-name "$GITHUB_EVENT_NAME" \
+            --git-ref "$GITHUB_REF" \
+            --candidate-sha "${{ steps.revisions.outputs.candidate_sha }}" \
+            --baseline-sha "${{ steps.revisions.outputs.baseline_sha }}" \
+            --workflow-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --runner-os "$RUNNER_OS" \
+            --runner-architecture "$RUNNER_ARCH" \
+            --runner-name "$RUNNER_NAME" \
+            --runner-image "$runner_image" \
+            --cpu-model "${cpu_model:-unknown}" \
+            --kernel "$(uname -srvmo)" \
+            --zig-version "$zig_version" \
+            --nix-version "$(nix --version)" \
+            --wrk-version "$wrk_version"
+          printf 'record_created=true\n' >>"$GITHUB_OUTPUT"
 
           {
             printf '%s\n' '## HTTP throughput benchmark'
@@ -102,15 +147,19 @@ jobs:
             printf '| --- | ---: |\n'
             printf '| Candidate | %s |\n' "$candidate_rate"
             printf '| Main baseline | %s |\n' "$baseline_rate"
-            printf '\nCandidate gate: at least 90%% of baseline (%s requests/second).\n' "$minimum_rate"
+            printf '\nCandidate gate: at least %s%% of baseline (%s requests/second).\n' \
+              "$minimum_percent" "$minimum_rate"
+            printf '\nContract: %s; durable mainline history: benchmark-data branch.\n' \
+              "$BENCHMARK_ID"
           } | tee "$RUNNER_TEMP/benchmark-summary.md" >>"$GITHUB_STEP_SUMMARY"
 
           awk -v candidate="$candidate_rate" -v baseline="$baseline_rate" \
-            'BEGIN { exit !(baseline > 0 && candidate >= baseline * 0.90) }'
+            -v ratio="$MINIMUM_BASELINE_RATIO" \
+            'BEGIN { exit !(baseline > 0 && candidate >= baseline * ratio) }'
 
       - name: Upload benchmark results
         if: ${{ always() }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: http-throughput-benchmark
           path: |
@@ -118,3 +167,83 @@ jobs:
             ${{ runner.temp }}/benchmark-summary.md
           if-no-files-found: error
           retention-days: 30
+
+  publish-history:
+    name: Publish durable benchmark history
+    needs: compare
+    if: >-
+      ${{ always() &&
+          needs.compare.outputs.record_created == 'true' &&
+          github.event_name != 'pull_request' &&
+          github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout trusted publisher
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: publisher
+          ref: ${{ needs.compare.outputs.candidate_sha }}
+          persist-credentials: false
+
+      - name: Checkout history repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: history
+          ref: ${{ needs.compare.outputs.candidate_sha }}
+          fetch-depth: 0
+
+      - name: Download benchmark evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: http-throughput-benchmark
+          path: artifact
+
+      - name: Prepare benchmark-data branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git -C history ls-remote --exit-code --heads origin benchmark-data >/dev/null; then
+            git -C history fetch origin benchmark-data
+            git -C history checkout -B benchmark-data FETCH_HEAD
+          else
+            git -C history checkout --orphan benchmark-data
+            git -C history rm -rf . || true
+          fi
+
+      - name: Append immutable benchmark record
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t record_paths < <(find artifact -type f -name http-throughput-v1.json -print)
+          test "${#record_paths[@]}" -eq 1
+          record_path=${record_paths[0]}
+          results_directory=$(dirname "$record_path")
+          record_id=$(
+            python3 publisher/scripts/publish_benchmark_history.py \
+              --record "$record_path" \
+              --results-directory "$results_directory" \
+              --history-directory history \
+              --schema publisher/benchmarks/http_throughput_v1.schema.json \
+              --contract publisher/benchmarks/http_throughput_guarantee.md \
+              --contract-parameters publisher/benchmarks/http_throughput_v1.env
+          )
+          printf 'record_id=%s\n' "$record_id" >>"$GITHUB_OUTPUT"
+
+      - name: Push benchmark history
+        shell: bash
+        env:
+          RECORD_ID: ${{ steps.publish.outputs.record_id }}
+        run: |
+          set -euo pipefail
+          git -C history config user.name github-actions[bot]
+          git -C history config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git -C history add --all
+          if git -C history diff --cached --quiet; then
+            exit 0
+          fi
+          git -C history commit -m "benchmark: record $RECORD_ID"
+          git -C history push origin HEAD:benchmark-data

@@ -1,6 +1,10 @@
 #!/usr/bin/env sh
 set -eu
 
+script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+# shellcheck disable=SC1091
+. "$script_directory/../benchmarks/http_throughput_v1.env"
+
 if [ "$#" -ne 3 ]; then
     printf '%s\n' "usage: benchmark_http.sh <label> <server-binary> <output-directory>" >&2
     exit 2
@@ -69,9 +73,14 @@ if [ "$ready" != true ]; then
 fi
 
 run=1
-while [ "$run" -le 3 ]; do
+while [ "$run" -le "$WRK_SAMPLES" ]; do
     result_file="$output_directory/$label-$run.txt"
-    wrk -t2 -c64 -d10s --latency http://127.0.0.1:3000/ >"$result_file"
+    wrk \
+        -t"$WRK_THREADS" \
+        -c"$WRK_CONNECTIONS" \
+        -d"${WRK_DURATION_SECONDS}s" \
+        --latency \
+        "$TARGET_URL" >"$result_file"
     cat "$result_file" >&2
     rate=$(awk '/Requests\/sec:/ { print $2 }' "$result_file")
     if [ -z "$rate" ]; then
@@ -86,4 +95,5 @@ kill "$server_pid" 2>/dev/null || true
 wait "$server_pid" 2>/dev/null || true
 server_pid=
 
-sort -n "$rates_file" | sed -n '2p'
+median_line=$((WRK_SAMPLES / 2 + 1))
+sort -n "$rates_file" | sed -n "${median_line}p"

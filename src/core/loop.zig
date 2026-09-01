@@ -1,15 +1,16 @@
 const xev = @import("xev");
 
+/// Completion-driven event loop backed by libxev.
 pub const Loop = struct {
     xev_loop: xev.Loop,
-    // internal api: allow sockets to get the pointer to the underlying xev.loop
+
+    /// Returns the borrowed libxev loop handle used by transport integrations.
     pub inline fn get_xev_loop(self: *Loop) *xev.Loop {
         return &self.xev_loop;
     }
 };
 
-// intializes the event loop
-// returns an error if the os runs out of file descriptors or kernel memory
+/// Initializes an event loop sized for 4096 completion entries.
 pub fn init() !Loop {
     return .{
         // allows processing up to 4096 i/o events in a single kernel wake-up
@@ -17,13 +18,12 @@ pub fn init() !Loop {
     };
 }
 
-// destroys the event loop, releasing system resources
+/// Releases operating-system resources after all operations have stopped.
 pub fn deinit(l: *Loop) void {
     l.xev_loop.deinit();
 }
 
-// blocks the current thread and starts the perpetual event loop
-// returns when there are no active connections or timers left
+/// Runs until no active connection, timer, or cancellation remains.
 pub fn run(l: *Loop) !void {
     // .until_done forces the loop to run continuously until all
     // completions (i/o, timer) are fully canceled or processed

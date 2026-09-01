@@ -1,7 +1,8 @@
 const std = @import("std");
+/// Request view populated by `consume`.
 pub const Request = @import("request.zig").Request;
 
-// finite states of our zero-allocation http parser.
+/// Incremental state of the bounded HTTP/1.1 request parser.
 pub const ParserState = enum {
     method,
     path,
@@ -19,8 +20,11 @@ pub const ParserState = enum {
     error_too_large,
 };
 
+/// Maximum accepted request-line length in bytes.
 pub const max_request_line_size = 8 * 1024;
+/// Maximum accepted header block length in bytes.
 pub const max_header_size = 16 * 1024;
+/// Maximum accepted fixed or decoded chunked body length in bytes.
 pub const max_body_size = 16 * 1024;
 
 fn is_tchar(c: u8) bool {
@@ -49,7 +53,7 @@ fn is_hexadecimal(value: []const u8) bool {
     return true;
 }
 
-// http parser state data.
+/// Allocation-free incremental HTTP/1.1 parser state.
 pub const HttpParser = struct {
     state: ParserState = .method,
     mark: usize = 0,
@@ -59,8 +63,10 @@ pub const HttpParser = struct {
     body_start: usize = 0,
 };
 
-// consumes a chunk of bytes, maps them onto the request.
-// returns the number of bytes consumed.
+/// Parses bytes into `req` and returns the prefix consumed by this request.
+///
+/// Request slices borrow `buffer`. Chunked bodies are compacted in place, so
+/// callers must retain the mutable buffer until request dispatch completes.
 pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
     var i: usize = parser.mark;
 
@@ -461,7 +467,7 @@ fn valid_trailers(trailers: []const u8) bool {
     return true;
 }
 
-// resets the state for the next request.
+/// Resets parser offsets and lengths before parsing the next request.
 pub fn reset(parser: *HttpParser) void {
     parser.state = .method;
     parser.mark = 0;

@@ -19,15 +19,16 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Setup Zig
-        uses: mlugg/setup-zig@v2
+      - name: Install Nix
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
         with:
-          version: 0.16.0
+          extra_nix_config: |
+            experimental-features = nix-command flakes
 
       - name: Run Zig fmt
-        run: zig fmt --check build.zig src examples tests
+        run: nix develop "path:." -c zig fmt --check build.zig build.zig.zon src examples tests fuzz
 
       - name: Check repository conventions
-        run: sh scripts/check_conventions.sh
+        run: nix develop "path:." -c sh scripts/check_conventions.sh

@@ -1,0 +1,13 @@
+homepage: "https://github.com/farbenbuilds/uWebZockets"
+# OSS-Fuzz has no Zig language key. C++ selects its Clang linker environment.
+language: c++
+primary_contact: "trananhquan1009@gmail.com"
+auto_ccs:
+  - "noah1109.tran@gmail.com"
+main_repo: "https://github.com/farbenbuilds/uWebZockets.git"
+fuzzing_engines:
+  - libfuzzer
+sanitizers:
+  - address
+architectures:
+  - x86_64

@@ -1,4 +1,4 @@
-# µWebZockets Examples
+# µWebZockets 1.0.0 Examples
 
 Build the supported examples with Zig 0.16.0 and all recursive submodules:
 
@@ -8,6 +8,10 @@ zig build -Doptimize=ReleaseSafe
 
 The default install contains `hello_world`, `chat_server`, `http3_server`,
 `h1spec`, and `autobahn_server` under `zig-out/bin`.
+
+These examples target the live `App` transports. The bounded HTTP/2/HPACK
+components and the C ABI header are library surfaces rather than standalone
+example servers.
 
 ## HTTP/1.1 server
 
@@ -84,5 +88,12 @@ self-signed certificate.
 
 The example uses a capacity of 128 connections/active streams. QPACK headers,
 request bodies, response metadata, response bodies, and outgoing UDP packets
-all use fixed startup-allocated pools. WebSocket extended CONNECT is not part
-of the alpha HTTP/3 adapter.
+all use fixed startup-allocated pools. The UDP socket, timer, cancellation, and
+close completions are owned by `src/core/udp.zig` and drain before application
+storage is released.
+
+The live example serves bounded HTTP/3 request/response streams. RFC 9220
+WebSocket extended CONNECT, server push, early-data policy, and WebTransport
+draft-16 are exposed as protocol helpers but are not connected to this lsquic
+listener. The HTTP/3 compliance gate intentionally excludes server push and
+WebTransport.

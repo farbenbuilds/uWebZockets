@@ -8,9 +8,10 @@ on:
     branches:
       - main
   workflow_dispatch:
+  workflow_call:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: h1spec-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -22,18 +23,18 @@ jobs:
     environment: "h1spec Compliance"
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: recursive
 
       - name: Install Nix
-        uses: cachix/install-nix-action@v31
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
 
       - name: Setup Deno
-        uses: denoland/setup-deno@v2
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
         with:
           deno-version: v2.9.4
 
@@ -48,7 +49,7 @@ jobs:
           printf '%s\n' "$server_pid" >"$RUNNER_TEMP/h1spec_server.pid"
 
           ready=false
-          for attempt in $(seq 1 100); do
+          for _ in $(seq 1 100); do
             if ! kill -0 "$server_pid" 2>/dev/null; then
               cat "$RUNNER_TEMP/h1spec_server.log"
               exit 1
@@ -63,6 +64,8 @@ jobs:
 
       - name: Run h1spec
         run: |
+          patch -f -d vendor/h1spec -p1 \
+            -i "$GITHUB_WORKSPACE/patches/h1spec_deno_cleanup.patch"
           cd vendor/h1spec
           deno run --allow-net=127.0.0.1:8000 http_test.ts 127.0.0.1 8000
 
@@ -75,7 +78,7 @@ jobs:
 
       - name: Upload server log
         if: ${{ failure() }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: h1spec-server-log
           path: ${{ runner.temp }}/h1spec_server.log

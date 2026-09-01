@@ -1,9 +1,10 @@
 const std = @import("std");
-const parser = @import("http_parser");
+const support = @import("test_support");
+const parser = support.http_parser;
 const Request = parser.Request;
 const zslay = @import("zslay");
-const ws_handshake = @import("ws_handshake");
-const quic_validation = @import("quic_validation");
+const ws_handshake = support.ws_handshake;
+const quic_validation = support.quic_validation;
 
 test "fuzz: protocol parsers preserve bounded state" {
     try std.testing.fuzz({}, fuzz_protocol_parsers, .{
@@ -89,6 +90,7 @@ fn parser_is_terminal(state: parser.ParserState) bool {
 fn fuzz_zslay_receive(smith: *std.testing.Smith) !void {
     @disableInstrumentation();
 
+    // Smith generates malformed frames, so parser errors end the current sample.
     var input: [4096]u8 = undefined;
     const input_len: usize = @intCast(smith.slice(&input));
     var nodes: [4]zslay.Conn.FrameNode = undefined;
