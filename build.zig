@@ -836,7 +836,6 @@ pub fn build(b: *std.Build) void {
         .name = "http_framing",
         .root_module = http_fuzz_mod,
     });
-    http_fuzz_object.sanitize_coverage_trace_pc_guard = true;
 
     const ws_fuzz_mod = b.createModule(.{
         .root_source_file = b.path("fuzz/ws_masking.zig"),
@@ -849,7 +848,6 @@ pub fn build(b: *std.Build) void {
         .name = "ws_masking",
         .root_module = ws_fuzz_mod,
     });
-    ws_fuzz_object.sanitize_coverage_trace_pc_guard = true;
 
     const quic_fuzz_mod = b.createModule(.{
         .root_source_file = b.path("fuzz/quic_packets.zig"),
@@ -862,7 +860,6 @@ pub fn build(b: *std.Build) void {
         .name = "quic_packets",
         .root_module = quic_fuzz_mod,
     });
-    quic_fuzz_object.sanitize_coverage_trace_pc_guard = true;
 
     const install_http_fuzz_object = b.addInstallArtifact(http_fuzz_object, .{
         .dest_dir = .{ .override = .{ .custom = "oss-fuzz" } },

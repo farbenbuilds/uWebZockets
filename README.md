@@ -4,6 +4,20 @@
 
 # µWebZockets
 
+µWebZockets is a Zig 0.16 WebSocket server library with HTTP/1.1, WebSocket,
+and optional HTTP/3/QUIC support. It is designed for low-allocation,
+event-driven services; production deployments should still validate their own
+traffic, limits, TLS configuration, and observability requirements.
+
+## Status and validation
+
+The repository CI covers Zig builds and tests, RFC 6455 behavior, HTTP/3
+interop, HTTP/1.1 conformance, deterministic fuzz smoke tests, and an
+OSS-Fuzz/ClusterFuzzLite build. The throughput workflow compares the optimized
+`hello_world` server with the main branch on the same runner; it is a regression
+guard, not a universal performance claim. APIs and integrations may change
+until the 1.0 release is finalized.
+
 [![Test](https://github.com/farbenbuilds/uWebZockets/actions/workflows/test.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/test.yml)
 [![Autobahn Compliance](https://github.com/farbenbuilds/uWebZockets/actions/workflows/autobahn_compliance.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/autobahn_compliance.yml)
 [![h1spec Compliance](https://github.com/farbenbuilds/uWebZockets/actions/workflows/h1spec_compliance.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/h1spec_compliance.yml)
