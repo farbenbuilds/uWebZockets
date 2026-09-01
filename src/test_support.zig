@@ -19,7 +19,7 @@ pub const quic_packet = @import("quic/packet.zig");
 pub const quic_stream = @import("quic/stream.zig");
 pub const quic_validation = @import("quic/validation.zig");
 pub const webtransport = @import("quic/webtransport.zig");
-pub const udp = @import("udp.zig");
+pub const udp = @import("core/udp.zig");
 
 pub const app = @import("router/app.zig");
 pub const radix = @import("router/radix.zig");

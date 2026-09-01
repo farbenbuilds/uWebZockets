@@ -53,7 +53,7 @@ pub const websocket_mask = @import("ws/mask.zig");
 /// TLS context API backed by BoringSSL.
 pub const tls = @import("crypto/tls.zig");
 /// Completion-driven UDP/QUIC transport API.
-pub const udp = @import("udp.zig");
+pub const udp = @import("core/udp.zig");
 /// Bounded HTTP/2 frame and stream state machine.
 pub const http2 = @import("http2/connection.zig");
 /// Bounded HPACK decoder, dynamic table, Huffman codec, and response encoder.

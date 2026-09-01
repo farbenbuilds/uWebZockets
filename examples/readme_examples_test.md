@@ -89,7 +89,7 @@ self-signed certificate.
 The example uses a capacity of 128 connections/active streams. QPACK headers,
 request bodies, response metadata, response bodies, and outgoing UDP packets
 all use fixed startup-allocated pools. The UDP socket, timer, cancellation, and
-close completions are owned by `src/udp.zig` and drain before application
+close completions are owned by `src/core/udp.zig` and drain before application
 storage is released.
 
 The live example serves bounded HTTP/3 request/response streams. RFC 9220

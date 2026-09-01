@@ -1,8 +1,8 @@
 const std = @import("std");
 const c = @import("c");
 const xev = @import("xev");
-const Router = @import("router/radix.zig").Router;
-const max_udp_payload_size = @import("quic/lsquic_api.zig").max_udp_payload_size;
+const Router = @import("../router/radix.zig").Router;
+const max_udp_payload_size = @import("../quic/lsquic_api.zig").max_udp_payload_size;
 
 /// Returns a bounded UDP/QUIC transport backed by completion-driven I/O.
 ///

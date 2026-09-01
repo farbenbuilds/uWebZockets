@@ -78,7 +78,7 @@ uses Semantic Versioning.
 - Reworked application shutdown into an idempotent completion-driven drain;
   new work is rejected before accept, TCP, timer, UDP, and QUIC resources are
   stopped and released in ownership order.
-- Extracted the UDP/QUIC socket lifecycle into `src/udp.zig`; its fixed receive
+- Extracted the UDP/QUIC socket lifecycle into `src/core/udp.zig`; its fixed receive
   buffer, read, timer, cancellation, close, and drain completions are owned by
   one transport and used by `App.listen_udp`.
 - Reworked routing as fixed-capacity parallel arrays and made duplicate,

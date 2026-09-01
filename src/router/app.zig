@@ -10,7 +10,7 @@ const PubSubEngine = @import("../ws/pubsub.zig").PubSubEngine;
 const DeflateContext = @import("../ws/deflate.zig").Context;
 const TlsContext = @import("../crypto/tls.zig").TlsContext;
 const quic = @import("../quic/engine.zig");
-const udp = @import("../udp.zig");
+const udp = @import("../core/udp.zig");
 
 /// Default maximum complete WebSocket message size per connection.
 pub const default_max_ws_message_size = 16 * 1024;

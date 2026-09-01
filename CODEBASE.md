@@ -38,8 +38,8 @@ uWebZockets/
 ├── src/
 │   ├── root.zig              # supported public API
 │   ├── c_api.zig             # exported C ABI implementation
-│   ├── udp.zig               # completion-owned UDP/QUIC transport
 │   ├── core/                 # libxev loop, TCP, pool, context, timer
+│   │   ├── udp.zig           # completion-owned UDP/QUIC transport
 │   ├── crypto/               # bounded BoringSSL TLS adapter
 │   ├── http/                 # strict HTTP/1.1 parser and response writer
 │   ├── http2/                # bounded frames, stream slab, and HPACK
@@ -96,7 +96,7 @@ old completion from observing a reused connection.
 Shutdown reverses that ownership graph. The application first rejects new
 work, stops recurring timers, cancels accept/read/write/UDP completions, closes
 descriptors through libxev, and runs the loop until every callback is disarmed.
-`src/udp.zig` owns its fixed receive buffer, QUIC engine, read, timer,
+`src/core/udp.zig` owns its fixed receive buffer, QUIC engine, read, timer,
 cancellation, and close completions as one unit. Only after both transports
 drain are TLS state, QUIC state, the loop, and contiguous slabs released.
 
