@@ -3,6 +3,13 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.0.1] - 2026-09-01
+
+### Fixed
+
+- Fixed Nix dev-shell evaluation by using the package set supplied by
+  `flake-parts` instead of recursively replacing its compiler stdenv.
+
 ## [1.0.0] - 2026-09-01
 
 ### Added

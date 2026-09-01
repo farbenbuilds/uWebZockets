@@ -15,8 +15,8 @@ The repository CI covers Zig builds and tests, RFC 6455 behavior, HTTP/3
 interop, HTTP/1.1 conformance, deterministic fuzz smoke tests, and an
 OSS-Fuzz/ClusterFuzzLite build. The throughput workflow compares the optimized
 `hello_world` server with the main branch on the same runner; it is a regression
-guard, not a universal performance claim. APIs and integrations may change
-until the 1.0 release is finalized.
+guard, not a universal performance claim. Released tags provide stable
+snapshots, and the current source tree may include unreleased changes.
 
 [![Test](https://github.com/farbenbuilds/uWebZockets/actions/workflows/test.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/test.yml)
 [![Autobahn Compliance](https://github.com/farbenbuilds/uWebZockets/actions/workflows/autobahn_compliance.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/autobahn_compliance.yml)
@@ -24,16 +24,16 @@ until the 1.0 release is finalized.
 [![Benchmark](https://github.com/farbenbuilds/uWebZockets/actions/workflows/benchmark.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/benchmark.yml)
 
 µWebZockets is a bounded-memory, event-driven WebSocket, HTTP/1.1, HTTP/2,
-and HTTP/3 server library for Zig 0.16.0. This source tree is preparing version
-1.0.0. The request, response, frame
-parsing, masking, routing,
+and HTTP/3 server library for Zig 0.16.0. Released tags provide stable
+snapshots, while the current source tree may include unreleased changes. The
+request, response, frame parsing, masking, routing,
 and connection I/O paths use fixed-capacity storage after application startup.
 BoringSSL provides TLS, libxev drives non-blocking POSIX I/O, zslay 0.1.5
 provides the WebSocket frame state machine, and lsquic provides QUIC.
 
-The manifest and C ABI report version `1.0.0`, but a release is not published
-until the `v1.0.0` tag completes the publish workflow. Pin an exact source
-commit until that tag exists. Only POSIX targets are supported.
+Use a released tag for applications that need a published stable snapshot. Pin
+an exact source commit when consuming current development changes. Only POSIX
+targets are supported.
 
 ## Features
 
@@ -159,13 +159,36 @@ the platform networking libraries required by those dependencies.
 
 ## Use as a Zig dependency
 
-Until `v1.0.0` is published, pin an exact commit in your repository and
-reference that immutable checkout by path. After publication, the tag may be
-used instead:
+### Zig package manager
+
+From the consuming project, fetch an immutable release tag or commit:
+
+```sh
+zig fetch --save 'git+https://github.com/farbenbuilds/uWebZockets#<tag-or-commit>'
+```
+
+This adds the package to `build.zig.zon` under the `uWebZockets` name. Import it
+from `build.zig`:
+
+```zig
+const uz = b.dependency("uWebZockets", .{
+    .target = target,
+    .optimize = optimize,
+});
+const uz_module = uz.module("uWebZockets");
+exe.root_module.addImport("uWebZockets", uz_module);
+```
+
+Pin a tag or full commit rather than a moving branch so dependency resolution
+remains reproducible.
+
+### Local path dependency
+
+For local development changes, reference an immutable checkout by path:
 
 ```sh
 git submodule add https://github.com/farbenbuilds/uWebZockets.git vendor/uWebZockets
-git -C vendor/uWebZockets checkout <full-commit-hash>
+git -C vendor/uWebZockets checkout <release-tag-or-full-commit-hash>
 git add .gitmodules vendor/uWebZockets
 ```
 
