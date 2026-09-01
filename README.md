@@ -15,8 +15,8 @@ The repository CI covers Zig builds and tests, RFC 6455 behavior, HTTP/3
 interop, HTTP/1.1 conformance, deterministic fuzz smoke tests, and an
 OSS-Fuzz/ClusterFuzzLite build. The throughput workflow compares the optimized
 `hello_world` server with the main branch on the same runner; it is a regression
-guard, not a universal performance claim. The stable `v1.0.0` release is
-available; the current source version is `1.0.1`.
+guard, not a universal performance claim. Released tags provide stable
+snapshots, and the current source tree may include unreleased changes.
 
 [![Test](https://github.com/farbenbuilds/uWebZockets/actions/workflows/test.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/test.yml)
 [![Autobahn Compliance](https://github.com/farbenbuilds/uWebZockets/actions/workflows/autobahn_compliance.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/autobahn_compliance.yml)
@@ -24,16 +24,16 @@ available; the current source version is `1.0.1`.
 [![Benchmark](https://github.com/farbenbuilds/uWebZockets/actions/workflows/benchmark.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/benchmark.yml)
 
 µWebZockets is a bounded-memory, event-driven WebSocket, HTTP/1.1, HTTP/2,
-and HTTP/3 server library for Zig 0.16.0. The current source tree reports
-version `1.0.1`; `v1.0.0` is the latest released stable tag. The request,
-response, frame parsing, masking, routing,
+and HTTP/3 server library for Zig 0.16.0. Released tags provide stable
+snapshots, while the current source tree may include unreleased changes. The
+request, response, frame parsing, masking, routing,
 and connection I/O paths use fixed-capacity storage after application startup.
 BoringSSL provides TLS, libxev drives non-blocking POSIX I/O, zslay 0.1.5
 provides the WebSocket frame state machine, and lsquic provides QUIC.
 
-The `v1.0.0` tag is the stable release for applications that need a published
-version. Pin an exact source commit when consuming the current `1.0.1` changes.
-Only POSIX targets are supported.
+Use a released tag for applications that need a published stable snapshot. Pin
+an exact source commit when consuming current development changes. Only POSIX
+targets are supported.
 
 ## Features
 
@@ -159,13 +159,13 @@ the platform networking libraries required by those dependencies.
 
 ## Use as a Zig dependency
 
-The `v1.0.0` release is published and can be used as an immutable dependency.
-For current `1.0.1` changes, pin an exact commit in your repository and
-reference that immutable checkout by path:
+Use a released tag as an immutable dependency. For current development changes,
+pin an exact commit in your repository and reference that immutable checkout by
+path:
 
 ```sh
 git submodule add https://github.com/farbenbuilds/uWebZockets.git vendor/uWebZockets
-git -C vendor/uWebZockets checkout <full-commit-hash>
+git -C vendor/uWebZockets checkout <release-tag-or-full-commit-hash>
 git add .gitmodules vendor/uWebZockets
 ```
 
