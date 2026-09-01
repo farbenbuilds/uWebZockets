@@ -181,22 +181,25 @@
               packages =
                 [
                   zig
-                  packagePkgs.zls
+                  # Shell tools run on the host; only zlib follows the target libc.
+                  pkgs.zls
                   pkgs.cmake
                   pkgs.ninja
                   pkgs.pkg-config
                   pkgs.go
                   pkgs.perl
                   pkgs.python3
-                  packagePkgs.ripgrep
-                  packagePkgs.gnutar
-                  packagePkgs.gzip
-                  packagePkgs.patch
-                  packagePkgs.xz
+                  pkgs.ripgrep
+                  pkgs.gnutar
+                  pkgs.gzip
+                  pkgs.patch
+                  pkgs.xz
                   packagePkgs.zlib
-                  packagePkgs.wrk
+                  pkgs.wrk
                 ]
-                ++ lib.optional (zon2nixPackage != null) zon2nixPackage
+                ++ lib.optional
+                (zon2nixPackage != null && isLinux && packagePkgs.stdenv.hostPlatform.isGnu)
+                zon2nixPackage
                 ++ lib.optional supportsSanitizers llvmCompilerRt;
               UWEBZOCKETS_ZLIB_PREFIX = zlibPrefix;
               UWEBZOCKETS_DEFAULT_TARGET = targetTriple;
