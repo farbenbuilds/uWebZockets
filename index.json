@@ -2,6 +2,17 @@
   "benchmark_id": "http-throughput-v1",
   "records": [
     {
+      "baseline_median_rps": 114229.2,
+      "baseline_sha": "7a8b5d3acd499803c956cda157ad9ddfaf7c2db4",
+      "candidate_median_rps": 118383.28,
+      "candidate_sha": "7a8b5d3acd499803c956cda157ad9ddfaf7c2db4",
+      "candidate_to_baseline_ratio": 1.036366183077532,
+      "passed": true,
+      "record_id": "33606222364-1-7a8b5d3acd49",
+      "record_path": "records/2026/33606222364-1-7a8b5d3acd49.json",
+      "recorded_at": "2026-09-02T08:10:45Z"
+    },
+    {
       "baseline_median_rps": 115199.66,
       "baseline_sha": "93cd251dfc82227c05686c4809fb6958b14b6d26",
       "candidate_median_rps": 116688.21,
