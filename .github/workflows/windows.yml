@@ -37,18 +37,8 @@ jobs:
       - name: Install MinGW zlib
         shell: pwsh
         run: |
-          git -C $env:VCPKG_INSTALLATION_ROOT fetch --depth=1 origin 2026.07.29
-          Push-Location scripts\windows
-          try {
-            & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install `
-              --triplet x64-mingw-static
-          } finally {
-            Pop-Location
-          }
-          $prefix = Join-Path $env:VCPKG_INSTALLATION_ROOT "installed\x64-mingw-static"
-          if (!(Test-Path (Join-Path $prefix "lib\libz.a"))) {
-            throw "vcpkg did not install the MinGW static zlib archive"
-          }
+          $prefix = Join-Path $env:RUNNER_TEMP "uwebzockets-zlib"
+          .\scripts\windows\prepare_zlib.ps1 -OutputDirectory $prefix
           "UWEBZOCKETS_ZLIB_PREFIX=$prefix" >> $env:GITHUB_ENV
 
       - name: Run Windows tests

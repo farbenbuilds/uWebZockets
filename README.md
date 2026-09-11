@@ -150,11 +150,8 @@ the pinned manifest under `scripts/windows`, the `x64-mingw-static` triplet,
 and the following PowerShell flow:
 
 ```powershell
-Push-Location scripts\windows
-& "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install `
-  --triplet x64-mingw-static
-Pop-Location
-$zlib = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-mingw-static"
+$zlib = "$env:TEMP\uwebzockets-zlib"
+.\scripts\windows\prepare_zlib.ps1 -OutputDirectory $zlib
 zig build test -Dtarget=x86_64-windows-gnu "-Dzlib-prefix=$zlib" `
   -Doptimize=ReleaseSafe --summary all
 zig build lib -Dtarget=x86_64-windows-gnu "-Dzlib-prefix=$zlib" `
