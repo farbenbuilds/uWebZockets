@@ -26,7 +26,7 @@ jobs:
     uses: ./.github/workflows/oss_fuzz.yml
 
   windows:
-    name: Windows build and tests
+    name: Windows build and test compilation
     uses: ./.github/workflows/windows.yml
 
   verify:

@@ -107,10 +107,11 @@ still perform workload-specific QUIC load testing.
 
 Cross-platform support covers Linux, macOS, Windows (`x86_64-windows-gnu` /
 MinGW ABI), FreeBSD, NetBSD, OpenBSD, and DragonFlyBSD. The configured publish
-matrix covers Linux and macOS. A dedicated native Windows job builds and runs
-the complete ReleaseSafe test/ABI graph, and tagged releases include its static
-libraries. The additional BSD targets share the build graph without dedicated
-runtime CI coverage.
+matrix covers Linux and macOS. A dedicated native Windows job compiles the
+complete ReleaseSafe test/ABI graph without executing it, and tagged
+releases include its static libraries. Windows runtime verification remains a
+Tier 2 deployment responsibility. The additional BSD targets share the build
+graph without dedicated runtime CI coverage.
 
 ## Disclosure
 

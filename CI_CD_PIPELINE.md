@@ -11,7 +11,7 @@ it is not a proof that all memory or security defects are absent.
 | --- | --- | --- | --- |
 | `lint.yml` | pushes and pull requests to `main`, manual | `Linting` | Zig formatting and repository conventions |
 | `test.yml` | pushes and pull requests to `main`, manual | `Testing` | Debug, sanitizer, fuzz, ReleaseSafe, and ReleaseFast verification |
-| `windows.yml` | manual, reusable from tagged publishing | `Testing` | Native `x86_64-windows-gnu` tests and static-library build |
+| `windows.yml` | manual, reusable from tagged publishing | `Testing` | Native `x86_64-windows-gnu` test compilation and static-library build |
 | `oss_fuzz.yml` | pushes and pull requests to `main`, manual, reusable | `Testing` | OSS-Fuzz-compatible ASan/libFuzzer build and execution |
 | `autobahn_compliance.yml` | pushes and pull requests to `main`, manual | `autobahn Compliance` | RFC 6455 server compliance |
 | `h1spec_compliance.yml` | pushes and pull requests to `main`, manual | `h1spec Compliance` | HTTP/1.1 compliance |
@@ -142,12 +142,13 @@ publish matrix runs natively on these GitHub-hosted architectures:
 - aarch64-macos
 
 The reusable Windows workflow runs separately on `windows-2025`. It installs
-the exact Zig release and vcpkg `x64-mingw-static` zlib, runs the complete
+the exact Zig release and vcpkg `x64-mingw-static` zlib, compiles the complete
 ReleaseSafe test and C ABI graph as Windows executables, builds ReleaseFast
 static libraries, and retains the packaged result as a 14-day workflow
 artifact. Tag publishing calls the same workflow and includes its archive as
-the seventh release asset. Windows remains Tier 2 because the HTTP/3 transport
-does not yet have feature parity with POSIX UDP.
+the seventh release asset. Runtime execution remains a Tier 2 deployment
+responsibility because the HTTP/3 transport does not yet have feature parity
+with POSIX UDP.
 
 The default build also compiles the bounded `http3_server` example. The HTTP/3
 gate drives it independently with pinned curl/ngtcp2/nghttp3 and aioquic,

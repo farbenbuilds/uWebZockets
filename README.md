@@ -19,7 +19,7 @@ guard, not a universal performance claim. Released tags provide stable
 snapshots, and the current source tree may include unreleased changes.
 
 [![Test](https://github.com/farbenbuilds/uWebZockets/actions/workflows/test.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/test.yml)
-[![Windows Cross-Build](https://github.com/farbenbuilds/uWebZockets/actions/workflows/windows.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/windows.yml)
+[![Windows Build](https://github.com/farbenbuilds/uWebZockets/actions/workflows/windows.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/windows.yml)
 [![Autobahn Compliance](https://github.com/farbenbuilds/uWebZockets/actions/workflows/autobahn_compliance.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/autobahn_compliance.yml)
 [![h1spec Compliance](https://github.com/farbenbuilds/uWebZockets/actions/workflows/h1spec_compliance.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/h1spec_compliance.yml)
 [![Benchmark](https://github.com/farbenbuilds/uWebZockets/actions/workflows/benchmark.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/benchmark.yml)
@@ -152,7 +152,7 @@ and the following PowerShell flow:
 ```powershell
 $zlib = "$env:TEMP\uwebzockets-zlib"
 .\scripts\windows\prepare_zlib.ps1 -OutputDirectory $zlib
-zig build test -Dtarget=x86_64-windows-gnu "-Dzlib-prefix=$zlib" `
+zig build test-compile -Dtarget=x86_64-windows-gnu "-Dzlib-prefix=$zlib" `
   -Doptimize=ReleaseSafe --summary all
 zig build lib -Dtarget=x86_64-windows-gnu "-Dzlib-prefix=$zlib" `
   -Doptimize=ReleaseFast --summary all
@@ -544,10 +544,11 @@ borrowed slices and caller-owned buffers.
 - Tier 1: Linux and macOS on `x86_64` and `aarch64`; these targets are built,
   tested, and published by CI.
 - Tier 2: `x86_64-windows-gnu`, FreeBSD, NetBSD, OpenBSD, and DragonFlyBSD.
-  Windows libraries and the complete test/ABI graph are built and executed on
-  a native Windows runner for tagged releases, with a manual pre-release
-  trigger available; the resulting archive is published. The BSD targets share
-  the build graph without dedicated CI.
+  Windows libraries and the complete test/ABI graph are compiled on a native
+  Windows runner for tagged releases, with a manual pre-release trigger
+  available; the resulting archive is published. Windows runtime tests remain
+  a Tier 2 validation responsibility. The BSD targets share the build graph
+  without dedicated CI.
 
 Request fields, route captures, middleware, async tokens, and transport pools
 have fixed capacities; there is no dynamic overflow fallback. Performance

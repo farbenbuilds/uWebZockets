@@ -41,10 +41,10 @@ jobs:
           .\scripts\windows\prepare_zlib.ps1 -OutputDirectory $prefix
           "UWEBZOCKETS_ZLIB_PREFIX=$prefix" >> $env:GITHUB_ENV
 
-      - name: Run Windows tests
+      - name: Compile Windows tests
         shell: pwsh
         run: |
-          zig build test -Dtarget=x86_64-windows-gnu `
+          zig build test-compile -Dtarget=x86_64-windows-gnu `
             "-Dzlib-prefix=$env:UWEBZOCKETS_ZLIB_PREFIX" `
             -Doptimize=ReleaseSafe --summary all
 

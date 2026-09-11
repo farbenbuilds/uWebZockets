@@ -14,8 +14,8 @@ uses Semantic Versioning.
   `mswsock` extension).
 - Added Windows ABI compatibility for `uz_lsxpack_header` in C shims, accounting
   for 4-byte enum bitfield alignment.
-- Added native Windows CI for the `x86_64-windows-gnu` test graph and static
-  libraries, plus a Windows archive in tagged GitHub releases.
+- Added native Windows CI that compiles the `x86_64-windows-gnu` test graph and
+  static libraries, plus a Windows archive in tagged GitHub releases.
 - Added Fetch-inspired ergonomics to `Request` (`headers` view,
   `text()`, `bytes()`, `json()`, `url()`) and `Response` (`text()`, `html()`,
   `bytes()`, `json()`, `json_buf()`, `redirect()`, `writable_stream()`).

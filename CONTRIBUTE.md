@@ -80,8 +80,8 @@ pass `-Dsanitizer-lib-dir=/path/to/compiler/runtime/lib`. When that runtime
 uses a different glibc than the host, also pass matching
 `-Dsanitizer-libc-dir` and `-Dsanitizer-dynamic-linker` paths.
 
-On Windows, install `zlib:x64-mingw-static` with vcpkg and run the ReleaseSafe
-test graph plus the ReleaseFast library build with
+On Windows, install `zlib:x64-mingw-static` with vcpkg and compile the
+ReleaseSafe test graph plus the ReleaseFast library build with
 `-Dtarget=x86_64-windows-gnu` and the installed prefix passed through
 `-Dzlib-prefix`.
 
