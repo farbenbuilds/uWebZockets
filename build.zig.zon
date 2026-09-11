@@ -67,6 +67,7 @@
         "tests",
         "fuzz",
         "patches",
+        "scripts/windows",
         "scripts/check_static_archive.sh",
         "scripts/prepare_lsquic_source.sh",
         "zig-cc",

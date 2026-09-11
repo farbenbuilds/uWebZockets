@@ -40,40 +40,7 @@ try {
   const config_mount =
     `${test_directory}/fuzzingclient.json:/fuzzingclient.json:ro`;
   const reports_mount = `${reports_directory}:/reports`;
-
-  const docker = new Deno.Command("docker", {
-    args: [
-      "run",
-      "--name",
-      "fuzzingserver",
-      "--user",
-      docker_user,
-      "--volume",
-      config_mount,
-      "--volume",
-      reports_mount,
-      "--workdir",
-      "/",
-      "--net=host",
-      "--rm",
-      autobahn_testsuite_docker,
-      "wstest",
-      "-m",
-      "fuzzingclient",
-      "-s",
-      "/fuzzingclient.json",
-    ],
-    cwd: test_directory,
-    stdin: "null",
-    stdout: "inherit",
-    stderr: "inherit",
-  }).spawn();
-  const docker_status = await docker.status;
-  if (!docker_status.success) {
-    throw new Error(
-      `Autobahn container failed with ${describe_status(docker_status)}`,
-    );
-  }
+  await run_testsuite(config_mount, reports_mount);
 
   const report = JSON.parse(await Deno.readTextFile(report_path));
   const agent_report = report[agent_name];
@@ -354,6 +321,52 @@ async function reset_reports() {
     if (!(error instanceof Deno.errors.NotFound)) throw error;
   }
   await Deno.mkdir(reports_directory, { recursive: true });
+}
+
+async function run_testsuite(config_mount, reports_mount) {
+  const maximum_attempts = 2;
+
+  for (let attempt = 1; attempt <= maximum_attempts; attempt += 1) {
+    if (attempt > 1) await reset_reports();
+
+    const docker = new Deno.Command("docker", {
+      args: [
+        "run",
+        "--name",
+        `fuzzingserver-${attempt}`,
+        "--user",
+        docker_user,
+        "--volume",
+        config_mount,
+        "--volume",
+        reports_mount,
+        "--workdir",
+        "/",
+        "--net=host",
+        "--rm",
+        autobahn_testsuite_docker,
+        "wstest",
+        "-m",
+        "fuzzingclient",
+        "-s",
+        "/fuzzingclient.json",
+      ],
+      cwd: test_directory,
+      stdin: "null",
+      stdout: "inherit",
+      stderr: "inherit",
+    }).spawn();
+    const status = await docker.status;
+    if (status.success) return;
+
+    if (status.code !== 137 || attempt === maximum_attempts) {
+      throw new Error(
+        `Autobahn container failed with ${describe_status(status)}`,
+      );
+    }
+
+    console.warn("Autobahn container was killed; retrying once");
+  }
 }
 
 async function wait_for_server() {

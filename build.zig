@@ -101,11 +101,11 @@ pub fn build(b: *std.Build) void {
     const ninja_exe = b.option([]const u8, "ninja", "Ninja executable") orelse "ninja";
     const patch_exe = b.option([]const u8, "patch", "Patch executable") orelse "patch";
     const default_c_compiler = if (builtin.os.tag == .windows)
-        b.pathFromRoot("zig_cc.cmd")
+        b.pathFromRoot("scripts/windows/zig_cc.cmd")
     else
         b.pathFromRoot("zig-cc");
     const default_cxx_compiler = if (builtin.os.tag == .windows)
-        b.pathFromRoot("zig_cxx.cmd")
+        b.pathFromRoot("scripts/windows/zig_cxx.cmd")
     else
         b.pathFromRoot("zig-c++");
     const c_compiler = b.option(
@@ -202,10 +202,13 @@ pub fn build(b: *std.Build) void {
     const cmake_asm = b.fmt("-DCMAKE_ASM_COMPILER={s}", .{asm_compiler});
     const cmake_type = b.fmt("-DCMAKE_BUILD_TYPE={s}", .{cmake_build_type});
     const cmake_make = b.fmt("-DCMAKE_MAKE_PROGRAM={s}", .{ninja_exe});
-    const cmake_ar = b.fmt("-DCMAKE_AR={s}", .{b.pathFromRoot("zig_ar.cmd")});
+    const cmake_ar = b.fmt(
+        "-DCMAKE_AR={s}",
+        .{b.pathFromRoot("scripts/windows/zig_ar.cmd")},
+    );
     const cmake_ranlib = b.fmt(
         "-DCMAKE_RANLIB={s}",
-        .{b.pathFromRoot("zig_ranlib.cmd")},
+        .{b.pathFromRoot("scripts/windows/zig_ranlib.cmd")},
     );
     const sanitizer_link_flags = if (!sanitize)
         ""

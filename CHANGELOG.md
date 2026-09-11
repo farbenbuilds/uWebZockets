@@ -29,6 +29,8 @@ uses Semantic Versioning.
 
 ### Fixed
 
+- Retried a transient Autobahn container kill once without masking protocol
+  failures, and grouped Windows compiler wrappers under `scripts/windows`.
 - Made `tests/c_api/smoke.c` cross-platform for Windows and POSIX with
   `WSAStartup`/`WSACleanup`, `SOCKET` abstraction, `close_socket()`, and `send()`.
 - Centralized release metadata validation so the package, Nix, C ABI, tests,
