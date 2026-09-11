@@ -51,7 +51,7 @@ jobs:
         with:
           path: |
             ~/.cache/zig
-            .zig-cache/vendor-build-v2
+            .zig-cache/vendor-build-v3
           key: ${{ runner.os }}-publish-zig-v5-${{ hashFiles('build.zig', 'build.zig.zon', 'flake.nix', 'flake.lock', 'vendor/**/CMakeLists.txt') }}
           restore-keys: |
             ${{ runner.os }}-publish-zig-v5-

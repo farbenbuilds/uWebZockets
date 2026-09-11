@@ -43,7 +43,7 @@ jobs:
         with:
           path: |
             ~/.cache/zig
-            .zig-cache/vendor-build-v2
+            .zig-cache/vendor-build-v3
           key: ${{ runner.os }}-http3-v1-${{ hashFiles('build.zig', 'build.zig.zon', 'flake.lock', 'scripts/http3_compliance/flake.lock') }}
           restore-keys: |
             ${{ runner.os }}-http3-v1-

@@ -184,17 +184,17 @@ pub fn build(b: *std.Build) void {
     const cmake_build_type = cmake_build_type_name(optimize);
     const vendor_build = if (sanitize)
         b.fmt(
-            ".zig-cache/vendor-build-v2/{s}-{s}-address-sanitize",
+            ".zig-cache/vendor-build-v3/{s}-{s}-address-sanitize",
             .{ target_key, @tagName(optimize) },
         )
     else if (memory_sanitize)
         b.fmt(
-            ".zig-cache/vendor-build-v2/{s}-{s}-memory-sanitize",
+            ".zig-cache/vendor-build-v3/{s}-{s}-memory-sanitize",
             .{ target_key, @tagName(optimize) },
         )
     else
         b.fmt(
-            ".zig-cache/vendor-build-v2/{s}-{s}",
+            ".zig-cache/vendor-build-v3/{s}-{s}",
             .{ target_key, @tagName(optimize) },
         );
     const cmake_c = b.fmt("-DCMAKE_C_COMPILER={s}", .{c_compiler});
