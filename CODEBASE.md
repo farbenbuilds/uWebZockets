@@ -179,7 +179,7 @@ reused.
 routes decoded requests through the same middleware and sync/async handlers as
 HTTP/1.1. Plaintext sockets recognize the prior-knowledge preface; TLS prefers
 ALPN `h2` and falls back to `http/1.1`. Peer resets invalidate retained async
-tokens. RFC 8441 WebSocket tunneling is not advertised.
+tokens. RFC 8441 WebSocket tunneling is supported via extended CONNECT.
 
 ## TLS, UDP, and HTTP/3
 

@@ -391,8 +391,8 @@ including Huffman and pseudo-header validation.
 selects it through ALPN. Each TCP connection embeds an eight-stream request,
 body, response, and async-token slab. SETTINGS, PING, GOAWAY, RST_STREAM,
 trailers, partial DATA, and connection/stream flow control are handled without
-dynamic allocation on the data path. RFC 8441 WebSocket tunneling is not
-advertised; WebSockets remain an HTTP/1.1 upgrade feature.
+dynamic allocation on the data path. RFC 8441 WebSocket tunneling is supported
+via extended CONNECT over HTTP/2 streams.
 
 ## HTTP/3
 
@@ -482,11 +482,12 @@ Oversized or ambiguous input is rejected rather than expanded dynamically.
 
 ## Current limitations
 
-- HTTP/2 WebSocket extended CONNECT is not advertised; WebSocket upgrades use
-  HTTP/1.1 because message/compression state is connection-owned.
-- The live HTTP/3 server handles request/response routing and passes the
-  cross-implementation gate. It rejects TLS 0-RTT. Extended CONNECT, server
-  push, and WebTransport remain helper modules rather than live features.
+- HTTP/2 WebSocket extended CONNECT (RFC 8441) is advertised via
+  `SETTINGS_ENABLE_CONNECT_PROTOCOL` and supported over stream multiplexing.
+- The live HTTP/3 server handles request/response routing, validates RFC 9220
+  extended CONNECT, wires QUIC datagrams, and passes the cross-implementation
+  gate. Server push and full WebTransport remain helper modules rather than live
+  features.
 - WebTransport follows draft-ietf-webtrans-http3-16 wire semantics; RFC 10008
   is the separately implemented HTTP `QUERY` method.
 - Per-message deflate deliberately uses no-context-takeover. An offered 8-bit

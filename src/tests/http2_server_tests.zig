@@ -1158,13 +1158,18 @@ test "http2 server: first peer frame must be non-ack settings" {
     const settings = try http2.FrameHeader.parse(state.output[0..9]);
     try std.testing.expectEqual(@intFromEnum(http2.FrameType.settings), settings.frame_type);
     var setting_offset: usize = 9;
+    var found_connect_protocol = false;
     while (setting_offset < 9 + settings.payload_length) : (setting_offset += 6) {
-        try std.testing.expect(std.mem.readInt(
-            u16,
-            state.output[setting_offset..][0..2],
-            .big,
-        ) != 0x8);
+        const id = std.mem.readInt(u16, state.output[setting_offset..][0..2], .big);
+        if (id == 0x8) {
+            found_connect_protocol = true;
+            try std.testing.expectEqual(
+                @as(u32, 1),
+                std.mem.readInt(u32, state.output[setting_offset + 2 ..][0..4], .big),
+            );
+        }
     }
+    try std.testing.expect(found_connect_protocol);
     const goaway_offset = 9 + settings.payload_length;
     const goaway = try http2.FrameHeader.parse(state.output[goaway_offset..][0..9]);
     try std.testing.expectEqual(@intFromEnum(http2.FrameType.goaway), goaway.frame_type);
@@ -1302,6 +1307,35 @@ test "http2 server: content length is unique numeric and exact" {
         output_offset += 9 + header.payload_length;
     }
     try std.testing.expectEqual(@as(usize, 3), reset_frame_count);
+}
+
+test "http2 server: extended CONNECT with :protocol websocket dispatches to handler" {
+    var session: TestSession = .{};
+    try session.reset();
+    var state = TestState{ .session = &session };
+    try state.router.route_context(.connect, "/ws", &state, route_handler);
+
+    const connect_ws_headers = [_]u8{
+        0x02, 0x07, 'C',  'O',  'N', 'N',  'E',  'C', 'T',
+        0x87, 0x01, 0x0b, 'e',  'x', 'a',  'm',  'p', 'l',
+        'e',  '.',  'c',  'o',  'm', 0x04, 0x03, '/', 'w',
+        's',  0x00, 0x09, ':',  'p', 'r',  'o',  't', 'o',
+        'c',  'o',  'l',  0x09, 'w', 'e',  'b',  's', 'o',
+        'c',  'k',  'e',  't',
+    };
+
+    var input: [128]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x4, 1, &connect_ws_headers);
+    try session.receive(input[0..input_length], state.callbacks());
+
+    try std.testing.expect(!session.is_closed());
+    try std.testing.expectEqual(@as(usize, 1), state.dispatch_count);
+    try std.testing.expectEqualStrings("websocket", session.requests[0].protocol);
+    try std.testing.expectEqualStrings("/ws", session.requests[0].path);
+    try std.testing.expectEqualStrings("CONNECT", session.requests[0].method);
 }
 
 test "tls: ALPN prefers h2 and falls back to http 1.1" {

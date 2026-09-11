@@ -32,6 +32,7 @@ pub const HeaderSet = struct {
     scheme: ?[]const u8 = null,
     authority: ?[]const u8 = null,
     path: ?[]const u8 = null,
+    protocol: ?[]const u8 = null,
     content_length: ?usize = null,
     write_offset: usize = 0,
     regular_headers_seen: bool = false,
@@ -148,6 +149,11 @@ pub const HeaderSet = struct {
             self.path = value;
             return true;
         }
+        if (std.mem.eql(u8, name, ":protocol")) {
+            if (self.protocol != null or value.len == 0) return false;
+            self.protocol = value;
+            return true;
+        }
         return false;
     }
 
@@ -191,6 +197,11 @@ pub const HeaderSet = struct {
         const method = self.method orelse return false;
         const is_connect = std.mem.eql(u8, method, "CONNECT");
         const target = if (is_connect) blk: {
+            if (self.protocol != null) {
+                _ = self.scheme orelse return false;
+                const path = self.path orelse return false;
+                break :blk path;
+            }
             if (self.scheme != null or self.path != null) return false;
             break :blk self.authority orelse return false;
         } else blk: {
@@ -213,7 +224,7 @@ pub const HeaderSet = struct {
 
         self.request.method = method;
         self.request.target = target;
-        if (is_connect) {
+        if (is_connect and self.protocol == null) {
             self.request.path = "";
             self.request.query = "";
             self.finished = true;
@@ -435,9 +446,48 @@ pub const QuicStream = struct {
         self.suppress_body = method == .head;
         var response = Response{ .target = .{ .http3 = self.response_target() } };
         if (std.mem.eql(u8, header_set.request.method, "CONNECT")) {
-            response.end("501 Not Implemented", "HTTP/3 CONNECT is not supported") catch
-                self.close_now();
-            return;
+            if (header_set.protocol) |protocol| {
+                var ws_version: ?[]const u8 = null;
+                var ws_version_count: usize = 0;
+                var has_connection = false;
+                var has_upgrade = false;
+
+                for (header_set.request.header_names[0..header_set.request.header_count], 0..) |name, i| {
+                    if (std.mem.eql(u8, name, "sec-websocket-version")) {
+                        ws_version = header_set.request.header_values[i];
+                        ws_version_count += 1;
+                    } else if (std.mem.eql(u8, name, "connection")) {
+                        has_connection = true;
+                    } else if (std.mem.eql(u8, name, "upgrade")) {
+                        has_upgrade = true;
+                    }
+                }
+
+                const extensions = @import("http3_extensions.zig");
+                extensions.validate_websocket_connect(.{
+                    .method = header_set.request.method,
+                    .protocol = protocol,
+                    .scheme = header_set.scheme,
+                    .authority = header_set.authority,
+                    .path = header_set.path,
+                    .websocket_version = ws_version,
+                    .websocket_version_count = ws_version_count,
+                    .has_connection_header = has_connection,
+                    .has_upgrade_header = has_upgrade,
+                }) catch |err| {
+                    const status = extensions.websocket_error_status(err);
+                    switch (status) {
+                        501 => response.end("501 Not Implemented", "Protocol not supported") catch self.close_now(),
+                        426 => response.end("426 Upgrade Required", "Upgrade Required") catch self.close_now(),
+                        else => response.end("400 Bad Request", "Invalid CONNECT") catch self.close_now(),
+                    }
+                    return;
+                };
+            } else {
+                response.end("501 Not Implemented", "HTTP/3 CONNECT is not supported") catch
+                    self.close_now();
+                return;
+            }
         }
         if (!header_set.request.valid_query_content_type()) {
             response.end("400 Bad Request", "QUERY requires a valid Content-Type") catch
@@ -471,6 +521,10 @@ pub const QuicStream = struct {
         }
         if (matched_route.ws_behavior != null and method == .get) {
             response.end("426 Upgrade Required", "WebSocket over HTTP/3 is not supported") catch self.close_now();
+            return;
+        }
+        if (matched_route.ws_behavior != null and std.mem.eql(u8, header_set.request.method, "CONNECT")) {
+            response.end("200 OK", "") catch self.close_now();
             return;
         }
         self.send_method_response(&response, matched_route.allowed_methods, "405 Method Not Allowed", "Method Not Allowed");

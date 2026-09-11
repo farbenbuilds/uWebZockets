@@ -11,6 +11,8 @@ pub const Request = struct {
     target: []const u8 = "",
     /// Request path without its query.
     path: []const u8 = "",
+    /// Extended CONNECT protocol token, when negotiated.
+    protocol: []const u8 = "",
     /// Query bytes without the leading question mark.
     query: []const u8 = "",
     /// Complete bounded request body.

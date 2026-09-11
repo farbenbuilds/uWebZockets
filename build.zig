@@ -997,6 +997,11 @@ fn add_run_artifact(
         const dynamic_linker = b.graph.environ_map.get(
             "UWEBZOCKETS_RUNTIME_DYNAMIC_LINKER",
         ) orelse return b.addRunArtifact(artifact);
+        if (std.mem.indexOfScalar(u8, dynamic_linker, '*') != null or
+            artifact.root_module.resolved_target.?.result.abi.isMusl())
+        {
+            return b.addRunArtifact(artifact);
+        }
         const library_path = b.graph.environ_map.get(
             "UWEBZOCKETS_RUNTIME_LIBRARY_PATH",
         ) orelse @panic("Nix runtime loader requires its library path");

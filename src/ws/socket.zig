@@ -16,6 +16,7 @@ const PubSubEngine = @import("pubsub.zig").PubSubEngine;
 pub const WebSocket = struct {
     conn: *TcpConnection,
     pubsub: ?*PubSubEngine = null,
+    h2_stream_id: ?u32 = null,
     behavior: WsBehavior = .{},
     z_conn: zslay.Conn = undefined,
     tx_nodes: [4]zslay.Conn.FrameNode = undefined,
@@ -176,10 +177,22 @@ pub const WebSocket = struct {
 
         var node = try self.z_conn.prepare_frame(true, opcode, payload, false, null);
         if (compressed) node.header_buf[0] |= 0x40;
-        try self.conn.write_data_parts(&.{ node.header_buf[0..node.header_size], payload });
-        if (opcode == .close) {
-            self.close_sent = true;
-            tcp.close_after_flush(self.conn);
+        if (self.h2_stream_id) |stream_id| {
+            const callbacks = self.conn.http2_callbacks();
+            try self.conn.h2.write_response_data(stream_id, node.header_buf[0..node.header_size], callbacks);
+            if (payload.len > 0) {
+                try self.conn.h2.write_response_data(stream_id, payload, callbacks);
+            }
+            if (opcode == .close) {
+                self.close_sent = true;
+                try self.conn.h2.finish_response(stream_id, callbacks);
+            }
+        } else {
+            try self.conn.write_data_parts(&.{ node.header_buf[0..node.header_size], payload });
+            if (opcode == .close) {
+                self.close_sent = true;
+                tcp.close_after_flush(self.conn);
+            }
         }
     }
 
@@ -471,7 +484,7 @@ pub const WebSocket = struct {
     fn handle_control(self: *WebSocket, opcode: zslay.Opcode, payload: []const u8) bool {
         switch (opcode) {
             .ping => self.send(payload, .pong) catch {
-                tcp.close_connection(self.conn);
+                self.terminate();
                 return false;
             },
             .pong => {},
@@ -491,12 +504,12 @@ pub const WebSocket = struct {
                 self.close_received = true;
                 if (!self.close_sent) {
                     self.send(payload, .close) catch {
-                        tcp.close_connection(self.conn);
+                        self.terminate();
                         return false;
                     };
                 }
                 self.notify_close();
-                tcp.close_after_flush(self.conn);
+                if (self.h2_stream_id == null) tcp.close_after_flush(self.conn);
                 return false;
             },
             else => {
@@ -509,11 +522,11 @@ pub const WebSocket = struct {
 
     fn fail(self: *WebSocket, code: u16, reason: []const u8) void {
         self.send_close(code, reason) catch {
-            tcp.close_connection(self.conn);
+            self.terminate();
             return;
         };
         self.notify_close();
-        tcp.close_after_flush(self.conn);
+        if (self.h2_stream_id == null) tcp.close_after_flush(self.conn);
     }
 
     fn notify_close(self: *WebSocket) void {
@@ -528,9 +541,14 @@ pub const WebSocket = struct {
         if (self.behavior.drain) |callback| callback(self);
     }
 
-    /// Immediately closes the underlying TCP connection.
+    /// Immediately closes the underlying TCP connection or H2 stream.
     pub fn terminate(self: *WebSocket) void {
-        tcp.close_connection(self.conn);
+        if (self.h2_stream_id) |stream_id| {
+            const callbacks = self.conn.http2_callbacks();
+            self.conn.h2.reset_stream(stream_id, .internal_error, callbacks) catch {};
+        } else {
+            tcp.close_connection(self.conn);
+        }
     }
 
     /// Releases subscriptions and notifies close at most once.

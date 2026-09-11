@@ -15,6 +15,7 @@ const handshake = @import("../crypto/handshake.zig");
 const tls = @import("../crypto/tls.zig");
 const DeflateContext = @import("../ws/deflate.zig").Context;
 const http2_server = @import("../http2/server.zig");
+const zslay = @import("zslay");
 
 /// Bytes read from one POSIX socket completion at a time.
 pub const socket_read_capacity = 8192;
@@ -288,11 +289,12 @@ pub const TcpConnection = struct {
         if (self.h2.is_closed()) close_after_flush(self);
     }
 
-    fn http2_callbacks(self: *TcpConnection) http2_server.Callbacks {
+    pub fn http2_callbacks(self: *TcpConnection) http2_server.Callbacks {
         return .{
             .context = self,
             .write_fn = write_http2_parts,
             .request_fn = dispatch_http2_request,
+            .ws_data_fn = ws_http2_data,
             .stream_closed_fn = close_http2_stream,
             .max_frame_payload = http2_frame_payload_capacity(
                 self.write_queue.len,
@@ -312,6 +314,13 @@ pub const TcpConnection = struct {
     fn write_http2_parts(context: *anyopaque, parts: []const []const u8) !void {
         const self: *TcpConnection = @ptrCast(@alignCast(context));
         try self.write_data_parts(parts);
+    }
+
+    fn ws_http2_data(context: *anyopaque, stream_id: u32, data: []u8) void {
+        const self: *TcpConnection = @ptrCast(@alignCast(context));
+        if (self.ws.h2_stream_id == stream_id) {
+            self.ws.on_data(data);
+        }
     }
 
     fn dispatch_http2_request(
@@ -358,7 +367,40 @@ pub const TcpConnection = struct {
                 );
                 return;
             }
-            if (matched_route.ws_behavior != null) {
+            if (matched_route.ws_behavior) |ws_behavior| {
+                if (std.mem.eql(u8, request.method, "CONNECT") and std.mem.eql(u8, request.protocol, "websocket")) {
+                    if (!radix.valid_ws_limits(ws_behavior, self.ws_message_buffer.len)) {
+                        try response.end("500 Internal Server Error", "Invalid WebSocket limits");
+                        return;
+                    }
+                    if (ws_behavior.upgrade) |authorize| {
+                        if (!authorize(request)) {
+                            try response.end("403 Forbidden", "WebSocket upgrade rejected");
+                            return;
+                        }
+                    }
+
+                    self.ws = WebSocket{
+                        .conn = self,
+                        .pubsub = self.pubsub,
+                        .h2_stream_id = stream_id,
+                        .behavior = ws_behavior,
+                    };
+
+                    self.ws.z_conn = zslay.Conn.init(&self.ws.tx_nodes, .{
+                        .role = .server,
+                        .max_frame_len = ws_behavior.max_frame_size,
+                        .max_message_len = ws_behavior.max_message_size,
+                    }) catch {
+                        try response.end("500 Internal Server Error", "Invalid WebSocket limits");
+                        return;
+                    };
+                    self.ws.initialized = true;
+
+                    try response.begin_chunked("200 OK", "");
+                    if (self.ws.behavior.open) |callback| callback(&self.ws);
+                    return;
+                }
                 try response.end("501 Not Implemented", "HTTP/2 WebSocket dispatch is unavailable");
                 return;
             }

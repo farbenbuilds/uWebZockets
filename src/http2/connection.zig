@@ -371,7 +371,7 @@ pub fn connection(comptime max_streams: usize) type {
         local_settings: Settings = .{
             .enable_push = false,
             .max_concurrent_streams = max_streams,
-            .enable_connect_protocol = false,
+            .enable_connect_protocol = true,
         },
         /// Remaining inbound connection flow-control credit.
         connection_receive_window: i64 = default_window_size,
