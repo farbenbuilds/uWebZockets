@@ -435,6 +435,8 @@ pub fn build(b: *std.Build) void {
     translate_c.addIncludePath(lsquic_root.path(b, "include"));
     translate_c.addIncludePath(deflate_root);
     if (target.result.os.tag == .windows) {
+        // MinGW's fortified inline wrappers generate invalid translate-c output.
+        translate_c.defineCMacro("_FORTIFY_SOURCE", "0");
         translate_c.addIncludePath(lsquic_root.path(b, "wincompat"));
     }
     if (zlib_prefix) |prefix| {

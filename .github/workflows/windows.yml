@@ -1,4 +1,4 @@
-name: Windows Cross-Build
+name: Windows Build
 
 on:
   workflow_dispatch:
