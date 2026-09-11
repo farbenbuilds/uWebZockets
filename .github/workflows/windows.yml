@@ -45,7 +45,7 @@ jobs:
           } finally {
             Pop-Location
           }
-          $prefix = Join-Path $PWD "scripts\windows\vcpkg_installed\x64-mingw-static"
+          $prefix = Join-Path $env:VCPKG_INSTALLATION_ROOT "installed\x64-mingw-static"
           if (!(Test-Path (Join-Path $prefix "lib\libz.a"))) {
             throw "vcpkg did not install the MinGW static zlib archive"
           }

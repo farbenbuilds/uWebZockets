@@ -8,7 +8,6 @@
 zig-out/
 zig-cache/
 zig-pkg/
-scripts/windows/vcpkg_installed/
 
 # build artifacts
 *.o
