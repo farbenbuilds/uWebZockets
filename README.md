@@ -480,28 +480,33 @@ The defaults are deliberately finite:
 
 Oversized or ambiguous input is rejected rather than expanded dynamically.
 
-## Current limitations
+## Web Standard APIs (Fetch & Streams)
 
-- HTTP/2 WebSocket extended CONNECT (RFC 8441) is advertised via
-  `SETTINGS_ENABLE_CONNECT_PROTOCOL` and supported over stream multiplexing.
-- The live HTTP/3 server handles request/response routing, validates RFC 9220
-  extended CONNECT, wires QUIC datagrams, and passes the cross-implementation
-  gate. Server push and full WebTransport remain helper modules rather than live
-  features.
-- WebTransport follows draft-ietf-webtrans-http3-16 wire semantics; RFC 10008
-  is the separately implemented HTTP `QUERY` method.
-- Per-message deflate deliberately uses no-context-takeover. An offered 8-bit
-  server compression window is declined because zlib cannot emit it reliably;
-  8-bit client compression is accepted and decoded within the configured
-  output bound.
-- Windows is unsupported by design. The configured publish and CI matrix
-  covers Linux and macOS; BSD targets are accepted by the build but are not
-  publish targets.
-- Zig and C route parameters, middleware, and one-shot async tokens are
-  implemented with fixed capacities and event-loop-confined lifetimes.
-- The versioned [`http-throughput-v1`](benchmarks/http_throughput_guarantee.md)
-  guarantee is relative to a same-runner baseline, not an absolute capacity
-  guarantee across different hardware cohorts.
+µWebZockets implements Web Standard API patterns ([WHATWG Fetch](https://fetch.spec.whatwg.org/) and [WHATWG Streams](https://streams.spec.whatwg.org/)) for optimal developer ergonomics without compromising zero-allocation guarantees:
+
+### Fetch API Primitives
+- **Headers View**: `req.headers()` returns a `HeadersView` with `.get(name)` and `.has(name)`; `req.header_entries()` provides an iterator over all `[name, value]` pairs.
+- **Body Consumption**: `req.text()`, `req.bytes()`, and `req.json(T, allocator)` read payload content into typed models.
+- **Response Formatting**: `res.text(str)`, `res.json(val, allocator)`, `res.json_buf(val, buf)`, `res.html(str)`, `res.bytes(data)`, and `res.redirect(url, code)` format standard responses with automatic headers.
+
+### Streams API Primitives
+- **Readable Streams**: `uz.streams.ReadableByteStream` provides zero-allocation Bring-Your-Own-Buffer (BYOB) chunk reading.
+- **Writable Streams**: `res.writable_stream()` returns a `WritableByteStream` that writes chunks directly into chunked HTTP/1.1, HTTP/2, or HTTP/3 response frames.
+- **Piping**: `uz.streams.pipe_to(&readable, &writable, buffer)` pipes data from source to destination with zero intermediate heap allocations.
+
+## Standards and Platform Support
+
+### Standards Conformance
+- **WebSocket**: RFC 6455 and RFC 7692 per-message deflate.
+- **HTTP/2**: RFC 9113 and RFC 8441 WebSocket extended CONNECT tunneling.
+- **HTTP/3 & QUIC**: RFC 9114, RFC 9220 extended CONNECT validation, QUIC datagrams, and draft-ietf-webtrans-http3-16 wire semantics.
+- **HTTP Extensions**: RFC 10008 HTTP `QUERY` method.
+- **Web Standards**: WHATWG Fetch and WHATWG Streams abstractions.
+
+### Platform Support
+- **Tier 1 (Publish & CI)**: Linux (`x86_64`, `aarch64`) with `io_uring`/`epoll` and macOS (`x86_64`, `aarch64`) with `kqueue`.
+- **Tier 2 (Build Supported)**: FreeBSD, NetBSD, OpenBSD, and DragonFly BSD.
+- **Architecture**: POSIX-native event loop model. Parameter, middleware, and async tokens use fixed capacities and event-loop-confined lifetimes for deterministic performance. Guaranteed benchmarks are versioned relative to a same-runner baseline (`benchmarks/http_throughput_guarantee.md`).
 
 See [CHANGELOG.md](CHANGELOG.md), [CODEBASE.md](CODEBASE.md), and
 [CI_CD_PIPELINE.md](CI_CD_PIPELINE.md) for release details, architecture, and

@@ -23,6 +23,10 @@ pub const AsyncResponseState = @import("http/response.zig").AsyncResponseState;
 pub const AsyncResponseStatus = @import("http/response.zig").AsyncState;
 /// Low-level HTTP/1.1 chunked response helpers.
 pub const chunked = @import("http/chunked.zig");
+/// WHATWG Fetch Standard (https://fetch.spec.whatwg.org/) helper primitives.
+pub const fetch = @import("http/fetch.zig");
+/// WHATWG Streams Standard (https://streams.spec.whatwg.org/) primitives.
+pub const streams = @import("http/streams.zig");
 
 /// HTTP method selector used by generic route registration.
 pub const HttpMethod = @import("router/radix.zig").HttpMethod;

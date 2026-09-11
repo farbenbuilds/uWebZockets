@@ -1,4 +1,5 @@
 const std = @import("std");
+const fetch = @import("fetch.zig");
 
 /// Maximum number of allocation-free route parameters on one request.
 pub const max_route_params = 16;
@@ -32,6 +33,44 @@ pub const Request = struct {
             if (std.ascii.eqlIgnoreCase(h_name, name)) return self.header_values[i];
         }
         return null;
+    }
+
+    /// Reports whether a header exists case-insensitively (Fetch API).
+    pub fn has_header(self: *const Request, name: []const u8) bool {
+        return self.get_header(name) != null;
+    }
+
+    /// Returns a Web-Standard Headers view over the request headers.
+    pub fn headers(self: *const Request) fetch.HeadersView {
+        return fetch.HeadersView.init(
+            self.header_names[0..self.header_count],
+            self.header_values[0..self.header_count],
+        );
+    }
+
+    /// Returns an iterator over [name, value] header entries (Fetch API).
+    pub fn header_entries(self: *const Request) fetch.HeaderIterator {
+        return self.headers().entries();
+    }
+
+    /// Returns the complete body as a text string (Body mixin).
+    pub fn text(self: *const Request) []const u8 {
+        return self.body;
+    }
+
+    /// Returns the complete body as raw byte slice (Body mixin).
+    pub fn bytes(self: *const Request) []const u8 {
+        return self.body;
+    }
+
+    /// Parses the request body as JSON into type T (Body mixin).
+    pub fn json(self: *const Request, comptime T: type, allocator: std.mem.Allocator) !std.json.Parsed(T) {
+        return std.json.parseFromSlice(T, allocator, self.body, .{});
+    }
+
+    /// Returns the full request target URL/path (Request.url).
+    pub fn url(self: *const Request) []const u8 {
+        return self.target;
     }
 
     /// Returns a field only when it occurs exactly once.
