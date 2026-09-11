@@ -10,9 +10,25 @@ const reports_directory = decodeURIComponent(
   new URL("./reports", import.meta.url).pathname,
 );
 const baseline_path = `${test_directory}/baseline.json`;
+const source_config_path = `${test_directory}/fuzzingclient.json`;
 const report_path = `${reports_directory}/servers/index.json`;
 const server_binary = `${repository_directory}/zig-out/bin/autobahn_server`;
 const agent_name = "uWebZockets";
+const case_batches = [
+  ["1.*", "2.*", "3.*", "4.*", "5.*", "6.*", "7.*", "9.*", "10.*", "11.*"],
+  ["12.1.*"],
+  ["12.2.*"],
+  ["12.3.*"],
+  ["12.4.*"],
+  ["12.5.*"],
+  ["13.1.*"],
+  ["13.2.*"],
+  ["13.3.*"],
+  ["13.4.*"],
+  ["13.5.*"],
+  ["13.6.*"],
+  ["13.7.*"],
+];
 
 const autobahn_testsuite_docker =
   "crossbario/autobahn-testsuite:0.8.2@sha256:519915fb568b04c9383f70a1c405ae3ff44ab9e35835b085239c258b6fac3074";
@@ -22,16 +38,7 @@ await reset_reports();
 const reports_owner = await Deno.stat(reports_directory);
 const docker_user = container_user(reports_owner);
 
-const config_mount =
-  `${test_directory}/fuzzingclient.json:/fuzzingclient.json:ro`;
-const reports_mount = `${reports_directory}:/reports`;
-await run_testsuite(config_mount, reports_mount);
-
-const report = JSON.parse(await Deno.readTextFile(report_path));
-const agent_report = report[agent_name];
-if (agent_report == null || typeof agent_report !== "object") {
-  throw new Error(`Autobahn report does not contain agent ${agent_name}`);
-}
+const agent_report = await run_testsuite();
 
 verify_baseline(agent_report, expected_baseline);
 
@@ -297,19 +304,74 @@ function describe_counts(counts) {
 }
 
 async function reset_reports() {
+  await reset_directory(reports_directory);
+}
+
+async function reset_directory(path) {
   try {
-    await Deno.remove(reports_directory, { recursive: true });
+    await Deno.remove(path, { recursive: true });
   } catch (error) {
     if (!(error instanceof Deno.errors.NotFound)) throw error;
   }
-  await Deno.mkdir(reports_directory, { recursive: true });
+  await Deno.mkdir(path, { recursive: true });
 }
 
-async function run_testsuite(config_mount, reports_mount) {
+async function run_testsuite() {
+  const source_config = JSON.parse(
+    await Deno.readTextFile(source_config_path),
+  );
+  const combined_report = {};
+
+  for (const [index, cases] of case_batches.entries()) {
+    const batch_name = `batch-${index + 1}`;
+    const batch_directory = `${reports_directory}/${batch_name}`;
+    const config_path = `${reports_directory}/${batch_name}.json`;
+    const batch_config = { ...source_config, cases };
+    await Deno.writeTextFile(
+      config_path,
+      `${JSON.stringify(batch_config, null, 2)}\n`,
+    );
+    await reset_directory(batch_directory);
+
+    const config_mount = `${config_path}:/fuzzingclient.json:ro`;
+    const reports_mount = `${batch_directory}:/reports`;
+    await run_batch(batch_name, batch_directory, config_mount, reports_mount);
+
+    const batch_report_path = `${batch_directory}/servers/index.json`;
+    const report = JSON.parse(await Deno.readTextFile(batch_report_path));
+    const agent_report = report[agent_name];
+    if (agent_report == null || typeof agent_report !== "object") {
+      throw new Error(
+        `Autobahn ${batch_name} report does not contain agent ${agent_name}`,
+      );
+    }
+
+    for (const [case_id, result] of Object.entries(agent_report)) {
+      if (Object.hasOwn(combined_report, case_id)) {
+        throw new Error(`Autobahn batches repeat case ${case_id}`);
+      }
+      combined_report[case_id] = result;
+    }
+  }
+
+  await Deno.mkdir(`${reports_directory}/servers`, { recursive: true });
+  await Deno.writeTextFile(
+    report_path,
+    `${JSON.stringify({ [agent_name]: combined_report }, null, 2)}\n`,
+  );
+  return combined_report;
+}
+
+async function run_batch(
+  batch_name,
+  batch_directory,
+  config_mount,
+  reports_mount,
+) {
   const maximum_attempts = 2;
 
   for (let attempt = 1; attempt <= maximum_attempts; attempt += 1) {
-    if (attempt > 1) await reset_reports();
+    if (attempt > 1) await reset_directory(batch_directory);
 
     const server = start_server();
     let status;
@@ -320,7 +382,7 @@ async function run_testsuite(config_mount, reports_mount) {
         args: [
           "run",
           "--name",
-          `fuzzingserver-${attempt}`,
+          `fuzzingserver-${batch_name}-${attempt}`,
           "--user",
           docker_user,
           "--volume",
@@ -352,12 +414,14 @@ async function run_testsuite(config_mount, reports_mount) {
 
     if (status.code !== 137 || attempt === maximum_attempts) {
       throw new Error(
-        `Autobahn container failed with ${describe_status(status)}`,
+        `Autobahn ${batch_name} container failed with ${
+          describe_status(status)
+        }`,
       );
     }
 
     console.warn(
-      "Autobahn container was killed; restarting the server and retrying once",
+      `Autobahn ${batch_name} container was killed; restarting the server and retrying once`,
     );
   }
 }

@@ -29,8 +29,8 @@ uses Semantic Versioning.
 
 ### Fixed
 
-- Added swap for the largest Autobahn compression cases and retried a killed
-  container once with a fresh server without masking protocol failures.
+- Isolated Autobahn compression datasets in fresh containers, merged their full
+  results before gating, and retried a killed batch once with a fresh server.
 - Grouped Windows compiler wrappers under `scripts/windows`.
 - Made `tests/c_api/smoke.c` cross-platform for Windows and POSIX with
   `WSAStartup`/`WSACleanup`, `SOCKET` abstraction, `close_socket()`, and `send()`.

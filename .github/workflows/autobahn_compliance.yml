@@ -44,15 +44,6 @@ jobs:
       - name: Build compliance server
         run: nix develop "path:." -c zig build -Doptimize=ReleaseSafe
 
-      - name: Add swap for compression cases
-        shell: bash
-        run: |
-          autobahn_swap_file="$RUNNER_TEMP/autobahn.swap"
-          sudo fallocate --length 4G "$autobahn_swap_file"
-          sudo chmod 600 "$autobahn_swap_file"
-          sudo mkswap "$autobahn_swap_file"
-          sudo swapon "$autobahn_swap_file"
-
       - name: Run Autobahn Testsuite
         shell: bash
         run: |

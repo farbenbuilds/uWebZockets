@@ -11,7 +11,7 @@ fn echo_message(ws: *uz.WebSocket, message: []const u8, opcode: uz.Opcode) void 
 }
 
 pub fn main(init: std.process.Init) !void {
-    var app = try uz.ConfiguredApp(4, max_message_size, write_queue_size).init(init.io);
+    var app = try uz.ConfiguredApp(1, max_message_size, write_queue_size).init(init.io);
     defer app.deinit();
 
     _ = try app.ws("/", .{
