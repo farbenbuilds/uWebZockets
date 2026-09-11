@@ -32,3 +32,6 @@ jobs:
 
       - name: Check repository conventions
         run: nix develop "path:." -c sh scripts/check_conventions.sh
+
+      - name: Check release metadata
+        run: sh scripts/check_release_version.sh

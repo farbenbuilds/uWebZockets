@@ -100,16 +100,24 @@ pub fn build(b: *std.Build) void {
     const cmake_exe = b.option([]const u8, "cmake", "CMake executable") orelse "cmake";
     const ninja_exe = b.option([]const u8, "ninja", "Ninja executable") orelse "ninja";
     const patch_exe = b.option([]const u8, "patch", "Patch executable") orelse "patch";
+    const default_c_compiler = if (builtin.os.tag == .windows)
+        b.pathFromRoot("zig_cc.cmd")
+    else
+        b.pathFromRoot("zig-cc");
+    const default_cxx_compiler = if (builtin.os.tag == .windows)
+        b.pathFromRoot("zig_cxx.cmd")
+    else
+        b.pathFromRoot("zig-c++");
     const c_compiler = b.option(
         []const u8,
         "c-compiler",
         "C compiler used for vendored dependencies",
-    ) orelse b.pathFromRoot("zig-cc");
+    ) orelse default_c_compiler;
     const cxx_compiler = b.option(
         []const u8,
         "cxx-compiler",
         "C++ compiler used for vendored dependencies",
-    ) orelse b.pathFromRoot("zig-c++");
+    ) orelse default_cxx_compiler;
     const asm_compiler = b.option(
         []const u8,
         "asm-compiler",
@@ -194,6 +202,11 @@ pub fn build(b: *std.Build) void {
     const cmake_asm = b.fmt("-DCMAKE_ASM_COMPILER={s}", .{asm_compiler});
     const cmake_type = b.fmt("-DCMAKE_BUILD_TYPE={s}", .{cmake_build_type});
     const cmake_make = b.fmt("-DCMAKE_MAKE_PROGRAM={s}", .{ninja_exe});
+    const cmake_ar = b.fmt("-DCMAKE_AR={s}", .{b.pathFromRoot("zig_ar.cmd")});
+    const cmake_ranlib = b.fmt(
+        "-DCMAKE_RANLIB={s}",
+        .{b.pathFromRoot("zig_ranlib.cmd")},
+    );
     const sanitizer_link_flags = if (!sanitize)
         ""
     else if (sanitizer_libc_dir) |libc_dir|
@@ -237,6 +250,9 @@ pub fn build(b: *std.Build) void {
     }
     if (target.result.os.tag == .windows) {
         bssl_cmake.addArg("-DOPENSSL_NO_ASM=ON");
+    }
+    if (builtin.os.tag == .windows) {
+        bssl_cmake.addArgs(&.{ cmake_ar, cmake_ranlib });
     }
     add_cross_cmake_args(b, bssl_cmake, target, target_is_native, instrument_c);
     set_vendor_environment(b, bssl_cmake, target_triple);
@@ -307,6 +323,9 @@ pub fn build(b: *std.Build) void {
             memory_sanitizer_link_flags,
         });
     }
+    if (builtin.os.tag == .windows) {
+        lsquic_cmake.addArgs(&.{ cmake_ar, cmake_ranlib });
+    }
     add_cross_cmake_args(b, lsquic_cmake, target, target_is_native, instrument_c);
     set_vendor_environment(b, lsquic_cmake, target_triple);
     if (zlib_prefix) |prefix| {
@@ -334,6 +353,9 @@ pub fn build(b: *std.Build) void {
     const deflate_cmake = b.addSystemCommand(&.{ cmake_exe, "-B", deflate_build_dir, "-S", deflate_src, "-GNinja", cmake_make, cmake_type, "-DLIBDEFLATE_BUILD_GZIP=OFF", "-DLIBDEFLATE_BUILD_TESTS=OFF", "-DLIBDEFLATE_BUILD_SHARED_LIB=OFF", b.fmt("-DCMAKE_C_FLAGS={s}", .{deflate_c_flags}), cmake_c, cmake_cxx, cmake_asm });
     if (sanitize) deflate_cmake.addArg(sanitizer_link_flags);
     if (memory_sanitize) deflate_cmake.addArg(memory_sanitizer_link_flags);
+    if (builtin.os.tag == .windows) {
+        deflate_cmake.addArgs(&.{ cmake_ar, cmake_ranlib });
+    }
     add_cross_cmake_args(b, deflate_cmake, target, target_is_native, instrument_c);
     set_vendor_environment(b, deflate_cmake, target_triple);
     const deflate_ninja = b.addSystemCommand(&.{ ninja_exe, "-C", deflate_build_dir });

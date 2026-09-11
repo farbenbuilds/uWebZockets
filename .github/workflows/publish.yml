@@ -25,6 +25,10 @@ jobs:
     name: OSS-Fuzz compatibility
     uses: ./.github/workflows/oss_fuzz.yml
 
+  windows:
+    name: Windows build and tests
+    uses: ./.github/workflows/windows.yml
+
   verify:
     name: Verify tagged source
     runs-on: ubuntu-24.04
@@ -128,37 +132,9 @@ jobs:
             experimental-features = nix-command flakes
 
       - name: Validate release metadata
-        shell: bash
         run: |
-          set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
-          version_core=${version%%[-+]*}
-          manifest_version=$(sed -n 's/^[[:space:]]*\.version = "\([^"]*\)",/\1/p' build.zig.zon)
-          flake_versions=()
-          while IFS= read -r flake_version; do
-            flake_versions+=("$flake_version")
-          done < <(
-            sed -n 's/^[[:space:]]*version = "\([^"]*\)";/\1/p' flake.nix
-          )
-          abi_major=$(sed -n 's/^#define UWZ_VERSION_MAJOR \([0-9][0-9]*\)$/\1/p' include/uWebZockets.h)
-          abi_minor=$(sed -n 's/^#define UWZ_VERSION_MINOR \([0-9][0-9]*\)$/\1/p' include/uWebZockets.h)
-          abi_patch=$(sed -n 's/^#define UWZ_VERSION_PATCH \([0-9][0-9]*\)$/\1/p' include/uWebZockets.h)
-          abi_version="${abi_major}.${abi_minor}.${abi_patch}"
-          c_api_version=$(
-            sed -n '/^pub export fn uwz_version()/,/^}/s/^[[:space:]]*return "\([^"]*\)";/\1/p' \
-              src/c_api.zig
-          )
-          test -n "$version"
-          printf '%s\n' "$version" | grep -Eq \
-            '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
-          test "$version" = "$manifest_version"
-          test "${#flake_versions[@]}" -eq 2
-          for flake_version in "${flake_versions[@]}"; do
-            test "$version" = "$flake_version"
-          done
-          test "$version_core" = "$abi_version"
-          test "$version" = "$c_api_version"
-          grep -F "## [$version]" CHANGELOG.md
+          sh scripts/check_release_version.sh "$version"
 
       - name: Build static library
         shell: bash
@@ -199,6 +175,7 @@ jobs:
     name: Create GitHub release
     needs:
       - build
+      - windows
     runs-on: ubuntu-24.04
     environment: Publish
     permissions:
@@ -221,7 +198,7 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           artifact_count=$(find artifacts -maxdepth 1 -name '*.tar.gz' | wc -l)
-          test "$artifact_count" -eq 6
+          test "$artifact_count" -eq 7
           (
             cd artifacts
             sha256sum ./*.tar.gz >SHA256SUMS

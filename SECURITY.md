@@ -106,9 +106,11 @@ curl/ngtcp2 plus aioquic HTTP/3 gate add protocol coverage. Deployments should
 still perform workload-specific QUIC load testing.
 
 Cross-platform support covers Linux, macOS, Windows (`x86_64-windows-gnu` /
-MSVC ABI), FreeBSD, NetBSD, OpenBSD, and DragonFlyBSD. The configured publish
-and CI matrix covers Linux and macOS. Windows and the additional BSD targets
-share the build graph but do not receive runtime CI coverage.
+MinGW ABI), FreeBSD, NetBSD, OpenBSD, and DragonFlyBSD. The configured publish
+matrix covers Linux and macOS. A dedicated native Windows job builds and runs
+the complete ReleaseSafe test/ABI graph, and tagged releases include its static
+libraries. The additional BSD targets share the build graph without dedicated
+runtime CI coverage.
 
 ## Disclosure
 

@@ -19,6 +19,7 @@ guard, not a universal performance claim. Released tags provide stable
 snapshots, and the current source tree may include unreleased changes.
 
 [![Test](https://github.com/farbenbuilds/uWebZockets/actions/workflows/test.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/test.yml)
+[![Windows Cross-Build](https://github.com/farbenbuilds/uWebZockets/actions/workflows/windows.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/windows.yml)
 [![Autobahn Compliance](https://github.com/farbenbuilds/uWebZockets/actions/workflows/autobahn_compliance.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/autobahn_compliance.yml)
 [![h1spec Compliance](https://github.com/farbenbuilds/uWebZockets/actions/workflows/h1spec_compliance.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/h1spec_compliance.yml)
 [![Benchmark](https://github.com/farbenbuilds/uWebZockets/actions/workflows/benchmark.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/benchmark.yml)
@@ -59,7 +60,7 @@ pin an exact source commit. Platform verification tiers are documented below.
   operations
 - Centralized unit tests, Google OSS-Fuzz/libFuzzer targets, protocol
   compliance gates, and a versioned HTTP throughput regression contract
-- Native GNU/Linux, musl/Linux, and macOS release packages
+- Native GNU/Linux, musl/Linux, macOS, and `x86_64-windows-gnu` release packages
 
 The bundled Autobahn runner executes all 517 selected server cases. The
 verified baseline is 514 `OK` and 3 `INFORMATIONAL` results for both
@@ -144,8 +145,25 @@ zlib is not in the compiler's default search path, pass a prefix containing
 zig build -Dzlib-prefix=/path/to/zlib-prefix
 ```
 
-Cross-target builds must pass a zlib prefix built for the selected target; the
-host `UWEBZOCKETS_ZLIB_PREFIX` is deliberately ignored for foreign targets:
+Windows builds require a MinGW static zlib prefix. The native Windows CI uses
+the pinned manifest under `scripts/windows`, the `x64-mingw-static` triplet,
+and the following PowerShell flow:
+
+```powershell
+Push-Location scripts\windows
+& "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install `
+  --triplet x64-mingw-static
+Pop-Location
+$zlib = "$PWD\scripts\windows\vcpkg_installed\x64-mingw-static"
+zig build test -Dtarget=x86_64-windows-gnu "-Dzlib-prefix=$zlib" `
+  -Doptimize=ReleaseSafe --summary all
+zig build lib -Dtarget=x86_64-windows-gnu "-Dzlib-prefix=$zlib" `
+  -Doptimize=ReleaseFast --summary all
+```
+
+Other cross-target builds must pass a zlib prefix built for the selected
+target; the host `UWEBZOCKETS_ZLIB_PREFIX` is deliberately ignored for foreign
+targets:
 
 ```sh
 zig build lib -Dtarget=x86_64-windows-gnu \
@@ -528,9 +546,11 @@ borrowed slices and caller-owned buffers.
 
 - Tier 1: Linux and macOS on `x86_64` and `aarch64`; these targets are built,
   tested, and published by CI.
-- Tier 2: `x86_64-windows-gnu`, FreeBSD, NetBSD, OpenBSD, and DragonFlyBSD;
-  these share the build graph but are not in the publish/runtime CI matrix.
-  Windows currently has compile-time cross-target validation only.
+- Tier 2: `x86_64-windows-gnu`, FreeBSD, NetBSD, OpenBSD, and DragonFlyBSD.
+  Windows libraries and the complete test/ABI graph are built and executed on
+  a native Windows runner for every pull request and `main` push; tagged
+  releases publish the resulting archive. The BSD targets share the build
+  graph without dedicated CI.
 
 Request fields, route captures, middleware, async tokens, and transport pools
 have fixed capacities; there is no dynamic overflow fallback. Performance

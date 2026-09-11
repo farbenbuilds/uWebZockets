@@ -2,7 +2,11 @@
 set -eu
 
 archive=${1:?usage: check_static_archive.sh ARCHIVE}
-members=$(ar t "$archive")
+if command -v zig >/dev/null 2>&1; then
+    members=$(zig ar t "$archive")
+else
+    members=$(ar t "$archive")
+fi
 
 if [ -z "$members" ]; then
     printf '%s\n' "static archive has no object members: $archive" >&2

@@ -9,7 +9,7 @@ repos:
       - id: trailing-whitespace
         exclude: ^(patches/.*\.patch|oss-fuzz/corpus/)
       - id: end-of-file-fixer
-        exclude: ^oss-fuzz/corpus/
+        exclude: ^(\.agents/|oss-fuzz/corpus/)
       - id: check-yaml
       - id: check-added-large-files
   - repo: local

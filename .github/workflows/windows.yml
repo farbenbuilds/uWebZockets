@@ -1,0 +1,124 @@
+name: Windows Cross-Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build_and_test:
+    name: x86_64-windows-gnu
+    runs-on: windows-2025
+    environment: Testing
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: 0.16.0
+
+      - name: Validate release metadata
+        shell: bash
+        run: sh scripts/check_release_version.sh
+
+      - name: Install MinGW zlib
+        shell: pwsh
+        run: |
+          Push-Location scripts\windows
+          try {
+            & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install `
+              --triplet x64-mingw-static
+          } finally {
+            Pop-Location
+          }
+          $prefix = Join-Path $PWD "scripts\windows\vcpkg_installed\x64-mingw-static"
+          if (!(Test-Path (Join-Path $prefix "lib\libz.a"))) {
+            throw "vcpkg did not install the MinGW static zlib archive"
+          }
+          "UWEBZOCKETS_ZLIB_PREFIX=$prefix" >> $env:GITHUB_ENV
+
+      - name: Run Windows tests
+        shell: pwsh
+        run: |
+          zig build test -Dtarget=x86_64-windows-gnu `
+            "-Dzlib-prefix=$env:UWEBZOCKETS_ZLIB_PREFIX" `
+            -Doptimize=ReleaseSafe --summary all
+
+      - name: Build Windows static libraries
+        shell: pwsh
+        run: |
+          zig build lib -Dtarget=x86_64-windows-gnu `
+            "-Dzlib-prefix=$env:UWEBZOCKETS_ZLIB_PREFIX" `
+            -Doptimize=ReleaseFast --summary all
+
+      - name: Package Windows build
+        shell: pwsh
+        run: |
+          if (!(Test-Path "zig-out\include\uWebZockets.h")) {
+            throw "Windows C ABI header was not installed"
+          }
+          $libraries = Get-ChildItem "zig-out\lib" -File
+          if ($libraries.Count -eq 0) {
+            throw "Windows static libraries were not installed"
+          }
+          $archiveRoot = Join-Path $env:RUNNER_TEMP "uWebZockets-x86_64-windows-gnu"
+          New-Item -ItemType Directory -Force -Path @(
+            (Join-Path $archiveRoot "lib")
+            (Join-Path $archiveRoot "include")
+            (Join-Path $archiveRoot "licenses\vendor")
+          )
+          Copy-Item "zig-out\lib\*" (Join-Path $archiveRoot "lib")
+          Copy-Item "zig-out\include\uWebZockets.h" (Join-Path $archiveRoot "include")
+          Copy-Item -Path @(
+            "CHANGELOG.md"
+            "LICENSE"
+            "README.md"
+            "THIRD_PARTY_NOTICES.md"
+            "build.zig.zon"
+          ) -Destination $archiveRoot
+          Copy-Item "licenses\*" (Join-Path $archiveRoot "licenses")
+          Copy-Item "vendor\boringssl\LICENSE" `
+            (Join-Path $archiveRoot "licenses\vendor\boringssl_license.txt")
+          Copy-Item "vendor\boringssl\third_party\fiat\LICENSE" `
+            (Join-Path $archiveRoot "licenses\vendor\fiat_crypto_license.txt")
+          Copy-Item "vendor\boringssl\third_party\fiat\AUTHORS" `
+            (Join-Path $archiveRoot "licenses\vendor\fiat_crypto_authors.txt")
+          Copy-Item "vendor\libdeflate\COPYING" `
+            (Join-Path $archiveRoot "licenses\vendor\libdeflate_license.txt")
+          Copy-Item "vendor\lsquic\LICENSE" `
+            (Join-Path $archiveRoot "licenses\vendor\lsquic_license.txt")
+          Copy-Item "vendor\lsquic\LICENSE.chrome" `
+            (Join-Path $archiveRoot "licenses\vendor\lsquic_chrome_license.txt")
+          Copy-Item "vendor\lsquic\src\liblsquic\ls-qpack\LICENSE" `
+            (Join-Path $archiveRoot "licenses\vendor\ls_qpack_license.txt")
+          Copy-Item "vendor\lsquic\src\lshpack\LICENSE" `
+            (Join-Path $archiveRoot "licenses\vendor\ls_hpack_license.txt")
+          tar.exe -C $env:RUNNER_TEMP -czf uWebZockets-x86_64-windows-gnu.tar.gz `
+            uWebZockets-x86_64-windows-gnu
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: uwebzockets-x86_64-windows-gnu
+          path: uWebZockets-x86_64-windows-gnu.tar.gz
+          if-no-files-found: error
+          retention-days: 14
