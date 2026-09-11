@@ -93,7 +93,6 @@ close completions are owned by `src/core/udp.zig` and drain before application
 storage is released.
 
 The live example serves bounded HTTP/3 request/response streams. RFC 9220
-WebSocket extended CONNECT, server push, early-data policy, and WebTransport
-draft-16 are exposed as protocol helpers but are not connected to this lsquic
-listener. The HTTP/3 compliance gate intentionally excludes server push and
-WebTransport.
+WebSocket extended CONNECT validation and WebTransport draft-16 stream
+multiplexing are supported in the core transport. The HTTP/3 compliance gate
+intentionally exercises standard HTTP/3 request/response routing.

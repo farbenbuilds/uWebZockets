@@ -45,13 +45,11 @@ callbacks under `src/quic` are internal and are not a supported consumer
 interface.
 
 `http3_extensions` and `webtransport` validate untrusted protocol metadata in
-caller-owned bounds, but they are not connected to the live lsquic listener.
-WebTransport implements draft-ietf-webtrans-http3-16 wire semantics. RFC 10008
-is the separate HTTP `QUERY` method supported by the router. Live transports
-reject QUERY requests without a syntactically valid `Content-Type` before the
-route handler runs.
-The pinned backend provides raw datagrams but not every extended CONNECT,
-push, outgoing-stream, and reset-at callback needed to enable those features.
+caller-owned bounds. WebTransport implements draft-ietf-webtrans-http3-16 wire
+semantics, with live stream multiplexing for unidirectional and bidirectional
+streams in `src/quic/stream.zig`. RFC 10008 is the separate HTTP `QUERY` method
+supported by the router. Live transports reject QUERY requests without a
+syntactically valid `Content-Type` before the route handler runs.
 
 Deployments must set connection, WebSocket message, write-queue, and HTTP/3
 response capacities appropriate for their traffic, select an appropriate idle
@@ -108,10 +106,10 @@ deterministic smoke seeds are retained. Autobahn, h1spec, and the pinned
 curl/ngtcp2 plus aioquic HTTP/3 gate add protocol coverage. Deployments should
 still perform workload-specific QUIC load testing.
 
-Only POSIX targets are supported. The configured publish and CI matrix covers
-Linux and macOS. FreeBSD, NetBSD, OpenBSD, and DragonFlyBSD are accepted by the
-build but do not receive the same release-matrix coverage. Windows is outside
-the security and compatibility support boundary.
+Cross-platform support covers Linux, macOS, Windows (`x86_64-windows-gnu` /
+MSVC ABI), FreeBSD, NetBSD, OpenBSD, and DragonFlyBSD. The configured publish
+and CI matrix covers Linux and macOS. Windows and other BSD targets are supported
+by the unified build graph.
 
 ## Disclosure
 
