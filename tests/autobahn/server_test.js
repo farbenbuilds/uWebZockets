@@ -22,48 +22,30 @@ await reset_reports();
 const reports_owner = await Deno.stat(reports_directory);
 const docker_user = container_user(reports_owner);
 
-const server = new Deno.Command(server_binary, {
-  cwd: repository_directory,
-  stdin: "null",
-  stdout: "inherit",
-  stderr: "inherit",
-}).spawn();
-let server_status = null;
-const server_done = server.status.then((status) => {
-  server_status = status;
-  return status;
-});
+const config_mount =
+  `${test_directory}/fuzzingclient.json:/fuzzingclient.json:ro`;
+const reports_mount = `${reports_directory}:/reports`;
+await run_testsuite(config_mount, reports_mount);
 
-try {
-  await wait_for_server();
-
-  const config_mount =
-    `${test_directory}/fuzzingclient.json:/fuzzingclient.json:ro`;
-  const reports_mount = `${reports_directory}:/reports`;
-  await run_testsuite(config_mount, reports_mount);
-
-  const report = JSON.parse(await Deno.readTextFile(report_path));
-  const agent_report = report[agent_name];
-  if (agent_report == null || typeof agent_report !== "object") {
-    throw new Error(`Autobahn report does not contain agent ${agent_name}`);
-  }
-
-  verify_baseline(agent_report, expected_baseline);
-
-  const results = Object.values(agent_report);
-  const protocol_counts = classification_counts(results, "behavior");
-  const close_counts = classification_counts(results, "behaviorClose");
-
-  console.log(JSON.stringify(results, null, 2));
-  console.log(
-    `%c${results.length} / ${expected_baseline.totals.total} cases match the baseline`,
-    "color: green",
-  );
-  console.log(`protocol: ${describe_counts(protocol_counts)}`);
-  console.log(`close: ${describe_counts(close_counts)}`);
-} finally {
-  await stop_server();
+const report = JSON.parse(await Deno.readTextFile(report_path));
+const agent_report = report[agent_name];
+if (agent_report == null || typeof agent_report !== "object") {
+  throw new Error(`Autobahn report does not contain agent ${agent_name}`);
 }
+
+verify_baseline(agent_report, expected_baseline);
+
+const results = Object.values(agent_report);
+const protocol_counts = classification_counts(results, "behavior");
+const close_counts = classification_counts(results, "behaviorClose");
+
+console.log(JSON.stringify(results, null, 2));
+console.log(
+  `%c${results.length} / ${expected_baseline.totals.total} cases match the baseline`,
+  "color: green",
+);
+console.log(`protocol: ${describe_counts(protocol_counts)}`);
+console.log(`close: ${describe_counts(close_counts)}`);
 
 async function load_baseline() {
   const document = JSON.parse(await Deno.readTextFile(baseline_path));
@@ -329,34 +311,43 @@ async function run_testsuite(config_mount, reports_mount) {
   for (let attempt = 1; attempt <= maximum_attempts; attempt += 1) {
     if (attempt > 1) await reset_reports();
 
-    const docker = new Deno.Command("docker", {
-      args: [
-        "run",
-        "--name",
-        `fuzzingserver-${attempt}`,
-        "--user",
-        docker_user,
-        "--volume",
-        config_mount,
-        "--volume",
-        reports_mount,
-        "--workdir",
-        "/",
-        "--net=host",
-        "--rm",
-        autobahn_testsuite_docker,
-        "wstest",
-        "-m",
-        "fuzzingclient",
-        "-s",
-        "/fuzzingclient.json",
-      ],
-      cwd: test_directory,
-      stdin: "null",
-      stdout: "inherit",
-      stderr: "inherit",
-    }).spawn();
-    const status = await docker.status;
+    const server = start_server();
+    let status;
+    try {
+      await wait_for_server(server);
+
+      const docker = new Deno.Command("docker", {
+        args: [
+          "run",
+          "--name",
+          `fuzzingserver-${attempt}`,
+          "--user",
+          docker_user,
+          "--volume",
+          config_mount,
+          "--volume",
+          reports_mount,
+          "--workdir",
+          "/",
+          "--net=host",
+          "--rm",
+          autobahn_testsuite_docker,
+          "wstest",
+          "-m",
+          "fuzzingclient",
+          "-s",
+          "/fuzzingclient.json",
+        ],
+        cwd: test_directory,
+        stdin: "null",
+        stdout: "inherit",
+        stderr: "inherit",
+      }).spawn();
+      status = await docker.status;
+    } finally {
+      await stop_server(server);
+    }
+
     if (status.success) return;
 
     if (status.code !== 137 || attempt === maximum_attempts) {
@@ -365,16 +356,33 @@ async function run_testsuite(config_mount, reports_mount) {
       );
     }
 
-    console.warn("Autobahn container was killed; retrying once");
+    console.warn(
+      "Autobahn container was killed; restarting the server and retrying once",
+    );
   }
 }
 
-async function wait_for_server() {
+function start_server() {
+  const process = new Deno.Command(server_binary, {
+    cwd: repository_directory,
+    stdin: "null",
+    stdout: "inherit",
+    stderr: "inherit",
+  }).spawn();
+  const server = { process, status: null, done: null };
+  server.done = process.status.then((status) => {
+    server.status = status;
+    return status;
+  });
+  return server;
+}
+
+async function wait_for_server(server) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (server_status != null) {
+    if (server.status != null) {
       throw new Error(
         `Autobahn server exited before readiness with ${
-          describe_status(server_status)
+          describe_status(server.status)
         }`,
       );
     }
@@ -396,18 +404,18 @@ async function wait_for_server() {
   throw new Error("Autobahn server did not become ready");
 }
 
-async function stop_server() {
-  if (server_status != null) return;
+async function stop_server(server) {
+  if (server.status != null) return;
 
   try {
-    server.kill("SIGTERM");
+    server.process.kill("SIGTERM");
   } catch {
     // The child may have exited between the state check and the signal.
   }
 
   let timeout_id;
   const stopped = await Promise.race([
-    server_done.then(() => true),
+    server.done.then(() => true),
     new Promise((resolve) => {
       timeout_id = setTimeout(() => resolve(false), 5000);
     }),
@@ -416,13 +424,13 @@ async function stop_server() {
 
   if (!stopped) {
     try {
-      server.kill("SIGKILL");
+      server.process.kill("SIGKILL");
     } catch {
       // The child may have exited between the timeout and the signal.
     }
   }
 
-  await server_done;
+  await server.done;
 }
 
 function describe_status(status) {

@@ -109,8 +109,9 @@ digest-pinned
 container as a fuzzing client. The runner uses Deno's native process API and
 has no runtime JavaScript dependencies. It always terminates the server, and
 the container writes reports as the invoking POSIX user so repeated local runs
-can replace them safely. A container killed with exit code 137 is retried once
-from a clean report directory; protocol failures and repeated kills fail
+can replace them safely. CI adds 4 GiB of swap for the largest compression
+cases. A container killed with exit code 137 is retried once from a clean report
+directory and a fresh server process; protocol failures and repeated kills fail
 immediately. The workflow uploads the complete HTML/JSON report even when the
 gate fails.
 
