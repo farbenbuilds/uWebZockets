@@ -11,7 +11,7 @@ test "web standards: Request header and body methods adhere to Fetch API" {
         .target = "/api/users?page=1",
         .path = "/api/users",
         .query = "page=1",
-        .body = "{\"id\":42,\"name\":\"Antigravity\"}",
+        .body = "{\"id\":42,\"name\":\"uWebZockets\"}",
     };
     req.header_names[0] = "Content-Type";
     req.header_values[0] = "application/json";
@@ -38,15 +38,15 @@ test "web standards: Request header and body methods adhere to Fetch API" {
     try std.testing.expect(it.next() == null);
 
     // Body
-    try std.testing.expectEqualStrings("{\"id\":42,\"name\":\"Antigravity\"}", req.text());
-    try std.testing.expectEqualStrings("{\"id\":42,\"name\":\"Antigravity\"}", req.bytes());
+    try std.testing.expectEqualStrings("{\"id\":42,\"name\":\"uWebZockets\"}", req.text());
+    try std.testing.expectEqualStrings("{\"id\":42,\"name\":\"uWebZockets\"}", req.bytes());
     try std.testing.expectEqualStrings("/api/users?page=1", req.url());
 
     const User = struct { id: u32, name: []const u8 };
     const parsed = try req.json(User, std.testing.allocator);
     defer parsed.deinit();
     try std.testing.expectEqual(@as(u32, 42), parsed.value.id);
-    try std.testing.expectEqualStrings("Antigravity", parsed.value.name);
+    try std.testing.expectEqualStrings("uWebZockets", parsed.value.name);
 }
 
 test "web standards: WHATWG Streams zero-allocation BYOB reading and pipe_to" {
