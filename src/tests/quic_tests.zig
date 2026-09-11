@@ -175,7 +175,18 @@ test "quic: HTTP/3 regular CONNECT requires authority and omits scheme and path"
 
     header_set.reset(&owner, Owner.release, &storage);
     try std.testing.expect(add_test_header(&header_set, ":method", "CONNECT"));
-    try std.testing.expect(!add_test_header(&header_set, ":protocol", "websocket"));
+    try std.testing.expect(add_test_header(&header_set, ":protocol", "websocket"));
+    try std.testing.expect(!header_set.process_header(null));
+
+    header_set.reset(&owner, Owner.release, &storage);
+    try std.testing.expect(add_test_header(&header_set, ":method", "CONNECT"));
+    try std.testing.expect(add_test_header(&header_set, ":protocol", "websocket"));
+    try std.testing.expect(add_test_header(&header_set, ":scheme", "https"));
+    try std.testing.expect(add_test_header(&header_set, ":authority", "localhost:443"));
+    try std.testing.expect(add_test_header(&header_set, ":path", "/tunnel"));
+    try std.testing.expect(header_set.process_header(null));
+    try std.testing.expectEqualStrings("/tunnel", header_set.request.target);
+    try std.testing.expectEqualStrings("websocket", header_set.protocol.?);
 }
 
 test "quic: HTTP/3 trailers reject pseudo and framing fields" {

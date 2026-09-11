@@ -32,6 +32,7 @@ pub const HeaderSet = struct {
     scheme: ?[]const u8 = null,
     authority: ?[]const u8 = null,
     path: ?[]const u8 = null,
+    protocol: ?[]const u8 = null,
     content_length: ?usize = null,
     write_offset: usize = 0,
     regular_headers_seen: bool = false,
@@ -148,6 +149,11 @@ pub const HeaderSet = struct {
             self.path = value;
             return true;
         }
+        if (std.mem.eql(u8, name, ":protocol")) {
+            if (self.protocol != null or !validation.valid_method(value)) return false;
+            self.protocol = value;
+            return true;
+        }
         return false;
     }
 
@@ -191,6 +197,11 @@ pub const HeaderSet = struct {
         const method = self.method orelse return false;
         const is_connect = std.mem.eql(u8, method, "CONNECT");
         const target = if (is_connect) blk: {
+            if (self.protocol != null) {
+                _ = self.scheme orelse return false;
+                const path = self.path orelse return false;
+                break :blk path;
+            }
             if (self.scheme != null or self.path != null) return false;
             break :blk self.authority orelse return false;
         } else blk: {
@@ -213,7 +224,7 @@ pub const HeaderSet = struct {
 
         self.request.method = method;
         self.request.target = target;
-        if (is_connect) {
+        if (is_connect and self.protocol == null) {
             self.request.path = "";
             self.request.query = "";
             self.finished = true;

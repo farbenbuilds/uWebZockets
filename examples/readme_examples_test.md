@@ -1,4 +1,4 @@
-# µWebZockets 1.0.0 Examples
+# µWebZockets 1.0.2 Examples
 
 Build the supported examples with Zig 0.16.0 and all recursive submodules:
 
@@ -92,8 +92,8 @@ all use fixed startup-allocated pools. The UDP socket, timer, cancellation, and
 close completions are owned by `src/core/udp.zig` and drain before application
 storage is released.
 
-The live example serves bounded HTTP/3 request/response streams. RFC 9220
-WebSocket extended CONNECT, server push, early-data policy, and WebTransport
-draft-16 are exposed as protocol helpers but are not connected to this lsquic
-listener. The HTTP/3 compliance gate intentionally excludes server push and
-WebTransport.
+The live example serves bounded HTTP/3 request/response streams and rejects
+extended CONNECT. RFC 9220 and WebTransport draft-16 validators and wire
+helpers are Zig library surfaces only; they are not connected to the lsquic
+listener. The HTTP/3 compliance gate exercises standard HTTP/3
+request/response routing.

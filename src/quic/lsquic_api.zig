@@ -1,5 +1,18 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const c = @import("c");
+
+pub const invalid_socket: std.posix.socket_t = if (builtin.os.tag == .windows)
+    @ptrFromInt(std.math.maxInt(usize))
+else
+    -1;
+
+pub fn is_valid_socket(fd: std.posix.socket_t) bool {
+    return if (builtin.os.tag == .windows)
+        @intFromPtr(fd) != std.math.maxInt(usize)
+    else
+        fd >= 0;
+}
 
 /// Reports that the build includes the lsquic support layer.
 pub const available = true;
@@ -83,7 +96,7 @@ pub fn send_packets(
     specs: [*c]const c.lsquic_out_spec,
     count: c_uint,
 ) c_int {
-    if (fd < 0) return fail_with_errno(.BADF);
+    if (!is_valid_socket(fd)) return fail_with_errno(.BADF);
     if (specs == null) return fail_with_errno(.INVAL);
     if (count == 0) return 0;
 
@@ -109,29 +122,78 @@ pub fn send_packets(
         }
 
         const address_length: c.socklen_t = switch (spec.dest_sa.*.sa_family) {
-            c.AF_INET => @sizeOf(c.struct_sockaddr_in),
-            c.AF_INET6 => @sizeOf(c.struct_sockaddr_in6),
+            c.AF_INET => @sizeOf(std.posix.sockaddr.in),
+            c.AF_INET6 => @sizeOf(std.posix.sockaddr.in6),
             else => {
                 set_errno(.AFNOSUPPORT);
                 break :packet_loop;
             },
         };
-        var message = c.struct_msghdr{
-            .msg_name = @ptrCast(@constCast(spec.dest_sa)),
-            .msg_namelen = address_length,
-            .msg_iov = spec.iov,
-            .msg_iovlen = @intCast(spec.iovlen),
-        };
-        const written = c.sendmsg(fd, &message, c.MSG_DONTWAIT | c.MSG_NOSIGNAL);
-        if (written < 0) break;
-        if (@as(usize, @intCast(written)) != total_size) {
-            set_errno(.IO);
-            break;
+        if (builtin.os.tag == .windows) {
+            var wsa_bufs: [32]c.WSABUF = undefined;
+            if (spec.iovlen > wsa_bufs.len) {
+                set_errno(.INVAL);
+                break;
+            }
+            var i: usize = 0;
+            while (i < spec.iovlen) : (i += 1) {
+                wsa_bufs[i] = .{
+                    .len = @intCast(spec.iov[i].iov_len),
+                    .buf = @ptrCast(spec.iov[i].iov_base),
+                };
+            }
+            var bytes_sent: c.DWORD = 0;
+            const sock: c.SOCKET = @intCast(@intFromPtr(fd));
+            const rc = c.WSASendTo(
+                sock,
+                &wsa_bufs,
+                @intCast(spec.iovlen),
+                &bytes_sent,
+                0,
+                @ptrCast(spec.dest_sa),
+                @intCast(address_length),
+                null,
+                null,
+            );
+            if (rc != 0) {
+                set_errno(winsock_errno(c.WSAGetLastError()));
+                break;
+            }
+            if (bytes_sent != total_size) {
+                set_errno(.IO);
+                break;
+            }
+        } else {
+            var message = c.struct_msghdr{
+                .msg_name = @ptrCast(@constCast(spec.dest_sa)),
+                .msg_namelen = address_length,
+                .msg_iov = spec.iov,
+                .msg_iovlen = @intCast(spec.iovlen),
+            };
+            const written = c.sendmsg(fd, &message, c.MSG_DONTWAIT | c.MSG_NOSIGNAL);
+            if (written < 0) break;
+            if (@as(usize, @intCast(written)) != total_size) {
+                set_errno(.IO);
+                break;
+            }
         }
     }
 
     if (sent == 0) return -1;
     return @intCast(sent);
+}
+
+fn winsock_errno(wsa_error: c_int) std.c.E {
+    if (builtin.os.tag != .windows) unreachable;
+    return switch (wsa_error) {
+        c.WSAEWOULDBLOCK, c.WSAENOBUFS => .AGAIN,
+        c.WSAEINTR => .INTR,
+        c.WSAEMSGSIZE => .MSGSIZE,
+        c.WSAEAFNOSUPPORT => .AFNOSUPPORT,
+        c.WSAEINVAL => .INVAL,
+        c.WSAEBADF, c.WSAENOTSOCK => .BADF,
+        else => .IO,
+    };
 }
 
 fn fail_with_errno(err: std.c.E) c_int {

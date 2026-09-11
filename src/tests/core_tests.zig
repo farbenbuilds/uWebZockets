@@ -58,7 +58,7 @@ fn dummy_accept(socket: @import("xev").TCP, user_data: ?*anyopaque) void {
 test "core: tcp server init" {
     // bind to ephemeral port 0 to prevent port collisions during tests.
     const server = try tcp.init_server("127.0.0.1", 0, dummy_accept, null);
-    defer _ = std.posix.system.close(server.listener.fd);
+    defer tcp.close_socket(server.listener.fd);
 }
 
 // dummy callback for timer test.
@@ -141,7 +141,7 @@ test "tcp: closed connection waits for active completions" {
 test "tcp: server close drains an outstanding accept" {
     const Accept = struct {
         fn callback(socket: @import("xev").TCP, _: ?*anyopaque) void {
-            _ = std.posix.system.close(socket.fd);
+            tcp.close_socket(socket.fd);
         }
     };
 

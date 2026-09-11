@@ -1,6 +1,6 @@
 .{
     .name = .uWebZockets,
-    .version = "1.0.1",
+    .version = "1.0.2",
     .fingerprint = 0xbbf152173cd23d48,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
@@ -67,6 +67,7 @@
         "tests",
         "fuzz",
         "patches",
+        "scripts/windows",
         "scripts/check_static_archive.sh",
         "scripts/prepare_lsquic_source.sh",
         "zig-cc",

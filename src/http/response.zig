@@ -1,5 +1,6 @@
 const std = @import("std");
 const tcp = @import("../core/tcp.zig");
+const streams = @import("streams.zig");
 const TcpConnection = tcp.TcpConnection;
 
 /// HTTP/3 stream callbacks used by the transport-neutral response writer.
@@ -260,6 +261,78 @@ pub const Response = struct {
     /// Reports whether any response bytes were started.
     pub fn is_started(self: *const Response) bool {
         return self.state != .idle;
+    }
+
+    /// Sends a 200 OK plain text response (Web Standards Response.text).
+    pub fn text(self: *Response, content: []const u8) !void {
+        return self.end_with_headers("200 OK", "Content-Type: text/plain; charset=utf-8\r\n", content);
+    }
+
+    /// Sends a 200 OK HTML response.
+    pub fn html(self: *Response, content: []const u8) !void {
+        return self.end_with_headers("200 OK", "Content-Type: text/html; charset=utf-8\r\n", content);
+    }
+
+    /// Sends a 200 OK binary response (Web Standards Response.bytes).
+    pub fn bytes(self: *Response, content: []const u8) !void {
+        return self.end_with_headers("200 OK", "Content-Type: application/octet-stream\r\n", content);
+    }
+
+    /// Sends a 200 OK JSON response formatted using caller-owned buffer (zero-allocation).
+    pub fn json_buf(self: *Response, value: anytype, buffer: []u8) !void {
+        const payload = std.fmt.bufPrint(buffer, "{f}", .{std.json.fmt(value, .{})}) catch return error.BufferOverflow;
+        return self.end_with_headers("200 OK", "Content-Type: application/json; charset=utf-8\r\n", payload);
+    }
+
+    /// Sends a 200 OK JSON response formatted using an allocator (Web Standards Response.json).
+    pub fn json(self: *Response, value: anytype, allocator: std.mem.Allocator) !void {
+        const payload = try std.fmt.allocPrint(allocator, "{f}", .{std.json.fmt(value, .{})});
+        defer allocator.free(payload);
+        return self.end_with_headers("200 OK", "Content-Type: application/json; charset=utf-8\r\n", payload);
+    }
+
+    /// Sends a redirection response (Web Standards Response.redirect).
+    pub fn redirect(self: *Response, location: []const u8, code: ?u16) !void {
+        for (location) |byte| {
+            if (byte == '\r' or byte == '\n') return error.InvalidHeaders;
+        }
+        const status_str = switch (code orelse 302) {
+            301 => "301 Moved Permanently",
+            302 => "302 Found",
+            303 => "303 See Other",
+            307 => "307 Temporary Redirect",
+            308 => "308 Permanent Redirect",
+            else => "302 Found",
+        };
+        var buf: [512]u8 = undefined;
+        const headers = std.fmt.bufPrint(&buf, "Location: {s}\r\n", .{location}) catch return error.BufferOverflow;
+        return self.end_with_headers(status_str, headers, "");
+    }
+
+    const StreamWriterAdapter = struct {
+        fn write(context: *anyopaque, chunk: []const u8) anyerror!void {
+            const res: *Response = @ptrCast(@alignCast(context));
+            if (res.state == .idle) {
+                try res.begin_chunked("200 OK", "");
+            }
+            try res.write_chunk(chunk);
+        }
+
+        fn close(context: *anyopaque) anyerror!void {
+            const res: *Response = @ptrCast(@alignCast(context));
+            if (res.state == .streaming) {
+                try res.end_chunks();
+            }
+        }
+    };
+
+    /// Returns a WHATWG WritableByteStream connected directly to this response.
+    pub fn writable_stream(self: *Response) streams.WritableByteStream {
+        return .{
+            .context = self,
+            .write_fn = StreamWriterAdapter.write,
+            .close_fn = StreamWriterAdapter.close,
+        };
     }
 };
 

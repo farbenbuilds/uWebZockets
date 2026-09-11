@@ -27,6 +27,7 @@ pub const Callbacks = struct {
     context: *anyopaque,
     write_fn: *const fn (*anyopaque, []const []const u8) anyerror!void,
     request_fn: *const fn (*anyopaque, *Request, u32) anyerror!void,
+    ws_data_fn: ?*const fn (*anyopaque, u32, []u8, bool) bool = null,
     stream_closed_fn: ?*const fn (*anyopaque, u32, u16) void = null,
     /// Largest nonempty frame payload that can fit an otherwise empty transport.
     max_frame_payload: usize = connection_module.maximum_frame_size,
@@ -683,7 +684,7 @@ pub fn server_session(
             };
             self.headers_ready[index] = true;
             self.finish_header_block();
-            if (end_stream) try self.dispatch(index, callbacks);
+            if (end_stream or decoded.protocol != null) try self.dispatch(index, callbacks);
         }
 
         fn complete_discarded_headers(
@@ -725,7 +726,7 @@ pub fn server_session(
         ) !void {
             const index = event.stream_index;
             const stream_id = self.connection.streams.stream_ids[index];
-            if (!self.headers_ready[index] or self.dispatched[index]) {
+            if (!self.headers_ready[index] or (self.dispatched[index] and self.requests[index].protocol.len == 0)) {
                 try self.send_reset(stream_id, .protocol_error, callbacks);
                 return;
             }
@@ -735,6 +736,24 @@ pub fn server_session(
                 try self.send_window_update(0, increment, callbacks);
                 try self.send_window_update(stream_id, increment, callbacks);
             }
+            if (self.dispatched[index] and self.requests[index].protocol.len > 0) {
+                const ws_data_fn = callbacks.ws_data_fn orelse {
+                    try self.send_reset(stream_id, .protocol_error, callbacks);
+                    return;
+                };
+                if (!ws_data_fn(
+                    callbacks.context,
+                    stream_id,
+                    @constCast(event.bytes),
+                    event.end_stream,
+                )) {
+                    try self.send_reset(stream_id, .protocol_error, callbacks);
+                    return;
+                }
+                if (event.end_stream) try self.finish_remote(index, stream_id, callbacks);
+                return;
+            }
+
             if (event.bytes.len > self.body_storage[index].len - self.body_lengths[index]) {
                 try self.send_reset(stream_id, .enhance_your_calm, callbacks);
                 return;
@@ -750,7 +769,10 @@ pub fn server_session(
                 event.bytes,
             );
             self.body_lengths[index] += event.bytes.len;
-            if (event.end_stream) try self.dispatch(index, callbacks);
+            if (event.end_stream) {
+                try self.dispatch(index, callbacks);
+                try self.finish_remote(index, stream_id, callbacks);
+            }
         }
 
         fn dispatch(self: *Self, index: u16, callbacks: Callbacks) !void {
@@ -778,7 +800,9 @@ pub fn server_session(
         }
 
         fn copy_request(self: *Self, index: u16, decoded: hpack.Request) !void {
-            if (decoded.protocol != null) return error.ExtendedConnectDisabled;
+            if (decoded.protocol != null and !self.connection.local_settings.enable_connect_protocol) {
+                return error.ExtendedConnectDisabled;
+            }
             const raw_target = decoded.path orelse return error.UnsupportedConnect;
             self.requests[index] = .{};
             self.request_storage_lengths[index] = 0;
@@ -788,6 +812,9 @@ pub fn server_session(
             self.response_started[index] = false;
 
             self.requests[index].method = try self.copy_request_bytes(index, decoded.method);
+            if (decoded.protocol) |protocol| {
+                self.requests[index].protocol = try self.copy_request_bytes(index, protocol);
+            }
             const target = try self.copy_request_bytes(index, raw_target);
             self.requests[index].target = target;
             const query_offset = std.mem.indexOfScalar(u8, target, '?');
@@ -852,7 +879,7 @@ pub fn server_session(
 
         fn send_settings(self: *Self, callbacks: Callbacks) !void {
             if (self.settings_sent) return;
-            var payload: [18]u8 = undefined;
+            var payload: [24]u8 = undefined;
             write_setting(payload[0..6], 0x2, 0);
             write_setting(payload[6..12], 0x3, @intCast(max_streams));
             write_setting(
@@ -860,6 +887,7 @@ pub fn server_session(
                 0x6,
                 @intCast(@min(request_storage_capacity, std.math.maxInt(u32))),
             );
+            write_setting(payload[18..24], 0x8, 1);
             try self.send_frame(.settings, 0, 0, &payload, callbacks);
             self.settings_sent = true;
         }
@@ -933,7 +961,7 @@ pub fn server_session(
                 self.pending_header_ready[index] = false;
                 if (end_stream) {
                     self.clear_pending_response(index);
-                    try self.finish_local(index);
+                    try self.finish_local(index, callbacks);
                     return;
                 }
             }
@@ -972,7 +1000,7 @@ pub fn server_session(
                 if (!final) continue;
 
                 self.clear_pending_response(index);
-                try self.finish_local(index);
+                try self.finish_local(index, callbacks);
                 return;
             }
 
@@ -982,7 +1010,7 @@ pub fn server_session(
                 return err;
             };
             self.pending_stream_end[index] = false;
-            try self.finish_local(index);
+            try self.finish_local(index, callbacks);
         }
 
         fn send_data_frame(
@@ -1000,9 +1028,26 @@ pub fn server_session(
             };
         }
 
-        fn finish_local(self: *Self, index: u16) !void {
+        fn finish_local(self: *Self, index: u16, callbacks: Callbacks) !void {
+            const stream_id = self.connection.streams.stream_ids[index];
             const released = try self.connection.close_local(index);
-            if (released and !self.callback_active[index]) self.clear_stream(index);
+            if (!released) return;
+            self.notify_stream_closed(stream_id, index, callbacks);
+            if (!self.callback_active[index]) self.clear_stream(index);
+        }
+
+        fn finish_remote(
+            self: *Self,
+            index: u16,
+            stream_id: u32,
+            callbacks: Callbacks,
+        ) !void {
+            const active_index = self.connection.streams.find(stream_id) orelse return;
+            if (active_index != index) return;
+            const released = try self.connection.finish_remote(index);
+            if (!released) return;
+            self.notify_stream_closed(stream_id, index, callbacks);
+            if (!self.callback_active[index]) self.clear_stream(index);
         }
 
         fn send_window_update(

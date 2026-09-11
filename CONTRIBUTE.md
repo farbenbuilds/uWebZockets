@@ -46,12 +46,13 @@ Ninja, patch, Go, Python, Perl, and zlib development files.
 - Put every ordinary Zig unit test under `src/tests/` and import it from
   `src/tests/main.zig`. Production modules must not import the centralized test
   root. The `src/tests/fuzz_main.zig` Smith corpus runs once in the ordinary
-  test graph and is also the dedicated root for extended `zig build fuzz` runs.
-- Keep the implementation POSIX-only. Do not add Windows branches or APIs.
-  Linux and macOS are the published CI matrix; preserve the accepted FreeBSD,
-  NetBSD, OpenBSD, and DragonFlyBSD targets when changing platform checks.
-- Preserve upstream style in vendored submodules; update those through their
-  upstream project rather than rewriting vendored files.
+  suite and for the requested iteration count under `zig build fuzz`.
+- Support cross-platform targets cleanly across Linux, macOS, Windows
+  (`x86_64-windows-gnu` / MinGW ABI), FreeBSD, NetBSD, OpenBSD, and
+  DragonFlyBSD. Ensure platform-specific I/O branches remain isolated to
+  transport abstractions (POSIX and Windows IOCP via `libxev`).
+- Submit dependency fixes to the upstream project rather than rewriting
+  vendored files without an auditable patch.
 
 ## Local checks
 
@@ -60,6 +61,7 @@ Run all relevant checks before opening a pull request:
 ```sh
 zig fmt --check build.zig src examples tests fuzz
 sh scripts/check_conventions.sh
+sh scripts/check_release_version.sh
 zig build test --summary all
 zig build test -Dsanitize=true -Doptimize=ReleaseSafe --summary all
 zig build msan -Dmemory-sanitize=true -Doptimize=ReleaseSafe --summary all
@@ -77,6 +79,11 @@ setups must
 pass `-Dsanitizer-lib-dir=/path/to/compiler/runtime/lib`. When that runtime
 uses a different glibc than the host, also pass matching
 `-Dsanitizer-libc-dir` and `-Dsanitizer-dynamic-linker` paths.
+
+On Windows, install `zlib:x64-mingw-static` with vcpkg and compile the
+ReleaseSafe test graph plus the ReleaseFast library build with
+`-Dtarget=x86_64-windows-gnu` and the installed prefix passed through
+`-Dzlib-prefix`.
 
 Changes to WebSocket parsing or I/O must also run the Autobahn target. Changes
 to HTTP parsing, dispatch, or response framing must run h1spec. Changes to
@@ -131,7 +138,7 @@ target-local settings work.
 
 ## Releasing
 
-1. Set the same version in `build.zig.zon` and `flake.nix`.
+1. Update all versioned surfaces and run `sh scripts/check_release_version.sh`.
 2. Add a dated `CHANGELOG.md` section with breaking changes and limitations;
    do not leave an `Unreleased` placeholder in a final release snapshot.
 3. Verify `THIRD_PARTY_NOTICES.md` and every packaged license.
@@ -140,5 +147,5 @@ target-local settings work.
    Autobahn, h1spec, and HTTP/3 cross-implementation checks on the release
    commit.
 6. Tag the final commit as `v<version>` and push the tag.
-7. Review all six `Publish` environment deployments, archives, and
+7. Review all seven release archives and
    `SHA256SUMS` before announcing the release.

@@ -1,7 +1,9 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const c = @import("c");
 const xev = @import("xev");
 const core_loop = @import("loop.zig");
+const tcp = @import("tcp.zig");
 const Router = @import("../router/radix.zig").Router;
 const max_udp_payload_size = @import("../quic/lsquic_api.zig").max_udp_payload_size;
 
@@ -204,6 +206,11 @@ pub fn quic_transport(comptime Engine: type) type {
                 );
             }
             self.close_started = true;
+            if (builtin.os.tag == .windows) {
+                tcp.close_socket(self.socket.fd);
+                self.close_complete = true;
+                return;
+            }
             self.socket.close(
                 loop,
                 &self.close_completion,
@@ -313,5 +320,5 @@ pub fn quic_transport(comptime Engine: type) type {
 }
 
 fn close_unregistered_socket(socket: xev.UDP) void {
-    _ = std.posix.system.close(socket.fd);
+    tcp.close_socket(socket.fd);
 }

@@ -24,7 +24,7 @@ pub fn cancel(
         result: xev.CancelError!void,
     ) xev.CallbackAction,
 ) void {
-    if (xev.backend != .kqueue) {
+    if (xev.backend != .kqueue and xev.backend != .iocp) {
         loop.cancel(
             completion,
             cancel_completion,

@@ -371,7 +371,7 @@ pub fn connection(comptime max_streams: usize) type {
         local_settings: Settings = .{
             .enable_push = false,
             .max_concurrent_streams = max_streams,
-            .enable_connect_protocol = false,
+            .enable_connect_protocol = true,
         },
         /// Remaining inbound connection flow-control credit.
         connection_receive_window: i64 = default_window_size,
@@ -734,7 +734,6 @@ pub fn connection(comptime max_streams: usize) type {
             }
             self.connection_receive_window -= flow_length;
             self.streams.receive_windows[index] -= flow_length;
-            if (header.flags & 0x1 != 0) try self.close_remote(index);
             return .{ .data = .{
                 .stream_index = index,
                 .bytes = bytes,
@@ -867,6 +866,21 @@ pub fn connection(comptime max_streams: usize) type {
                 .half_closed_local => {
                     self.streams.states[index] = .closed;
                     _ = self.streams.release(index);
+                },
+                else => return error.StreamClosed,
+            }
+        }
+
+        /// Applies END_STREAM after the caller finishes processing its event.
+        pub fn finish_remote(self: *Self, index: u16) !bool {
+            switch (self.streams.states[index]) {
+                .open => {
+                    self.streams.states[index] = .half_closed_remote;
+                    return false;
+                },
+                .half_closed_local => {
+                    self.streams.states[index] = .closed;
+                    return self.streams.release(index);
                 },
                 else => return error.StreamClosed,
             }

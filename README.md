@@ -4,10 +4,10 @@
 
 # µWebZockets
 
-µWebZockets is a Zig 0.16 WebSocket server library with HTTP/1.1, WebSocket,
-and optional HTTP/3/QUIC support. It is designed for low-allocation,
-event-driven services; production deployments should still validate their own
-traffic, limits, TLS configuration, and observability requirements.
+µWebZockets is a bounded-memory, event-driven WebSocket and HTTP server library
+for Zig 0.16.0. It supports HTTP/1.1, HTTP/2, and optional HTTP/3 over lsquic.
+The request, response, routing, framing, and connection I/O paths use fixed
+capacity storage after application startup.
 
 ## Status and validation
 
@@ -19,21 +19,14 @@ guard, not a universal performance claim. Released tags provide stable
 snapshots, and the current source tree may include unreleased changes.
 
 [![Test](https://github.com/farbenbuilds/uWebZockets/actions/workflows/test.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/test.yml)
+[![Windows Build](https://github.com/farbenbuilds/uWebZockets/actions/workflows/windows.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/windows.yml)
 [![Autobahn Compliance](https://github.com/farbenbuilds/uWebZockets/actions/workflows/autobahn_compliance.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/autobahn_compliance.yml)
 [![h1spec Compliance](https://github.com/farbenbuilds/uWebZockets/actions/workflows/h1spec_compliance.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/h1spec_compliance.yml)
 [![Benchmark](https://github.com/farbenbuilds/uWebZockets/actions/workflows/benchmark.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/benchmark.yml)
 
-µWebZockets is a bounded-memory, event-driven WebSocket, HTTP/1.1, HTTP/2,
-and HTTP/3 server library for Zig 0.16.0. Released tags provide stable
-snapshots, while the current source tree may include unreleased changes. The
-request, response, frame parsing, masking, routing,
-and connection I/O paths use fixed-capacity storage after application startup.
-BoringSSL provides TLS, libxev drives non-blocking POSIX I/O, zslay 0.1.5
-provides the WebSocket frame state machine, and lsquic provides QUIC.
-
-Use a released tag for applications that need a published stable snapshot. Pin
-an exact source commit when consuming current development changes. Only POSIX
-targets are supported.
+BoringSSL provides TLS, libxev drives non-blocking I/O, zslay 0.1.5 provides the
+WebSocket frame state machine, and lsquic provides QUIC. Use a released tag or
+pin an exact source commit. Platform verification tiers are documented below.
 
 ## Features
 
@@ -56,8 +49,8 @@ targets are supported.
   body, response, and packet storage
 - Live bounded HTTP/2 routing with eight-stream multiplexing, flow control,
   and caller-owned HPACK decoding/encoding storage
-- RFC 9220 extended CONNECT validation, push and 0-RTT policy helpers, and
-  WebTransport-over-HTTP/3 draft-16 wire primitives
+- Transport-neutral RFC 9220, push, early-data, and WebTransport draft-16
+  validation and wire helpers; these are not connected to the live HTTP/3 listener
 - Contiguous connection pools and per-connection storage selected at compile
   time
 - Completion-driven shutdown that drains accept, read, write, close, timer,
@@ -67,7 +60,7 @@ targets are supported.
   operations
 - Centralized unit tests, Google OSS-Fuzz/libFuzzer targets, protocol
   compliance gates, and a versioned HTTP throughput regression contract
-- Native GNU/Linux, musl/Linux, and macOS release packages
+- Native GNU/Linux, musl/Linux, macOS, and `x86_64-windows-gnu` release packages
 
 The bundled Autobahn runner executes all 517 selected server cases. The
 verified baseline is 514 `OK` and 3 `INFORMATIONAL` results for both
@@ -80,7 +73,7 @@ RFC 7692 groups 12 and 13, with no exclusions.
 - CMake 3.20 or newer
 - Ninja
 - patch
-- A POSIX target: Linux, macOS, FreeBSD, NetBSD, OpenBSD, or DragonFlyBSD
+- A build target: Linux, macOS, FreeBSD, NetBSD, OpenBSD, DragonFlyBSD, or Windows
 - zlib development headers and a static library
 - Recursive git submodules for the repository's h1spec development suite
 
@@ -152,10 +145,33 @@ zlib is not in the compiler's default search path, pass a prefix containing
 zig build -Dzlib-prefix=/path/to/zlib-prefix
 ```
 
+Windows builds require a MinGW static zlib prefix. The native Windows CI uses
+the pinned manifest under `scripts/windows`, the `x64-mingw-static` triplet,
+and the following PowerShell flow:
+
+```powershell
+$zlib = "$env:TEMP\uwebzockets-zlib"
+.\scripts\windows\prepare_zlib.ps1 -OutputDirectory $zlib
+zig build test-compile -Dtarget=x86_64-windows-gnu "-Dzlib-prefix=$zlib" `
+  -Doptimize=ReleaseSafe --summary all
+zig build lib -Dtarget=x86_64-windows-gnu "-Dzlib-prefix=$zlib" `
+  -Doptimize=ReleaseFast --summary all
+```
+
+Other cross-target builds must pass a zlib prefix built for the selected
+target; the host `UWEBZOCKETS_ZLIB_PREFIX` is deliberately ignored for foreign
+targets:
+
+```sh
+zig build lib -Dtarget=x86_64-windows-gnu \
+  -Dzlib-prefix=/path/to/windows-zlib-prefix
+```
+
 `zig build lib -Doptimize=ReleaseFast` installs the µWebZockets, BoringSSL,
 lsquic, and libdeflate static archives under `zig-out/lib`. Applications that
 link these archives directly must also link libc, the C++ runtime, zlib, and
-the platform networking libraries required by those dependencies.
+the platform networking libraries required by those dependencies (on Windows:
+`ws2_32`, `mswsock`, `crypt32`, and `advapi32`).
 
 ## Use as a Zig dependency
 
@@ -290,6 +306,11 @@ including an empty remainder.
 64 parameterized patterns, and static routes win over parameter and wildcard
 matches.
 
+Integration code may attach borrowed `extra_param_*` or `extra_header_*` slices
+when adapting a different parser. Request lookup and iteration include the
+paired portion of those slices without allocating. The built-in parsers do not
+populate them or expand their fixed capacities dynamically.
+
 Malformed patterns, duplicate parameter names, and nonterminal wildcards fail
 registration instead of falling back to ambiguous matching.
 
@@ -391,8 +412,10 @@ including Huffman and pseudo-header validation.
 selects it through ALPN. Each TCP connection embeds an eight-stream request,
 body, response, and async-token slab. SETTINGS, PING, GOAWAY, RST_STREAM,
 trailers, partial DATA, and connection/stream flow control are handled without
-dynamic allocation on the data path. RFC 8441 WebSocket tunneling is not
-advertised; WebSockets remain an HTTP/1.1 upgrade feature.
+dynamic allocation on the data path. RFC 8441 WebSocket tunneling is supported
+via extended CONNECT. Because parsing and message storage are connection-owned,
+each HTTP/2 connection permits one active WebSocket tunnel; additional tunnels
+receive `503 Service Unavailable` without disturbing the active tunnel.
 
 ## HTTP/3
 
@@ -480,27 +503,57 @@ The defaults are deliberately finite:
 
 Oversized or ambiguous input is rejected rather than expanded dynamically.
 
-## Current limitations
+## Fetch- and Streams-inspired helpers
 
-- HTTP/2 WebSocket extended CONNECT is not advertised; WebSocket upgrades use
-  HTTP/1.1 because message/compression state is connection-owned.
-- The live HTTP/3 server handles request/response routing and passes the
-  cross-implementation gate. It rejects TLS 0-RTT. Extended CONNECT, server
-  push, and WebTransport remain helper modules rather than live features.
-- WebTransport follows draft-ietf-webtrans-http3-16 wire semantics; RFC 10008
-  is the separately implemented HTTP `QUERY` method.
-- Per-message deflate deliberately uses no-context-takeover. An offered 8-bit
-  server compression window is declined because zlib cannot emit it reliably;
-  8-bit client compression is accepted and decoded within the configured
-  output bound.
-- Windows is unsupported by design. The configured publish and CI matrix
-  covers Linux and macOS; BSD targets are accepted by the build but are not
-  publish targets.
-- Zig and C route parameters, middleware, and one-shot async tokens are
-  implemented with fixed capacities and event-loop-confined lifetimes.
-- The versioned [`http-throughput-v1`](benchmarks/http_throughput_guarantee.md)
-  guarantee is relative to a same-runner baseline, not an absolute capacity
-  guarantee across different hardware cohorts.
+These small Zig helpers borrow familiar naming from the WHATWG Fetch and Streams
+APIs. They are not JavaScript objects and do not claim full WHATWG conformance.
+Except for the explicitly allocator-backed JSON helpers, they operate on
+borrowed slices and caller-owned buffers.
+
+### Request and response helpers
+
+- `req.headers()` returns a read-only `HeadersView`; `req.header_entries()`
+  iterates the bounded request fields.
+- `req.text()` and `req.bytes()` borrow the buffered body. `req.json(T,
+  allocator)` parses it with the supplied allocator.
+- `res.text`, `res.html`, `res.bytes`, `res.json`, `res.json_buf`, and
+  `res.redirect` provide common response formatting. Redirect destinations with
+  CR or LF are rejected.
+
+### Byte-stream helpers
+
+- `uz.streams.ReadableByteStream` reads into a caller-owned buffer.
+- `res.writable_stream()` adapts chunked HTTP/1.1, HTTP/2, or HTTP/3 output.
+- `uz.streams.pipe_to` transfers through a nonempty caller-owned buffer and
+  closes both adapters on a transfer failure.
+
+## Standards and Platform Support
+
+### Protocol coverage
+
+- WebSocket: RFC 6455 and RFC 7692 per-message deflate.
+- HTTP/2: bounded RFC 9113 routing and one RFC 8441 WebSocket tunnel per
+  connection.
+- HTTP/3: bounded RFC 9114 request/response routing. Extended CONNECT,
+  WebTransport, push, and application datagrams are helper-only and rejected by
+  the live listener.
+- HTTP extensions: RFC 10008 `QUERY` routing with syntactic content-type checks.
+
+### Platform support
+
+- Tier 1: Linux and macOS on `x86_64` and `aarch64`; these targets are built,
+  tested, and published by CI.
+- Tier 2: `x86_64-windows-gnu`, FreeBSD, NetBSD, OpenBSD, and DragonFlyBSD.
+  Windows libraries and the complete test/ABI graph are compiled on a native
+  Windows runner for tagged releases, with a manual pre-release trigger
+  available; the resulting archive is published. Windows runtime tests remain
+  a Tier 2 validation responsibility. The BSD targets share the build graph
+  without dedicated CI.
+
+Request fields, route captures, middleware, async tokens, and transport pools
+have fixed capacities; there is no dynamic overflow fallback. Performance
+guarantees are relative same-runner comparisons defined by
+[`http-throughput-v1`](benchmarks/http_throughput_guarantee.md).
 
 See [CHANGELOG.md](CHANGELOG.md), [CODEBASE.md](CODEBASE.md), and
 [CI_CD_PIPELINE.md](CI_CD_PIPELINE.md) for release details, architecture, and

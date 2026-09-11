@@ -99,6 +99,7 @@ pub const HttpMethod = enum(u8) {
     options,
     any,
     query,
+    connect,
 
     /// Parses a case-sensitive HTTP method token.
     pub fn parse(value: []const u8) ?HttpMethod {
@@ -110,6 +111,7 @@ pub const HttpMethod = enum(u8) {
         if (std.mem.eql(u8, value, "PATCH")) return .patch;
         if (std.mem.eql(u8, value, "OPTIONS")) return .options;
         if (std.mem.eql(u8, value, "QUERY")) return .query;
+        if (std.mem.eql(u8, value, "CONNECT")) return .connect;
         return null;
     }
 
@@ -125,6 +127,7 @@ pub const HttpMethod = enum(u8) {
             .options => "OPTIONS",
             .any => "",
             .query => "QUERY",
+            .connect => "CONNECT",
         };
     }
 };

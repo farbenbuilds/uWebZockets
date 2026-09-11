@@ -2,16 +2,15 @@
 
 ## Supported versions
 
-This source tree is preparing `1.0.0`; no `v1.0.0` release tag has been
-published yet. Until publication, security fixes apply to the current
-development revision. After publication, fixes apply to the latest `1.0.x`
-patch release. Older snapshots and unsupported raw transport internals do not
-receive backports.
+Security fixes apply to the current development revision and the latest
+`1.0.x` patch release. Older snapshots and unsupported raw transport internals
+do not receive backports.
 
 | Version | Supported |
 | --- | --- |
 | Current development revision | Yes |
-| Tagged releases | None published yet |
+| Latest `1.0.x` release | Yes |
+| Older tagged releases | No |
 | Earlier snapshots | No |
 
 ## Reporting a vulnerability
@@ -44,14 +43,12 @@ connection at eight streams. Raw QUIC engine, stream, packet, and QPACK
 callbacks under `src/quic` are internal and are not a supported consumer
 interface.
 
-`http3_extensions` and `webtransport` validate untrusted protocol metadata in
-caller-owned bounds, but they are not connected to the live lsquic listener.
-WebTransport implements draft-ietf-webtrans-http3-16 wire semantics. RFC 10008
-is the separate HTTP `QUERY` method supported by the router. Live transports
-reject QUERY requests without a syntactically valid `Content-Type` before the
-route handler runs.
-The pinned backend provides raw datagrams but not every extended CONNECT,
-push, outgoing-stream, and reset-at callback needed to enable those features.
+`http3_extensions` and `webtransport` provide bounded validators and wire
+helpers. They are not connected to the live lsquic listener, which rejects
+extended CONNECT; they do not establish WebTransport, server push, or
+application-datagram support. RFC 10008 is the separate HTTP `QUERY` method
+supported by the router. Live transports reject QUERY requests without a
+syntactically valid `Content-Type` before the route handler runs.
 
 Deployments must set connection, WebSocket message, write-queue, and HTTP/3
 response capacities appropriate for their traffic, select an appropriate idle
@@ -108,10 +105,13 @@ deterministic smoke seeds are retained. Autobahn, h1spec, and the pinned
 curl/ngtcp2 plus aioquic HTTP/3 gate add protocol coverage. Deployments should
 still perform workload-specific QUIC load testing.
 
-Only POSIX targets are supported. The configured publish and CI matrix covers
-Linux and macOS. FreeBSD, NetBSD, OpenBSD, and DragonFlyBSD are accepted by the
-build but do not receive the same release-matrix coverage. Windows is outside
-the security and compatibility support boundary.
+Cross-platform support covers Linux, macOS, Windows (`x86_64-windows-gnu` /
+MinGW ABI), FreeBSD, NetBSD, OpenBSD, and DragonFlyBSD. The configured publish
+matrix covers Linux and macOS. A dedicated native Windows job compiles the
+complete ReleaseSafe test/ABI graph without executing it, and tagged
+releases include its static libraries. Windows runtime verification remains a
+Tier 2 deployment responsibility. The additional BSD targets share the build
+graph without dedicated runtime CI coverage.
 
 ## Disclosure
 

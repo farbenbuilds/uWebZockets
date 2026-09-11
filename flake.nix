@@ -28,6 +28,7 @@
       }: let
         lib = pkgs.lib;
         isLinux = pkgs.stdenv.hostPlatform.isLinux;
+        releaseVersion = "1.0.2";
         pkgsMusl =
           if isLinux
           then pkgs.pkgsMusl
@@ -105,7 +106,7 @@
         in
           packagePkgs.stdenv.mkDerivation {
             pname = "uwebzockets";
-            version = "1.0.1";
+            version = releaseVersion;
             src = source;
             strictDeps = true;
             inherit nativeBuildInputs;
@@ -139,7 +140,7 @@
         in
           packagePkgs.stdenv.mkDerivation {
             pname = "uwebzockets-compile-tests";
-            version = "1.0.1";
+            version = releaseVersion;
             src = source;
             strictDeps = true;
             inherit nativeBuildInputs;
