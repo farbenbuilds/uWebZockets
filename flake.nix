@@ -105,7 +105,7 @@
         in
           packagePkgs.stdenv.mkDerivation {
             pname = "uwebzockets";
-            version = "1.0.1";
+            version = "1.0.3";
             src = source;
             strictDeps = true;
             inherit nativeBuildInputs;
@@ -139,7 +139,7 @@
         in
           packagePkgs.stdenv.mkDerivation {
             pname = "uwebzockets-compile-tests";
-            version = "1.0.1";
+            version = "1.0.3";
             src = source;
             strictDeps = true;
             inherit nativeBuildInputs;

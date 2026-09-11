@@ -27,7 +27,7 @@ pub const Callbacks = struct {
     context: *anyopaque,
     write_fn: *const fn (*anyopaque, []const []const u8) anyerror!void,
     request_fn: *const fn (*anyopaque, *Request, u32) anyerror!void,
-    ws_data_fn: ?*const fn (*anyopaque, u32, []u8) void = null,
+    ws_data_fn: ?*const fn (*anyopaque, u32, []u8, bool) bool = null,
     stream_closed_fn: ?*const fn (*anyopaque, u32, u16) void = null,
     /// Largest nonempty frame payload that can fit an otherwise empty transport.
     max_frame_payload: usize = connection_module.maximum_frame_size,
@@ -737,9 +737,20 @@ pub fn server_session(
                 try self.send_window_update(stream_id, increment, callbacks);
             }
             if (self.dispatched[index] and self.requests[index].protocol.len > 0) {
-                if (callbacks.ws_data_fn) |cb| {
-                    cb(callbacks.context, stream_id, @constCast(event.bytes));
+                const ws_data_fn = callbacks.ws_data_fn orelse {
+                    try self.send_reset(stream_id, .protocol_error, callbacks);
+                    return;
+                };
+                if (!ws_data_fn(
+                    callbacks.context,
+                    stream_id,
+                    @constCast(event.bytes),
+                    event.end_stream,
+                )) {
+                    try self.send_reset(stream_id, .protocol_error, callbacks);
+                    return;
                 }
+                if (event.end_stream) try self.finish_remote(index, stream_id, callbacks);
                 return;
             }
 
@@ -758,7 +769,10 @@ pub fn server_session(
                 event.bytes,
             );
             self.body_lengths[index] += event.bytes.len;
-            if (event.end_stream) try self.dispatch(index, callbacks);
+            if (event.end_stream) {
+                try self.dispatch(index, callbacks);
+                try self.finish_remote(index, stream_id, callbacks);
+            }
         }
 
         fn dispatch(self: *Self, index: u16, callbacks: Callbacks) !void {
@@ -947,7 +961,7 @@ pub fn server_session(
                 self.pending_header_ready[index] = false;
                 if (end_stream) {
                     self.clear_pending_response(index);
-                    try self.finish_local(index);
+                    try self.finish_local(index, callbacks);
                     return;
                 }
             }
@@ -986,7 +1000,7 @@ pub fn server_session(
                 if (!final) continue;
 
                 self.clear_pending_response(index);
-                try self.finish_local(index);
+                try self.finish_local(index, callbacks);
                 return;
             }
 
@@ -996,7 +1010,7 @@ pub fn server_session(
                 return err;
             };
             self.pending_stream_end[index] = false;
-            try self.finish_local(index);
+            try self.finish_local(index, callbacks);
         }
 
         fn send_data_frame(
@@ -1014,9 +1028,26 @@ pub fn server_session(
             };
         }
 
-        fn finish_local(self: *Self, index: u16) !void {
+        fn finish_local(self: *Self, index: u16, callbacks: Callbacks) !void {
+            const stream_id = self.connection.streams.stream_ids[index];
             const released = try self.connection.close_local(index);
-            if (released and !self.callback_active[index]) self.clear_stream(index);
+            if (!released) return;
+            self.notify_stream_closed(stream_id, index, callbacks);
+            if (!self.callback_active[index]) self.clear_stream(index);
+        }
+
+        fn finish_remote(
+            self: *Self,
+            index: u16,
+            stream_id: u32,
+            callbacks: Callbacks,
+        ) !void {
+            const active_index = self.connection.streams.find(stream_id) orelse return;
+            if (active_index != index) return;
+            const released = try self.connection.finish_remote(index);
+            if (!released) return;
+            self.notify_stream_closed(stream_id, index, callbacks);
+            if (!self.callback_active[index]) self.clear_stream(index);
         }
 
         fn send_window_update(

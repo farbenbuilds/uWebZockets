@@ -218,6 +218,7 @@ test "http2: half closed local streams still accept peer data" {
     const data = try append_frame(&storage, .data, 0x1, 3, "body");
     const data_event = try connection.receive_frame(data);
     try std.testing.expect(data_event.data.end_stream);
+    try std.testing.expect(try connection.finish_remote(data_event.data.stream_index));
     try std.testing.expect(connection.streams.find(3) == null);
 }
 

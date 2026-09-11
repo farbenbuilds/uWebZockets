@@ -184,8 +184,8 @@ pub const WebSocket = struct {
                 try self.conn.h2.write_response_data(stream_id, payload, callbacks);
             }
             if (opcode == .close) {
-                self.close_sent = true;
                 try self.conn.h2.finish_response(stream_id, callbacks);
+                self.close_sent = true;
             }
         } else {
             try self.conn.write_data_parts(&.{ node.header_buf[0..node.header_size], payload });
@@ -545,7 +545,7 @@ pub const WebSocket = struct {
     pub fn terminate(self: *WebSocket) void {
         if (self.h2_stream_id) |stream_id| {
             const callbacks = self.conn.http2_callbacks();
-            self.conn.h2.reset_stream(stream_id, .internal_error, callbacks) catch {};
+            self.conn.h2.reset_stream(stream_id, .cancel, callbacks) catch {};
         } else {
             tcp.close_connection(self.conn);
         }
@@ -557,6 +557,7 @@ pub const WebSocket = struct {
         self.notify_close();
         if (self.pubsub) |engine| engine.unsubscribe_all(self);
         self.initialized = false;
+        self.h2_stream_id = null;
         self.reset_message();
         self.permessage_deflate = null;
         self.frame_rsv1 = false;

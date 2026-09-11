@@ -4,10 +4,10 @@
 
 # µWebZockets
 
-µWebZockets is a Zig 0.16 WebSocket server library with HTTP/1.1, WebSocket,
-and optional HTTP/3/QUIC support. It is designed for low-allocation,
-event-driven services; production deployments should still validate their own
-traffic, limits, TLS configuration, and observability requirements.
+µWebZockets is a bounded-memory, event-driven WebSocket and HTTP server library
+for Zig 0.16.0. It supports HTTP/1.1, HTTP/2, and optional HTTP/3 over lsquic.
+The request, response, routing, framing, and connection I/O paths use fixed
+capacity storage after application startup.
 
 ## Status and validation
 
@@ -23,18 +23,9 @@ snapshots, and the current source tree may include unreleased changes.
 [![h1spec Compliance](https://github.com/farbenbuilds/uWebZockets/actions/workflows/h1spec_compliance.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/h1spec_compliance.yml)
 [![Benchmark](https://github.com/farbenbuilds/uWebZockets/actions/workflows/benchmark.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/benchmark.yml)
 
-µWebZockets is a bounded-memory, event-driven WebSocket, HTTP/1.1, HTTP/2,
-and HTTP/3 server library for Zig 0.16.0. Released tags provide stable
-snapshots, while the current source tree may include unreleased changes. The
-request, response, frame parsing, masking, routing,
-and connection I/O paths use fixed-capacity storage after application startup.
-BoringSSL provides TLS, libxev drives non-blocking POSIX and Windows IOCP I/O, zslay 0.1.5
-provides the WebSocket frame state machine, and lsquic provides QUIC.
-
-Use a released tag for applications that need a published stable snapshot. Pin
-an exact source commit when consuming current development changes. Cross-platform
-support includes Linux, macOS, FreeBSD, NetBSD, OpenBSD, DragonFlyBSD, and Windows
-(`x86_64-windows-gnu` / MSVC ABI).
+BoringSSL provides TLS, libxev drives non-blocking I/O, zslay 0.1.5 provides the
+WebSocket frame state machine, and lsquic provides QUIC. Use a released tag or
+pin an exact source commit. Platform verification tiers are documented below.
 
 ## Features
 
@@ -57,8 +48,8 @@ support includes Linux, macOS, FreeBSD, NetBSD, OpenBSD, DragonFlyBSD, and Windo
   body, response, and packet storage
 - Live bounded HTTP/2 routing with eight-stream multiplexing, flow control,
   and caller-owned HPACK decoding/encoding storage
-- RFC 9220 extended CONNECT validation, push and 0-RTT policy helpers, and
-  WebTransport-over-HTTP/3 draft-16 wire primitives
+- Transport-neutral RFC 9220, push, early-data, and WebTransport draft-16
+  validation and wire helpers; these are not connected to the live HTTP/3 listener
 - Contiguous connection pools and per-connection storage selected at compile
   time
 - Completion-driven shutdown that drains accept, read, write, close, timer,
@@ -81,7 +72,7 @@ RFC 7692 groups 12 and 13, with no exclusions.
 - CMake 3.20 or newer
 - Ninja
 - patch
-- A supported target: Linux, macOS, FreeBSD, NetBSD, OpenBSD, DragonFlyBSD, or Windows
+- A build target: Linux, macOS, FreeBSD, NetBSD, OpenBSD, DragonFlyBSD, or Windows
 - zlib development headers and a static library
 - Recursive git submodules for the repository's h1spec development suite
 
@@ -151,6 +142,14 @@ zlib is not in the compiler's default search path, pass a prefix containing
 
 ```sh
 zig build -Dzlib-prefix=/path/to/zlib-prefix
+```
+
+Cross-target builds must pass a zlib prefix built for the selected target; the
+host `UWEBZOCKETS_ZLIB_PREFIX` is deliberately ignored for foreign targets:
+
+```sh
+zig build lib -Dtarget=x86_64-windows-gnu \
+  -Dzlib-prefix=/path/to/windows-zlib-prefix
 ```
 
 `zig build lib -Doptimize=ReleaseFast` installs the µWebZockets, BoringSSL,
@@ -292,6 +291,11 @@ including an empty remainder.
 64 parameterized patterns, and static routes win over parameter and wildcard
 matches.
 
+Integration code may attach borrowed `extra_param_*` or `extra_header_*` slices
+when adapting a different parser. Request lookup and iteration include the
+paired portion of those slices without allocating. The built-in parsers do not
+populate them or expand their fixed capacities dynamically.
+
 Malformed patterns, duplicate parameter names, and nonterminal wildcards fail
 registration instead of falling back to ambiguous matching.
 
@@ -394,7 +398,9 @@ selects it through ALPN. Each TCP connection embeds an eight-stream request,
 body, response, and async-token slab. SETTINGS, PING, GOAWAY, RST_STREAM,
 trailers, partial DATA, and connection/stream flow control are handled without
 dynamic allocation on the data path. RFC 8441 WebSocket tunneling is supported
-via extended CONNECT over HTTP/2 streams.
+via extended CONNECT. Because parsing and message storage are connection-owned,
+each HTTP/2 connection permits one active WebSocket tunnel; additional tunnels
+receive `503 Service Unavailable` without disturbing the active tunnel.
 
 ## HTTP/3
 
@@ -482,33 +488,54 @@ The defaults are deliberately finite:
 
 Oversized or ambiguous input is rejected rather than expanded dynamically.
 
-## Web Standard APIs (Fetch & Streams)
+## Fetch- and Streams-inspired helpers
 
-µWebZockets implements Web Standard API patterns ([WHATWG Fetch](https://fetch.spec.whatwg.org/) and [WHATWG Streams](https://streams.spec.whatwg.org/)) for optimal developer ergonomics without compromising zero-allocation guarantees:
+These small Zig helpers borrow familiar naming from the WHATWG Fetch and Streams
+APIs. They are not JavaScript objects and do not claim full WHATWG conformance.
+Except for the explicitly allocator-backed JSON helpers, they operate on
+borrowed slices and caller-owned buffers.
 
-### Fetch API Primitives
-- **Headers View**: `req.headers()` returns a `HeadersView` with `.get(name)` and `.has(name)`; `req.header_entries()` provides an iterator over all `[name, value]` pairs.
-- **Body Consumption**: `req.text()`, `req.bytes()`, and `req.json(T, allocator)` read payload content into typed models.
-- **Response Formatting**: `res.text(str)`, `res.json(val, allocator)`, `res.json_buf(val, buf)`, `res.html(str)`, `res.bytes(data)`, and `res.redirect(url, code)` format standard responses with automatic headers.
+### Request and response helpers
 
-### Streams API Primitives
-- **Readable Streams**: `uz.streams.ReadableByteStream` provides zero-allocation Bring-Your-Own-Buffer (BYOB) chunk reading.
-- **Writable Streams**: `res.writable_stream()` returns a `WritableByteStream` that writes chunks directly into chunked HTTP/1.1, HTTP/2, or HTTP/3 response frames.
-- **Piping**: `uz.streams.pipe_to(&readable, &writable, buffer)` pipes data from source to destination with zero intermediate heap allocations.
+- `req.headers()` returns a read-only `HeadersView`; `req.header_entries()`
+  iterates the bounded request fields.
+- `req.text()` and `req.bytes()` borrow the buffered body. `req.json(T,
+  allocator)` parses it with the supplied allocator.
+- `res.text`, `res.html`, `res.bytes`, `res.json`, `res.json_buf`, and
+  `res.redirect` provide common response formatting. Redirect destinations with
+  CR or LF are rejected.
+
+### Byte-stream helpers
+
+- `uz.streams.ReadableByteStream` reads into a caller-owned buffer.
+- `res.writable_stream()` adapts chunked HTTP/1.1, HTTP/2, or HTTP/3 output.
+- `uz.streams.pipe_to` transfers through a nonempty caller-owned buffer and
+  closes both adapters on a transfer failure.
 
 ## Standards and Platform Support
 
-### Standards Conformance
-- **WebSocket**: RFC 6455 and RFC 7692 per-message deflate.
-- **HTTP/2**: RFC 9113 and RFC 8441 WebSocket extended CONNECT tunneling.
-- **HTTP/3 & QUIC**: RFC 9114, RFC 9220 extended CONNECT validation, QUIC datagrams, and draft-ietf-webtrans-http3-16 wire semantics.
-- **HTTP Extensions**: RFC 10008 HTTP `QUERY` method.
-- **Web Standards**: WHATWG Fetch and WHATWG Streams abstractions.
+### Protocol coverage
 
-### Platform Support
-- **Tier 1 (Publish & CI)**: Linux (`x86_64`, `aarch64`) with `io_uring`/`epoll` and macOS (`x86_64`, `aarch64`) with `kqueue`.
-- **Tier 2 (Build Supported)**: Windows (`x86_64-windows-gnu` / MSVC) with `iocp`, FreeBSD, NetBSD, OpenBSD, and DragonFly BSD.
-- **Architecture**: Cross-platform event-driven I/O model (POSIX `epoll`/`kqueue`/`io_uring` and Windows `iocp` via `libxev`). Parameter, middleware, and async tokens prioritize zero-allocation fast paths with dynamic fallbacks for high-concurrency and arbitrary request structures. Guaranteed benchmarks are versioned relative to a same-runner baseline (`benchmarks/http_throughput_guarantee.md`).
+- WebSocket: RFC 6455 and RFC 7692 per-message deflate.
+- HTTP/2: bounded RFC 9113 routing and one RFC 8441 WebSocket tunnel per
+  connection.
+- HTTP/3: bounded RFC 9114 request/response routing. Extended CONNECT,
+  WebTransport, push, and application datagrams are helper-only and rejected by
+  the live listener.
+- HTTP extensions: RFC 10008 `QUERY` routing with syntactic content-type checks.
+
+### Platform support
+
+- Tier 1: Linux and macOS on `x86_64` and `aarch64`; these targets are built,
+  tested, and published by CI.
+- Tier 2: `x86_64-windows-gnu`, FreeBSD, NetBSD, OpenBSD, and DragonFlyBSD;
+  these share the build graph but are not in the publish/runtime CI matrix.
+  Windows currently has compile-time cross-target validation only.
+
+Request fields, route captures, middleware, async tokens, and transport pools
+have fixed capacities; there is no dynamic overflow fallback. Performance
+guarantees are relative same-runner comparisons defined by
+[`http-throughput-v1`](benchmarks/http_throughput_guarantee.md).
 
 See [CHANGELOG.md](CHANGELOG.md), [CODEBASE.md](CODEBASE.md), and
 [CI_CD_PIPELINE.md](CI_CD_PIPELINE.md) for release details, architecture, and

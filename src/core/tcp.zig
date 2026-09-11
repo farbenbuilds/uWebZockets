@@ -306,9 +306,10 @@ pub const TcpConnection = struct {
 
     fn close_http2_stream(context: *anyopaque, stream_id: u32, index: u16) void {
         const self: *TcpConnection = @ptrCast(@alignCast(context));
+        if (self.ws.initialized and self.ws.h2_stream_id == stream_id) self.ws.deinit();
         if (index >= self.h2_async_states.len) return;
         if (self.h2_async_contexts[index].stream_id != stream_id) return;
-        self.h2_async_states[index].cancel();
+        if (self.h2_async_states[index].is_pending()) self.h2_async_states[index].cancel();
         self.h2_async_contexts[index].stream_id = 0;
     }
 
@@ -317,11 +318,19 @@ pub const TcpConnection = struct {
         try self.write_data_parts(parts);
     }
 
-    fn ws_http2_data(context: *anyopaque, stream_id: u32, data: []u8) void {
+    fn ws_http2_data(
+        context: *anyopaque,
+        stream_id: u32,
+        data: []u8,
+        end_stream: bool,
+    ) bool {
         const self: *TcpConnection = @ptrCast(@alignCast(context));
-        if (self.ws.h2_stream_id == stream_id) {
-            self.ws.on_data(data);
+        if (!self.ws.initialized or self.ws.h2_stream_id != stream_id) return false;
+        self.ws.on_data(data);
+        if (end_stream and self.ws.initialized and self.ws.h2_stream_id == stream_id) {
+            self.ws.terminate();
         }
+        return true;
     }
 
     fn dispatch_http2_request(
@@ -370,6 +379,10 @@ pub const TcpConnection = struct {
             }
             if (matched_route.ws_behavior) |ws_behavior| {
                 if (std.mem.eql(u8, request.method, "CONNECT") and std.mem.eql(u8, request.protocol, "websocket")) {
+                    if (self.ws.initialized) {
+                        try response.end("503 Service Unavailable", "WebSocket tunnel capacity reached");
+                        return;
+                    }
                     if (!radix.valid_ws_limits(ws_behavior, self.ws_message_buffer.len)) {
                         try response.end("500 Internal Server Error", "Invalid WebSocket limits");
                         return;
@@ -397,6 +410,7 @@ pub const TcpConnection = struct {
                         return;
                     };
                     self.ws.initialized = true;
+                    errdefer self.ws.deinit();
 
                     try response.begin_chunked("200 OK", "");
                     if (self.ws.behavior.open) |callback| callback(&self.ws);
@@ -1132,7 +1146,7 @@ fn on_write_complete(
 
     if (conn.was_backpressured and conn.write_len < conn.write_queue.len / 2) {
         conn.was_backpressured = false;
-        if (conn.protocol_state == .websocket) conn.ws.notify_drain();
+        if (conn.ws.initialized) conn.ws.notify_drain();
     }
 
     if (conn.write_len == 0 and conn.close_when_drained) {
@@ -1183,7 +1197,7 @@ pub fn close_connection(conn: *TcpConnection) void {
     conn.async_response_state.cancel();
     for (&conn.h2_async_states) |*state| state.cancel();
 
-    if (conn.protocol_state == .websocket) conn.ws.deinit();
+    if (conn.ws.initialized) conn.ws.deinit();
     conn.deinit_tls();
 
     if (conn.read_active) {
@@ -1207,6 +1221,13 @@ pub fn close_connection(conn: *TcpConnection) void {
             conn,
             on_write_cancel_complete,
         );
+    }
+
+    if (builtin.os.tag == .windows) {
+        close_socket(conn.socket.fd);
+        conn.close_complete = true;
+        release_closed_connection(conn);
+        return;
     }
 
     conn.socket.close(
@@ -1347,6 +1368,11 @@ pub fn close_server(server: *TcpServer, loop: *Loop) void {
             null,
             on_accept_cancel_complete,
         );
+    }
+    if (builtin.os.tag == .windows) {
+        close_socket(server.listener.fd);
+        server.close_complete = true;
+        return;
     }
     server.listener.close(
         loop.get_xev_loop(),

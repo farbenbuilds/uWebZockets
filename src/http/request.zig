@@ -39,12 +39,10 @@ pub const Request = struct {
         for (self.header_names[0..@min(self.header_count, max_headers)], 0..) |h_name, i| {
             if (std.ascii.eqlIgnoreCase(h_name, name)) return self.header_values[i];
         }
-        if (self.extra_header_names) |names| {
-            if (self.extra_header_values) |values| {
-                for (names, 0..) |h_name, i| {
-                    if (i < values.len and std.ascii.eqlIgnoreCase(h_name, name)) return values[i];
-                }
-            }
+        const names = self.extra_header_names orelse return null;
+        const values = self.extra_header_values orelse return null;
+        for (names[0..@min(names.len, values.len)], 0..) |h_name, i| {
+            if (std.ascii.eqlIgnoreCase(h_name, name)) return values[i];
         }
         return null;
     }
@@ -54,11 +52,16 @@ pub const Request = struct {
         return self.get_header(name) != null;
     }
 
-    /// Returns a Web-Standard Headers view over the request headers.
+    /// Returns a read-only view over the request headers.
     pub fn headers(self: *const Request) fetch.HeadersView {
-        return fetch.HeadersView.init(
-            self.header_names[0..self.header_count],
-            self.header_values[0..self.header_count],
+        const count = @min(self.header_count, max_headers);
+        const extra_names = self.extra_header_names orelse &.{};
+        const extra_values = self.extra_header_values orelse &.{};
+        return fetch.HeadersView.init_with_extra(
+            self.header_names[0..count],
+            self.header_values[0..count],
+            extra_names,
+            extra_values,
         );
     }
 
@@ -91,10 +94,20 @@ pub const Request = struct {
     pub fn get_unique_header(self: *const Request, name: []const u8) ?[]const u8 {
         var value: ?[]const u8 = null;
 
-        for (self.header_names[0..self.header_count], self.header_values[0..self.header_count]) |header_name, header_value| {
+        const count = @min(self.header_count, max_headers);
+        for (self.header_names[0..count], self.header_values[0..count]) |header_name, header_value| {
             if (!std.ascii.eqlIgnoreCase(header_name, name)) continue;
             if (value != null) return null;
             value = header_value;
+        }
+        if (self.extra_header_names) |names| {
+            if (self.extra_header_values) |values| {
+                for (names[0..@min(names.len, values.len)], 0..) |header_name, index| {
+                    if (!std.ascii.eqlIgnoreCase(header_name, name)) continue;
+                    if (value != null) return null;
+                    value = values[index];
+                }
+            }
         }
         return value;
     }
@@ -102,21 +115,32 @@ pub const Request = struct {
     /// Counts fields matching `name` case-insensitively.
     pub fn count_headers(self: *const Request, name: []const u8) usize {
         var count: usize = 0;
-        for (self.header_names[0..self.header_count]) |header_name| {
+        for (self.header_names[0..@min(self.header_count, max_headers)]) |header_name| {
             if (std.ascii.eqlIgnoreCase(header_name, name)) count += 1;
+        }
+        if (self.extra_header_names) |names| {
+            if (self.extra_header_values) |values| {
+                for (names[0..@min(names.len, values.len)]) |header_name| {
+                    if (std.ascii.eqlIgnoreCase(header_name, name)) count += 1;
+                }
+            }
         }
         return count;
     }
 
     /// Reports whether a comma-delimited field contains `token`.
     pub fn header_has_token(self: *const Request, name: []const u8, token: []const u8) bool {
-        for (self.header_names[0..self.header_count], self.header_values[0..self.header_count]) |header_name, value| {
+        const count = @min(self.header_count, max_headers);
+        for (self.header_names[0..count], self.header_values[0..count]) |header_name, value| {
             if (!std.ascii.eqlIgnoreCase(header_name, name)) continue;
-
-            var tokens = std.mem.splitScalar(u8, value, ',');
-            while (tokens.next()) |candidate| {
-                const trimmed = std.mem.trim(u8, candidate, " \t");
-                if (std.ascii.eqlIgnoreCase(trimmed, token)) return true;
+            if (value_has_token(value, token)) return true;
+        }
+        if (self.extra_header_names) |names| {
+            if (self.extra_header_values) |values| {
+                for (names[0..@min(names.len, values.len)], 0..) |header_name, index| {
+                    if (!std.ascii.eqlIgnoreCase(header_name, name)) continue;
+                    if (value_has_token(values[index], token)) return true;
+                }
             }
         }
         return false;
@@ -137,12 +161,10 @@ pub const Request = struct {
         ) |param_name, value| {
             if (std.mem.eql(u8, param_name, name)) return value;
         }
-        if (self.extra_param_names) |names| {
-            if (self.extra_param_values) |values| {
-                for (names, 0..) |param_name, i| {
-                    if (i < values.len and std.mem.eql(u8, param_name, name)) return values[i];
-                }
-            }
+        const names = self.extra_param_names orelse return null;
+        const values = self.extra_param_values orelse return null;
+        for (names[0..@min(names.len, values.len)], 0..) |param_name, index| {
+            if (std.mem.eql(u8, param_name, name)) return values[index];
         }
         return null;
     }
@@ -162,6 +184,15 @@ pub const Request = struct {
         self.route_param_count += 1;
     }
 };
+
+fn value_has_token(value: []const u8, token: []const u8) bool {
+    var tokens = std.mem.splitScalar(u8, value, ',');
+    while (tokens.next()) |candidate| {
+        const trimmed = std.mem.trim(u8, candidate, " \t");
+        if (std.ascii.eqlIgnoreCase(trimmed, token)) return true;
+    }
+    return false;
+}
 
 fn valid_media_type(value: []const u8) bool {
     const trimmed = std.mem.trim(u8, value, " \t");

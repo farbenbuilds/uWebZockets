@@ -150,7 +150,7 @@ pub const HeaderSet = struct {
             return true;
         }
         if (std.mem.eql(u8, name, ":protocol")) {
-            if (self.protocol != null or value.len == 0) return false;
+            if (self.protocol != null or !validation.valid_method(value)) return false;
             self.protocol = value;
             return true;
         }
@@ -343,41 +343,8 @@ pub const QuicStream = struct {
 
     /// Drains readable request bytes and dispatches a complete request.
     pub fn on_read(self: *QuicStream) void {
-        if (self.dispatched) {
+        if (self.header_set == null or self.dispatched) {
             _ = c.lsquic_stream_close(self.stream);
-            return;
-        }
-
-        if (self.header_set == null) {
-            const webtransport = @import("webtransport.zig");
-            const destination = self.body_storage[self.body_length..];
-            if (destination.len == 0) {
-                self.close_now();
-                return;
-            }
-            const read_length = c.lsquic_stream_read(self.stream, destination.ptr, destination.len);
-            if (read_length <= 0) {
-                if (read_length < 0 and std.c.errno(read_length) == .AGAIN) return;
-                self.close_now();
-                return;
-            }
-            self.body_length += @intCast(read_length);
-            const input = self.body_storage[0..self.body_length];
-            if (webtransport.decode_unidirectional_header(input)) |uni| {
-                _ = uni;
-                return;
-            } else |err| switch (err) {
-                error.NeedMoreData => return,
-                else => {},
-            }
-            if (webtransport.decode_bidirectional_header(input)) |bidi| {
-                _ = bidi;
-                return;
-            } else |err| switch (err) {
-                error.NeedMoreData => return,
-                else => {},
-            }
-            self.close_now();
             return;
         }
 
@@ -479,79 +446,9 @@ pub const QuicStream = struct {
         self.suppress_body = method == .head;
         var response = Response{ .target = .{ .http3 = self.response_target() } };
         if (std.mem.eql(u8, header_set.request.method, "CONNECT")) {
-            if (header_set.protocol) |protocol| {
-                if (std.mem.eql(u8, protocol, "webtransport") or std.mem.eql(u8, protocol, "webtransport-h3")) {
-                    const webtransport = @import("webtransport.zig");
-                    const origin = header_set.request.get_header("origin");
-                    webtransport.validate_connect(.{
-                        .method = header_set.request.method,
-                        .protocol = "webtransport-h3",
-                        .scheme = header_set.scheme,
-                        .authority = header_set.authority,
-                        .path = header_set.path,
-                        .origin = origin,
-                        .client_settings_received = true,
-                        .client_requirements_valid = true,
-                        .arrived_before_confirmation = false,
-                        .browser_client = origin != null,
-                        .origin_allowed = true,
-                    }) catch |err| {
-                        const status = webtransport.connect_error_status(err);
-                        switch (status) {
-                            403 => response.end("403 Forbidden", "Forbidden Origin") catch self.close_now(),
-                            405 => response.end("405 Method Not Allowed", "Invalid Protocol") catch self.close_now(),
-                            425 => response.end("425 Too Early", "Too Early") catch self.close_now(),
-                            503 => response.end("503 Service Unavailable", "Settings Pending") catch self.close_now(),
-                            else => response.end("400 Bad Request", "Invalid WebTransport CONNECT") catch self.close_now(),
-                        }
-                        return;
-                    };
-                } else if (std.mem.eql(u8, protocol, "websocket")) {
-                    var ws_version: ?[]const u8 = null;
-                    var ws_version_count: usize = 0;
-                    var has_connection = false;
-                    var has_upgrade = false;
-
-                    for (header_set.request.header_names[0..header_set.request.header_count], 0..) |name, i| {
-                        if (std.mem.eql(u8, name, "sec-websocket-version")) {
-                            ws_version = header_set.request.header_values[i];
-                            ws_version_count += 1;
-                        } else if (std.mem.eql(u8, name, "connection")) {
-                            has_connection = true;
-                        } else if (std.mem.eql(u8, name, "upgrade")) {
-                            has_upgrade = true;
-                        }
-                    }
-
-                    const extensions = @import("http3_extensions.zig");
-                    extensions.validate_websocket_connect(.{
-                        .method = header_set.request.method,
-                        .protocol = protocol,
-                        .scheme = header_set.scheme,
-                        .authority = header_set.authority,
-                        .path = header_set.path,
-                        .websocket_version = ws_version,
-                        .websocket_version_count = ws_version_count,
-                        .has_connection_header = has_connection,
-                        .has_upgrade_header = has_upgrade,
-                    }) catch |err| {
-                        const status = extensions.websocket_error_status(err);
-                        switch (status) {
-                            501 => response.end("501 Not Implemented", "Protocol not supported") catch self.close_now(),
-                            426 => response.end("426 Upgrade Required", "Upgrade Required") catch self.close_now(),
-                            else => response.end("400 Bad Request", "Invalid CONNECT") catch self.close_now(),
-                        }
-                        return;
-                    };
-                } else {
-                    response.end("501 Not Implemented", "Unsupported CONNECT protocol") catch self.close_now();
-                    return;
-                }
-            } else {
-                response.end("501 Not Implemented", "HTTP/3 CONNECT is not supported") catch
-                    self.close_now();
-                return;
-            }
+            response.end("501 Not Implemented", "HTTP/3 CONNECT is not supported") catch
+                self.close_now();
+            return;
         }
         if (!header_set.request.valid_query_content_type()) {
             response.end("400 Bad Request", "QUERY requires a valid Content-Type") catch
@@ -585,10 +482,6 @@ pub const QuicStream = struct {
         }
         if (matched_route.ws_behavior != null and method == .get) {
             response.end("426 Upgrade Required", "WebSocket over HTTP/3 is not supported") catch self.close_now();
-            return;
-        }
-        if (matched_route.ws_behavior != null and std.mem.eql(u8, header_set.request.method, "CONNECT")) {
-            response.end("200 OK", "") catch self.close_now();
             return;
         }
         self.send_method_response(&response, matched_route.allowed_methods, "405 Method Not Allowed", "Method Not Allowed");

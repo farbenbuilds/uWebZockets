@@ -1,11 +1,11 @@
-//! WHATWG Streams Standard (https://streams.spec.whatwg.org/) primitives.
+//! Streams-inspired byte primitives.
 //!
-//! Provides zero-allocation ReadableByteStream and WritableByteStream abstractions
+//! Provides zero-allocation readable and writable byte-stream abstractions
 //! with Bring-Your-Own-Buffer (BYOB) reading, chunk writing, and backpressure control.
 
 const std = @import("std");
 
-/// Stream controller state reflecting stream lifecycle.
+/// Stream state reflecting the local adapter lifecycle.
 pub const StreamState = enum(u8) {
     readable,
     closed,
@@ -14,7 +14,7 @@ pub const StreamState = enum(u8) {
 
 /// Zero-allocation readable byte stream with BYOB ("Bring Your Own Buffer") reader.
 ///
-/// Implements the pull-based byte-oriented reader pattern from WHATWG Streams.
+/// Implements a pull-based byte-oriented reader pattern.
 pub const ReadableByteStream = struct {
     context: *anyopaque,
     read_fn: *const fn (context: *anyopaque, dest: []u8) anyerror!usize,
@@ -32,6 +32,10 @@ pub const ReadableByteStream = struct {
             self.state = .errored;
             return err;
         };
+        if (bytes_read > dest.len) {
+            self.state = .errored;
+            return error.InvalidReadCount;
+        }
         if (bytes_read == 0) {
             self.state = .closed;
         }
@@ -40,7 +44,7 @@ pub const ReadableByteStream = struct {
 
     /// Closes the readable stream and invalidates further reads.
     pub fn cancel(self: *ReadableByteStream) void {
-        if (self.state != .readable) return;
+        if (self.state == .closed) return;
         self.state = .closed;
         if (self.close_fn) |close_cb| close_cb(self.context);
     }
@@ -67,7 +71,7 @@ pub const SliceReaderContext = struct {
     }
 };
 
-/// Zero-allocation writable byte stream adhering to WHATWG Streams concepts.
+/// Zero-allocation writable byte stream.
 ///
 /// Provides bounded chunk writes, end-of-stream signaling, and backpressure awareness.
 pub const WritableByteStream = struct {
@@ -90,7 +94,7 @@ pub const WritableByteStream = struct {
 
     /// Finalizes the stream and closes the underlying transport side.
     pub fn close(self: *WritableByteStream) !void {
-        if (self.state != .readable) return;
+        if (self.state == .closed) return;
         self.state = .closed;
         try self.close_fn(self.context);
     }
@@ -110,6 +114,12 @@ pub fn pipe_to(
     writer: *WritableByteStream,
     buffer: []u8,
 ) !usize {
+    if (buffer.len == 0) return error.EmptyTransferBuffer;
+    errdefer {
+        reader.cancel();
+        writer.close() catch {};
+    }
+
     var total_bytes: usize = 0;
     while (!reader.is_closed()) {
         const read_count = try reader.read(buffer);

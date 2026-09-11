@@ -3,7 +3,7 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
-## [Unreleased]
+## [1.0.3] - 2026-09-12
 
 ### Added
 
@@ -14,20 +14,16 @@ uses Semantic Versioning.
   `mswsock` extension).
 - Added Windows ABI compatibility for `uz_lsxpack_header` in C shims, accounting
   for 4-byte enum bitfield alignment.
-- Added WHATWG Fetch-compatible ergonomics to `Request` (`headers` view,
+- Added Fetch-inspired ergonomics to `Request` (`headers` view,
   `text()`, `bytes()`, `json()`, `url()`) and `Response` (`text()`, `html()`,
   `bytes()`, `json()`, `json_buf()`, `redirect()`, `writable_stream()`).
-- Added WHATWG Streams implementation (`ReadableByteStream` with BYOB and chunk
+- Added Streams-inspired adapters (`ReadableByteStream` with BYOB and chunk
   readers, `WritableByteStream`, and `pipe_to`).
+- Added optional borrowed fallback parameter and header slices for external
+  request adapters while retaining fixed-capacity built-in parsers.
 - Added RFC 8441 extended CONNECT support for WebSocket upgrade over HTTP/2
   streams (`SETTINGS_ENABLE_CONNECT_PROTOCOL`), mapping frames across stream DATA
   payloads.
-- Added live WebTransport stream prefix dispatch for unidirectional (`0x54`)
-  and bidirectional (`0x41`) streams in `src/quic/stream.zig`.
-- Added dynamic fallback parameter and header slices (`extra_param_names`,
-  `extra_param_values`, `extra_header_names`, `extra_header_values`) in
-  `Request`, preserving zero-allocation fast paths while accepting arbitrary
-  parameter counts.
 
 ### Fixed
 
@@ -35,6 +31,19 @@ uses Semantic Versioning.
   `WSAStartup`/`WSACleanup`, `SOCKET` abstraction, `close_socket()`, and `send()`.
 - Guarded host `zlib_prefix` in `build.zig` to only apply to native targets,
   preventing host ELF static archives from interfering with Windows cross-compilation.
+- Rejected CR/LF in redirect destinations before formatting the `Location`
+  field.
+- Bound header-view iteration and byte-stream callback counts to their borrowed
+  slices, and close both stream adapters after transfer failures.
+- Bound HTTP/2 WebSocket state to one active tunnel per connection, removed
+  stale pub/sub state on every teardown path, and rejected DATA for unaccepted
+  extended CONNECT streams.
+- Deferred terminal HTTP/2 DATA stream release until event processing finishes,
+  preventing one stream from closing its multiplexed connection.
+- Mapped Winsock send errors to the C errno values expected by lsquic and used
+  `closesocket` for Windows transport sockets.
+- Kept HTTP/3 extended CONNECT and WebTransport helpers detached from the live
+  listener until backend negotiation and application policy can be enforced.
 
 ## [1.0.1] - 2026-09-01
 

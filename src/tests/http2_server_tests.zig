@@ -35,7 +35,7 @@ const TestState = struct {
     fn stream_closed(context: *anyopaque, stream_id: u32, _: u16) void {
         const self: *TestState = @ptrCast(@alignCast(context));
         if (self.async_stream_id != stream_id) return;
-        self.async_state.cancel();
+        if (self.async_state.is_pending()) self.async_state.cancel();
         self.async_stream_id = 0;
     }
 
@@ -1336,6 +1336,44 @@ test "http2 server: extended CONNECT with :protocol websocket dispatches to hand
     try std.testing.expectEqualStrings("websocket", session.requests[0].protocol);
     try std.testing.expectEqualStrings("/ws", session.requests[0].path);
     try std.testing.expectEqualStrings("CONNECT", session.requests[0].method);
+}
+
+test "http2 server: extended CONNECT data requires an accepted tunnel" {
+    var session: TestSession = .{};
+    try session.reset();
+    var state = RefusalState{};
+
+    const connect_ws_headers = [_]u8{
+        0x02, 0x07, 'C',  'O',  'N', 'N',  'E',  'C', 'T',
+        0x87, 0x01, 0x0b, 'e',  'x', 'a',  'm',  'p', 'l',
+        'e',  '.',  'c',  'o',  'm', 0x04, 0x03, '/', 'w',
+        's',  0x00, 0x09, ':',  'p', 'r',  'o',  't', 'o',
+        'c',  'o',  'l',  0x09, 'w', 'e',  'b',  's', 'o',
+        'c',  'k',  'e',  't',
+    };
+
+    var input: [128]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x4, 1, &connect_ws_headers);
+    try session.receive(input[0..input_length], state.callbacks());
+
+    var data_frame: [16]u8 = undefined;
+    var data_length: usize = 0;
+    try append_frame(&data_frame, &data_length, .data, 0, 1, "frame");
+    try session.receive(data_frame[0..data_length], state.callbacks());
+
+    var output_offset: usize = 0;
+    var reset_seen = false;
+    while (output_offset < state.output_length) {
+        const header = try http2.FrameHeader.parse(state.output[output_offset..][0..9]);
+        if (header.frame_type == @intFromEnum(http2.FrameType.rst_stream)) {
+            reset_seen = true;
+        }
+        output_offset += 9 + header.payload_length;
+    }
+    try std.testing.expect(reset_seen);
 }
 
 test "tls: ALPN prefers h2 and falls back to http 1.1" {

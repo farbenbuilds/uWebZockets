@@ -2,16 +2,15 @@
 
 ## Supported versions
 
-This source tree is preparing `1.0.0`; no `v1.0.0` release tag has been
-published yet. Until publication, security fixes apply to the current
-development revision. After publication, fixes apply to the latest `1.0.x`
-patch release. Older snapshots and unsupported raw transport internals do not
-receive backports.
+Security fixes apply to the current development revision and the latest
+`1.0.x` patch release. Older snapshots and unsupported raw transport internals
+do not receive backports.
 
 | Version | Supported |
 | --- | --- |
 | Current development revision | Yes |
-| Tagged releases | None published yet |
+| Latest `1.0.x` release | Yes |
+| Older tagged releases | No |
 | Earlier snapshots | No |
 
 ## Reporting a vulnerability
@@ -44,10 +43,10 @@ connection at eight streams. Raw QUIC engine, stream, packet, and QPACK
 callbacks under `src/quic` are internal and are not a supported consumer
 interface.
 
-`http3_extensions` and `webtransport` validate untrusted protocol metadata in
-caller-owned bounds. WebTransport implements draft-ietf-webtrans-http3-16 wire
-semantics, with live stream multiplexing for unidirectional and bidirectional
-streams in `src/quic/stream.zig`. RFC 10008 is the separate HTTP `QUERY` method
+`http3_extensions` and `webtransport` provide bounded validators and wire
+helpers. They are not connected to the live lsquic listener, which rejects
+extended CONNECT; they do not establish WebTransport, server push, or
+application-datagram support. RFC 10008 is the separate HTTP `QUERY` method
 supported by the router. Live transports reject QUERY requests without a
 syntactically valid `Content-Type` before the route handler runs.
 
@@ -108,8 +107,8 @@ still perform workload-specific QUIC load testing.
 
 Cross-platform support covers Linux, macOS, Windows (`x86_64-windows-gnu` /
 MSVC ABI), FreeBSD, NetBSD, OpenBSD, and DragonFlyBSD. The configured publish
-and CI matrix covers Linux and macOS. Windows and other BSD targets are supported
-by the unified build graph.
+and CI matrix covers Linux and macOS. Windows and the additional BSD targets
+share the build graph but do not receive runtime CI coverage.
 
 ## Disclosure
 

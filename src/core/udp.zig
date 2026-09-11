@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const c = @import("c");
 const xev = @import("xev");
 const core_loop = @import("loop.zig");
@@ -205,6 +206,11 @@ pub fn quic_transport(comptime Engine: type) type {
                 );
             }
             self.close_started = true;
+            if (builtin.os.tag == .windows) {
+                tcp.close_socket(self.socket.fd);
+                self.close_complete = true;
+                return;
+            }
             self.socket.close(
                 loop,
                 &self.close_completion,

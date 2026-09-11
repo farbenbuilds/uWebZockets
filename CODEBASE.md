@@ -2,12 +2,12 @@
 
 ## Scope
 
-µWebZockets 1.0.0 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
+µWebZockets 1.0.3 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
 server library with bounded HPACK protocol storage. It combines an
 event-driven cross-platform transport (POSIX and Windows IOCP), fixed-capacity
 protocol state, a data-oriented router, and C libraries for TLS, compression, and QUIC.
 
-The 1.0.0 design makes bounded resource use explicit. Startup allocates one
+The current design makes bounded resource use explicit. Startup allocates one
 contiguous connection slab, one WebSocket message region, and one output region.
 Network callbacks then reuse those regions without general-purpose allocation.
 WebSocket compression and HTTP/3 allocate their fixed slabs when the feature is
@@ -179,7 +179,9 @@ reused.
 routes decoded requests through the same middleware and sync/async handlers as
 HTTP/1.1. Plaintext sockets recognize the prior-knowledge preface; TLS prefers
 ALPN `h2` and falls back to `http/1.1`. Peer resets invalidate retained async
-tokens. RFC 8441 WebSocket tunneling is supported via extended CONNECT.
+tokens. RFC 8441 WebSocket tunneling is supported via extended CONNECT. The
+parser and message buffers are connection-owned, so one HTTP/2 connection may
+carry one active WebSocket tunnel alongside ordinary request streams.
 
 ## TLS, UDP, and HTTP/3
 

@@ -293,6 +293,9 @@ pub const Response = struct {
 
     /// Sends a redirection response (Web Standards Response.redirect).
     pub fn redirect(self: *Response, location: []const u8, code: ?u16) !void {
+        for (location) |byte| {
+            if (byte == '\r' or byte == '\n') return error.InvalidHeaders;
+        }
         const status_str = switch (code orelse 302) {
             301 => "301 Moved Permanently",
             302 => "302 Found",

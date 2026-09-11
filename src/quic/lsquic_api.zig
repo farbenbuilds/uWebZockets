@@ -9,7 +9,7 @@ else
 
 pub fn is_valid_socket(fd: std.posix.socket_t) bool {
     return if (builtin.os.tag == .windows)
-        @intFromPtr(fd) != 0 and @intFromPtr(fd) != std.math.maxInt(usize)
+        @intFromPtr(fd) != std.math.maxInt(usize)
     else
         fd >= 0;
 }
@@ -155,7 +155,10 @@ pub fn send_packets(
                 null,
                 null,
             );
-            if (rc != 0) break;
+            if (rc != 0) {
+                set_errno(winsock_errno(c.WSAGetLastError()));
+                break;
+            }
             if (bytes_sent != total_size) {
                 set_errno(.IO);
                 break;
@@ -178,6 +181,19 @@ pub fn send_packets(
 
     if (sent == 0) return -1;
     return @intCast(sent);
+}
+
+fn winsock_errno(wsa_error: c_int) std.c.E {
+    if (builtin.os.tag != .windows) unreachable;
+    return switch (wsa_error) {
+        c.WSAEWOULDBLOCK, c.WSAENOBUFS => .AGAIN,
+        c.WSAEINTR => .INTR,
+        c.WSAEMSGSIZE => .MSGSIZE,
+        c.WSAEAFNOSUPPORT => .AFNOSUPPORT,
+        c.WSAEINVAL => .INVAL,
+        c.WSAEBADF, c.WSAENOTSOCK => .BADF,
+        else => .IO,
+    };
 }
 
 fn fail_with_errno(err: std.c.E) c_int {

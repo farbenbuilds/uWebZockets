@@ -137,8 +137,9 @@ matrix runs natively on these GitHub-hosted architectures:
 - x86_64-macos
 - aarch64-macos
 
-Windows is not supported in `1.0.0` and is intentionally absent from the
-matrix.
+Windows is a Tier 2 compile-supported target and is intentionally absent from
+the publish and runtime CI matrix. Cross-target builds require a target zlib
+prefix passed with `-Dzlib-prefix`.
 
 The default build also compiles the bounded `http3_server` example. The HTTP/3
 gate drives it independently with pinned curl/ngtcp2/nghttp3 and aioquic,

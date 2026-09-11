@@ -46,11 +46,13 @@ Ninja, patch, Go, Python, Perl, and zlib development files.
 - Put every ordinary Zig unit test under `src/tests/` and import it from
   `src/tests/main.zig`. Production modules must not import the centralized test
   root. The `src/tests/fuzz_main.zig` Smith corpus runs once in the ordinary
+  suite and for the requested iteration count under `zig build fuzz`.
 - Support cross-platform targets cleanly across Linux, macOS, Windows
   (`x86_64-windows-gnu` / MSVC ABI), FreeBSD, NetBSD, OpenBSD, and
   DragonFlyBSD. Ensure platform-specific I/O branches remain isolated to
   transport abstractions (POSIX and Windows IOCP via `libxev`).
-  upstream project rather than rewriting vendored files.
+- Submit dependency fixes to the upstream project rather than rewriting
+  vendored files without an auditable patch.
 
 ## Local checks
 

@@ -152,7 +152,6 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
             self.settings.es_max_delayed_0rtt_packets = 0;
             self.settings.es_rw_once = 1;
             self.settings.es_proc_time_thresh = 10_000;
-            self.settings.es_datagrams = 1;
 
             var settings_error: [256]u8 = undefined;
             if (c.lsquic_engine_check_settings(
@@ -170,7 +169,6 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
             self.stream_interface.on_write = on_stream_write;
             self.stream_interface.on_close = on_stream_close;
             self.stream_interface.on_hset_in = on_header_set_available;
-            self.stream_interface.on_datagram = on_datagram;
 
             self.header_interface = std.mem.zeroes(c.lsquic_hset_if);
             self.header_interface.hsi_create_header_set = create_header_set;
@@ -364,10 +362,6 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
             };
             const header_set: *HeaderSet = @ptrCast(@alignCast(raw_header_set));
             quic_stream.attach_headers(header_set);
-        }
-
-        fn on_datagram(_: ?*c.lsquic_conn, _: ?*const anyopaque, _: usize) callconv(.c) void {
-            // Drop unhandled datagrams.
         }
 
         fn create_header_set(
