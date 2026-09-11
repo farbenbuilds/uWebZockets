@@ -1,12 +1,6 @@
 name: Windows Cross-Build
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
   workflow_call:
 
@@ -43,6 +37,7 @@ jobs:
       - name: Install MinGW zlib
         shell: pwsh
         run: |
+          git -C $env:VCPKG_INSTALLATION_ROOT fetch --depth=1 origin 2026.07.29
           Push-Location scripts\windows
           try {
             & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install `

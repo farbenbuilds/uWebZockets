@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
   "name": "uwebzockets-windows-ci",
   "version-string": "1",
-  "builtin-baseline": "52d80838fb40c755b1615fbc9c7b994a33742a22",
+  "builtin-baseline": "9e593bb18ea69cc5095e012465dcd675a822ed0d",
   "dependencies": [
     "zlib"
   ]

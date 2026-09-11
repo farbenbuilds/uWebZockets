@@ -548,9 +548,9 @@ borrowed slices and caller-owned buffers.
   tested, and published by CI.
 - Tier 2: `x86_64-windows-gnu`, FreeBSD, NetBSD, OpenBSD, and DragonFlyBSD.
   Windows libraries and the complete test/ABI graph are built and executed on
-  a native Windows runner for every pull request and `main` push; tagged
-  releases publish the resulting archive. The BSD targets share the build
-  graph without dedicated CI.
+  a native Windows runner for tagged releases, with a manual pre-release
+  trigger available; the resulting archive is published. The BSD targets share
+  the build graph without dedicated CI.
 
 Request fields, route captures, middleware, async tokens, and transport pools
 have fixed capacities; there is no dynamic overflow fallback. Performance
