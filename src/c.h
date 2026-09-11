@@ -1,8 +1,14 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <sys/types.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <sys/socket.h>
 #include <netinet/in.h>
+#endif
 #include <openssl/base.h>
 #undef OPENSSL_GNUC_CLANG_PRAGMA
 #define OPENSSL_GNUC_CLANG_PRAGMA(arg)
@@ -27,7 +33,15 @@ struct uz_lsxpack_header {
     uint8_t hpack_index;
     uint8_t qpack_index;
     uint8_t app_index;
+#ifdef _WIN32
+    uint8_t _pad1[3];
+    uint32_t flags;
+    uint8_t indexed_type;
+    uint8_t dec_overhead;
+    uint8_t _pad2[6];
+#else
     uint8_t flags;
     uint8_t indexed_type;
     uint8_t dec_overhead;
+#endif
 };

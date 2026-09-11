@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const xev = @import("xev");
 const c = @import("c");
 const Loop = @import("loop.zig").Loop;
@@ -1408,6 +1409,18 @@ fn on_server_close_complete(
     return .disarm;
 }
 
+pub fn close_socket(fd: anytype) void {
+    if (builtin.os.tag == .windows) {
+        const s: c.SOCKET = if (@typeInfo(@TypeOf(fd)) == .pointer or @TypeOf(fd) == ?*anyopaque or @TypeOf(fd) == *anyopaque)
+            @intCast(@intFromPtr(fd))
+        else
+            @intCast(fd);
+        _ = c.closesocket(s);
+    } else {
+        _ = std.posix.system.close(fd);
+    }
+}
+
 fn close_unregistered_socket(socket: xev.TCP) void {
-    _ = std.posix.system.close(socket.fd);
+    close_socket(socket.fd);
 }

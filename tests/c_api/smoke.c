@@ -1,10 +1,21 @@
 #include "uWebZockets.h"
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <process.h>
+#define close_socket(s) closesocket(s)
+#define get_pid() ((unsigned int)_getpid())
+#else
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#define close_socket(s) close(s)
+#define get_pid() ((unsigned int)getpid())
+#endif
 
 #include <string.h>
 
@@ -71,7 +82,14 @@ int main(void)
     uwz_app *app = NULL;
     uwz_error result;
     uint16_t port = 0;
+#ifdef _WIN32
+    SOCKET client = INVALID_SOCKET;
+    WSADATA wsa_data;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0)
+        return 100;
+#else
     int client = -1;
+#endif
     size_t sent = 0;
     unsigned int attempt;
 
@@ -107,7 +125,7 @@ int main(void)
 
     for (attempt = 0; attempt < 512; attempt++) {
         port = (uint16_t) (20000U +
-            (((unsigned int) getpid() + attempt) % 30000U));
+            (((unsigned int) get_pid() + attempt) % 30000U));
         result = uwz_app_listen(app, "127.0.0.1", 9, port);
         if (result == UWZ_OK)
             break;
@@ -118,8 +136,13 @@ int main(void)
         return 8;
 
     client = socket(AF_INET, SOCK_STREAM, 0);
+#ifdef _WIN32
+    if (client == INVALID_SOCKET)
+        return 9;
+#else
     if (client == -1)
         return 9;
+#endif
     memset(&address, 0, sizeof(address));
     address.sin_family = AF_INET;
     address.sin_port = htons(port);
@@ -128,6 +151,18 @@ int main(void)
         return 10;
 
     while (sent < sizeof(request) - 1) {
+#ifdef _WIN32
+        int written = send(
+            client,
+            request + sent,
+            (int) (sizeof(request) - 1 - sent),
+            0
+        );
+        if (written < 0 && WSAGetLastError() == WSAEINTR)
+            continue;
+        if (written <= 0)
+            return 11;
+#else
         ssize_t written = write(
             client,
             request + sent,
@@ -137,6 +172,7 @@ int main(void)
             continue;
         if (written <= 0)
             return 11;
+#endif
         sent += (size_t) written;
     }
 
@@ -148,8 +184,11 @@ int main(void)
         return 14;
     if (context.destroy_result != UWZ_ERROR_INVALID_STATE || app == NULL)
         return 15;
-    if (close(client) != 0)
+    if (close_socket(client) != 0)
         return 16;
+#ifdef _WIN32
+    WSACleanup();
+#endif
     if (uwz_app_destroy(&app) != UWZ_OK || app != NULL)
         return 17;
     return 0;

@@ -17,8 +17,8 @@ pub fn build(b: *std.Build) void {
         std.Target.Query{};
     const target = b.standardTargetOptions(.{ .default_target = default_target });
     switch (target.result.os.tag) {
-        .linux, .macos, .freebsd, .netbsd, .openbsd, .dragonfly => {},
-        else => @panic("uWebZockets supports POSIX targets only"),
+        .linux, .macos, .freebsd, .netbsd, .openbsd, .dragonfly, .windows => {},
+        else => @panic("uWebZockets supports POSIX and Windows targets only"),
     }
     const target_is_native = target.query.isNative() or
         (target.result.cpu.arch == builtin.cpu.arch and
@@ -96,7 +96,7 @@ pub fn build(b: *std.Build) void {
         []const u8,
         "zlib-prefix",
         "Path containing zlib include/ and lib/ directories",
-    ) orelse b.graph.environ_map.get("UWEBZOCKETS_ZLIB_PREFIX");
+    ) orelse if (target_is_native) b.graph.environ_map.get("UWEBZOCKETS_ZLIB_PREFIX") else null;
     const cmake_exe = b.option([]const u8, "cmake", "CMake executable") orelse "cmake";
     const ninja_exe = b.option([]const u8, "ninja", "Ninja executable") orelse "ninja";
     const patch_exe = b.option([]const u8, "patch", "Patch executable") orelse "patch";
@@ -234,6 +234,9 @@ pub fn build(b: *std.Build) void {
             "-DMSAN=ON",
             memory_sanitizer_link_flags,
         });
+    }
+    if (target.result.os.tag == .windows) {
+        bssl_cmake.addArg("-DOPENSSL_NO_ASM=ON");
     }
     add_cross_cmake_args(b, bssl_cmake, target, target_is_native, instrument_c);
     set_vendor_environment(b, bssl_cmake, target_triple);
@@ -389,6 +392,16 @@ pub fn build(b: *std.Build) void {
     mod.linkSystemLibrary("lsquic", .{});
     mod.linkSystemLibrary("deflate", .{});
     mod.linkSystemLibrary("z", .{});
+    if (target.result.os.tag == .windows) {
+        mod.linkSystemLibrary("ws2_32", .{});
+        mod.linkSystemLibrary("mswsock", .{});
+        mod.linkSystemLibrary("crypt32", .{});
+        mod.linkSystemLibrary("advapi32", .{});
+        archive_mod.linkSystemLibrary("ws2_32", .{});
+        archive_mod.linkSystemLibrary("mswsock", .{});
+        archive_mod.linkSystemLibrary("crypt32", .{});
+        archive_mod.linkSystemLibrary("advapi32", .{});
+    }
 
     const translate_c = b.addTranslateC(.{
         .root_source_file = b.path("src/c.h"),
@@ -399,6 +412,9 @@ pub fn build(b: *std.Build) void {
     translate_c.addIncludePath(bssl_root.path(b, "include"));
     translate_c.addIncludePath(lsquic_root.path(b, "include"));
     translate_c.addIncludePath(deflate_root);
+    if (target.result.os.tag == .windows) {
+        translate_c.addIncludePath(lsquic_root.path(b, "wincompat"));
+    }
     if (zlib_prefix) |prefix| {
         translate_c.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "include" }) });
     }
@@ -409,6 +425,10 @@ pub fn build(b: *std.Build) void {
     archive_mod.addIncludePath(bssl_root.path(b, "include"));
     archive_mod.addIncludePath(lsquic_root.path(b, "include"));
     archive_mod.addIncludePath(deflate_root);
+    if (target.result.os.tag == .windows) {
+        mod.addIncludePath(lsquic_root.path(b, "wincompat"));
+        archive_mod.addIncludePath(lsquic_root.path(b, "wincompat"));
+    }
     if (zlib_prefix) |prefix| {
         mod.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "include" }) });
         archive_mod.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "include" }) });
@@ -682,6 +702,13 @@ pub fn build(b: *std.Build) void {
     test_mod.linkSystemLibrary("lsquic", .{});
     test_mod.linkSystemLibrary("deflate", .{});
     test_mod.linkSystemLibrary("z", .{});
+    if (target.result.os.tag == .windows) {
+        test_mod.linkSystemLibrary("ws2_32", .{});
+        test_mod.linkSystemLibrary("mswsock", .{});
+        test_mod.linkSystemLibrary("crypt32", .{});
+        test_mod.linkSystemLibrary("advapi32", .{});
+        test_mod.addIncludePath(lsquic_root.path(b, "wincompat"));
+    }
     if (sanitize) {
         const runtime_path: std.Build.LazyPath = .{ .cwd_relative = sanitizer_lib_dir.? };
         test_mod.addLibraryPath(runtime_path);
@@ -761,6 +788,13 @@ pub fn build(b: *std.Build) void {
     c_api_smoke_mod.linkSystemLibrary("lsquic", .{});
     c_api_smoke_mod.linkSystemLibrary("deflate", .{});
     c_api_smoke_mod.linkSystemLibrary("z", .{});
+    if (target.result.os.tag == .windows) {
+        c_api_smoke_mod.linkSystemLibrary("ws2_32", .{});
+        c_api_smoke_mod.linkSystemLibrary("mswsock", .{});
+        c_api_smoke_mod.linkSystemLibrary("crypt32", .{});
+        c_api_smoke_mod.linkSystemLibrary("advapi32", .{});
+        c_api_smoke_mod.addIncludePath(lsquic_root.path(b, "wincompat"));
+    }
     if (sanitize) {
         const runtime_path: std.Build.LazyPath = .{ .cwd_relative = sanitizer_lib_dir.? };
         c_api_smoke_mod.addLibraryPath(runtime_path);
@@ -964,6 +998,7 @@ fn add_cross_cmake_args(
         .netbsd => "NetBSD",
         .openbsd => "OpenBSD",
         .dragonfly => "DragonFlyBSD",
+        .windows => "Windows",
         else => return,
     };
     const processor: []const u8 = switch (target.result.cpu.arch) {
@@ -998,7 +1033,8 @@ fn add_run_artifact(
             "UWEBZOCKETS_RUNTIME_DYNAMIC_LINKER",
         ) orelse return b.addRunArtifact(artifact);
         if (std.mem.indexOfScalar(u8, dynamic_linker, '*') != null or
-            artifact.root_module.resolved_target.?.result.abi.isMusl())
+            artifact.root_module.resolved_target.?.result.abi.isMusl() or
+            artifact.root_module.resolved_target.?.result.os.tag == .windows)
         {
             return b.addRunArtifact(artifact);
         }

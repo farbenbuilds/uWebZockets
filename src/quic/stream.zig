@@ -343,8 +343,41 @@ pub const QuicStream = struct {
 
     /// Drains readable request bytes and dispatches a complete request.
     pub fn on_read(self: *QuicStream) void {
-        if (self.header_set == null or self.dispatched) {
+        if (self.dispatched) {
             _ = c.lsquic_stream_close(self.stream);
+            return;
+        }
+
+        if (self.header_set == null) {
+            const webtransport = @import("webtransport.zig");
+            const destination = self.body_storage[self.body_length..];
+            if (destination.len == 0) {
+                self.close_now();
+                return;
+            }
+            const read_length = c.lsquic_stream_read(self.stream, destination.ptr, destination.len);
+            if (read_length <= 0) {
+                if (read_length < 0 and std.c.errno(read_length) == .AGAIN) return;
+                self.close_now();
+                return;
+            }
+            self.body_length += @intCast(read_length);
+            const input = self.body_storage[0..self.body_length];
+            if (webtransport.decode_unidirectional_header(input)) |uni| {
+                _ = uni;
+                return;
+            } else |err| switch (err) {
+                error.NeedMoreData => return,
+                else => {},
+            }
+            if (webtransport.decode_bidirectional_header(input)) |bidi| {
+                _ = bidi;
+                return;
+            } else |err| switch (err) {
+                error.NeedMoreData => return,
+                else => {},
+            }
+            self.close_now();
             return;
         }
 

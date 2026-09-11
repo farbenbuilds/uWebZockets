@@ -4,8 +4,8 @@
 
 µWebZockets 1.0.0 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
 server library with bounded HPACK protocol storage. It combines an
-event-driven POSIX transport, fixed-capacity protocol state, a data-oriented
-router, and C libraries for TLS, compression, and QUIC.
+event-driven cross-platform transport (POSIX and Windows IOCP), fixed-capacity
+protocol state, a data-oriented router, and C libraries for TLS, compression, and QUIC.
 
 The 1.0.0 design makes bounded resource use explicit. Startup allocates one
 contiguous connection slab, one WebSocket message region, and one output region.
@@ -22,8 +22,8 @@ listener starts, so callbacks never observe a structural mutation.
    and output state. Stateful I/O remains localized at transport boundaries.
 3. Hot paths have fixed capacity. Exhaustion returns an error or closes the
    offending peer instead of allocating.
-4. POSIX non-blocking I/O and libxev drive callbacks. CMake and Ninja build the
-   vendored C and C++ libraries with Zig compiler wrappers.
+4. Non-blocking I/O (epoll, io_uring, kqueue, and IOCP via libxev) drive callbacks.
+   CMake and Ninja build the vendored C and C++ libraries with Zig compiler wrappers.
 5. WebSocket masking operates on native SIMD vectors before handling the scalar
    tail.
 

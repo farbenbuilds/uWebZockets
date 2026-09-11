@@ -3,6 +3,8 @@ const fetch = @import("fetch.zig");
 
 /// Maximum number of allocation-free route parameters on one request.
 pub const max_route_params = 16;
+/// Maximum number of allocation-free headers on one request.
+pub const max_headers = 64;
 
 /// Incoming HTTP request with fixed-capacity headers and route parameters.
 pub const Request = struct {
@@ -19,18 +21,30 @@ pub const Request = struct {
     /// Complete bounded request body.
     body: []const u8 = "",
 
-    header_names: [64][]const u8 = undefined,
-    header_values: [64][]const u8 = undefined,
+    header_names: [max_headers][]const u8 = undefined,
+    header_values: [max_headers][]const u8 = undefined,
     header_count: usize = 0,
 
     route_param_names: [max_route_params][]const u8 = undefined,
     route_param_values: [max_route_params][]const u8 = undefined,
     route_param_count: usize = 0,
 
+    extra_param_names: ?[]const []const u8 = null,
+    extra_param_values: ?[]const []const u8 = null,
+    extra_header_names: ?[]const []const u8 = null,
+    extra_header_values: ?[]const []const u8 = null,
+
     /// Returns the first field value matching `name` case-insensitively.
     pub fn get_header(self: *const Request, name: []const u8) ?[]const u8 {
-        for (self.header_names[0..self.header_count], 0..) |h_name, i| {
+        for (self.header_names[0..@min(self.header_count, max_headers)], 0..) |h_name, i| {
             if (std.ascii.eqlIgnoreCase(h_name, name)) return self.header_values[i];
+        }
+        if (self.extra_header_names) |names| {
+            if (self.extra_header_values) |values| {
+                for (names, 0..) |h_name, i| {
+                    if (i < values.len and std.ascii.eqlIgnoreCase(h_name, name)) return values[i];
+                }
+            }
         }
         return null;
     }
@@ -118,10 +132,17 @@ pub const Request = struct {
     /// Returns a captured `:name` or terminal `*name` route parameter.
     pub fn get_param(self: *const Request, name: []const u8) ?[]const u8 {
         for (
-            self.route_param_names[0..self.route_param_count],
-            self.route_param_values[0..self.route_param_count],
+            self.route_param_names[0..@min(self.route_param_count, max_route_params)],
+            self.route_param_values[0..@min(self.route_param_count, max_route_params)],
         ) |param_name, value| {
             if (std.mem.eql(u8, param_name, name)) return value;
+        }
+        if (self.extra_param_names) |names| {
+            if (self.extra_param_values) |values| {
+                for (names, 0..) |param_name, i| {
+                    if (i < values.len and std.mem.eql(u8, param_name, name)) return values[i];
+                }
+            }
         }
         return null;
     }
@@ -129,6 +150,8 @@ pub const Request = struct {
     /// Clears route captures before a new router lookup.
     pub fn clear_params(self: *Request) void {
         self.route_param_count = 0;
+        self.extra_param_names = null;
+        self.extra_param_values = null;
     }
 
     /// Appends one borrowed route capture when fixed capacity remains.

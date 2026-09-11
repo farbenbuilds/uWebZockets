@@ -582,5 +582,5 @@ fn close_rejected_socket(socket: xev.TCP) void {
 }
 
 fn close_socket_now(socket: anytype) void {
-    _ = std.posix.system.close(socket.fd);
+    core_tcp.close_socket(socket.fd);
 }

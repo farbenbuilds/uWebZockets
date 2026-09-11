@@ -28,12 +28,13 @@ and HTTP/3 server library for Zig 0.16.0. Released tags provide stable
 snapshots, while the current source tree may include unreleased changes. The
 request, response, frame parsing, masking, routing,
 and connection I/O paths use fixed-capacity storage after application startup.
-BoringSSL provides TLS, libxev drives non-blocking POSIX I/O, zslay 0.1.5
+BoringSSL provides TLS, libxev drives non-blocking POSIX and Windows IOCP I/O, zslay 0.1.5
 provides the WebSocket frame state machine, and lsquic provides QUIC.
 
 Use a released tag for applications that need a published stable snapshot. Pin
-an exact source commit when consuming current development changes. Only POSIX
-targets are supported.
+an exact source commit when consuming current development changes. Cross-platform
+support includes Linux, macOS, FreeBSD, NetBSD, OpenBSD, DragonFlyBSD, and Windows
+(`x86_64-windows-gnu` / MSVC ABI).
 
 ## Features
 
@@ -80,7 +81,7 @@ RFC 7692 groups 12 and 13, with no exclusions.
 - CMake 3.20 or newer
 - Ninja
 - patch
-- A POSIX target: Linux, macOS, FreeBSD, NetBSD, OpenBSD, or DragonFlyBSD
+- A supported target: Linux, macOS, FreeBSD, NetBSD, OpenBSD, DragonFlyBSD, or Windows
 - zlib development headers and a static library
 - Recursive git submodules for the repository's h1spec development suite
 
@@ -155,7 +156,8 @@ zig build -Dzlib-prefix=/path/to/zlib-prefix
 `zig build lib -Doptimize=ReleaseFast` installs the µWebZockets, BoringSSL,
 lsquic, and libdeflate static archives under `zig-out/lib`. Applications that
 link these archives directly must also link libc, the C++ runtime, zlib, and
-the platform networking libraries required by those dependencies.
+the platform networking libraries required by those dependencies (on Windows:
+`ws2_32`, `mswsock`, `crypt32`, and `advapi32`).
 
 ## Use as a Zig dependency
 
@@ -505,8 +507,8 @@ Oversized or ambiguous input is rejected rather than expanded dynamically.
 
 ### Platform Support
 - **Tier 1 (Publish & CI)**: Linux (`x86_64`, `aarch64`) with `io_uring`/`epoll` and macOS (`x86_64`, `aarch64`) with `kqueue`.
-- **Tier 2 (Build Supported)**: FreeBSD, NetBSD, OpenBSD, and DragonFly BSD.
-- **Architecture**: POSIX-native event loop model. Parameter, middleware, and async tokens use fixed capacities and event-loop-confined lifetimes for deterministic performance. Guaranteed benchmarks are versioned relative to a same-runner baseline (`benchmarks/http_throughput_guarantee.md`).
+- **Tier 2 (Build Supported)**: Windows (`x86_64-windows-gnu` / MSVC) with `iocp`, FreeBSD, NetBSD, OpenBSD, and DragonFly BSD.
+- **Architecture**: Cross-platform event-driven I/O model (POSIX `epoll`/`kqueue`/`io_uring` and Windows `iocp` via `libxev`). Parameter, middleware, and async tokens prioritize zero-allocation fast paths with dynamic fallbacks for high-concurrency and arbitrary request structures. Guaranteed benchmarks are versioned relative to a same-runner baseline (`benchmarks/http_throughput_guarantee.md`).
 
 See [CHANGELOG.md](CHANGELOG.md), [CODEBASE.md](CODEBASE.md), and
 [CI_CD_PIPELINE.md](CI_CD_PIPELINE.md) for release details, architecture, and

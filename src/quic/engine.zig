@@ -52,7 +52,7 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
         engine: ?*c.lsquic_engine = null,
         ssl_ctx: *c.SSL_CTX = undefined,
         router: *const Router = undefined,
-        udp_fd: std.posix.socket_t = -1,
+        udp_fd: std.posix.socket_t = api.invalid_socket,
         local_address: api.Sockaddr = .{},
         settings: c.lsquic_engine_settings = std.mem.zeroes(c.lsquic_engine_settings),
         stream_interface: c.lsquic_stream_if = std.mem.zeroes(c.lsquic_stream_if),
@@ -204,7 +204,7 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
         pub fn deinit(self: *Self) void {
             if (self.engine) |engine| c.lsquic_engine_destroy(engine);
             self.engine = null;
-            self.udp_fd = -1;
+            self.udp_fd = api.invalid_socket;
 
             std.debug.assert(self.stream_pool.count_active() == 0);
             std.debug.assert(self.header_pool.count_active() == 0);

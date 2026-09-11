@@ -9,7 +9,7 @@ if [ -z "$members" ]; then
     exit 1
 fi
 
-if invalid=$(printf '%s\n' "$members" | grep -Ev '\.o$'); then
+if invalid=$(printf '%s\n' "$members" | grep -Ev '\.(o|obj)$'); then
     printf '%s\n' "static archive contains non-object members:" >&2
     printf '%s\n' "$invalid" >&2
     exit 1
