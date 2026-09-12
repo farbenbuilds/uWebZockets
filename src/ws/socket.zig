@@ -32,6 +32,8 @@ pub const WebSocket = struct {
     close_received: bool = false,
     close_notified: bool = false,
     initialized: bool = false,
+    heartbeat_ping_ms: i64 = 0,
+    heartbeat_pending: bool = false,
     control_buffer: [125]u8 = undefined,
 
     /// Validates and performs an HTTP/1.1 upgrade using `behavior` callbacks.
@@ -130,6 +132,8 @@ pub const WebSocket = struct {
         self.close_sent = false;
         self.close_received = false;
         self.close_notified = false;
+        self.heartbeat_ping_ms = 0;
+        self.heartbeat_pending = false;
         self.initialized = true;
         self.conn.protocol_state = .websocket;
 
@@ -487,7 +491,10 @@ pub const WebSocket = struct {
                 self.terminate();
                 return false;
             },
-            .pong => {},
+            .pong => {
+                self.heartbeat_pending = false;
+                self.heartbeat_ping_ms = 0;
+            },
             .close => {
                 switch (close_payload_status(payload)) {
                     .valid => {},
@@ -545,10 +552,34 @@ pub const WebSocket = struct {
     pub fn terminate(self: *WebSocket) void {
         if (self.h2_stream_id) |stream_id| {
             const callbacks = self.conn.http2_callbacks();
+            // The peer may have closed the stream before local termination.
             self.conn.h2.reset_stream(stream_id, .cancel, callbacks) catch {};
         } else {
             tcp.close_connection(self.conn);
         }
+    }
+
+    /// Advances the allocation-free heartbeat state for one timer sweep.
+    pub fn heartbeat_tick(self: *WebSocket, now_ms: i64) void {
+        if (!self.initialized or self.conn.closing) return;
+        const interval: i64 = @intCast(self.behavior.ping_interval_ms);
+        const timeout: i64 = @intCast(self.behavior.pong_timeout_ms);
+        if (interval == 0 or timeout == 0) return;
+
+        if (self.heartbeat_pending) {
+            if (now_ms - self.heartbeat_ping_ms < timeout) return;
+            self.terminate();
+            return;
+        }
+        if (self.conn.last_active_ms <= 0) return;
+        if (now_ms - self.conn.last_active_ms < interval) return;
+
+        self.send("", .ping) catch {
+            self.terminate();
+            return;
+        };
+        self.heartbeat_pending = true;
+        self.heartbeat_ping_ms = now_ms;
     }
 
     /// Releases subscriptions and notifies close at most once.
@@ -558,6 +589,8 @@ pub const WebSocket = struct {
         if (self.pubsub) |engine| engine.unsubscribe_all(self);
         self.initialized = false;
         self.h2_stream_id = null;
+        self.heartbeat_ping_ms = 0;
+        self.heartbeat_pending = false;
         self.reset_message();
         self.permessage_deflate = null;
         self.frame_rsv1 = false;

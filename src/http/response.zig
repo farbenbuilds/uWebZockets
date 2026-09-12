@@ -1,6 +1,7 @@
 const std = @import("std");
 const tcp = @import("../core/tcp.zig");
 const streams = @import("streams.zig");
+const cookie_module = @import("cookie.zig");
 const TcpConnection = tcp.TcpConnection;
 
 /// HTTP/3 stream callbacks used by the transport-neutral response writer.
@@ -138,9 +139,13 @@ pub const AsyncResponse = struct {
 
 /// Transport-neutral synchronous response writer.
 pub const Response = struct {
+    const pending_header_capacity = 2048;
+
     target: ConnectionTarget,
     state: ResponseState = .idle,
     close_after_end: bool = false,
+    pending_headers: [pending_header_capacity]u8 = undefined,
+    pending_header_length: usize = 0,
 
     /// Sends a complete response with no additional fields.
     pub fn end(self: *Response, status: []const u8, body: []const u8) !void {
@@ -158,22 +163,24 @@ pub const Response = struct {
         const code = status_code(status) orelse return error.InvalidStatus;
         if (!valid_headers(headers)) return error.InvalidHeaders;
         if (status_forbids_body(code) and body.len != 0) return error.BodyNotAllowed;
+        var combined_buffer: [pending_header_capacity * 2]u8 = undefined;
+        const complete_headers = try self.combine_headers(headers, &combined_buffer);
 
         switch (self.target) {
             .tcp => |conn| {
-                const close_requested = headers_have_token(headers, "Connection", "close");
-                var header_buffer: [1024]u8 = undefined;
+                const close_requested = headers_have_token(complete_headers, "Connection", "close");
+                var header_buffer: [pending_header_capacity * 2 + 128]u8 = undefined;
                 const formatted_headers = if (status_forbids_body(code))
                     std.fmt.bufPrint(
                         &header_buffer,
                         "HTTP/1.1 {s}\r\n{s}\r\n",
-                        .{ status, headers },
+                        .{ status, complete_headers },
                     ) catch return error.BufferOverflow
                 else
                     std.fmt.bufPrint(
                         &header_buffer,
                         "HTTP/1.1 {s}\r\nContent-Length: {d}\r\n{s}\r\n",
-                        .{ status, body.len, headers },
+                        .{ status, body.len, complete_headers },
                     ) catch return error.BufferOverflow;
 
                 if (conn.suppress_response_body or status_forbids_body(code)) {
@@ -184,10 +191,10 @@ pub const Response = struct {
                 if (close_requested) tcp.close_after_flush(conn);
             },
             .http3 => |target| {
-                try target.end_fn(target.context, status, headers, body);
+                try target.end_fn(target.context, status, complete_headers, body);
             },
             .http2 => |target| {
-                try target.end_fn(target.context, target.stream_id, status, headers, body);
+                try target.end_fn(target.context, target.stream_id, status, complete_headers, body);
             },
         }
         self.state = .ended;
@@ -203,25 +210,27 @@ pub const Response = struct {
         const code = status_code(status) orelse return error.InvalidStatus;
         if (!valid_headers(headers)) return error.InvalidHeaders;
         if (status_forbids_body(code)) return error.BodyNotAllowed;
+        var combined_buffer: [pending_header_capacity * 2]u8 = undefined;
+        const complete_headers = try self.combine_headers(headers, &combined_buffer);
 
         switch (self.target) {
             .tcp => |conn| {
-                self.close_after_end = headers_have_token(headers, "Connection", "close");
+                self.close_after_end = headers_have_token(complete_headers, "Connection", "close");
                 if (conn.suppress_response_body) return error.BodyNotAllowed;
 
-                var header_buffer: [1024]u8 = undefined;
+                var header_buffer: [pending_header_capacity * 2 + 128]u8 = undefined;
                 const formatted_headers = std.fmt.bufPrint(
                     &header_buffer,
                     "HTTP/1.1 {s}\r\nTransfer-Encoding: chunked\r\n{s}\r\n",
-                    .{ status, headers },
+                    .{ status, complete_headers },
                 ) catch return error.BufferOverflow;
                 try conn.write_data(formatted_headers);
             },
             .http3 => |target| {
-                try target.begin_fn(target.context, status, headers);
+                try target.begin_fn(target.context, status, complete_headers);
             },
             .http2 => |target| {
-                try target.begin_fn(target.context, target.stream_id, status, headers);
+                try target.begin_fn(target.context, target.stream_id, status, complete_headers);
             },
         }
         self.state = .streaming;
@@ -261,6 +270,63 @@ pub const Response = struct {
     /// Reports whether any response bytes were started.
     pub fn is_started(self: *const Response) bool {
         return self.state != .idle;
+    }
+
+    /// Queues one validated response field before the response starts.
+    pub fn append_header(self: *Response, name: []const u8, value: []const u8) !void {
+        if (self.state != .idle) return error.ResponseAlreadyStarted;
+        var line_buffer: [1024]u8 = undefined;
+        const line = std.fmt.bufPrint(&line_buffer, "{s}: {s}\r\n", .{ name, value }) catch {
+            return error.BufferOverflow;
+        };
+        if (!valid_headers(line)) return error.InvalidHeaders;
+        if (line.len > self.pending_headers.len - self.pending_header_length) {
+            return error.BufferOverflow;
+        }
+        @memcpy(self.pending_headers[self.pending_header_length..][0..line.len], line);
+        self.pending_header_length += line.len;
+    }
+
+    /// Queues one validated RFC 6265 Set-Cookie field.
+    pub fn set_cookie(
+        self: *Response,
+        name: []const u8,
+        value: []const u8,
+        options: cookie_module.Options,
+    ) !void {
+        if (self.state != .idle) return error.ResponseAlreadyStarted;
+        var buffer: [1024]u8 = undefined;
+        const field = cookie_module.format(&buffer, name, value, options) catch |err| switch (err) {
+            error.WriteFailed => return error.BufferOverflow,
+            else => |cookie_error| return cookie_error,
+        };
+        if (field.len > self.pending_headers.len - self.pending_header_length) {
+            return error.BufferOverflow;
+        }
+        @memcpy(self.pending_headers[self.pending_header_length..][0..field.len], field);
+        self.pending_header_length += field.len;
+    }
+
+    /// Signs and queues one tamper-evident session cookie.
+    pub fn set_signed_cookie(
+        self: *Response,
+        name: []const u8,
+        value: []const u8,
+        secret: []const u8,
+        options: cookie_module.Options,
+    ) !void {
+        var signed_buffer: [1024]u8 = undefined;
+        const signed = try cookie_module.sign(&signed_buffer, value, secret);
+        return self.set_cookie(name, signed, options);
+    }
+
+    /// Starts a Server-Sent Events stream with safe cache and proxy defaults.
+    pub fn sse(self: *Response) !ServerSentEvents {
+        try self.begin_chunked(
+            "200 OK",
+            "Content-Type: text/event-stream\r\nCache-Control: no-cache\r\nX-Accel-Buffering: no\r\n",
+        );
+        return .{ .response = self };
     }
 
     /// Sends a 200 OK plain text response (Web Standards Response.text).
@@ -333,6 +399,51 @@ pub const Response = struct {
             .write_fn = StreamWriterAdapter.write,
             .close_fn = StreamWriterAdapter.close,
         };
+    }
+
+    fn combine_headers(
+        self: *const Response,
+        headers: []const u8,
+        buffer: []u8,
+    ) ![]const u8 {
+        const total = std.math.add(usize, self.pending_header_length, headers.len) catch {
+            return error.BufferOverflow;
+        };
+        if (total > buffer.len) return error.BufferOverflow;
+        @memcpy(buffer[0..self.pending_header_length], self.pending_headers[0..self.pending_header_length]);
+        @memcpy(buffer[self.pending_header_length..total], headers);
+        return buffer[0..total];
+    }
+};
+
+/// Allocation-free writer for one active text/event-stream response.
+pub const ServerSentEvents = struct {
+    response: *Response,
+
+    pub fn send_event(self: *ServerSentEvents, event: []const u8, data: []const u8) !void {
+        if (std.mem.indexOfAny(u8, event, "\r\n") != null) return error.InvalidEventName;
+        if (event.len != 0) {
+            try self.response.write_chunk("event: ");
+            try self.response.write_chunk(event);
+            try self.response.write_chunk("\n");
+        }
+
+        var lines = std.mem.splitScalar(u8, data, '\n');
+        while (lines.next()) |raw_line| {
+            const line = if (std.mem.endsWith(u8, raw_line, "\r")) raw_line[0 .. raw_line.len - 1] else raw_line;
+            try self.response.write_chunk("data: ");
+            try self.response.write_chunk(line);
+            try self.response.write_chunk("\n");
+        }
+        try self.response.write_chunk("\n");
+    }
+
+    pub fn heartbeat(self: *ServerSentEvents) !void {
+        return self.response.write_chunk(": keep-alive\n\n");
+    }
+
+    pub fn close(self: *ServerSentEvents) !void {
+        return self.response.end_chunks();
     }
 };
 

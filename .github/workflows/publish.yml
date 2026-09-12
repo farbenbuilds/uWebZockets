@@ -237,7 +237,7 @@ jobs:
 
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release edit "$GITHUB_REF_NAME" \
-              --title "$GITHUB_REF_NAME" \
+              --title "uWebZockets $GITHUB_REF_NAME" \
               --notes-file release_notes.md \
               "${release_flags[@]}"
             gh release upload "$GITHUB_REF_NAME" \
@@ -246,7 +246,7 @@ jobs:
             gh release create "$GITHUB_REF_NAME" \
               artifacts/*.tar.gz artifacts/SHA256SUMS \
               --verify-tag \
-              --title "$GITHUB_REF_NAME" \
+              --title "uWebZockets $GITHUB_REF_NAME" \
               --notes-file release_notes.md \
               "${release_flags[@]}"
           fi

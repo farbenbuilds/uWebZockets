@@ -5,6 +5,7 @@ const Response = @import("../http/response.zig").Response;
 const AsyncResponse = @import("../http/response.zig").AsyncResponse;
 const WebSocket = @import("../ws/socket.zig").WebSocket;
 const zslay = @import("zslay");
+const openapi = @import("../http/openapi.zig");
 
 /// Existing synchronous route callback ABI.
 pub const Handler = *const fn (req: *Request, res: *Response) void;
@@ -79,12 +80,19 @@ pub const WsBehavior = struct {
     max_frame_size: u64 = 16 * 1024,
     /// Maximum decoded payload accepted across a fragmented message.
     max_message_size: u64 = 16 * 1024,
+    /// Sends a ping after this many milliseconds without inbound traffic.
+    ping_interval_ms: u64 = 0,
+    /// Closes a connection when its heartbeat ping remains unanswered.
+    pong_timeout_ms: u64 = 0,
 };
 
 /// Validates WebSocket limits against the configured connection slab.
 pub fn valid_ws_limits(behavior: WsBehavior, message_capacity: usize) bool {
     if (behavior.max_frame_size == 0 or behavior.max_message_size == 0) return false;
     if (behavior.max_frame_size > behavior.max_message_size) return false;
+    if ((behavior.ping_interval_ms == 0) != (behavior.pong_timeout_ms == 0)) return false;
+    if (behavior.ping_interval_ms > std.math.maxInt(i64)) return false;
+    if (behavior.pong_timeout_ms > std.math.maxInt(i64)) return false;
     return behavior.max_message_size <= @as(u64, @intCast(message_capacity));
 }
 
@@ -132,6 +140,21 @@ pub const HttpMethod = enum(u8) {
     }
 };
 
+fn lower_method(method: HttpMethod) []const u8 {
+    return switch (method) {
+        .get => "get",
+        .head => "head",
+        .post => "post",
+        .put => "put",
+        .delete => "delete",
+        .patch => "patch",
+        .options => "options",
+        .query => "x-query",
+        .connect => "x-connect",
+        .any => "x-any",
+    };
+}
+
 const method_count = @typeInfo(HttpMethod).@"enum".fields.len;
 const concrete_methods = [_]HttpMethod{ .get, .head, .post, .put, .delete, .patch, .options, .query };
 const all_method_mask: u16 = ((@as(u16, 1) << method_count) - 1) &
@@ -160,6 +183,9 @@ pub const max_pattern_routes = 64;
 const max_route_storage_size = (max_nodes + max_pattern_routes) * max_route_path_size;
 /// Maximum number of ordered global middleware callbacks.
 pub const max_middleware = 32;
+/// Maximum number of routes retained for introspection.
+pub const max_registered_routes = max_nodes + max_pattern_routes;
+const max_registry_storage = 64 * 1024;
 const null_node: u16 = std.math.maxInt(u16);
 const empty_handlers = [_]?RouteHandler{null} ** method_count;
 
@@ -178,6 +204,13 @@ const PatternInfo = struct {
     has_wildcard: bool = false,
 };
 
+const RouteRecord = struct {
+    offset: u16,
+    length: u16,
+    method: HttpMethod,
+    websocket: bool,
+};
+
 /// Allocation-free radix router with bounded patterns and middleware.
 pub const Router = struct {
     route_storage: [max_route_storage_size]u8 = undefined,
@@ -192,12 +225,16 @@ pub const Router = struct {
     pattern_offsets: [max_pattern_routes]u32 = .{0} ** max_pattern_routes,
     pattern_lengths: [max_pattern_routes]u16 = .{0} ** max_pattern_routes,
     middleware: [max_middleware]MiddlewareEntry = undefined,
+    registry_storage: [max_registry_storage]u8 = undefined,
+    route_records: [max_registered_routes]RouteRecord = undefined,
 
     node_count: u16 = 0,
     root_idx: u16 = null_node,
     pattern_count: u8 = 0,
     middleware_count: u8 = 0,
     route_storage_length: u32 = 0,
+    registry_storage_length: u16 = 0,
+    route_record_count: u16 = 0,
 
     /// Initializes an empty router with fixed inline storage.
     pub fn init() Router {
@@ -328,12 +365,14 @@ pub const Router = struct {
         method: HttpMethod,
         handler: RouteHandler,
     ) !void {
+        try self.ensure_route_record(path);
         const pattern = try analyze_pattern(path);
         if (pattern.dynamic) {
             const route = try self.get_or_add_pattern(path, pattern);
             const method_index = @intFromEnum(method);
             if (route.handlers[method_index] != null) return error.RouteAlreadyRegistered;
             route.handlers[method_index] = handler;
+            self.record_route(path, method, false);
             return;
         }
 
@@ -343,6 +382,7 @@ pub const Router = struct {
 
         self.http_handlers[node][method_index] = handler;
         self.has_route[node] = true;
+        self.record_route(path, method, false);
     }
 
     /// Registers a synchronous GET route.
@@ -457,11 +497,13 @@ pub const Router = struct {
 
     /// Registers a WebSocket upgrade route.
     pub fn ws(self: *Router, path: []const u8, behavior: WsBehavior) !void {
+        try self.ensure_route_record(path);
         const pattern = try analyze_pattern(path);
         if (pattern.dynamic) {
             const route = try self.get_or_add_pattern(path, pattern);
             if (route.ws_behavior != null) return error.RouteAlreadyRegistered;
             route.ws_behavior = behavior;
+            self.record_route(path, .get, true);
             return;
         }
 
@@ -470,6 +512,60 @@ pub const Router = struct {
 
         self.ws_behaviors[node] = behavior;
         self.has_route[node] = true;
+        self.record_route(path, .get, true);
+    }
+
+    /// Writes OpenAPI 3.1 JSON for all successfully registered routes.
+    pub fn write_openapi(
+        self: *const Router,
+        buffer: []u8,
+        spec_options: openapi.Options,
+    ) ![]const u8 {
+        var routes: [max_registered_routes]openapi.Route = undefined;
+        for (self.route_records[0..self.route_record_count], 0..) |record, index| {
+            const start: usize = record.offset;
+            routes[index] = .{
+                .method = if (record.method == .any) "x-any" else lower_method(record.method),
+                .path = self.registry_storage[start .. start + record.length],
+                .websocket = record.websocket,
+            };
+        }
+        return openapi.generate(buffer, routes[0..self.route_record_count], spec_options);
+    }
+
+    fn ensure_route_record(self: *const Router, path: []const u8) !void {
+        if (self.route_record_count == self.route_records.len) return error.RouteCapacityReached;
+        if (path.len > self.registry_storage.len - self.registry_storage_length) {
+            return error.RouteStorageCapacityReached;
+        }
+    }
+
+    fn record_route(self: *Router, path: []const u8, method: HttpMethod, websocket: bool) void {
+        const start = self.registry_storage_length;
+        @memcpy(self.registry_storage[start..][0..path.len], path);
+        self.registry_storage_length += @intCast(path.len);
+        self.route_records[self.route_record_count] = .{
+            .offset = start,
+            .length = @intCast(path.len),
+            .method = method,
+            .websocket = websocket,
+        };
+        self.route_record_count += 1;
+    }
+
+    /// Reports whether any route enables automatic WebSocket heartbeats.
+    pub fn has_ws_heartbeats(self: *const Router) bool {
+        for (self.ws_behaviors[0..self.node_count]) |behavior| {
+            if (behavior) |configured| {
+                if (configured.ping_interval_ms != 0) return true;
+            }
+        }
+        for (self.pattern_routes[0..self.pattern_count]) |route| {
+            if (route.ws_behavior) |configured| {
+                if (configured.ping_interval_ms != 0) return true;
+            }
+        }
+        return false;
     }
 
     /// Matches a path without materializing parameter captures.

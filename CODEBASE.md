@@ -2,7 +2,7 @@
 
 ## Scope
 
-µWebZockets 1.0.2 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
+µWebZockets 1.0.3 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
 server library with bounded HPACK protocol storage. It combines an
 event-driven cross-platform transport (POSIX and Windows IOCP), fixed-capacity
 protocol state, a data-oriented router, and C libraries for TLS, compression, and QUIC.
@@ -223,6 +223,10 @@ draft-ietf-webtrans-http3-16 and do not claim live interoperability. RFC 10008
 is the separate HTTP `QUERY` method supported by the router. All live
 transports reject QUERY requests without a syntactically valid `Content-Type`;
 the selected route enforces resource-specific media-type and content rules.
+
+Windows QUIC datagrams are received through libxev IOCP UDP completions and
+sent with the Winsock `WSASendTo` adapter. The native Windows workflow compiles
+this path, while runtime interoperability remains Tier 2.
 
 ## Build graph
 

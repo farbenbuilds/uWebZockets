@@ -145,14 +145,15 @@ publish matrix runs natively on these GitHub-hosted architectures:
 - x86_64-macos
 - aarch64-macos
 
-The reusable Windows workflow runs separately on `windows-2025`. It installs
+The reusable Windows workflow runs separately on `windows-2025` in the
+`Windows Publishing` deployment environment. It installs
 the exact Zig release and vcpkg `x64-mingw-static` zlib, compiles the complete
 ReleaseSafe test and C ABI graph as Windows executables, builds ReleaseFast
 static libraries, and retains the packaged result as a 14-day workflow
 artifact. Tag publishing calls the same workflow and includes its archive as
 the seventh release asset. Runtime execution remains a Tier 2 deployment
-responsibility because the HTTP/3 transport does not yet have feature parity
-with POSIX UDP.
+responsibility; QUIC receive completion uses IOCP and packet transmission uses
+Winsock `WSASendTo`.
 
 The default build also compiles the bounded `http3_server` example. The HTTP/3
 gate drives it independently with pinned curl/ngtcp2/nghttp3 and aioquic,
@@ -206,7 +207,8 @@ A `v*` tag gates four release phases.
    `include/uWebZockets.h`, metadata, and all relevant licenses.
 4. The release job enters the `Publish` environment, requires exactly seven
    archives, writes `SHA256SUMS`, extracts matching changelog notes, and creates
-   or updates the GitHub release through `gh`. Versions containing a hyphen are
+   or updates the GitHub release through `gh` with the title
+   `uWebZockets v<version>`. Versions containing a hyphen are
    marked as prereleases; stable versions are marked latest.
 
 Release uploads are idempotent: rerunning a tag workflow updates notes and

@@ -3,6 +3,7 @@ comptime {
     _ = @import("c_tests.zig");
     _ = @import("core_tests.zig");
     _ = @import("fuzz_main.zig");
+    _ = @import("framework_tests.zig");
     _ = @import("http_tests.zig");
     _ = @import("http2_tests.zig");
     _ = @import("http2_hpack_tests.zig");
