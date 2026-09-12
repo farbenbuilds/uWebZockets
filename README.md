@@ -4,12 +4,56 @@
 
 # µWebZockets
 
-µWebZockets is a bounded-memory, event-driven WebSocket and HTTP server library
-for Zig 0.16.0. It supports HTTP/1.1, HTTP/2, and optional HTTP/3 over lsquic.
-The request, response, routing, framing, and connection I/O paths use fixed
-capacity storage after application startup.
+µWebZockets is a type-safe, transport-agnostic server framework for Zig 0.16.0.
+It gives HTTP/1.1, HTTP/2, HTTP/3, WebSocket, and JSON-RPC applications one
+pragmatic API backed by fixed-capacity, event-driven data paths.
 
-## Status and validation
+The project favors explicit ownership and compile-time configuration over
+hidden allocation. Request, response, routing, framing, and connection storage
+remain bounded after startup.
+
+Start with [HTTP](#http-example), [JSON-RPC](#json-rpc), or
+[WebSocket](#websocket-example). See [Build](#build) for the full toolchain,
+[C ABI](#c-abi) for non-Zig callers, and
+[capacity limits](#capacity-and-protocol-limits) before production deployment.
+
+## Quick start
+
+With Nix installed, the shortest path to a running server is:
+
+```sh
+git clone --recurse-submodules https://github.com/farbenbuilds/uWebZockets.git
+cd uWebZockets
+nix develop
+zig build hello_world -Doptimize=ReleaseSafe
+```
+
+In another terminal:
+
+```sh
+curl -i http://127.0.0.1:3000/
+```
+
+The `hello_world` build step compiles and starts the example on port 3000. For
+a reusable application, add µWebZockets as a [Zig dependency](#use-as-a-zig-dependency)
+and register handlers with `App` as shown below.
+
+## Design goals
+
+- **Type-safe:** typed handlers, native Zig errors, and compile-time capacities
+  make contracts visible to the compiler.
+- **Transport-agnostic:** the same `Request`, `Response`, router, and middleware
+  work across HTTP/1.1, HTTP/2, and HTTP/3. JSON-RPC can also dispatch without
+  HTTP.
+- **Pragmatic:** common operations have direct helpers while lower-level APIs
+  remain available for custom status, headers, streaming, and decoding.
+- **Predictable:** hot paths use fixed storage, bounded queues, and explicit
+  backpressure instead of dynamic overflow fallbacks.
+- **Web-standard vocabulary:** `Request`, `Response`, `Headers`, body helpers,
+  redirects, and byte streams follow familiar Fetch and Streams concepts where
+  they map cleanly to Zig.
+
+## Project status
 
 The repository CI covers Zig builds and tests, RFC 6455 behavior, HTTP/3
 interop, HTTP/1.1 conformance, deterministic fuzz smoke tests, and an
@@ -28,44 +72,20 @@ BoringSSL provides TLS, libxev drives non-blocking I/O, zslay 0.1.5 provides the
 WebSocket frame state machine, and lsquic provides QUIC. Use a released tag or
 pin an exact source commit. Platform verification tiers are documented below.
 
-## Features
+## Feature map
 
-- HTTP/1.1 GET, HEAD, POST, PUT, DELETE, PATCH, OPTIONS, QUERY, and fallback routes
-- Request targets split into path and query slices without allocation
-- Exact routes plus bounded `:name` segment and terminal `*name` captures
-- Ordered fixed-capacity middleware, context callbacks, and one-shot async
-  response tokens for Zig handlers
-- Automatic 404, 405 with `Allow`, OPTIONS, HEAD fallback, and `100 Continue`
-- Fixed-size request parsing with strict framing and header validation
-- Fixed-capacity, backpressure-aware response queues and chunked responses
-- Bounded static assets with MIME types, validators, cache control, and ranges
-- Multipart, signed cookie/session, schema validation, CORS, security headers,
-  SSE, and OpenAPI 3.1 helpers
-- RFC 6455 server framing, fragmentation, masking, close handling, and
-  streaming UTF-8 validation
-- RFC 7692 per-message deflate with strict extension parsing, bounded expansion,
-  and mandatory client/server no-context-takeover
-- SIMD WebSocket masking with a scalar tail
-- Bounded WebSocket messages, frames, subscriptions, and topic ownership
-- Configurable allocation-free WebSocket ping/pong heartbeat sweeps
-- HTTPS with BoringSSL TLS 1.3 and `h2`/`http/1.1` ALPN
-- HTTP/3 request/response routing over lsquic with bounded QPACK, stream,
-  body, response, and packet storage
-- Live bounded HTTP/2 routing with eight-stream multiplexing, flow control,
-  and caller-owned HPACK decoding/encoding storage
-- Transport-neutral RFC 9220, push, early-data, and WebTransport draft-16
-  validation and wire helpers; these are not connected to the live HTTP/3 listener
-- Contiguous connection pools and per-connection storage selected at compile
-  time
-- Native thread-per-core clusters with fixed cross-thread pub/sub queues
-- Completion-driven shutdown that drains accept, read, write, close, timer,
-  and UDP operations before releasing their slabs
-- Versioned C ABI and `include/uWebZockets.h` for HTTP routes, middleware,
-  one-shot async responses, WebSocket, TLS, HTTP/3, publish, and lifecycle
-  operations
-- Centralized unit tests, Google OSS-Fuzz/libFuzzer targets, protocol
-  compliance gates, and a versioned HTTP throughput regression contract
-- Native GNU/Linux, musl/Linux, macOS, and `x86_64-windows-gnu` release packages
+| Area | Included |
+| --- | --- |
+| HTTP | GET, HEAD, POST, PUT, DELETE, PATCH, OPTIONS, QUERY, fallback routes, strict framing, automatic 404/405/OPTIONS, and `100 Continue` |
+| Routing | Exact paths, bounded `:name` and terminal `*name` captures, ordered middleware, explicit contexts, and one-shot async responses |
+| Web APIs | Fetch-inspired request bodies and headers, response helpers, redirects, BYOB reads, writable byte streams, SSE, CORS, and security headers |
+| Application helpers | Bounded static assets, multipart iteration, signed cookies and sessions, compile-time JSON constraints, and OpenAPI 3.1 |
+| JSON-RPC | Typed and low-level procedures, explicit context, notifications, batches, standard errors, and transport-neutral dispatch |
+| WebSocket | RFC 6455, RFC 7692, fragmentation, streaming UTF-8 validation, SIMD masking, backpressure, pub/sub, and heartbeat sweeps |
+| Transports | Plaintext HTTP/1.1 and HTTP/2, BoringSSL TLS 1.3 with ALPN, and bounded HTTP/3 over lsquic |
+| Runtime | Contiguous connection pools, fixed response queues, thread-per-core clusters, and completion-driven shutdown |
+| Interop | Versioned C ABI for server lifecycle, HTTP, async responses, WebSocket, TLS, HTTP/3, and publish operations |
+| Verification | Central tests, protocol conformance, fuzz targets, sanitizers, and a versioned throughput regression contract |
 
 The bundled Autobahn runner executes all 517 selected server cases. The
 verified baseline is 514 `OK` and 3 `INFORMATIONAL` results for both
@@ -272,13 +292,8 @@ modules exported from `src/root.zig`; those surfaces remain Zig-only.
 const std = @import("std");
 const uz = @import("uWebZockets");
 
-fn hello(req: *uz.Request, res: *uz.Response) void {
-    const name = if (req.query.len == 0) "world" else req.query;
-    res.end_with_headers(
-        "200 OK",
-        "Content-Type: text/plain\r\n",
-        name,
-    ) catch return;
+fn hello(_: *uz.Request, res: *uz.Response) void {
+    res.text("Hello from \u{b5}WebZockets! Zero allocation achieved.") catch return;
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -342,6 +357,71 @@ so every platform currently uses this bounded fallback.
 App.openapi(path) serves an OpenAPI 3.1 JSON document generated from the
 router's fixed route registry. Parameter and wildcard paths are emitted with
 OpenAPI braces.
+
+## JSON-RPC
+
+`json_rpc.Service` is a type-safe, fixed-capacity JSON-RPC 2.0 registry. Mount
+it on any `App` with one line, or call `dispatch` directly from another
+transport. The protocol layer imports only Zig's standard library.
+
+```zig
+const std = @import("std");
+const uz = @import("uWebZockets");
+
+const AddParams = struct { left: i64, right: i64 };
+const AddResult = struct { sum: i64 };
+
+fn add(params: AddParams) uz.json_rpc.HandlerError!AddResult {
+    return .{ .sum = params.left + params.right };
+}
+
+pub fn main(init: std.process.Init) !void {
+    var server = try uz.App(128).init(init.io);
+    defer server.deinit();
+
+    var rpc = uz.json_rpc.Service{};
+    try rpc.register_typed("math.add", AddParams, AddResult, add);
+    _ = try server.rpc("/rpc", &rpc);
+
+    try server.listen("0.0.0.0", 3000);
+    try server.run();
+}
+```
+
+Run it with `zig build rpc_server -Doptimize=ReleaseSafe`, then call it:
+
+```sh
+curl http://127.0.0.1:3000/rpc \
+  -H 'Content-Type: application/json' \
+  --data '{"jsonrpc":"2.0","method":"math.add","params":{"left":2,"right":3},"id":1}'
+```
+
+The response is `{"jsonrpc":"2.0","result":{"sum":5},"id":1}`.
+
+Behavior and ownership are explicit:
+
+- Clients send exactly one `Content-Type: application/json` or
+  `application/json-rpc` header.
+- Single calls, notifications, and batches are supported. Notification-only
+  requests return HTTP 204; protocol responses use HTTP 200.
+- Complete JSON syntax is validated before a batch invokes its first procedure.
+- Method names are copied during registration, and mounting seals the registry.
+- Parameters are borrowed only for the callback. Results serialize into bounded
+  caller- or service-owned output storage.
+- `register_context` and `register_typed_context` carry explicit application
+  state. `register` supports custom decoding, and `Call.fail` returns an
+  application-defined error.
+- One mounted service owns one HTTP response buffer and belongs to one event
+  loop. Create one service per cluster worker.
+
+Typed adapters use 4 KiB of fixed stack scratch for decoded parameters. Use
+the lower-level `register` API with `Call.parse_params` and an explicit
+allocator when a parameter type can exceed that bound.
+
+`configured_service(max_procedures, method_storage_capacity,
+response_capacity)` adjusts the default limits of 64 procedures, 4 KiB of
+copied method names, and a 16 KiB response. `dispatch` accepts caller-owned
+output storage when RPC is embedded outside the HTTP adapter.
 
 ## WebSocket example
 
@@ -513,6 +593,9 @@ The defaults are deliberately finite:
 | Parameterized routes | 64 patterns, 16 captures per request |
 | Middleware | 32 callbacks |
 | OpenAPI route registry | 320 entries, 64 KiB of paths |
+| JSON-RPC procedures | 64 by default |
+| JSON-RPC method names | 4 KiB copied storage by default |
+| JSON-RPC response | 16 KiB by default |
 | Mounted static directories | 8 |
 | Static file body | configured write queue minus 4 KiB |
 | Cluster message queue | 64 messages per worker |
@@ -533,29 +616,27 @@ The defaults are deliberately finite:
 
 Oversized or ambiguous input is rejected rather than expanded dynamically.
 
-## Fetch- and Streams-inspired helpers
+## Web-standard API conventions
 
-These small Zig helpers borrow familiar naming from the WHATWG Fetch and Streams
-APIs. They are not JavaScript objects and do not claim full WHATWG conformance.
-Except for the explicitly allocator-backed JSON helpers, they operate on
-borrowed slices and caller-owned buffers.
+The public HTTP surface uses familiar WHATWG Fetch and Streams concepts where
+they fit Zig. It keeps the same vocabulary and expected behavior, while making
+allocation, ownership, and fallible I/O explicit. It is not a JavaScript API or
+a claim of full WHATWG conformance.
 
-### Request and response helpers
+| Web concept | µWebZockets API | Storage model |
+| --- | --- | --- |
+| `Request.url` | `req.url()` | Borrowed request target |
+| `Headers.get`, `has`, `entries` | `req.headers()` | Read-only view over bounded fields |
+| Body `text`, bytes, JSON | `req.text()`, `req.bytes()`, `req.json(T, allocator)` | Borrowed bytes; explicit allocator for parsed JSON |
+| Text, HTML, bytes, JSON responses | `res.text()`, `res.html()`, `res.bytes()`, `res.json()`, `res.json_buf()` | Direct bounded write or explicit temporary allocator |
+| `Response.redirect` | `res.redirect(location, code)` | Validated `Location`; CR/LF rejected |
+| Readable and writable byte streams | `uz.streams.ReadableByteStream`, `res.writable_stream()` | BYOB reads and transport-aware bounded writes |
+| `pipeTo` | `uz.streams.pipe_to()` | Caller-owned transfer buffer and deterministic close |
 
-- `req.headers()` returns a read-only `HeadersView`; `req.header_entries()`
-  iterates the bounded request fields.
-- `req.text()` and `req.bytes()` borrow the buffered body. `req.json(T,
-  allocator)` parses it with the supplied allocator.
-- `res.text`, `res.html`, `res.bytes`, `res.json`, `res.json_buf`, and
-  `res.redirect` provide common response formatting. Redirect destinations with
-  CR or LF are rejected.
-
-### Byte-stream helpers
-
-- `uz.streams.ReadableByteStream` reads into a caller-owned buffer.
-- `res.writable_stream()` adapts chunked HTTP/1.1, HTTP/2, or HTTP/3 output.
-- `uz.streams.pipe_to` transfers through a nonempty caller-owned buffer and
-  closes both adapters on a transfer failure.
+These request and response types are the shared application boundary for
+HTTP/1.1, HTTP/2, and HTTP/3. Lower-level methods such as `end_with_headers`,
+`begin_chunked`, and `write_chunk` remain available when an application needs
+precise protocol control.
 
 ## Standards and Platform Support
 

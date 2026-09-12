@@ -39,6 +39,8 @@ pub const middleware = @import("http/middleware.zig");
 pub const schema = @import("http/schema.zig");
 pub const openapi = @import("http/openapi.zig");
 pub const static_files = @import("http/static_files.zig");
+/// Fixed-capacity JSON-RPC 2.0 services and procedure helpers.
+pub const json_rpc = @import("rpc/json_rpc.zig");
 pub const cluster = @import("router/cluster.zig");
 /// Server-Sent Events stream returned by `Response.sse`.
 pub const ServerSentEvents = @import("http/response.zig").ServerSentEvents;

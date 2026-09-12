@@ -1,4 +1,4 @@
-# µWebZockets 1.0.3 Examples
+# µWebZockets 1.0.4 Examples
 
 Build the supported examples with Zig 0.16.0 and all recursive submodules:
 
@@ -6,8 +6,8 @@ Build the supported examples with Zig 0.16.0 and all recursive submodules:
 zig build -Doptimize=ReleaseSafe
 ```
 
-The default install contains `hello_world`, `chat_server`, `http3_server`,
-`h1spec`, and `autobahn_server` under `zig-out/bin`.
+The default install contains `hello_world`, `chat_server`, `rpc_server`,
+`http3_server`, `h1spec`, and `autobahn_server` under `zig-out/bin`.
 
 These examples target the live `App` transports. The bounded HTTP/2/HPACK
 components and the C ABI header are library surfaces rather than standalone
@@ -61,6 +61,30 @@ The equivalent build-and-run step is:
 
 ```sh
 zig build chat_server -Doptimize=ReleaseSafe
+```
+
+## JSON-RPC server
+
+Start the typed JSON-RPC example:
+
+```sh
+./zig-out/bin/rpc_server
+```
+
+Call its `math.add` procedure from another terminal:
+
+```sh
+curl http://127.0.0.1:3000/rpc \
+  -H 'Content-Type: application/json' \
+  --data '{"jsonrpc":"2.0","method":"math.add","params":{"left":2,"right":3},"id":1}'
+```
+
+The expected response is
+`{"jsonrpc":"2.0","result":{"sum":5},"id":1}`. The equivalent
+build-and-run step is:
+
+```sh
+zig build rpc_server -Doptimize=ReleaseSafe
 ```
 
 ## Compliance targets
