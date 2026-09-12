@@ -185,6 +185,8 @@ pub fn connection_sweeper(comptime PoolType: type, comptime idle_timeout_ms: u64
             // contiguous memory ensures cpu cache processes all items in microseconds
             for (self.pool.storage, 0..) |*conn, index| {
                 if (!self.pool.is_active(index) or conn.closing) continue;
+                conn.ws.heartbeat_tick(current_time);
+                if (conn.closing or timeout_ms == 0) continue;
                 if (conn.last_active_ms <= 0) continue;
 
                 const idle_time = current_time - conn.last_active_ms;

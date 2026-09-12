@@ -1330,9 +1330,37 @@ pub const TcpServer = struct {
 
 /// Binds a non-blocking TCP listener without starting accept completions.
 pub fn init_server(address: []const u8, port: u16, callback: AcceptCallback, user_data: ?*anyopaque) !TcpServer {
+    return init_server_options(address, port, callback, user_data, false);
+}
+
+/// Binds a listener with kernel port sharing for thread-per-core clusters.
+pub fn init_reuse_port_server(
+    address: []const u8,
+    port: u16,
+    callback: AcceptCallback,
+    user_data: ?*anyopaque,
+) !TcpServer {
+    return init_server_options(address, port, callback, user_data, true);
+}
+
+fn init_server_options(
+    address: []const u8,
+    port: u16,
+    callback: AcceptCallback,
+    user_data: ?*anyopaque,
+    reuse_port: bool,
+) !TcpServer {
     const parsed_address = try std.Io.net.IpAddress.parse(address, port);
     var listener = try xev.TCP.init(parsed_address);
     errdefer close_unregistered_socket(listener);
+    if (reuse_port and builtin.os.tag != .windows) {
+        try std.posix.setsockopt(
+            listener.fd,
+            std.posix.SOL.SOCKET,
+            std.posix.SO.REUSEPORT,
+            &std.mem.toBytes(@as(c_int, 1)),
+        );
+    }
     try listener.bind(parsed_address);
     try listener.listen(128);
 

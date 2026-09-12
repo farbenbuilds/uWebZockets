@@ -3,6 +3,33 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.0.3] - 2026-09-12
+
+### Added
+
+- Added bounded static asset serving with MIME detection, ETags,
+  Last-Modified validation, cache control, single byte ranges, and
+  traversal-safe directory-relative file access.
+- Added zero-allocation multipart form parsing with borrowed chunk iteration,
+  signed cookie/session helpers, CORS and security-header middleware,
+  reflected JSON constraints, Server-Sent Events, and OpenAPI 3.1 route output.
+- Added a native thread-per-core cluster manager with fixed cross-thread
+  message queues, event-loop wakeups, shared pub/sub fan-out, and reusable
+  listener ports.
+- Added configurable WebSocket ping intervals and pong timeouts using the
+  existing data-oriented connection sweep.
+- Added portable SIMD delimiter search with scalar tail handling for multipart
+  parsing.
+
+### Fixed
+
+- Kept Git tags in v<version> form while publishing GitHub release titles as
+  uWebZockets v<version> on both release creation and later edits.
+- Assigned Windows build deployments to the separate Windows Publishing
+  environment.
+- Rejected multipart boundary-prefix sequences that are not complete delimiter
+  lines.
+
 ## [1.0.2] - 2026-09-12
 
 ### Added

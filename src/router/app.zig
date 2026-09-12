@@ -11,6 +11,10 @@ const DeflateContext = @import("../ws/deflate.zig").Context;
 const TlsContext = @import("../crypto/tls.zig").TlsContext;
 const quic = @import("../quic/engine.zig");
 const udp = @import("../core/udp.zig");
+const Request = @import("../http/request.zig").Request;
+const Response = @import("../http/response.zig").Response;
+const static_files_module = @import("../http/static_files.zig");
+const cluster_module = @import("cluster.zig");
 
 /// Default maximum complete WebSocket message size per connection.
 pub const default_max_ws_message_size = 16 * 1024;
@@ -62,6 +66,10 @@ pub fn configured_app_with_timeout(
         const Pool = core_pool.freelist_pool(core_tcp.TcpConnection, max_connections);
         const QuicEngine = quic.quic_engine(max_connections, write_queue_size);
         const QuicTransport = udp.quic_transport(QuicEngine);
+        const static_file_capacity = if (write_queue_size > 4096) write_queue_size - 4096 else write_queue_size;
+        const StaticFiles = static_files_module.static_files(static_file_capacity);
+        const ClusterInbox = cluster_module.message_queue(max_ws_message_size);
+        const max_static_routes = 8;
 
         io: std.Io,
         loop: core_loop.Loop,
@@ -72,6 +80,13 @@ pub fn configured_app_with_timeout(
         ws_deflate: ?DeflateContext = null,
         write_queue_storage: []u8,
         router: radix.Router,
+        static_handlers: [max_static_routes]?*StaticFiles = .{null} ** max_static_routes,
+        static_handler_count: u8 = 0,
+        cluster_inbox: ?*ClusterInbox = null,
+        cluster_wakeup: ?xev.Async = null,
+        cluster_completion: xev.Completion = .{},
+        cluster_stop_requested: std.atomic.Value(bool) = .init(false),
+        cluster_wakeup_active: bool = false,
         server: ?core_tcp.TcpServer = null,
         sweeper: ?core_timer.connection_sweeper(Pool, idle_timeout_ms) = null,
         tls_ctx: ?TlsContext = null,
@@ -157,6 +172,14 @@ pub fn configured_app_with_timeout(
             self.tls_ctx = null;
             if (self.ws_deflate) |*context| context.deinit();
             self.ws_deflate = null;
+            for (self.static_handlers[0..self.static_handler_count]) |maybe_handler| {
+                const handler = maybe_handler orelse continue;
+                handler.deinit();
+                std.heap.page_allocator.destroy(handler);
+            }
+            self.static_handler_count = 0;
+            if (self.cluster_wakeup) |*wakeup| wakeup.deinit();
+            self.cluster_wakeup = null;
             core_loop.deinit(&self.loop);
             self.pool.deinit();
             std.heap.page_allocator.free(self.ws_message_storage);
@@ -187,6 +210,9 @@ pub fn configured_app_with_timeout(
             if (self.shutting_down) return;
 
             self.shutting_down = true;
+            self.cluster_stop_requested.store(true, .release);
+            // Shutdown continues even if the cross-thread wakeup is already closed.
+            if (self.cluster_wakeup) |*wakeup| wakeup.notify() catch {};
             if (self.sweeper) |*sw| sw.stop(&self.loop);
             if (self.server) |*server| core_tcp.close_server(server, &self.loop);
             if (self.quic_transport) |*transport| transport.shutdown();
@@ -275,6 +301,47 @@ pub fn configured_app_with_timeout(
         pub fn any(self: *Self, path: []const u8, handler: radix.Handler) !*Self {
             try self.ensure_routes_mutable();
             try self.router.any(path, handler);
+            return self;
+        }
+
+        /// Registers a GET endpoint serving the current OpenAPI 3.1 document.
+        pub fn openapi(self: *Self, path: []const u8) !*Self {
+            return self.get_context(path, &self.router, serve_openapi);
+        }
+
+        /// Mounts one bounded, traversal-safe static asset directory.
+        pub fn static(
+            self: *Self,
+            prefix: []const u8,
+            root: []const u8,
+            static_options: static_files_module.Options,
+        ) !*Self {
+            try self.ensure_routes_mutable();
+            if (self.static_handler_count == max_static_routes) return error.StaticRouteCapacityReached;
+            if (prefix.len == 0 or prefix[0] != '/' or
+                std.mem.indexOfAny(u8, prefix, "?#\r\n:*") != null)
+            {
+                return error.InvalidRoutePath;
+            }
+
+            var route_buffer: [2048]u8 = undefined;
+            const base = if (prefix.len > 1) std.mem.trimRight(u8, prefix, "/") else "";
+            const route = std.fmt.bufPrint(&route_buffer, "{s}/*path", .{base}) catch {
+                return error.InvalidRoutePath;
+            };
+            const index = self.static_handler_count;
+            const handler = try std.heap.page_allocator.create(StaticFiles);
+            errdefer std.heap.page_allocator.destroy(handler);
+            handler.* = try StaticFiles.init(self.io, root, static_options);
+            errdefer handler.deinit();
+            try self.router.route_context(
+                .get,
+                route,
+                handler,
+                StaticFiles.handler,
+            );
+            self.static_handlers[index] = handler;
+            self.static_handler_count += 1;
             return self;
         }
 
@@ -492,7 +559,7 @@ pub fn configured_app_with_timeout(
             errdefer close_socket_now(server.listener);
 
             var sweeper: ?core_timer.connection_sweeper(Pool, idle_timeout_ms) = null;
-            if (idle_timeout_ms != 0) {
+            if (idle_timeout_ms != 0 or self.router.has_ws_heartbeats()) {
                 sweeper = try core_timer.connection_sweeper(Pool, idle_timeout_ms).init(self.io, &self.pool);
             }
 
@@ -539,6 +606,7 @@ pub fn configured_app_with_timeout(
 
             self.running = true;
             defer self.running = false;
+            self.arm_cluster_wakeup();
             try core_loop.run(&self.loop);
             if (self.shutting_down) try self.verify_shutdown();
         }
@@ -546,6 +614,222 @@ pub fn configured_app_with_timeout(
         /// Publishes one message to every matching bounded subscription.
         pub fn publish(self: *Self, topic: []const u8, message: []const u8, is_text: bool) usize {
             return self.pubsub.publish(topic, message, is_text);
+        }
+
+        /// Returns a heap-backed thread-per-core manager for this App type.
+        pub fn cluster(comptime worker_count: usize) type {
+            if (worker_count == 0) @compileError("cluster worker count must be greater than zero");
+
+            return struct {
+                const Cluster = @This();
+
+                allocator: std.mem.Allocator,
+                workers: []Self,
+                inboxes: []ClusterInbox,
+                threads: []std.Thread,
+                thread_count: usize = 0,
+                worker_failed: std.atomic.Value(bool) = .init(false),
+
+                pub fn init(allocator: std.mem.Allocator, io: std.Io) !Cluster {
+                    const workers = try allocator.alloc(Self, worker_count);
+                    errdefer allocator.free(workers);
+                    const inboxes = try allocator.alloc(ClusterInbox, worker_count);
+                    errdefer allocator.free(inboxes);
+                    const threads = try allocator.alloc(std.Thread, worker_count);
+                    errdefer allocator.free(threads);
+                    for (inboxes) |*inbox| inbox.* = .{};
+
+                    var initialized: usize = 0;
+                    errdefer {
+                        for (workers[0..initialized]) |*app_worker| app_worker.deinit();
+                    }
+                    for (workers, 0..) |*app_worker, index| {
+                        app_worker.* = try Self.init(io);
+                        initialized += 1;
+                        try app_worker.attach_cluster_inbox(&inboxes[index]);
+                    }
+                    return .{
+                        .allocator = allocator,
+                        .workers = workers,
+                        .inboxes = inboxes,
+                        .threads = threads,
+                    };
+                }
+
+                pub fn deinit(self: *Cluster) void {
+                    if (self.thread_count != 0) {
+                        std.debug.panic("cannot deinitialize a running cluster", .{});
+                    }
+                    for (self.workers) |*app_worker| app_worker.deinit();
+                    self.allocator.free(self.threads);
+                    self.allocator.free(self.inboxes);
+                    self.allocator.free(self.workers);
+                    self.* = undefined;
+                }
+
+                /// Applies the same route configuration callback to every worker.
+                pub fn configure(self: *Cluster, comptime callback: anytype) !void {
+                    for (self.workers, 0..) |*app_worker, index| try callback(app_worker, index);
+                }
+
+                pub fn worker(self: *Cluster, index: usize) ?*Self {
+                    if (index >= self.workers.len) return null;
+                    return &self.workers[index];
+                }
+
+                /// Binds every worker to one shared kernel port.
+                pub fn listen(self: *Cluster, address: []const u8, port: u16) !void {
+                    var listening: usize = 0;
+                    errdefer {
+                        // Preserve the original bind error during partial cleanup.
+                        for (self.workers[0..listening]) |*app_worker| app_worker.shutdown() catch {};
+                    }
+                    for (self.workers) |*app_worker| {
+                        try app_worker.listen_reuse_port(address, port);
+                        listening += 1;
+                    }
+                }
+
+                /// Broadcasts through bounded per-worker queues and wakes each loop.
+                pub fn publish(
+                    self: *Cluster,
+                    topic: []const u8,
+                    message: []const u8,
+                    is_text: bool,
+                ) !usize {
+                    if (topic.len == 0) return error.EmptyTopic;
+                    if (topic.len > @import("../ws/pubsub.zig").max_topic_length) return error.TopicTooLong;
+                    if (message.len > max_ws_message_size) return error.ClusterMessageTooLarge;
+
+                    var queued: usize = 0;
+                    for (self.inboxes, self.workers) |*inbox, *app_worker| {
+                        inbox.push(topic, message, is_text) catch continue;
+                        app_worker.notify_cluster();
+                        queued += 1;
+                    }
+                    return queued;
+                }
+
+                /// Runs all workers on native threads and joins them on shutdown.
+                pub fn run(self: *Cluster) !void {
+                    self.worker_failed.store(false, .release);
+                    for (0..worker_count) |index| {
+                        self.threads[index] = std.Thread.spawn(.{}, worker_main, .{ self, index }) catch |err| {
+                            self.request_shutdown();
+                            for (self.threads[0..self.thread_count]) |thread| thread.join();
+                            self.thread_count = 0;
+                            return err;
+                        };
+                        self.thread_count += 1;
+                    }
+                    for (self.threads[0..self.thread_count]) |thread| thread.join();
+                    self.thread_count = 0;
+                    if (self.worker_failed.load(.acquire)) return error.ClusterWorkerFailed;
+                }
+
+                /// Requests event-loop-confined shutdown for every worker.
+                pub fn request_shutdown(self: *Cluster) void {
+                    for (self.workers) |*app_worker| app_worker.request_cluster_shutdown();
+                }
+
+                fn worker_main(self: *Cluster, index: usize) void {
+                    self.workers[index].run() catch {
+                        self.worker_failed.store(true, .release);
+                        self.request_shutdown();
+                    };
+                }
+            };
+        }
+
+        fn listen_reuse_port(self: *Self, address: []const u8, port: u16) !void {
+            if (self.shutting_down or self.deinitialized) return error.ApplicationUnavailable;
+            if (self.server != null) return error.AlreadyListening;
+
+            const server = try core_tcp.init_reuse_port_server(address, port, on_new_connection, self);
+            errdefer close_socket_now(server.listener);
+            var sweeper: ?core_timer.connection_sweeper(Pool, idle_timeout_ms) = null;
+            if (idle_timeout_ms != 0 or self.router.has_ws_heartbeats()) {
+                sweeper = try core_timer.connection_sweeper(Pool, idle_timeout_ms).init(self.io, &self.pool);
+            }
+            self.routes_locked = true;
+            self.server = server;
+            self.sweeper = sweeper;
+            core_tcp.accept_start(&self.server.?, &self.loop);
+            if (self.sweeper) |*sw| sw.start(&self.loop);
+        }
+
+        fn attach_cluster_inbox(self: *Self, inbox: *ClusterInbox) !void {
+            if (self.cluster_inbox != null) return error.ClusterAlreadyAttached;
+            self.cluster_wakeup = try xev.Async.init();
+            self.cluster_inbox = inbox;
+        }
+
+        fn arm_cluster_wakeup(self: *Self) void {
+            if (self.cluster_wakeup_active) return;
+            if (self.cluster_wakeup == null) return;
+            self.cluster_wakeup_active = true;
+            self.cluster_wakeup.?.wait(
+                self.loop.get_xev_loop(),
+                &self.cluster_completion,
+                Self,
+                self,
+                on_cluster_wakeup,
+            );
+        }
+
+        fn notify_cluster(self: *Self) void {
+            // A full or stopping loop will observe the queue on its next wakeup.
+            if (self.cluster_wakeup) |*wakeup| wakeup.notify() catch {};
+        }
+
+        fn request_cluster_shutdown(self: *Self) void {
+            self.cluster_stop_requested.store(true, .release);
+            self.notify_cluster();
+        }
+
+        fn on_cluster_wakeup(
+            user_data: ?*Self,
+            _: *xev.Loop,
+            _: *xev.Completion,
+            result: xev.Async.WaitError!void,
+        ) xev.CallbackAction {
+            const self = user_data.?;
+            _ = result catch {
+                self.cluster_wakeup_active = false;
+                return .disarm;
+            };
+            if (self.cluster_stop_requested.load(.acquire)) {
+                self.cluster_wakeup_active = false;
+                self.begin_shutdown();
+                return .disarm;
+            }
+
+            const inbox = self.cluster_inbox orelse {
+                self.cluster_wakeup_active = false;
+                return .disarm;
+            };
+            var topic_buffer: [@import("../ws/pubsub.zig").max_topic_length]u8 = undefined;
+            var message_buffer: [max_ws_message_size]u8 = undefined;
+            while (inbox.pop_copy(&topic_buffer, &message_buffer)) |message| {
+                _ = self.pubsub.publish(message.topic, message.payload, message.is_text);
+            }
+            return .rearm;
+        }
+
+        fn serve_openapi(context: *anyopaque, _: *Request, response: *Response) void {
+            const router: *const radix.Router = @ptrCast(@alignCast(context));
+            var buffer: [32 * 1024]u8 = undefined;
+            const document = router.write_openapi(&buffer, .{}) catch {
+                // The handler ABI cannot propagate a response write failure.
+                response.end("500 Internal Server Error", "OpenAPI document exceeds capacity") catch {};
+                return;
+            };
+            // A disconnected peer cannot receive a late handler error.
+            response.end_with_headers(
+                "200 OK",
+                "Content-Type: application/json\r\n",
+                document,
+            ) catch {};
         }
     };
 }

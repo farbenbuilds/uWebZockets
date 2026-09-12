@@ -38,12 +38,16 @@ pin an exact source commit. Platform verification tiers are documented below.
 - Automatic 404, 405 with `Allow`, OPTIONS, HEAD fallback, and `100 Continue`
 - Fixed-size request parsing with strict framing and header validation
 - Fixed-capacity, backpressure-aware response queues and chunked responses
+- Bounded static assets with MIME types, validators, cache control, and ranges
+- Multipart, signed cookie/session, schema validation, CORS, security headers,
+  SSE, and OpenAPI 3.1 helpers
 - RFC 6455 server framing, fragmentation, masking, close handling, and
   streaming UTF-8 validation
 - RFC 7692 per-message deflate with strict extension parsing, bounded expansion,
   and mandatory client/server no-context-takeover
 - SIMD WebSocket masking with a scalar tail
 - Bounded WebSocket messages, frames, subscriptions, and topic ownership
+- Configurable allocation-free WebSocket ping/pong heartbeat sweeps
 - HTTPS with BoringSSL TLS 1.3 and `h2`/`http/1.1` ALPN
 - HTTP/3 request/response routing over lsquic with bounded QPACK, stream,
   body, response, and packet storage
@@ -53,6 +57,7 @@ pin an exact source commit. Platform verification tiers are documented below.
   validation and wire helpers; these are not connected to the live HTTP/3 listener
 - Contiguous connection pools and per-connection storage selected at compile
   time
+- Native thread-per-core clusters with fixed cross-thread pub/sub queues
 - Completion-driven shutdown that drains accept, read, write, close, timer,
   and UDP operations before releasing their slabs
 - Versioned C ABI and `include/uWebZockets.h` for HTTP routes, middleware,
@@ -322,11 +327,28 @@ token that completes exactly once. Completion is confined to the owning event
 loop; marshal cross-thread results back to that loop. A pending token keeps the
 TCP request buffer or HTTP/3 stream from being reused.
 
+Request.clone(allocator) creates an owned snapshot for deferred worker work.
+Call deinit on the returned OwnedRequest. The framework modules also expose
+zero-allocation multipart part/chunk iteration, HMAC-SHA256 signed cookies,
+comptime JSON field constraints, CORS and security-header middleware, and SSE.
+
+App.static(prefix, root, options) mounts a directory with directory-relative
+path confinement, symlinks disabled, MIME detection, ETag and Last-Modified
+validation, cache control, and one RFC 9110 byte range. File contents use the
+configured bounded write capacity; oversized files fail with 413 Content Too
+Large. The pinned libxev revision does not expose a socket-to-file completion,
+so every platform currently uses this bounded fallback.
+
+App.openapi(path) serves an OpenAPI 3.1 JSON document generated from the
+router's fixed route registry. Parameter and wildcard paths are emitted with
+OpenAPI braces.
+
 ## WebSocket example
 
 ```zig
 const std = @import("std");
 const uz = @import("uWebZockets");
+
 fn echo(ws: *uz.WebSocket, message: []const u8, opcode: uz.Opcode) void {
     ws.send(message, opcode) catch {
         ws.send_close(1011, "write failed") catch return;
@@ -348,6 +370,8 @@ pub fn main(init: std.process.Init) !void {
         .compression = .permessage_deflate,
         .max_frame_size = max_message_size,
         .max_message_size = max_message_size,
+        .ping_interval_ms = 30_000,
+        .pong_timeout_ms = 10_000,
     });
     try server.listen("0.0.0.0", 3000);
     try server.run();
@@ -365,6 +389,8 @@ frame drains, while `terminate` performs an immediate transport close.
 Compression is opt-in per WebSocket route. Enabling `.permessage_deflate`
 allocates separate bounded receive and send scratch slices per connection
 during route registration; message processing itself does not allocate.
+Heartbeat-enabled routes reuse the connection sweeper: idle peers receive an
+empty ping and are closed if the configured pong timeout expires.
 Negotiation always selects
 `server_no_context_takeover` and `client_no_context_takeover`, accepts window
 sizes 9 through 15 for server output and 8 through 15 for client input, and
@@ -486,6 +512,10 @@ The defaults are deliberately finite:
 | Routes | 256 radix nodes |
 | Parameterized routes | 64 patterns, 16 captures per request |
 | Middleware | 32 callbacks |
+| OpenAPI route registry | 320 entries, 64 KiB of paths |
+| Mounted static directories | 8 |
+| Static file body | configured write queue minus 4 KiB |
+| Cluster message queue | 64 messages per worker |
 | Route path | 2 KiB |
 | WebSocket message | 16 KiB with `App` |
 | WebSocket control payload | 125 bytes |
@@ -547,7 +577,8 @@ borrowed slices and caller-owned buffers.
   Windows libraries and the complete test/ABI graph are compiled on a native
   Windows runner for tagged releases, with a manual pre-release trigger
   available; the resulting archive is published. Windows runtime tests remain
-  a Tier 2 validation responsibility. The BSD targets share the build graph
+  a Tier 2 validation responsibility. Windows QUIC uses IOCP UDP receives and
+  Winsock WSASendTo sends. The BSD targets share the build graph
   without dedicated CI.
 
 Request fields, route captures, middleware, async tokens, and transport pools

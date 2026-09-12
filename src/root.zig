@@ -13,6 +13,8 @@ pub const http3_available = @import("router/app.zig").http3_available;
 
 /// Borrowed, fixed-capacity HTTP request metadata passed to route callbacks.
 pub const Request = @import("http/request.zig").Request;
+/// Allocator-owned request metadata for deferred or cross-thread work.
+pub const OwnedRequest = @import("http/request.zig").OwnedRequest;
 /// Bounded response writer passed to route callbacks.
 pub const Response = @import("http/response.zig").Response;
 /// Copyable, generation-checked one-shot asynchronous response token.
@@ -27,6 +29,19 @@ pub const chunked = @import("http/chunked.zig");
 pub const fetch = @import("http/fetch.zig");
 /// WHATWG Streams Standard (https://streams.spec.whatwg.org/) primitives.
 pub const streams = @import("http/streams.zig");
+/// Zero-allocation RFC 7578 multipart parsing primitives.
+pub const multipart = @import("http/multipart.zig");
+/// RFC 6265 parsing, formatting, and HMAC-SHA256 signing helpers.
+pub const cookie = @import("http/cookie.zig");
+/// Fixed-state CORS and browser security-header middleware.
+pub const middleware = @import("http/middleware.zig");
+/// Comptime-tagged JSON schema validation.
+pub const schema = @import("http/schema.zig");
+pub const openapi = @import("http/openapi.zig");
+pub const static_files = @import("http/static_files.zig");
+pub const cluster = @import("router/cluster.zig");
+/// Server-Sent Events stream returned by `Response.sse`.
+pub const ServerSentEvents = @import("http/response.zig").ServerSentEvents;
 
 /// HTTP method selector used by generic route registration.
 pub const HttpMethod = @import("router/radix.zig").HttpMethod;
