@@ -459,7 +459,11 @@ async function wait_for_server(server) {
       connection.close();
       return;
     } catch (error) {
-      if (!(error instanceof Deno.errors.ConnectionRefused)) throw error;
+      // A previous batch can reset the probe while its listener is draining.
+      if (
+        !(error instanceof Deno.errors.ConnectionRefused) &&
+        !(error instanceof Deno.errors.ConnectionReset)
+      ) throw error;
     }
 
     await new Promise((resolve) => setTimeout(resolve, 100));

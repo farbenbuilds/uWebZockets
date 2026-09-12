@@ -3,7 +3,7 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
-## [1.0.4] - 2026-09-12
+## [1.0.4] - 2026-09-13
 
 ### Added
 
@@ -16,6 +16,8 @@ uses Semantic Versioning.
 
 - Validate complete JSON-RPC batches before invoking procedures so malformed
   tails cannot commit prefix side effects behind a parse-error response.
+- Retry transient connection resets in Autobahn readiness probes between
+  isolated compliance batches.
 
 ## [1.0.3] - 2026-09-12
 
