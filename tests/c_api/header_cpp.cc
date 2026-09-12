@@ -4,7 +4,7 @@
 
 static_assert(UWZ_VERSION_MAJOR == 1);
 static_assert(UWZ_VERSION_MINOR == 0);
-static_assert(UWZ_VERSION_PATCH == 3);
+static_assert(UWZ_VERSION_PATCH == 4);
 static_assert(UWZ_HTTP_ANY == 7);
 static_assert(UWZ_HTTP_QUERY == 8);
 static_assert(std::is_standard_layout_v<uwz_slice>);

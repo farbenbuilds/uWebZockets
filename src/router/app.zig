@@ -13,6 +13,7 @@ const quic = @import("../quic/engine.zig");
 const udp = @import("../core/udp.zig");
 const Request = @import("../http/request.zig").Request;
 const Response = @import("../http/response.zig").Response;
+const json_rpc_http = @import("../rpc/http.zig");
 const static_files_module = @import("../http/static_files.zig");
 const cluster_module = @import("cluster.zig");
 
@@ -307,6 +308,35 @@ pub fn configured_app_with_timeout(
         /// Registers a GET endpoint serving the current OpenAPI 3.1 document.
         pub fn openapi(self: *Self, path: []const u8) !*Self {
             return self.get_context(path, &self.router, serve_openapi);
+        }
+
+        /// Mounts a fixed-capacity JSON-RPC 2.0 service on one POST route.
+        pub fn rpc(self: *Self, path: []const u8, service: anytype) !*Self {
+            const Pointer = @TypeOf(service);
+            const pointer = switch (@typeInfo(Pointer)) {
+                .pointer => |info| info,
+                else => @compileError("RPC service must be passed by mutable pointer"),
+            };
+            if (pointer.size != .one or pointer.is_const) {
+                @compileError("RPC service must be passed by mutable single-item pointer");
+            }
+            const Service = pointer.child;
+            if (!@hasDecl(Service, "dispatch") or
+                !@hasDecl(Service, "response_buffer") or
+                !@hasDecl(Service, "seal"))
+            {
+                @compileError("RPC service must be created by json_rpc.configured_service");
+            }
+
+            try self.ensure_routes_mutable();
+            try self.router.route_context(
+                .post,
+                path,
+                service,
+                json_rpc_http.route_handler(Service),
+            );
+            service.seal();
+            return self;
         }
 
         /// Mounts one bounded, traversal-safe static asset directory.

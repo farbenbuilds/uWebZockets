@@ -3,6 +3,22 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.0.4] - 2026-09-13
+
+### Added
+
+- Added fixed-capacity JSON-RPC 2.0 services with bounded method ownership,
+  open-addressed dispatch, typed procedure adapters and results, context
+  handlers, notifications, batches, standard protocol errors, application
+  faults, and `App.rpc` HTTP mounting.
+
+### Fixed
+
+- Validate complete JSON-RPC batches before invoking procedures so malformed
+  tails cannot commit prefix side effects behind a parse-error response.
+- Retry transient connection resets in Autobahn readiness probes between
+  isolated compliance batches.
+
 ## [1.0.3] - 2026-09-12
 
 ### Added

@@ -8,7 +8,7 @@ pub const Route = struct {
 
 pub const Options = struct {
     title: []const u8 = "uWebZockets API",
-    version: []const u8 = "1.0.3",
+    version: []const u8 = "1.0.4",
 };
 
 /// Generates a bounded OpenAPI 3.1 document from registered route metadata.

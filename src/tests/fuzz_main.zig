@@ -5,6 +5,7 @@ const Request = parser.Request;
 const zslay = @import("zslay");
 const ws_handshake = support.ws_handshake;
 const quic_validation = support.quic_validation;
+const json_rpc = support.json_rpc;
 
 test "fuzz: protocol parsers preserve bounded state" {
     try std.testing.fuzz({}, fuzz_protocol_parsers, .{
@@ -17,6 +18,9 @@ test "fuzz: protocol parsers preserve bounded state" {
             "\x89\x80\x01\x02\x03\x04",
             "\x88\x82\x01\x02\x03\x04\x02\xea",
             "\xff\xff\xff\xff",
+            "{\"jsonrpc\":\"2.0\",\"method\":\"echo\",\"id\":1}",
+            "[{\"jsonrpc\":\"2.0\",\"method\":\"echo\"},17]",
+            "[{\"jsonrpc\":\"2.0\",\"method\":\"echo\",\"id\":1},",
         },
     });
 }
@@ -27,6 +31,34 @@ fn fuzz_protocol_parsers(_: void, smith: *std.testing.Smith) !void {
     try fuzz_zslay_receive(smith);
     fuzz_extension_negotiation(smith);
     fuzz_http3_validation(smith);
+    try fuzz_json_rpc(smith);
+}
+
+fn rpc_echo(call: *json_rpc.Call) json_rpc.HandlerError!void {
+    try call.result(null);
+}
+
+fn fuzz_json_rpc(smith: *std.testing.Smith) !void {
+    var input: [4096]u8 = undefined;
+    const input_length: usize = @intCast(smith.slice(&input));
+    const RpcService = json_rpc.configured_service(1, 16, 4096);
+    var service = RpcService{};
+    try service.register("echo", rpc_echo);
+
+    var output: [4096]u8 = undefined;
+    const response = service.dispatch(input[0..input_length], &output) catch return;
+    const payload = response orelse return;
+    if (payload.len > output.len) @panic("JSON-RPC response escaped output storage");
+
+    var scanner_scratch: [256]u8 = undefined;
+    var scratch = std.heap.FixedBufferAllocator.init(&scanner_scratch);
+    var scanner = std.json.Scanner.initCompleteInput(scratch.allocator(), payload);
+    defer scanner.deinit();
+    scanner.skipValue() catch @panic("JSON-RPC emitted invalid JSON");
+    switch (scanner.next() catch @panic("JSON-RPC response did not terminate")) {
+        .end_of_document => {},
+        else => @panic("JSON-RPC emitted trailing JSON"),
+    }
 }
 
 fn fuzz_http3_validation(smith: *std.testing.Smith) void {

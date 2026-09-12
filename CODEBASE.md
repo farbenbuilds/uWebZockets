@@ -2,7 +2,7 @@
 
 ## Scope
 
-µWebZockets 1.0.3 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
+µWebZockets 1.0.4 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
 server library with bounded HPACK protocol storage. It combines an
 event-driven cross-platform transport (POSIX and Windows IOCP), fixed-capacity
 protocol state, a data-oriented router, and C libraries for TLS, compression, and QUIC.
@@ -44,6 +44,7 @@ uWebZockets/
 │   ├── http/                 # strict HTTP/1.1 parser and response writer
 │   ├── http2/                # bounded frames, stream slab, and HPACK
 │   ├── router/               # fixed-capacity radix router and App API
+│   ├── rpc/                  # bounded JSON-RPC registry and dispatcher
 │   ├── ws/                   # zslay integration, masking, UTF-8, pub/sub
 │   ├── quic/                 # lsquic HTTP/3 and extension primitives
 │   └── tests/                # centralized ordinary Zig unit tests
@@ -134,6 +135,27 @@ wrap split. Producers observe `error.WouldBlock` instead of causing unbounded
 memory growth. Chunk headers, bodies, and terminators are copied into that ring
 as parts, so no per-connection chunk scratch allocation or fixed 8 KiB chunk
 ceiling is needed.
+
+## JSON-RPC
+
+`src/rpc/json_rpc.zig` implements transport-independent JSON-RPC 2.0 single
+requests, notifications, and batches. `src/rpc/http.zig` adapts it to the
+existing POST router. Procedure metadata is stored in
+parallel fixed-capacity arrays, method bytes are copied into contiguous owned
+storage, and an open-addressed index avoids allocation and pointer chasing on
+dispatch. Registration is sealed at mount time so event-loop callbacks only
+read the registry.
+
+The protocol scanner borrows method parameters and IDs from the bounded HTTP
+request body, while escaped member and method names use fixed local scratch.
+Batches take a bounded syntax-only pass before dispatch so a malformed tail
+cannot follow an already-committed procedure side effect. The pure dispatcher
+accepts caller-owned output storage; the HTTP adapter uses one service-owned
+bounded buffer and copies the final response into the connection's existing
+write queue. Procedure handlers may parse parameters with an explicit
+allocator, emit typed JSON results, or return standard and application-defined
+faults. Each mounted service instance belongs to one event loop, so cluster
+workers keep independent response buffers.
 
 ## WebSocket
 
@@ -271,7 +293,8 @@ library sanitizer matrix instruments the C/C++ graph with ASan/UBSan/MSan.
 The Zig surface exported from `src/root.zig` includes `App`, `ConfiguredApp`,
 `ConfiguredAppWithTimeout`, `Request`, `Response`, `WebSocket`, `WsBehavior`,
 `Opcode`, TLS configuration, chunked HTTP helpers, and WebSocket masking. The
-surface also includes `WsCompression`, completion-driven `udp`, bounded
+surface also includes `WsCompression`, fixed-capacity `json_rpc`,
+completion-driven `udp`, bounded
 `http2`, `http2_hpack`, `http3_extensions`, `webtransport`, `http3_available`,
 `init_http3`, and `listen_udp` through the application type. Live lsquic
 engine, stream, packet, and QPACK callbacks remain internal.

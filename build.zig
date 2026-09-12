@@ -649,6 +649,24 @@ pub fn build(b: *std.Build) void {
     const http3_server_step = b.step("http3_server", "Run the HTTP/3 example server");
     http3_server_step.dependOn(&run_http3_server.step);
 
+    const rpc_server_exe = b.addExecutable(.{
+        .name = "rpc_server",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/rpc_server.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    rpc_server_exe.root_module.addImport("uWebZockets", mod);
+    rpc_server_exe.step.dependOn(&bssl_ninja.step);
+    rpc_server_exe.step.dependOn(&lsquic_ninja.step);
+    rpc_server_exe.step.dependOn(&deflate_ninja.step);
+    b.installArtifact(rpc_server_exe);
+
+    const run_rpc_server = add_run_artifact(b, rpc_server_exe, sanitizer_run_config);
+    const rpc_server_step = b.step("rpc_server", "Run the JSON-RPC example server");
+    rpc_server_step.dependOn(&run_rpc_server.step);
+
     const h1spec_exe = b.addExecutable(.{
         .name = "h1spec",
         .root_module = b.createModule(.{
