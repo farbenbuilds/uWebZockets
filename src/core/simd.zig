@@ -1,6 +1,10 @@
+const builtin = @import("builtin");
 const std = @import("std");
 
-const lane_count = 16;
+const lane_count = switch (builtin.cpu.arch) {
+    .x86, .x86_64 => 32,
+    else => 16,
+};
 const ByteVector = @Vector(lane_count, u8);
 
 /// Returns the first matching byte using portable vector comparisons.
@@ -37,4 +41,51 @@ pub fn index_of(input: []const u8, needle: []const u8) ?usize {
         offset += 1;
     }
     return null;
+}
+
+/// Returns the first HTTP line ending using vectorized carriage-return scans.
+pub fn index_of_crlf(input: []const u8) ?usize {
+    var offset: usize = 0;
+    while (offset < input.len) {
+        const relative = index_of_byte(input[offset..], '\r') orelse return null;
+        const position = offset + relative;
+        if (position + 1 < input.len and input[position + 1] == '\n') return position;
+        offset = position + 1;
+    }
+    return null;
+}
+
+/// Returns the first HTTP header terminator using SIMD candidate discovery.
+pub fn index_of_header_end(input: []const u8) ?usize {
+    var offset: usize = 0;
+    while (offset < input.len) {
+        const relative = index_of_crlf(input[offset..]) orelse return null;
+        const position = offset + relative;
+        if (position + 3 < input.len and
+            input[position + 2] == '\r' and
+            input[position + 3] == '\n')
+        {
+            return position;
+        }
+        offset = position + 2;
+    }
+    return null;
+}
+
+/// Validates HTTP field-value bytes 16 lanes at a time.
+pub fn valid_http_field_value(input: []const u8) bool {
+    const spaces: ByteVector = @splat(32);
+    const deletes: ByteVector = @splat(127);
+    const tabs: ByteVector = @splat('\t');
+    var offset: usize = 0;
+    while (input.len - offset >= lane_count) : (offset += lane_count) {
+        const bytes: [lane_count]u8 = input[offset..][0..lane_count].*;
+        const values: ByteVector = @bitCast(bytes);
+        const valid = ((values >= spaces) & (values != deletes)) | (values == tabs);
+        if (!@reduce(.And, valid)) return false;
+    }
+    for (input[offset..]) |byte| {
+        if ((byte < 32 and byte != '\t') or byte == 127) return false;
+    }
+    return true;
 }

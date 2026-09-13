@@ -14,7 +14,7 @@ Please describe the changes this PR makes and why it should be merged.
 
 - [ ] I have read the [Contributing Guidelines](../CONTRIBUTE.md)
 - [ ] My code follows the code style of this project
-- [ ] I have run `zig fmt --check build.zig src examples tests`
+- [ ] I have run `zig fmt --check build.zig build.zig.zon builds src examples tests fuzz`
 - [ ] I have run `sh scripts/check_conventions.sh`
 - [ ] I have run the relevant Debug, ReleaseSafe, and compliance tests
 - [ ] I have run ASan/UBSan and bounded fuzzing for memory or parser changes

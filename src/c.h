@@ -15,6 +15,11 @@
 
 #include <openssl/ssl.h>
 #include <openssl/crypto.h>
+#include <openssl/aead.h>
+#include <openssl/digest.h>
+#include <openssl/hmac.h>
+#include <openssl/mem.h>
+#include <openssl/sha2.h>
 #include <lsxpack_header.h>
 #include <lsquic.h>
 #include <libdeflate.h>

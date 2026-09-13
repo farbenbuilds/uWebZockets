@@ -14,6 +14,7 @@ const radix = @import("../router/radix.zig");
 const Router = radix.Router;
 const handshake = @import("../crypto/handshake.zig");
 const tls = @import("../crypto/tls.zig");
+const abort = @import("../http/abort.zig");
 const DeflateContext = @import("../ws/deflate.zig").Context;
 const http2_server = @import("../http2/server.zig");
 const zslay = @import("zslay");
@@ -63,6 +64,7 @@ pub const TcpConnection = struct {
     ws_compression_buffer: []u8 = &.{},
     ws_compression_output_buffer: []u8 = &.{},
     ws_deflate: ?*DeflateContext = null,
+    abort_controller: abort.AbortController = .{},
 
     read_completion: xev.Completion = .{},
     write_completion: xev.Completion = .{},
@@ -114,6 +116,7 @@ pub const TcpConnection = struct {
 
     /// Resets protocol detection and bounded HTTP/2 state after pool acquire.
     pub fn reset_protocol(self: *TcpConnection) !void {
+        self.abort_controller.reset();
         self.protocol_state = .detect;
         self.protocol_probe_len = 0;
         try self.h2.reset();
@@ -121,6 +124,11 @@ pub const TcpConnection = struct {
             state.cancel();
             context.* = .{ .connection = self };
         }
+    }
+
+    /// Returns a cancellation signal scoped to the current pooled connection.
+    pub fn abort_signal(self: *const TcpConnection) abort.AbortSignal {
+        return self.abort_controller.signal();
     }
 
     /// Allocates BoringSSL state and attaches bounded paired memory BIOs.
@@ -1189,6 +1197,7 @@ pub fn close_after_flush(conn: *TcpConnection) void {
 pub fn close_connection(conn: *TcpConnection) void {
     if (conn.closing) return;
     conn.closing = true;
+    _ = conn.abort_controller.abort(.connection_closed);
     conn.close_when_drained = false;
     conn.dispatch_suspended = false;
     conn.pending_request_consumed = 0;

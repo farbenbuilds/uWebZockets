@@ -28,6 +28,11 @@ printf '%s\n' "$expected_version" | grep -Eq \
     '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$' ||
     fail "release version is not valid Semantic Versioning"
 
+root_version=$(sed -n \
+    's/^pub const version = std.SemanticVersion{ \.major = \([0-9][0-9]*\), \.minor = \([0-9][0-9]*\), \.patch = \([0-9][0-9]*\) };$/\1.\2.\3/p' \
+    build.zig)
+require_single_value "build.zig" "$root_version"
+
 flake_version=$(sed -n \
     's/^[[:space:]]*releaseVersion = "\([^"]*\)";/\1/p' flake.nix)
 require_single_value "flake.nix" "$flake_version"
@@ -56,6 +61,8 @@ version_patch=$(printf '%s\n' "$version_core" | cut -d. -f3)
 
 [ "$expected_version" = "$manifest_version" ] ||
     fail "build.zig.zon version does not match $expected_version"
+[ "$version_core" = "$root_version" ] ||
+    fail "build.zig version does not match $version_core"
 [ "$expected_version" = "$flake_version" ] ||
     fail "flake.nix version does not match $expected_version"
 [ "$version_core" = "$abi_version" ] ||

@@ -1,4 +1,5 @@
 const std = @import("std");
+const AbortSignal = @import("../http/abort.zig").AbortSignal;
 
 pub const default_max_procedures = 64;
 pub const default_method_storage_capacity = 4096;
@@ -18,6 +19,7 @@ pub const standard_error = struct {
 };
 
 pub const HandlerError = error{
+    Aborted,
     ApplicationError,
     InternalError,
     InvalidParams,
@@ -26,7 +28,7 @@ pub const HandlerError = error{
     ResultTooLarge,
 };
 
-pub const DispatchError = error{ResponseTooLarge};
+pub const DispatchError = error{ Aborted, ResponseTooLarge };
 
 pub const RegistrationError = error{
     DuplicateProcedure,
@@ -45,8 +47,15 @@ pub const Fault = struct {
 pub const Call = struct {
     params: ?[]const u8,
     writer: ?*std.Io.Writer,
+    abort_signal: ?AbortSignal = null,
     fault: ?Fault = null,
     result_written: bool = false,
+
+    /// Cooperatively stops work when the request, timeout, or socket is gone.
+    pub fn checkpoint(self: *const Call) HandlerError!void {
+        const signal = self.abort_signal orelse return;
+        signal.checkpoint() catch return error.Aborted;
+    }
 
     /// Parses positional or named parameters with an explicit allocator.
     pub fn parse_params(
@@ -82,6 +91,11 @@ pub const Call = struct {
 pub const Handler = *const fn (*Call) HandlerError!void;
 pub const ContextHandler = *const fn (*anyopaque, *Call) HandlerError!void;
 
+pub const StaticProcedure = struct {
+    method: []const u8,
+    handler: Handler,
+};
+
 const HandlerKind = enum(u8) {
     direct,
     contextual,
@@ -108,6 +122,61 @@ pub const Service = configured_service(
     default_method_storage_capacity,
     default_response_capacity,
 );
+
+/// Generates a collision-free O(1) RPC jump table at comptime.
+///
+/// Runtime dispatch hashes once and compares the 64-bit fingerprint, avoiding
+/// string scans and registration-time mutation.
+pub fn comptime_service(comptime procedures: []const StaticProcedure) type {
+    if (procedures.len == 0) @compileError("RPC procedure list cannot be empty");
+    if (procedures.len >= std.math.maxInt(u16)) @compileError("RPC procedure list is too large");
+    @setEvalBranchQuota(1_000_000);
+
+    const table_capacity = static_table_capacity(procedures.len);
+    const seed = find_perfect_seed(procedures, table_capacity);
+    const table = make_static_table(procedures, table_capacity, seed);
+    const hashes = make_static_hashes(procedures, seed);
+
+    return struct {
+        const Self = @This();
+
+        response_storage: [default_response_capacity]u8 = undefined,
+
+        pub fn response_buffer(self: *Self) []u8 {
+            return &self.response_storage;
+        }
+
+        pub fn dispatch(
+            self: *const Self,
+            input: []const u8,
+            output: []u8,
+        ) DispatchError!?[]const u8 {
+            return dispatch_to_buffer(self, input, output, null);
+        }
+
+        pub fn dispatch_with_signal(
+            self: *const Self,
+            signal: AbortSignal,
+            input: []const u8,
+            output: []u8,
+        ) DispatchError!?[]const u8 {
+            return dispatch_to_buffer(self, input, output, signal);
+        }
+
+        fn find(_: *const Self, method: []const u8) ?usize {
+            const fingerprint = hash_method_seeded(method, seed);
+            const encoded_index = table[fingerprint % table_capacity];
+            if (encoded_index == 0) return null;
+            const index: usize = encoded_index - 1;
+            if (hashes[index] != fingerprint) return null;
+            return index;
+        }
+
+        fn invoke(_: *const Self, index: usize, call: *Call) HandlerError!void {
+            return procedures[index].handler(call);
+        }
+    };
+}
 
 /// Returns a JSON-RPC 2.0 service with explicit fixed capacities.
 pub fn configured_service(
@@ -265,18 +334,16 @@ pub fn configured_service(
             input: []const u8,
             output: []u8,
         ) DispatchError!?[]const u8 {
-            var writer: std.Io.Writer = .fixed(output);
-            dispatch_document(self, input, &writer) catch |err| switch (err) {
-                error.WriteFailed => return error.ResponseTooLarge,
-                else => {
-                    writer.end = 0;
-                    write_error(&writer, standard_error.parse_error, "Parse error", null) catch {
-                        return error.ResponseTooLarge;
-                    };
-                },
-            };
-            if (writer.end == 0) return null;
-            return writer.buffered();
+            return dispatch_to_buffer(self, input, output, null);
+        }
+
+        pub fn dispatch_with_signal(
+            self: *const Self,
+            signal: AbortSignal,
+            input: []const u8,
+            output: []u8,
+        ) DispatchError!?[]const u8 {
+            return dispatch_to_buffer(self, input, output, signal);
         }
 
         fn method_at(self: *const Self, index: usize) []const u8 {
@@ -312,7 +379,95 @@ pub fn configured_service(
     };
 }
 
-fn dispatch_document(service: anytype, input: []const u8, writer: *std.Io.Writer) !void {
+fn dispatch_to_buffer(
+    service: anytype,
+    input: []const u8,
+    output: []u8,
+    signal: ?AbortSignal,
+) DispatchError!?[]const u8 {
+    if (signal) |value| value.checkpoint() catch return error.Aborted;
+    var writer: std.Io.Writer = .fixed(output);
+    dispatch_document(service, input, &writer, signal) catch |err| switch (err) {
+        error.Aborted => return error.Aborted,
+        error.WriteFailed => return error.ResponseTooLarge,
+        else => {
+            writer.end = 0;
+            write_error(&writer, standard_error.parse_error, "Parse error", null) catch {
+                return error.ResponseTooLarge;
+            };
+        },
+    };
+    if (writer.end == 0) return null;
+    return writer.buffered();
+}
+
+fn static_table_capacity(procedure_count: usize) usize {
+    var capacity: usize = 2;
+    while (capacity < procedure_count * 2) capacity *= 2;
+    return capacity;
+}
+
+fn find_perfect_seed(
+    comptime procedures: []const StaticProcedure,
+    comptime table_capacity: usize,
+) u64 {
+    for (procedures, 0..) |procedure, index| {
+        if (!valid_method_name(procedure.method)) @compileError("invalid static RPC method name");
+        for (procedures[0..index]) |previous| {
+            if (std.mem.eql(u8, previous.method, procedure.method)) {
+                @compileError("duplicate static RPC method name");
+            }
+        }
+    }
+
+    var seed: u64 = 0;
+    while (seed < 100_000) : (seed += 1) {
+        var occupied = [_]bool{false} ** table_capacity;
+        var collision = false;
+        for (procedures) |procedure| {
+            const slot = hash_method_seeded(procedure.method, seed) % table_capacity;
+            if (occupied[slot]) {
+                collision = true;
+                break;
+            }
+            occupied[slot] = true;
+        }
+        if (!collision) return seed;
+    }
+    @compileError("unable to generate a perfect RPC hash table");
+}
+
+fn make_static_table(
+    comptime procedures: []const StaticProcedure,
+    comptime table_capacity: usize,
+    comptime seed: u64,
+) [table_capacity]u16 {
+    var table = [_]u16{0} ** table_capacity;
+    for (procedures, 0..) |procedure, index| {
+        const slot = hash_method_seeded(procedure.method, seed) % table_capacity;
+        table[slot] = @intCast(index + 1);
+    }
+    return table;
+}
+
+fn make_static_hashes(
+    comptime procedures: []const StaticProcedure,
+    comptime seed: u64,
+) [procedures.len]u64 {
+    var hashes: [procedures.len]u64 = undefined;
+    for (procedures, 0..) |procedure, index| {
+        hashes[index] = hash_method_seeded(procedure.method, seed);
+    }
+    return hashes;
+}
+
+fn dispatch_document(
+    service: anytype,
+    input: []const u8,
+    writer: *std.Io.Writer,
+    signal: ?AbortSignal,
+) !void {
+    if (signal) |value| try value.checkpoint();
     var scanner_scratch: [scanner_scratch_capacity]u8 = undefined;
     var scratch = std.heap.FixedBufferAllocator.init(&scanner_scratch);
     var scanner = std.json.Scanner.initCompleteInput(scratch.allocator(), input);
@@ -324,7 +479,7 @@ fn dispatch_document(service: anytype, input: []const u8, writer: *std.Io.Writer
             _ = try scanner.next();
             const request = try parse_request(&scanner, scratch.allocator(), input);
             try expect_document_end(&scanner);
-            _ = try dispatch_request(service, request, writer);
+            _ = try dispatch_request(service, request, writer, signal);
         },
         .array_begin => {
             // Validate the complete document before application callbacks can run.
@@ -333,7 +488,7 @@ fn dispatch_document(service: anytype, input: []const u8, writer: *std.Io.Writer
             scanner.deinit();
             scratch.reset();
             scanner = std.json.Scanner.initCompleteInput(scratch.allocator(), input);
-            try dispatch_batch(service, &scanner, scratch.allocator(), input, writer);
+            try dispatch_batch(service, &scanner, scratch.allocator(), input, writer, signal);
         },
         else => {
             try scanner.skipValue();
@@ -349,6 +504,7 @@ fn dispatch_batch(
     allocator: std.mem.Allocator,
     input: []const u8,
     writer: *std.Io.Writer,
+    signal: ?AbortSignal,
 ) !void {
     _ = try scanner.next();
     if (try scanner.peekNextTokenType() == .array_end) {
@@ -362,6 +518,7 @@ fn dispatch_batch(
     var response_count: usize = 0;
 
     while (try scanner.peekNextTokenType() != .array_end) {
+        if (signal) |value| try value.checkpoint();
         if (try scanner.peekNextTokenType() != .object_begin) {
             try scanner.skipValue();
             if (response_count != 0) try writer.writeByte(',');
@@ -373,12 +530,12 @@ fn dispatch_batch(
         _ = try scanner.next();
         const request = try parse_request(scanner, allocator, input);
         if (!request.wants_response()) {
-            _ = try dispatch_request(service, request, writer);
+            _ = try dispatch_request(service, request, writer, signal);
             continue;
         }
 
         if (response_count != 0) try writer.writeByte(',');
-        _ = try dispatch_request(service, request, writer);
+        _ = try dispatch_request(service, request, writer, signal);
         response_count += 1;
     }
     _ = try scanner.next();
@@ -391,7 +548,13 @@ fn dispatch_batch(
     try writer.writeByte(']');
 }
 
-fn dispatch_request(service: anytype, request: ParsedRequest, writer: *std.Io.Writer) !bool {
+fn dispatch_request(
+    service: anytype,
+    request: ParsedRequest,
+    writer: *std.Io.Writer,
+    signal: ?AbortSignal,
+) !bool {
+    if (signal) |value| try value.checkpoint();
     if (!request.valid) {
         try write_error(writer, standard_error.invalid_request, "Invalid Request", null);
         return true;
@@ -410,8 +573,10 @@ fn dispatch_request(service: anytype, request: ParsedRequest, writer: *std.Io.Wr
     var call = Call{
         .params = request.params,
         .writer = if (request.wants_response()) writer else null,
+        .abort_signal = signal,
     };
     service.invoke(procedure_index, &call) catch |err| {
+        if (err == error.Aborted) return error.Aborted;
         if (!request.wants_response()) return false;
         writer.end = response_start;
         switch (err) {
@@ -570,10 +735,16 @@ fn valid_method_name(method: []const u8) bool {
 }
 
 fn hash_method(method: []const u8) usize {
-    var hash: u64 = 0xcbf29ce484222325;
+    return @truncate(hash_method_seeded(method, 0));
+}
+
+fn hash_method_seeded(method: []const u8, seed: u64) u64 {
+    var hash: u64 = 0xcbf29ce484222325 ^ seed;
+    hash ^= method.len;
+    hash *%= 0x100000001b3;
     for (method) |byte| {
         hash ^= byte;
         hash *%= 0x100000001b3;
     }
-    return @truncate(hash);
+    return hash;
 }
