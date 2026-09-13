@@ -13,7 +13,7 @@ pub const RegionError = error{
     NoFreeBlock,
 };
 
-/// Fixed-block shared memory for TypedArray and SharedArrayBuffer bridges.
+/// Fixed-block shared memory for zero-copy host bridges.
 ///
 /// Handles carry a generation to reject stale releases and use-after-free.
 pub fn region(comptime block_size: usize, comptime block_count: usize) type {

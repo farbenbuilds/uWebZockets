@@ -10,7 +10,7 @@ const SharedRegion = shared.region(block_size, block_count);
 
 var shared_region: SharedRegion = .{};
 
-/// Acquires one fixed shared-memory block for a host TypedArray view.
+/// Acquires one fixed shared-memory block for a zero-copy host view.
 export fn alloc(length: u32) usize {
     const handle = shared_region.acquire(length) catch return 0;
     const bytes = shared_region.capacity(handle) catch return 0;

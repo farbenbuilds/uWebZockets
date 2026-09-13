@@ -33,7 +33,6 @@ listener starts, so callbacks never observe a structural mutation.
 uWebZockets/
 ├── build.zig                 # thin versioned graph injector
 ├── build.zig.zon             # Zig 0.16 package manifest
-├── bindings/                 # TypeScript shared-memory host adapters
 ├── builds/
 │   ├── orchestrator.zig        # target selection and aggregate steps
 │   ├── vendor.zig              # CMake/Ninja C and C++ dependencies

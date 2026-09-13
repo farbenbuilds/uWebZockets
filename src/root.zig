@@ -91,7 +91,7 @@ pub const transport = @import("core/transport.zig");
 pub const ktls = @import("core/ktls.zig");
 /// AF_XDP zero-copy socket and UMEM ring support.
 pub const xdp = @import("xdp/socket.zig");
-/// Generation-checked SharedArrayBuffer and Cap'n Proto bridge.
+/// Generation-checked shared memory and Cap'n Proto envelopes.
 pub const shared_memory = @import("ffi/shared_memory.zig");
 /// Completion-driven UDP/QUIC transport API.
 pub const udp = @import("core/udp.zig");

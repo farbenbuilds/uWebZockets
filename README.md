@@ -126,10 +126,10 @@ zig build ebpf
 zig build all-targets -Doptimize=ReleaseSafe
 ```
 
-The freestanding target exports shared memory for V8 isolate hosts. Both WASM
+The freestanding target exports linear memory for V8 isolate hosts. Both WASM
 targets export bounded `alloc`/`free` and generation-checked handle functions;
-host code should retain the handle while a `TypedArray` or `SharedArrayBuffer`
-view is live and release it exactly once. The eBPF step emits
+host code should retain each handle while its shared-memory view is live and
+release it exactly once. The eBPF step emits
 `zig-out/share/uwebzockets/uwz_xdp.o`; attaching it and populating its XSK map
 requires Linux network-administration privileges.
 

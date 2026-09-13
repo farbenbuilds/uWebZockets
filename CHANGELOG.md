@@ -15,8 +15,8 @@ uses Semantic Versioning.
 - Added bounded libdeflate compression streams, BoringSSL SHA-256, HMAC-SHA256,
   and AES-GCM primitives, plus generation-safe cooperative cancellation for
   streams, RPC dispatch, timers, and pooled TCP connection lifecycles.
-- Added a generation-checked shared-memory bridge with a bounded Cap'n Proto
-  envelope for host `TypedArray` and `SharedArrayBuffer` views.
+- Added generation-checked shared memory with a bounded Cap'n Proto envelope
+  for zero-copy WASM host views.
 - Added a Linux AF_XDP socket with UMEM ownership rings and an XDP redirect
   program, plus kTLS configuration and zero-copy `sendfile`/`splice` helpers.
 - Added SIMD HTTP delimiter and field-value scanning and compile-time JSON-RPC

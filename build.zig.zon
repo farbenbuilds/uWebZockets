@@ -49,7 +49,6 @@
     .paths = .{
         "build.zig",
         "builds",
-        "bindings",
         "build.zig.zon",
         "build.zig.zon.json",
         "build.zig.zon.nix",
