@@ -405,5 +405,5 @@ The protocol adaptations show that zero allocation is not a single parser trick.
 
 The current evidence supports a cache locality and high concurrency tail latency hypothesis, not a universal superiority claim. The repository records extensive functional tests and a 514 of 517 successful Autobahn baseline, but the cache and latency figures in this paper are intentionally synthetic placeholders. I would consider the architectural thesis established only after the proposed controlled comparison reports hardware counters, allocation counts, capacity rejection rates, and tail distributions across equivalent protocol workloads.
 \bibliographystyle{IEEEtran}
-\bibliography{ref}
+\IfFileExists{ref.bib}{\bibliography{ref}}{\bibliography{paper/ref}}
 \end{document}
