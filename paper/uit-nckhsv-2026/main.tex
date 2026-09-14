@@ -119,6 +119,24 @@ Về event loop, libxev phù hợp với mục tiêu Zig và zero-allocation vì
 
 Kho mã cũng đã định nghĩa hợp đồng benchmark HTTP/1.1 có thể tái lập~\cite{repo_benchmark}: bản dựng \texttt{ReleaseFast}, \texttt{wrk} với 2 thread và 64 connection trong 10 giây, ba mẫu lấy median, cùng quy tắc candidate phải đạt ít nhất 90\% median của baseline. Hợp đồng này đủ để kiểm tra hồi quy và tạo bằng chứng có thể lặp lại, nhưng chưa phải phép chứng minh libxev vượt libuv vì kho hiện chưa có backend libuv và chưa có cặp kết quả cùng điều kiện. TechEmpower Round 23 có thể làm mốc tham chiếu bên ngoài cho các workload như plaintext, JSON và truy vấn cơ sở dữ liệu~\cite{techempower}; các số liệu đó không được trộn trực tiếp với hợp đồng nội bộ do khác biệt về phần cứng, topology, phiên bản và harness.
 
+Bản ghi bền vững trên nhánh benchmark-data cung cấp một lần thực thi của hợp đồng này~\cite{repo_benchmark_record}. Lần chạy theo lịch sử dụng Zig 0.16.0, Nix 2.35.2, 2 thread \texttt{wrk}, 64 connection, ba mẫu 10 giây và cùng một source SHA cho baseline và candidate. Median của candidate là 177{,}024.21 requests/giây, còn baseline là 173{,}923.95 requests/giây; kết quả vượt ngưỡng 90\% là 156{,}531.56 requests/giây. Vì provenance ghi nhận cùng source SHA ở hai phía, bản ghi này nên được hiểu là bằng chứng tái lập và vượt qua contract, không phải bằng chứng cải thiện do một thay đổi kiến trúc. Raw sample thứ ba ghi nhận p99 là 449~$\mu\text{s}$ cho candidate và 459~$\mu\text{s}$ cho baseline; đây chỉ là quan sát mô tả của một mẫu, không phải ước lượng nhân quả hay khoảng tin cậy.
+
+\begin{table}[!ht]
+\centering
+\small
+\caption{Kết quả ghi nhận của \texttt{http-throughput-v1}}
+\label{tab:repo-result}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Bản dựng & Median RPS & Ba giá trị mẫu RPS \\
+\midrule
+Baseline & 173{,}923.95 & 172{,}132.47 / 179{,}453.11 / 173{,}923.95 \\
+Candidate & 177{,}024.21 & 175{,}983.07 / 179{,}375.31 / 177{,}024.21 \\
+Ngưỡng 90\% & 156{,}531.56 & Đạt \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \paragraph{Nội dung 2: Phân tích cô lập giao thức.}
 
 HTTP/1.1 dùng bộ đệm yêu cầu có giới hạn, parser nghiêm ngặt và hàng đợi ghi dạng vòng. HTTP/2 dùng slab luồng theo SoA, kiểm tra preface, frame, flow control, CONTINUATION, SETTINGS, PING và GOAWAY. HPACK dùng dynamic table có giới hạn, vùng header do bên gọi sở hữu và cây Huffman được xây dựng tại thời điểm biên dịch. WebSocket dùng zslay cho khung, kiểm tra UTF 8 và kích thước, bộ đệm thông điệp giới hạn, SIMD masking và backpressure. Per Message Deflate luôn thương lượng no context takeover ở cả phía máy chủ và máy khách, đồng thời tách vùng nén nhận và gửi để tránh phụ thuộc lịch sử không giới hạn.

@@ -281,6 +281,24 @@ Interpretation & Relative regression guard; not an absolute capacity claim \\
 \end{tabular}
 \end{table}
 
+A durable benchmark-data record provides one execution of this contract~\cite{repo_benchmark_record}. The scheduled run used Zig 0.16.0, Nix 2.35.2, two \texttt{wrk} threads, 64 connections, three 10-second samples, and the same source revision for both the recorded baseline and candidate. The candidate median was 177{,}024.21 requests per second versus 173{,}923.95 for the baseline, exceeding the 90\% gate threshold of 156{,}531.56 requests per second. Because the provenance identifies the same source SHA on both sides, this record is best interpreted as a reproducibility and contract-pass record, not as evidence of an implementation improvement. The raw third samples reported p99 latencies of 449~$\mu\text{s}$ for the candidate and 459~$\mu\text{s}$ for the baseline; these are descriptive single-sample observations, not a causal estimate or a confidence interval.
+
+\begin{table}[t]
+\caption{Recorded \texttt{http-throughput-v1} result}
+\label{tab:repo-result}
+\centering
+\small
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Build & Median RPS & Three sample RPS values \\
+\midrule
+Baseline & 173{,}923.95 & 172{,}132.47 / 179{,}453.11 / 173{,}923.95 \\
+Candidate & 177{,}024.21 & 175{,}983.07 / 179{,}375.31 / 177{,}024.21 \\
+90\% gate & 156{,}531.56 & Passed \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 TechEmpower provides a useful external reference because its benchmark suite covers multiple framework workloads, including plaintext, JSON serialization, database access, and other application tasks~\cite{techempower}. Its Round 23 results are contextual rather than directly comparable: the hardware, client/server topology, framework configuration, test implementation, and measurement round differ from the repository contract. A defensible libxev-versus-libuv claim therefore requires a new paired experiment using the repository contract, plus a clearly identified TechEmpower-compatible implementation if cross-suite comparison is desired.
 
 \subsection{Cache measurement}
