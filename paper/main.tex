@@ -181,32 +181,37 @@ Figure~\ref{fig:memory} shows the intended density argument. An array of structu
 \centering
 \begin{tikzpicture}[
   font=\scriptsize,
-  cell/.style={draw, minimum height=0.48cm, minimum width=0.84cm, align=center},
+  cell/.style={draw, minimum height=0.48cm, minimum width=0.98cm, align=center, font=\tiny},
   cache/.style={draw=black!65, dashed, thick, inner sep=3pt}
 ]
-\node[anchor=west] at (0,2.0) {Traditional AoS record sequence};
-\foreach \i/\txt in {0/{id},1/{state},2/{window},3/{cold},4/{id},5/{state},6/{window},7/{cold}} {
-  \node[cell,fill=blue!18] (a\i) at (\i*0.84,1.35) {\txt};
+\node[anchor=west] at (0,2.0) {Conventional layout (without DoD)};
+\foreach \i/\txt in {0/{id},1/{state},2/{window},4/{id},5/{state},6/{window}} {
+  \node[cell,fill=blue!18] (a\i) at (\i*1.0,1.45) {\txt};
+}
+\foreach \i/\txt in {3/{cold},7/{cold}} {
+  \node[cell,fill=gray!25] (a\i) at (\i*1.0,1.45) {\txt};
 }
 \node[cache, fit=(a0)(a3)] (ca) {};
 \node[cache, fit=(a4)(a7)] (cb) {};
-\node[below=0.1cm of ca] {cache line A};
-\node[below=0.1cm of cb] {cache line B};
-\node[anchor=west] at (0,0.55) {Packed SoA columns};
+\node[below=0.16cm of ca] {cache line A};
+\node[below=0.16cm of cb] {cache line B};
+\node[anchor=west] at (0,0.45) {Data-oriented layout (DoD / SoA)};
 \foreach \i/\txt in {0/{id$_0$},1/{id$_1$},2/{id$_2$},3/{id$_3$},4/{id$_4$},5/{id$_5$},6/{id$_6$},7/{id$_7$}} {
-  \node[cell,fill=blue!18] (s\i) at (\i*0.84,0) {\txt};
+  \node[cell,fill=blue!18] (s\i) at (\i*1.0,-0.10) {\txt};
 }
 \node[cache, fit=(s0)(s7)] (cs) {};
-\node[below=0.1cm of cs] {one dense identifier scan};
+\node[below=0.16cm of cs] {one dense identifier scan};
 \foreach \i/\txt in {0/{state$_0$},1/{state$_1$},2/{state$_2$},3/{state$_3$},4/{state$_4$},5/{state$_5$},6/{state$_6$},7/{state$_7$}} {
-  \node[cell,fill=blue!18] at (\i*0.84,-1.0) {\txt};
+  \node[cell,fill=gray!25] at (\i*1.0,-1.25) {\txt};
 }
 \foreach \i/\txt in {0/{window$_0$},1/{window$_1$},2/{window$_2$},3/{window$_3$},4/{window$_4$},5/{window$_5$},6/{window$_6$},7/{window$_7$}} {
-  \node[cell,fill=gray!18] at (\i*0.84,-2.0) {\txt};
+  \node[cell,fill=gray!18] at (\i*1.0,-2.35) {\txt};
 }
-\node[anchor=west] at (7.3,-1.0) {columns selected by access pattern};
+\node[anchor=west,align=left,text width=3.2cm] at (8.15,-1.25) {columns selected by access pattern};
+\node[anchor=west] at (8.15,1.45) {\textcolor{blue!70!black}{\rule{0.35cm}{0.4pt}} hot field};
+\node[anchor=west] at (8.15,1.10) {\textcolor{gray!70!black}{\rule{0.35cm}{0.4pt}} cold field};
 \end{tikzpicture}
-\caption{Conceptual cache line comparison. The shaded AoS cells interleave hot and cold fields, whereas SoA concentrates one field family into a dense scan. The diagram expresses an access pattern hypothesis and is not a processor trace.}
+\caption{Conceptual comparison of a conventional cache layout without data-oriented design (DoD) and a DoD/SoA layout. The conventional cache lines interleave hot and cold fields, whereas DoD isolates field families so a hot identifier scan can remain dense. Blue marks frequently accessed fields for the illustrated scan; gray marks colder fields. This is an access-pattern hypothesis, not a processor trace.}
 \label{fig:memory}
 \end{figure*}
 
