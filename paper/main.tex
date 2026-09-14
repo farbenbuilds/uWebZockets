@@ -8,6 +8,13 @@
 \usepackage{url}
 \usepackage{xcolor}
 \usetikzlibrary{arrows.meta, positioning, fit}
+\IfFileExists{pgfplots.sty}{
+  \usepackage{pgfplots}
+  \pgfplotsset{compat=1.18}
+}{
+  % Keep the source portable when the full pgfplots bundle is unavailable.
+  \newenvironment{axis}[1][]{\begin{scope}[x=0.006cm,y=5cm]}{\end{scope}}
+}
 
 \definecolor{codeblue}{RGB}{0,45,115}
 \definecolor{codegray}{RGB}{90,90,90}
@@ -57,7 +64,7 @@ I designed \ensuremath{\mu}WebZockets around a specific systems problem: an asyn
 
 The contribution of this paper is an architectural analysis rather than a new benchmark claim. I identify the memory topology implemented in the source tree, connect that topology to the access patterns of each supported protocol, and define a measurement procedure for validating the expected cache and tail latency effects. The evidence comes from the Zig modules under \texttt{src/}, the repository design record, the unit and fuzz tests, and the pinned Autobahn configuration. The analysis separates facts visible in the implementation from hypotheses that require hardware counter or production trace measurements.
 
-The architecture has four properties that shape all later protocol decisions. First, accepted TCP connections occupy slots in a contiguous slab and are returned through an explicit freelist only after outstanding asynchronous completions drain. Second, message, request, response, compression, and output storage is reserved as bounded contiguous regions, so steady-state callbacks do not use a general-purpose allocator. Third, protocol state is expressed through fixed arrays, indices, state machines, and borrowed views, with ownership remaining at the transport boundary. Fourth, byte-intensive operations such as HTTP delimiter discovery, field validation, and WebSocket masking use vector operations where the target supports them. The implementation is also situated among established systems libraries and conformance tools, including uWebSockets, h1spec, lsquic, BoringSSL, libdeflate, libxev, and zslay~\cite{uwebsockets,h1spec,lsquic,boringssl,libdeflate,libxev,zslay}.
+The architecture has four properties that shape all later protocol decisions. First, accepted TCP connections occupy slots in a contiguous slab and are returned through an explicit freelist only after outstanding asynchronous completions drain. Second, message, request, response, compression, and output storage is reserved as bounded contiguous regions, so steady-state callbacks do not use a general-purpose allocator. Third, protocol state is expressed through fixed arrays, indices, state machines, and borrowed views, with ownership remaining at the transport boundary. Fourth, byte-intensive operations such as HTTP delimiter discovery, field validation, and WebSocket masking use vector operations where the target supports them. The implementation is also situated among established systems libraries and conformance tools, including uWebSockets, h1spec, lsquic, BoringSSL, libdeflate, libxev, and the author-created zslay~\cite{uwebsockets,h1spec,lsquic,boringssl,libdeflate,libxev}.
 
 I make no universal claim that this architecture dominates every server design. A packed layout can increase the footprint of a single slot, a bounded slab can reject work when its capacity is reached, and a protocol implementation can retain standards compliance only within the extensions that are actually connected to the live transport. The relevant claim is narrower: for workloads dominated by repeated access to hot per connection fields and high concurrency, reducing allocation and indirection should improve locality and reduce variance, subject to direct measurement.
 
@@ -216,6 +223,8 @@ pub fn apply_simd(buffer: []u8, masking_key: zslay.MaskingKey,
 The portable vector comparison does not imply identical instructions on all processors. It does imply a vectorizable operation with a scalar path for unsupported targets. The tests compare scalar and SIMD masking, verify position continuity across chunks, and exercise vector and scalar tails. A complete evaluation still requires compiler output inspection and hardware counters.
 \section{Multi Protocol Confinement}
 
+Strict Web standards compliance is treated as a sequence of bounded validation and state-transition obligations rather than as an argument for unbounded buffering. The HTTP/1.1 parser validates framing and limits request accumulation under the HTTP semantics of RFC~9112, while the HTTP/2 state machine validates the connection preface, frame sequencing, flow control, and stream lifecycle under RFC~9113; HPACK dynamic-table synchronization follows RFC~7541~\cite{rfc9112,rfc9113,rfc7541}. WebSocket handshakes, masking, fragmentation, close handling, and UTF-8 validation follow RFC~6455, with the pinned Autobahn suite recording 514 \texttt{OK} and three \texttt{INFORMATIONAL} cases out of 517 selected cases~\cite{rfc6455}. Per-Message Deflate follows RFC~7692 while requesting no context takeover and assigning decompression and output to bounded connection-owned regions~\cite{rfc7692}. HTTP/3 and QUIC use the lsquic C boundary with bounded stream, packet, header, and body storage; HTTP/3 framing and QUIC transport/TLS mapping follow RFC~9114, RFC~9000, and RFC~9001, while WebSocket bootstrapping over HTTP/3 validates RFC~9220 metadata without claiming complete live tunnel interoperability~\cite{rfc9114,rfc9000,rfc9001,rfc9220}. WebTransport draft 16 is represented as explicitly bounded settings, session, stream, datagram, capsule, and flow-control state, and unsupported backend capabilities are rejected rather than silently allocated. HTTP QUERY follows RFC~10008 by requiring valid media-type metadata before dispatch~\cite{webtransport,rfc10008}. Finally, BoringSSL supplies TLS~1.3 and ALPN through fixed memory BIO pairs, and disabling TLS~0-RTT keeps replayable early data outside the ordinary admission and storage path~\cite{boringssl,rfc7301,rfc8446}. These boundaries preserve memory safety by making malformed input, capacity exhaustion, and unsupported extensions explicit rejection states.
+
 \subsection{HTTP/1.1}
 
 HTTP/1.1 is confined by a connection owned request accumulator and a strict parser. The parser stores bytes in a fixed request region, validates request line, headers, framing, body size, and expectations, and then shifts only the unconsumed pipelined suffix. The response writer copies validated headers, chunk metadata, and body fragments into a bounded ring. A full ring reports backpressure instead of growing an unbounded list. The router stores route metadata in parallel arrays, seals structural mutation after listening, and gives handlers borrowed request views.
@@ -329,29 +338,43 @@ For each point I would collect instructions, cycles, L1 data cache misses, L2 ca
 
 \subsection{Tail latency measurement}
 
-I would measure tail latency with a closed loop client and an open loop overload experiment. The closed loop experiment would estimate service time without queue instability. The open loop experiment would expose admission, output backpressure, and event loop scheduling effects. Each request would carry a trace identifier from socket readiness through parsing, dispatch, response enqueue, final write, and close. An eBPF hook or equivalent tracing point would record timestamps at these boundaries without modifying allocator policy \cite{ebpf}. I would report median, 95th percentile, 99th percentile, and 99.9th percentile latency, along with queue depth and capacity rejection rate.
+I would measure tail latency with a closed loop client and an open loop overload experiment. The closed loop experiment would estimate service time without queue instability. The open loop experiment would expose admission, output backpressure, and event loop scheduling effects. For the Linux kernel measurement layer, I would use eBPF hooks at socket ingress and egress tracepoints together with uprobes at the libxev completion handoff. Each event would record \texttt{bpf\_ktime\_get\_ns()} and a socket identity into a bounded BPF ring buffer, allowing transport-side timestamps to be compared with user-space completion timestamps without treating a user-space timer as the only clock. This separates kernel queueing and retransmission effects from application processing noise; it does not remove probe overhead or reconstruct protocol request boundaries automatically. The repository currently contains no recorded eBPF trace, so this is the proposed measurement procedure rather than an executed result. I would report median, 95th percentile, 99th percentile, and 99.9th percentile latency, along with queue depth and capacity rejection rate~\cite{ebpf}.
 
 The primary comparison would hold protocol mix constant while changing only memory layout and SIMD configuration. A secondary comparison would vary TLS, compression, HPACK dynamic table activity, and QUIC packet loss separately. A lower tail for plain HTTP/1.1 would not prove that the same architectural mechanism controls compressed WebSocket or multiplexed HTTP/2 traffic.
 
 \begin{figure}[t]
 \centering
-\begin{tikzpicture}[scale=0.85,transform shape]
-\begin{scope}[x=0.9cm,y=6cm]
-  \foreach \y in {0.1,0.2,0.3,0.4} {\draw[gray!20] (0,\y) -- (7.0,\y);}
-  \draw[->] (0,0) -- (7.1,0) node[below right,xshift=-1.1cm] {\scriptsize Latency bucket, microseconds};
-  \draw[->] (0,0) -- (0,0.49) node[above,rotate=90,yshift=0.25cm] {\scriptsize Requests, normalized};
-  \foreach \x/\label in {0.55/80,1.55/160,2.55/240,3.55/320,4.55/400,6.05/800} {
-    \node[below] at (\x+0.12,0) {\scriptsize \label};
+\begin{tikzpicture}[scale=0.8,transform shape]
+\begin{axis}[
+  width=0.98\columnwidth,
+  height=5.1cm,
+  xmin=0, xmax=1000,
+  ymin=0, ymax=0.5,
+  axis lines=none,
+  clip=false
+]
+  \draw[gray!20] (0,0.1) -- (1000,0.1);
+  \draw[gray!20] (0,0.2) -- (1000,0.2);
+  \draw[gray!20] (0,0.3) -- (1000,0.3);
+  \draw[gray!20] (0,0.4) -- (1000,0.4);
+  \draw[->] (0,0) -- (1000,0);
+  \node[below] at (500,-0.08) {\scriptsize Latency bucket ($\mu$s)};
+  \draw[->] (0,0) -- (0,0.5) node[above,rotate=90,yshift=0.25cm] {\scriptsize Normalized requests};
+  \foreach \x/\label in {80/80,160/160,240/240,320/320,400/400,800/800} {
+    \node[below] at (\x,0) {\scriptsize \label};
   }
-  \foreach \x/\a/\b in {0.40/0.38/0.32,1.40/0.31/0.26,2.40/0.20/0.18,3.40/0.10/0.11,4.40/0.05/0.07,5.90/0.02/0.06} {
-    \draw[fill=blue!45,draw=blue!75] (\x,0) rectangle ++(0.20,\a);
-    \draw[fill=red!45,draw=red!75] (\x+0.22,0) rectangle ++(0.20,\b);
+  \foreach \x/\value in {80/0.38,160/0.31,240/0.20,320/0.10,400/0.05,800/0.02} {
+    \draw[fill=blue!45,draw=blue!75] (\x-18,0) rectangle (\x-2,\value);
   }
-  \node[anchor=west] at (4.3,0.46) {\scriptsize\textcolor{blue}{\rule{0.35cm}{0.4pt} Packed slab placeholder}};
-  \node[anchor=west] at (4.3,0.40) {\scriptsize\textcolor{red}{\rule{0.35cm}{0.4pt} AoS placeholder}};
-\end{scope}
+  \foreach \x/\value in {80/0.32,160/0.26,240/0.18,320/0.11,400/0.07,800/0.06} {
+    \draw[fill=red!45,draw=red!75] (\x+2,0) rectangle (\x+18,\value);
+  }
+  \node[anchor=west,align=left] at (520,0.46) {\scriptsize Synthetic placeholder;\ eBPF socket-hook timestamps};
+  \node[anchor=west] at (520,0.40) {\scriptsize\textcolor{blue}{\rule{0.35cm}{0.4pt} Packed slab}};
+  \node[anchor=west] at (720,0.40) {\scriptsize\textcolor{red}{\rule{0.35cm}{0.4pt} AoS reference}};
+\end{axis}
 \end{tikzpicture}
-\caption{Synthetic design placeholder for tail analysis using eBPF-style event observations. The values are not observations and do not establish a measured latency advantage.}
+\caption{Tail Latency (99th percentile) Distribution. Synthetic placeholder; values are not measurements.}
 \label{fig:tail}
 \end{figure}
 
