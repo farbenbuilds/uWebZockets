@@ -1,7 +1,6 @@
 \documentclass[journal]{IEEEtran}
 \usepackage{amsmath}
 \usepackage{amssymb}
-\usepackage[utf8]{vietnam}
 \usepackage{booktabs}
 \usepackage{cite}
 \usepackage{listings}
@@ -13,6 +12,18 @@
 \definecolor{codeblue}{RGB}{0,45,115}
 \definecolor{codegray}{RGB}{90,90,90}
 \definecolor{codegreen}{RGB}{0,100,0}
+\lstdefinelanguage{Zig}{
+  sensitive=true,
+  morekeywords={addrspace,align,allowzero,anyframe,anytype,asm,async,await,
+    break,catch,comptime,const,continue,defer,else,enum,errdefer,error,
+    export,extern,false,fn,for,noalias,noinline,nosuspend,opaque,or,
+    orelse,packed,pub,return,struct,suspend,switch, test,threadlocal,
+    true,try,undefined,union,unreachable,usingnamespace,var,volatile,while,
+    u8,u16,u32,u64,u128,i8,i16,i32,i64,i128,usize,isize,f32,f64,bool,void},
+  morecomment=[l]{//},
+  morecomment=[s]{/*}{*/},
+  morestring=[b]"
+}
 \lstset{
   basicstyle=\footnotesize\ttfamily,
   keywordstyle=\color{codeblue},
@@ -29,7 +40,7 @@
 }
 
 \title{Cache Locality and Bounded Protocol Confinement in \ensuremath{\mu}WebZockets}
-\author{Trần Ngô Anh Quân\\
+\author{Tran Ngo Anh Quan\\
 \textit{Faculty of Computer Networking and Data Communication}\\
 \texttt{25521506@gm.uit.edu.vn}}
 \begin{document}
@@ -97,7 +108,7 @@ The resulting design changes overload semantics. A full output ring returns \tex
 
 The generic pool in \texttt{src/core/pool.zig} allocates a contiguous typed slab and a parallel index stack once during initialization. Acquire decrements a counter and returns the indexed element. Release validates that the pointer is in range, aligned to the element size, and active before pushing its index back. The steady-state operations perform no allocation and require a constant number of pointer and counter operations. A static activity bitset adds a validity check and a compact occupancy representation. This layout follows the data-oriented design principle of arranging storage around the access pattern rather than around an object graph~\cite{kelly_dod}.
 
-\begin{lstlisting}[language=C,caption={Source derived form of the bounded O(1) freelist operations},label={lst:freelist}]
+\begin{lstlisting}[language=Zig,caption={Source derived form of the bounded O(1) freelist operations},label={lst:freelist}]
 pub fn acquire(self: *Self) ?*T {
     if (self.free_count == 0) return null;
     self.free_count -= 1;
@@ -130,7 +141,7 @@ The constant time statement applies to pool acquisition and release, not to ever
 
 The HTTP/2 stream slab separates identifiers, lifecycle states, receive windows, send windows, freelist links, and active flags into parallel arrays. A frame handler can scan active identifiers without loading windows or state for every candidate, while flow control can access the window arrays without traversing heap objects.
 
-\begin{lstlisting}[language=C,caption={Structure of arrays used by the bounded HTTP/2 stream slab},label={lst:soa}]
+\begin{lstlisting}[language=Zig,caption={Structure of arrays used by the bounded HTTP/2 stream slab},label={lst:soa}]
 stream_ids: [capacity]u32 = .{0} ** capacity;
 states: [capacity]StreamState = .{.idle} ** capacity;
 receive_windows: [capacity]i64 = .{default_window_size} ** capacity;
@@ -180,7 +191,7 @@ Figure~\ref{fig:memory} shows the intended density argument. An array of structu
 
 The SIMD module vectorizes byte candidate discovery for HTTP delimiters and field validation. It uses a target dependent lane count, compares a vector against a repeated byte, and falls back to scalar work for candidate verification and the tail. WebSocket masking uses a sixteen byte vector and preserves key position across fragmented buffers by carrying absolute byte position into the scalar tail. These functions do not allocate and do not change input ownership.
 
-\begin{lstlisting}[language=C,caption={Source derived form of vectorized WebSocket masking},label={lst:simd}]
+\begin{lstlisting}[language=Zig,caption={Source derived form of vectorized WebSocket masking},label={lst:simd}]
 pub fn apply_simd(buffer: []u8, masking_key: zslay.MaskingKey,
     position: u64) void {
     if (buffer.len == 0) return;
