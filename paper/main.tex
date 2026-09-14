@@ -8,13 +8,6 @@
 \usepackage{url}
 \usepackage{xcolor}
 \usetikzlibrary{arrows.meta, positioning, fit}
-\IfFileExists{pgfplots.sty}{
-  \usepackage{pgfplots}
-  \pgfplotsset{compat=1.18}
-}{
-  % Keep the source portable when the full pgfplots bundle is unavailable.
-  \newenvironment{axis}[1][]{\begin{scope}[x=0.006cm,y=5cm]}{\end{scope}}
-}
 
 \definecolor{codeblue}{RGB}{0,45,115}
 \definecolor{codegray}{RGB}{90,90,90}
@@ -345,14 +338,7 @@ The primary comparison would hold protocol mix constant while changing only memo
 \begin{figure}[t]
 \centering
 \begin{tikzpicture}[scale=0.8,transform shape]
-\begin{axis}[
-  width=0.98\columnwidth,
-  height=5.1cm,
-  xmin=0, xmax=1000,
-  ymin=0, ymax=0.5,
-  axis lines=none,
-  clip=false
-]
+\begin{scope}[x=0.006cm,y=5cm]
   \draw[gray!20] (0,0.1) -- (1000,0.1);
   \draw[gray!20] (0,0.2) -- (1000,0.2);
   \draw[gray!20] (0,0.3) -- (1000,0.3);
@@ -364,15 +350,19 @@ The primary comparison would hold protocol mix constant while changing only memo
     \node[below] at (\x,0) {\scriptsize \label};
   }
   \foreach \x/\value in {80/0.38,160/0.31,240/0.20,320/0.10,400/0.05,800/0.02} {
-    \draw[fill=blue!45,draw=blue!75] (\x-18,0) rectangle (\x-2,\value);
+    \pgfmathsetmacro{\leftbar}{\x-18}
+    \pgfmathsetmacro{\rightbar}{\x-2}
+    \draw[fill=blue!45,draw=blue!75] (\leftbar,0) rectangle (\rightbar,\value);
   }
   \foreach \x/\value in {80/0.32,160/0.26,240/0.18,320/0.11,400/0.07,800/0.06} {
-    \draw[fill=red!45,draw=red!75] (\x+2,0) rectangle (\x+18,\value);
+    \pgfmathsetmacro{\leftbar}{\x+2}
+    \pgfmathsetmacro{\rightbar}{\x+18}
+    \draw[fill=red!45,draw=red!75] (\leftbar,0) rectangle (\rightbar,\value);
   }
   \node[anchor=west,align=left] at (520,0.46) {\scriptsize Synthetic placeholder;\ eBPF socket-hook timestamps};
   \node[anchor=west] at (520,0.40) {\scriptsize\textcolor{blue}{\rule{0.35cm}{0.4pt} Packed slab}};
   \node[anchor=west] at (720,0.40) {\scriptsize\textcolor{red}{\rule{0.35cm}{0.4pt} AoS reference}};
-\end{axis}
+\end{scope}
 \end{tikzpicture}
 \caption{Tail Latency (99th percentile) Distribution. Synthetic placeholder; values are not measurements.}
 \label{fig:tail}
