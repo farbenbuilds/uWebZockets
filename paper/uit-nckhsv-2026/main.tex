@@ -28,6 +28,17 @@
 \DeclareUnicodeCharacter{0301}{}
 \hypersetup{colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue}
 
+\setlength{\parindent}{1em}
+\setlength{\parskip}{0.25em}
+\renewcommand{\arraystretch}{1.15}
+\setlength{\tabcolsep}{4pt}
+\setlength{\LTpre}{6pt}
+\setlength{\LTpost}{6pt}
+\setlength{\textfloatsep}{10pt plus 2pt minus 2pt}
+\setlength{\intextsep}{8pt plus 2pt minus 2pt}
+\setlength{\abovecaptionskip}{5pt}
+\setlength{\belowcaptionskip}{0pt}
+
 \titleformat{\section}{\large\bfseries\color{blue}}{}{1em}{}
 \titleformat{\subsection}{\large\bfseries\color{blue}}{}{1em}{}
 \titleformat{\subsubsection}{\normalsize\color{blue}}{}{1em}{}
@@ -38,15 +49,20 @@
 
 \begin{table}[!ht]
 \centering
-\begin{adjustbox}{max width=\textwidth}
-\begin{tabular}{m{0.18\textwidth} c m{0.23\textwidth}}
-\IfFileExists{asset/Figure/image1.png}{\includegraphics[width=0.15\textwidth]{asset/Figure/image1.png}}{\fbox{\rule{0pt}{1.2cm}\rule{1.8cm}{0pt}}}
+\begingroup
+\renewcommand{\arraystretch}{1.0}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}m{0.16\textwidth} c m{0.20\textwidth} m{0.14\textwidth}@{}}
+\multirow{3}{*}{\includegraphics[width=0.08\textwidth]{asset/Figure/image1.png}}
+& & \multicolumn{1}{|c|}{} & \multicolumn{1}{|c|}{} \\\cline{3-4}
 & \small ĐẠI HỌC QUỐC GIA TP.HCM
-& \small Ngày nhận hồ sơ \\
+& \multicolumn{1}{|c|}{\multirow{2}{7em}{\small Ngày nhận hồ sơ}}
+& \multicolumn{1}{|c|}{} \\
 & \small \textbf{TRƯỜNG ĐẠI HỌC CÔNG NGHỆ THÔNG TIN}
-& \small \textit{Do cơ quan quản lý ghi}
+& \multicolumn{1}{|c|}{} & \multicolumn{1}{|c|}{} \\\cline{3-4}
+& & \multicolumn{2}{|c|}{\textit{\small (Do cơ quan quản lý ghi)}} \\\cline{3-4}
 \end{tabular}
-\end{adjustbox}
+\endgroup
 \end{table}
 
 \begin{quote}
@@ -125,7 +141,9 @@ Về event loop, libxev phù hợp với mục tiêu Zig và zero-allocation vì
 
 Kho mã cũng đã định nghĩa hợp đồng benchmark HTTP/1.1 có thể tái lập~\cite{repo_benchmark}: bản dựng \texttt{ReleaseFast}, \texttt{wrk} với 2 thread và 64 connection trong 10 giây, ba mẫu lấy median, cùng quy tắc candidate phải đạt ít nhất 90\% median của baseline. Hợp đồng này đủ để kiểm tra hồi quy và tạo bằng chứng có thể lặp lại, nhưng chưa phải phép chứng minh libxev vượt libuv vì kho hiện chưa có backend libuv và chưa có cặp kết quả cùng điều kiện. TechEmpower Round 23 có thể làm mốc tham chiếu bên ngoài cho các workload như plaintext, JSON và truy vấn cơ sở dữ liệu~\cite{techempower}; các số liệu đó không được trộn trực tiếp với hợp đồng nội bộ do khác biệt về phần cứng, topology, phiên bản và harness.
 
+{\sloppy
 Bản ghi bền vững trên nhánh benchmark-data cung cấp một lần thực thi của hợp đồng này~\cite{repo_benchmark_record}. Lần chạy theo lịch sử dụng Zig 0.16.0, Nix 2.35.2, 2 thread \texttt{wrk}, 64 connection, ba mẫu 10 giây và cùng một source SHA cho baseline và candidate. Median của candidate là 177{,}024.21 requests/giây, còn baseline là 173{,}923.95 requests/giây; kết quả vượt ngưỡng 90\% là 156{,}531.56 requests/giây. Vì provenance ghi nhận cùng source SHA ở hai phía, bản ghi này nên được hiểu là bằng chứng tái lập và vượt qua contract, không phải bằng chứng cải thiện do một thay đổi kiến trúc. Raw sample thứ ba ghi nhận p99 là 449~$\mu\text{s}$ cho candidate và 459~$\mu\text{s}$ cho baseline; đây chỉ là quan sát mô tả của một mẫu, không phải ước lượng nhân quả hay khoảng tin cậy.
+\par}
 
 \begin{table}[!ht]
 \centering

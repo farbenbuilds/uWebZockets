@@ -7,11 +7,14 @@
 \usepackage{tikz}
 \usepackage{url}
 \usepackage{xcolor}
+\usepackage{microtype}
 \usetikzlibrary{arrows.meta, positioning, fit}
 
 \definecolor{codeblue}{RGB}{0,45,115}
 \definecolor{codegray}{RGB}{90,90,90}
 \definecolor{codegreen}{RGB}{0,100,0}
+\definecolor{codebackground}{RGB}{247,249,252}
+\definecolor{codeborder}{RGB}{180,190,205}
 \lstdefinelanguage{Zig}{
   sensitive=true,
   morekeywords={addrspace,align,allowzero,anyframe,anytype,asm,async,await,
@@ -31,13 +34,33 @@
   stringstyle=\color{codegray},
   numbers=left,
   numberstyle=\tiny\color{codegray},
-  numbersep=5pt,
+  numbersep=6pt,
   frame=single,
+  rulecolor=\color{codeborder},
+  backgroundcolor=\color{codebackground},
+  framesep=5pt,
+  framexleftmargin=4pt,
+  framexrightmargin=4pt,
+  xleftmargin=0.35em,
+  xrightmargin=0.35em,
+  aboveskip=0.8\baselineskip,
+  belowskip=0.8\baselineskip,
+  captionpos=b,
   columns=fullflexible,
   keepspaces=true,
   showstringspaces=false,
-  breaklines=true
+  breaklines=true,
+  breakatwhitespace=false
 }
+
+\setlength{\emergencystretch}{2em}
+\renewcommand{\arraystretch}{1.12}
+\setlength{\tabcolsep}{4pt}
+\setlength{\textfloatsep}{10pt plus 2pt minus 2pt}
+\setlength{\floatsep}{8pt plus 2pt minus 2pt}
+\setlength{\intextsep}{8pt plus 2pt minus 2pt}
+\setlength{\abovecaptionskip}{5pt}
+\setlength{\belowcaptionskip}{0pt}
 
 \title{Cache Locality and Bounded Protocol Confinement in \ensuremath{\mu}WebZockets}
 \author{Tran Ngo Anh Quan\\
