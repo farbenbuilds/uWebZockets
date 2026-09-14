@@ -55,6 +55,42 @@ pub const ReadableByteStream = struct {
     }
 };
 
+/// Result of one WHATWG BYOB reader operation.
+pub const ReadResult = struct {
+    value: []u8,
+    done: bool,
+};
+
+/// Exclusive BYOB reader borrowing a ReadableByteStream.
+pub const ReadableStreamBYOBReader = struct {
+    stream: *ReadableByteStream,
+    released: bool = false,
+
+    pub fn read(self: *ReadableStreamBYOBReader, view: []u8) !ReadResult {
+        if (self.released) return error.ReaderReleased;
+        const count = try self.stream.read(view);
+        return .{
+            .value = view[0..count],
+            .done = count == 0 and self.stream.is_closed(),
+        };
+    }
+
+    pub fn cancel(self: *ReadableStreamBYOBReader) void {
+        if (self.released) return;
+        self.stream.cancel();
+        self.released = true;
+    }
+
+    pub fn release_lock(self: *ReadableStreamBYOBReader) void {
+        self.released = true;
+    }
+};
+
+/// Acquires a BYOB reader without allocating controller state.
+pub fn get_byob_reader(stream: *ReadableByteStream) ReadableStreamBYOBReader {
+    return .{ .stream = stream };
+}
+
 /// Slice-backed readable stream reader context for fixed in-memory bodies.
 pub const SliceReaderContext = struct {
     data: []const u8,

@@ -78,11 +78,11 @@ pin an exact source commit. Platform verification tiers are documented below.
 | --- | --- |
 | HTTP | GET, HEAD, POST, PUT, DELETE, PATCH, OPTIONS, QUERY, fallback routes, strict framing, automatic 404/405/OPTIONS, and `100 Continue` |
 | Routing | Exact paths, bounded `:name` and terminal `*name` captures, ordered middleware, explicit contexts, and one-shot async responses |
-| Web APIs | Fetch-inspired request bodies and headers, response helpers, redirects, BYOB reads, writable byte streams, SSE, CORS, and security headers |
+| Web APIs | Fetch-inspired request bodies and headers, `WebSocketStream`, BYOB reads, compression streams, abort signals, Web Crypto primitives, SSE, CORS, and security headers |
 | Application helpers | Bounded static assets, multipart iteration, signed cookies and sessions, compile-time JSON constraints, and OpenAPI 3.1 |
-| JSON-RPC | Typed and low-level procedures, explicit context, notifications, batches, standard errors, and transport-neutral dispatch |
+| JSON-RPC | Typed and low-level procedures, compile-time perfect-hash services, abort-aware dispatch, notifications, batches, standard errors, and transport-neutral dispatch |
 | WebSocket | RFC 6455, RFC 7692, fragmentation, streaming UTF-8 validation, SIMD masking, backpressure, pub/sub, and heartbeat sweeps |
-| Transports | Plaintext HTTP/1.1 and HTTP/2, BoringSSL TLS 1.3 with ALPN, and bounded HTTP/3 over lsquic |
+| Transports | Plaintext HTTP/1.1 and HTTP/2, BoringSSL TLS 1.3 with ALPN, bounded HTTP/3 over lsquic, Linux kTLS helpers, and AF_XDP kernel bypass |
 | Runtime | Contiguous connection pools, fixed response queues, thread-per-core clusters, and completion-driven shutdown |
 | Interop | Versioned C ABI for server lifecycle, HTTP, async responses, WebSocket, TLS, HTTP/3, and publish operations |
 | Verification | Central tests, protocol conformance, fuzz targets, sanitizers, and a versioned throughput regression contract |
@@ -114,6 +114,24 @@ nix develop
 zig build test --summary all
 zig build -Doptimize=ReleaseSafe
 ```
+
+The root `build.zig` only injects the graph. Target, vendor, sanitizer, test,
+fuzz, and example construction lives in focused modules under `builds/`.
+Build the edge and kernel-bypass artifacts explicitly with:
+
+```sh
+zig build wasm-freestanding -Doptimize=ReleaseSafe
+zig build wasm-wasi -Doptimize=ReleaseSafe
+zig build ebpf
+zig build all-targets -Doptimize=ReleaseSafe
+```
+
+The freestanding target exports linear memory for V8 isolate hosts. Both WASM
+targets export bounded `alloc`/`free` and generation-checked handle functions;
+host code should retain each handle while its shared-memory view is live and
+release it exactly once. The eBPF step emits
+`zig-out/share/uwebzockets/uwz_xdp.o`; attaching it and populating its XSK map
+requires Linux network-administration privileges.
 
 The Nix shell also exposes a coherent LLVM sanitizer runtime, matching glibc,
 and dynamic linker. Run the complete test graph with ASan, UBSan,

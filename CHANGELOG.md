@@ -3,6 +3,34 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.0.5] - 2026-09-14
+
+### Added
+
+- Added native, `wasm32-freestanding`, `wasm32-wasi`, and Linux eBPF build
+  targets behind a thin root orchestrator and decomposed the CMake/Ninja,
+  sanitizer, test, fuzz, example, and target logic under `builds/`.
+- Added a transport-independent protocol core, a pull-based `WebSocketStream`,
+  WHATWG-style BYOB reads, and an immutable backpressure transition function.
+- Added bounded libdeflate compression streams, BoringSSL SHA-256, HMAC-SHA256,
+  and AES-GCM primitives, plus generation-safe cooperative cancellation for
+  streams, RPC dispatch, timers, and pooled TCP connection lifecycles.
+- Added generation-checked shared memory with a bounded Cap'n Proto envelope
+  for zero-copy WASM host views.
+- Added a Linux AF_XDP socket with UMEM ownership rings and an XDP redirect
+  program, plus kTLS configuration and zero-copy `sendfile`/`splice` helpers.
+- Added SIMD HTTP delimiter and field-value scanning and compile-time JSON-RPC
+  perfect-hash services with constant-time table lookup.
+
+### Security
+
+- Reject stale shared-memory and cancellation handles across owner reuse, clear
+  released FFI blocks, authenticate AES-GCM before exposing plaintext, and use
+  constant-time HMAC verification.
+- Retained strict bounded HTTP framing, conflicting transfer-length rejection,
+  header control-character rejection, idle connection expiry, and allocator
+  lifecycle leak checks.
+
 ## [1.0.4] - 2026-09-13
 
 ### Added

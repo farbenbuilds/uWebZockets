@@ -4,6 +4,9 @@ pub const pool = @import("core/pool.zig");
 pub const tcp = @import("core/tcp.zig");
 pub const timer = @import("core/timer.zig");
 pub const simd = @import("core/simd.zig");
+pub const transport = @import("core/transport.zig");
+pub const ktls = @import("core/ktls.zig");
+pub const xdp = @import("xdp/socket.zig");
 
 pub const http_parser = @import("http/parser.zig");
 pub const http_request = @import("http/request.zig");
@@ -42,3 +45,10 @@ pub const ws_mask = @import("ws/mask.zig");
 pub const ws_pubsub = @import("ws/pubsub.zig");
 pub const ws_socket = @import("ws/socket.zig");
 pub const ws_utf8 = @import("ws/utf8.zig");
+pub const ws_backpressure = @import("ws/backpressure.zig");
+pub const ws_stream = @import("ws/stream.zig");
+
+pub const abort = @import("http/abort.zig");
+pub const compression_stream = @import("http/compression_stream.zig");
+pub const crypto_subtle = @import("crypto/subtle.zig");
+pub const shared_memory = @import("ffi/shared_memory.zig");

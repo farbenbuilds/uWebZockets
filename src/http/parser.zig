@@ -1,4 +1,5 @@
 const std = @import("std");
+const simd = @import("../core/simd.zig");
 /// Request view populated by `consume`.
 pub const Request = @import("request.zig").Request;
 
@@ -172,7 +173,10 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                 }
             },
             .headers => {
-                const headers_end = std.mem.indexOfPos(u8, buffer, parser.mark, "\r\n\r\n");
+                const headers_end = if (simd.index_of_header_end(buffer[parser.mark..])) |offset|
+                    parser.mark + offset
+                else
+                    null;
                 if (headers_end) |end| {
                     if (end - parser.mark > max_header_size) {
                         parser.state = .error_headers_too_large;
@@ -211,11 +215,9 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
 
                             const value = line[val_start..val_end];
 
-                            for (value) |c| {
-                                if ((c < 32 and c != '\t') or c == 127) {
-                                    parser.state = .error_invalid;
-                                    return buffer.len;
-                                }
+                            if (!simd.valid_http_field_value(value)) {
+                                parser.state = .error_invalid;
+                                return buffer.len;
                             }
 
                             if (std.ascii.eqlIgnoreCase(name, "Host")) {
@@ -418,7 +420,8 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                         parser.state = .done;
                         return parser.mark + 2;
                     }
-                    if (std.mem.indexOfPos(u8, buffer, parser.mark, "\r\n\r\n")) |end_idx| {
+                    if (simd.index_of_header_end(buffer[parser.mark..])) |relative_end| {
+                        const end_idx = parser.mark + relative_end;
                         if (!valid_trailers(buffer[parser.mark..end_idx])) {
                             parser.state = .error_invalid;
                             return buffer.len;

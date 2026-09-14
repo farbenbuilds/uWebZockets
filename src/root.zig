@@ -29,6 +29,10 @@ pub const chunked = @import("http/chunked.zig");
 pub const fetch = @import("http/fetch.zig");
 /// WHATWG Streams Standard (https://streams.spec.whatwg.org/) primitives.
 pub const streams = @import("http/streams.zig");
+/// Cooperative WinterCG cancellation shared by transports and async work.
+pub const abort = @import("http/abort.zig");
+/// libdeflate-backed CompressionStream and DecompressionStream.
+pub const compression_stream = @import("http/compression_stream.zig");
 /// Zero-allocation RFC 7578 multipart parsing primitives.
 pub const multipart = @import("http/multipart.zig");
 /// RFC 6265 parsing, formatting, and HMAC-SHA256 signing helpers.
@@ -70,9 +74,25 @@ pub const WsCompression = @import("router/radix.zig").WsCompression;
 pub const Opcode = @import("zslay").Opcode;
 /// Position-aware WebSocket masking helpers.
 pub const websocket_mask = @import("ws/mask.zig");
+/// Pure functional backpressure transition model.
+pub const websocket_backpressure = @import("ws/backpressure.zig");
+/// Transport-specialized pull-based WebSocketStream constructor.
+pub const WebSocketStream = @import("ws/stream.zig").web_socket_stream;
+/// WebSocketStream bound to the native server WebSocket transport.
+pub const NativeWebSocketStream = @import("ws/native_stream.zig").NativeWebSocketStream;
 
 /// TLS context API backed by BoringSSL.
 pub const tls = @import("crypto/tls.zig");
+/// BoringSSL-backed Web Crypto subset.
+pub const crypto_subtle = @import("crypto/subtle.zig");
+/// Compile-time transport separation for protocol-only cores.
+pub const transport = @import("core/transport.zig");
+/// Linux kernel TLS and zero-copy file/pipe transmission.
+pub const ktls = @import("core/ktls.zig");
+/// AF_XDP zero-copy socket and UMEM ring support.
+pub const xdp = @import("xdp/socket.zig");
+/// Generation-checked shared memory and Cap'n Proto envelopes.
+pub const shared_memory = @import("ffi/shared_memory.zig");
 /// Completion-driven UDP/QUIC transport API.
 pub const udp = @import("core/udp.zig");
 /// Bounded HTTP/2 frame and stream state machine.

@@ -35,10 +35,10 @@ jobs:
         with:
           path: |
             ~/.cache/zig
-            .zig-cache/vendor-build-v3
-          key: ${{ runner.os }}-zig-v5-${{ hashFiles('build.zig', 'build.zig.zon', 'flake.nix', 'flake.lock', 'vendor/**/CMakeLists.txt') }}
+            .zig-cache/vendor-build-v4
+          key: ${{ runner.os }}-zig-v6-${{ hashFiles('build.zig', 'builds/**/*.zig', 'build.zig.zon', 'flake.nix', 'flake.lock', 'vendor/**/CMakeLists.txt') }}
           restore-keys: |
-            ${{ runner.os }}-zig-v5-
+            ${{ runner.os }}-zig-v6-
 
       - name: Run debug tests
         run: nix develop "path:." -c zig build test --summary all

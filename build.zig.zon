@@ -1,6 +1,6 @@
 .{
     .name = .uWebZockets,
-    .version = "1.0.4",
+    .version = "1.0.5",
     .fingerprint = 0xbbf152173cd23d48,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
@@ -48,6 +48,7 @@
     },
     .paths = .{
         "build.zig",
+        "builds",
         "build.zig.zon",
         "build.zig.zon.json",
         "build.zig.zon.nix",

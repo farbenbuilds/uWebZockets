@@ -2,7 +2,7 @@
 
 ## Scope
 
-µWebZockets 1.0.4 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
+µWebZockets 1.0.5 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
 server library with bounded HPACK protocol storage. It combines an
 event-driven cross-platform transport (POSIX and Windows IOCP), fixed-capacity
 protocol state, a data-oriented router, and C libraries for TLS, compression, and QUIC.
@@ -31,21 +31,36 @@ listener starts, so callbacks never observe a structural mutation.
 
 ```text
 uWebZockets/
-├── build.zig                 # Zig and C/C++ build graph
+├── build.zig                 # thin versioned graph injector
 ├── build.zig.zon             # Zig 0.16 package manifest
+├── builds/
+│   ├── orchestrator.zig        # target selection and aggregate steps
+│   ├── vendor.zig              # CMake/Ninja C and C++ dependencies
+│   ├── sanitizers.zig          # ASan/MSan runtime configuration
+│   ├── testing.zig             # unit, C ABI, h1spec, and Autobahn steps
+│   ├── fuzzing.zig             # deterministic and OSS-Fuzz targets
+│   ├── examples.zig            # example executables and run steps
+│   └── targets/
+│       ├── native.zig         # TCP, io_uring/IOCP, TLS, and QUIC graph
+│       ├── wasm.zig           # freestanding and WASI edge graph
+│       └── ebpf.zig           # XDP BPF object pipeline
 ├── flake.nix                 # native GNU/musl and macOS packages
 ├── include/uWebZockets.h     # versioned C ABI declarations
 ├── src/
 │   ├── root.zig              # supported public API
 │   ├── c_api.zig             # exported C ABI implementation
-│   ├── core/                 # libxev loop, TCP, pool, context, timer
-│   │   ├── udp.zig           # completion-owned UDP/QUIC transport
-│   ├── crypto/               # bounded BoringSSL TLS adapter
+│   ├── core/                 # libxev I/O plus transport-neutral protocol core
+│   │   ├── ktls.zig          # Linux kTLS and zero-copy file transfer
+│   │   └── udp.zig           # completion-owned UDP/QUIC transport
+│   ├── crypto/               # bounded BoringSSL TLS and Web Crypto
+│   ├── edge/                 # WinterCG-compatible edge surface
+│   ├── ffi/                  # bounded generation-checked shared memory
 │   ├── http/                 # strict HTTP/1.1 parser and response writer
 │   ├── http2/                # bounded frames, stream slab, and HPACK
 │   ├── router/               # fixed-capacity radix router and App API
 │   ├── rpc/                  # bounded JSON-RPC registry and dispatcher
-│   ├── ws/                   # zslay integration, masking, UTF-8, pub/sub
+│   ├── ws/                   # streams, pure backpressure, framing, pub/sub
+│   ├── xdp/                  # AF_XDP UMEM rings and redirect hook
 │   ├── quic/                 # lsquic HTTP/3 and extension primitives
 │   └── tests/                # centralized ordinary Zig unit tests
 ├── fuzz/                     # libFuzzer ABI targets and local smoke drivers
@@ -252,8 +267,10 @@ this path, while runtime interoperability remains Tier 2.
 
 ## Build graph
 
-`build.zig` maps Zig optimization modes to CMake build types and invokes Ninja
-for BoringSSL, lsquic, and libdeflate. The `zig-cc` and `zig-c++` wrappers pass
+The root `build.zig` declares version 1.0.5 and delegates directly to
+`builds/orchestrator.zig`. Focused modules map Zig optimization modes to CMake
+build types and invoke Ninja for BoringSSL, lsquic, and libdeflate. The
+`zig-cc` and `zig-c++` wrappers pass
 the selected target triple to cross builds. Vendor caches are separated by
 target and optimization mode. Sanitizer mode adds another isolated cache,
 instruments BoringSSL, lsquic, libdeflate, and the local C shim with ASan/UBSan,
@@ -296,7 +313,9 @@ The Zig surface exported from `src/root.zig` includes `App`, `ConfiguredApp`,
 surface also includes `WsCompression`, fixed-capacity `json_rpc`,
 completion-driven `udp`, bounded
 `http2`, `http2_hpack`, `http3_extensions`, `webtransport`, `http3_available`,
-`init_http3`, and `listen_udp` through the application type. Live lsquic
+`WebSocketStream`, BYOB and compression streams, abort controllers, Web Crypto,
+shared memory, kTLS, AF_XDP, and the transport-independent protocol core.
+It also exposes `init_http3` and `listen_udp` through the application type. Live lsquic
 engine, stream, packet, and QPACK callbacks remain internal.
 
 The C ABI is declared by `include/uWebZockets.h` and implemented by

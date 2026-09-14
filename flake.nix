@@ -28,7 +28,7 @@
       }: let
         lib = pkgs.lib;
         isLinux = pkgs.stdenv.hostPlatform.isLinux;
-        releaseVersion = "1.0.4";
+        releaseVersion = "1.0.5";
         pkgsMusl =
           if isLinux
           then pkgs.pkgsMusl

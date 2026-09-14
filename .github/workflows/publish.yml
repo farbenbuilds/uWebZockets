@@ -51,14 +51,14 @@ jobs:
         with:
           path: |
             ~/.cache/zig
-            .zig-cache/vendor-build-v3
-          key: ${{ runner.os }}-publish-zig-v5-${{ hashFiles('build.zig', 'build.zig.zon', 'flake.nix', 'flake.lock', 'vendor/**/CMakeLists.txt') }}
+            .zig-cache/vendor-build-v4
+          key: ${{ runner.os }}-publish-zig-v6-${{ hashFiles('build.zig', 'builds/**/*.zig', 'build.zig.zon', 'flake.nix', 'flake.lock', 'vendor/**/CMakeLists.txt') }}
           restore-keys: |
-            ${{ runner.os }}-publish-zig-v5-
+            ${{ runner.os }}-publish-zig-v6-
 
       - name: Check formatting and conventions
         run: |
-          nix develop "path:." -c zig fmt --check build.zig build.zig.zon src examples tests fuzz
+          nix develop "path:." -c zig fmt --check build.zig build.zig.zon builds src examples tests fuzz
           nix develop "path:." -c sh scripts/check_conventions.sh
 
       - name: Run centralized tests

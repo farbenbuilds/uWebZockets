@@ -9,7 +9,7 @@ fi
 failed=0
 
 bad_files=$(
-    rg --files .github src examples tests scripts fuzz oss-fuzz benchmarks include misc patches |
+    rg --files .github builds src examples tests scripts fuzz oss-fuzz benchmarks include misc patches |
         while IFS= read -r file; do
             base=${file##*/}
             case "$base" in
@@ -32,17 +32,17 @@ if [ -n "$bad_files" ]; then
     failed=1
 fi
 
-if rg -n --pcre2 '\b(?:(?:pub|export|inline|noinline)\s+)*fn\s+(?!LLVMFuzzerTestOneInput\b)[A-Za-z_][A-Za-z0-9]*[A-Z][A-Za-z0-9]*\b' build.zig src examples tests fuzz; then
+if rg -n --pcre2 '\b(?:(?:pub|export|inline|noinline)\s+)*fn\s+(?!LLVMFuzzerTestOneInput\b)[A-Za-z_][A-Za-z0-9]*[A-Z][A-Za-z0-9]*\b' build.zig builds src examples tests fuzz; then
     printf '%s\n' "function names must use snake_case"
     failed=1
 fi
 
-if rg -n --pcre2 '\b(?:const|var)\s+[a-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*\b' build.zig src examples tests fuzz; then
+if rg -n --pcre2 '\b(?:const|var)\s+[a-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*\b' build.zig builds src examples tests fuzz; then
     printf '%s\n' "variable names must use snake_case"
     failed=1
 fi
 
-if rg -n --pcre2 '[\x{1F1E6}-\x{1FAFF}\x{2600}-\x{27BF}]' . -g '*.{c,h,json,md,nix,sh,yaml,yml,zig,zon}' -g '!.agents/**' -g '!.git/**' -g '!.zig-cache/**' -g '!vendor/**' -g '!zig-out/**' -g '!zig-pkg/**'; then
+if rg -n --pcre2 '[\x{1F1E6}-\x{1FAFF}\x{2600}-\x{27BF}]' . -g '*.{c,h,json,md,nix,sh,ts,yaml,yml,zig,zon}' -g '!.agents/**' -g '!.git/**' -g '!.zig-cache/**' -g '!vendor/**' -g '!zig-out/**' -g '!zig-pkg/**'; then
     printf '%s\n' "emoji characters are not permitted"
     failed=1
 fi
