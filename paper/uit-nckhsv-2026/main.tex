@@ -1,167 +1,238 @@
-@techreport{rfc9113,
-  author = {Thomson, Martin and Benfield, C.},
-  title = {HTTP/2},
-  institution = {IETF},
-  type = {RFC}, number = {9113}, year = {2022},
-  url = {https://www.rfc-editor.org/rfc/rfc9113.html}
+\documentclass[letterpaper]{article}
+\usepackage{amsmath,amssymb}
+\usepackage{lmodern}
+\usepackage{iftex}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{vietnam}
+\usepackage{textcomp}
+\usepackage{setspace}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{longtable,booktabs,array}
+\usepackage{multirow}
+\usepackage{calc}
+\usepackage{etoolbox}
+\usepackage{adjustbox}
+\usepackage{graphicx}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
+\IfFileExists{pgfplots.sty}{
+  \usepackage{pgfplots}
+  \pgfplotsset{compat=1.18}
+}{
+  % Giữ mã nguồn có thể biên dịch khi môi trường chưa có pgfplots đầy đủ.
+  \newenvironment{axis}[1][]{\begin{scope}[x=0.006cm,y=5cm]}{\end{scope}}
 }
-@techreport{rfc9112,
-  author = {Fielding, Roy and Nottingham, Mark and Reschke, Julian}, title = {HTTP/1.1},
-  institution = {IETF}, type = {RFC}, number = {9112}, year = {2022},
-  url = {https://www.rfc-editor.org/rfc/rfc9112.html}
-}
-@techreport{rfc7541,
-  author = {Peon, Roberto and Ruellan, Herve},
-  title = {HPACK: Header Compression for HTTP/2},
-  institution = {IETF},
-  type = {RFC}, number = {7541}, year = {2015},
-  url = {https://www.rfc-editor.org/rfc/rfc7541.html}
-}
-@techreport{rfc6455,
-  author = {Fette, Ian and Melnikov, Alexey},
-  title = {The WebSocket Protocol},
-  institution = {IETF},
-  type = {RFC}, number = {6455}, year = {2011},
-  url = {https://www.rfc-editor.org/rfc/rfc6455.html}
-}
-@techreport{rfc7692,
-  author = {Takebayashi, Yoshifumi and Bankston, Peter A. and Jesup, Randell},
-  title = {Compression Extensions for WebSocket},
-  institution = {IETF},
-  type = {RFC}, number = {7692}, year = {2015},
-  url = {https://www.rfc-editor.org/rfc/rfc7692.html}
-}
-@techreport{rfc9114,
-  author = {Bishop, Mike},
-  title = {HTTP/3},
-  institution = {IETF},
-  type = {RFC}, number = {9114}, year = {2022},
-  url = {https://www.rfc-editor.org/rfc/rfc9114.html}
-}
-@techreport{rfc9220,
-  author = {Bishop, Mike},
-  title = {Bootstrapping WebSockets with HTTP/3},
-  institution = {IETF},
-  type = {RFC}, number = {9220}, year = {2022},
-  url = {https://www.rfc-editor.org/rfc/rfc9220.html}
-}
-@techreport{webtransport,
-  author = {Frindell, Alan and Kinnear, Eric and Vasiliev, Victor},
-  title = {WebTransport over HTTP/3},
-  institution = {IETF},
-  type = {Internet Draft}, number = {draft-ietf-webtrans-http3-16}, year = {2026},
-  url = {https://datatracker.ietf.org/doc/draft-ietf-webtrans-http3/16/}
-}
-@techreport{rfc10008,
-  author = {Reschke, Julian and Snell, James M. and Bishop, Mike},
-  title = {The HTTP QUERY Method},
-  institution = {IETF},
-  type = {RFC}, number = {10008}, year = {2026},
-  url = {https://www.rfc-editor.org/rfc/rfc10008.html}
-}
-@techreport{rfc8446,
-  author = {Rescorla, Eric},
-  title = {The Transport Layer Security Protocol Version 1.3},
-  institution = {IETF},
-  type = {RFC}, number = {8446}, year = {2018},
-  url = {https://www.rfc-editor.org/rfc/rfc8446.html}
-}
-@misc{boringssl,
-  author = {{Google}},
-  title = {BoringSSL},
-  url = {https://boringssl.googlesource.com/boringssl/}
-}
-@misc{lsquic,
-  author = {{LiteSpeed Technologies}},
-  title = {lsquic: LiteSpeed QUIC and HTTP/3 library},
-  url = {https://github.com/litespeedtech/lsquic}
-}
-@manual{cachegrind,
-  author = {{Valgrind Developers}},
-  title = {Cachegrind: a cache and branch prediction profiler},
-  url = {https://valgrind.org/docs/manual/cg-manual.html}
-}
-@book{gregg2019,
-  author = {Gregg, Brendan},
-  title = {BPF Performance Tools: Linux System and Application Observability},
-  publisher = {Addison Wesley}, year = {2019}
-}
-@techreport{rfc7301,
-  author = {Friedl, S. and Popov, A. and Langley, A. and Stephan, E.},
-  title = {Transport Layer Security Application-Layer Protocol Negotiation Extension},
-  institution = {IETF}, type = {RFC}, number = {7301}, year = {2014},
-  url = {https://www.rfc-editor.org/rfc/rfc7301.html}
-}
-@techreport{rfc8441,
-  author = {McManus, Peter}, title = {Bootstrapping WebSockets with HTTP/2},
-  institution = {IETF}, type = {RFC}, number = {8441}, year = {2018},
-  url = {https://www.rfc-editor.org/rfc/rfc8441.html}
-}
-@techreport{rfc9000,
-  author = {Iyengar, Jana and Thomson, Martin}, title = {QUIC: A UDP-Based Multiplexed and Secure Transport},
-  institution = {IETF}, type = {RFC}, number = {9000}, year = {2021},
-  url = {https://www.rfc-editor.org/rfc/rfc9000.html}
-}
-@techreport{rfc9001,
-  author = {Thomson, Martin and Turner, Sean}, title = {Using TLS to Secure QUIC},
-  institution = {IETF}, type = {RFC}, number = {9001}, year = {2021},
-  url = {https://www.rfc-editor.org/rfc/rfc9001.html}
-}
-@techreport{rfc9221,
-  author = {Pauly, Tommy and Kinnear, Eric and Schinazi, David}, title = {An Unreliable Datagram Extension to QUIC},
-  institution = {IETF}, type = {RFC}, number = {9221}, year = {2022},
-  url = {https://www.rfc-editor.org/rfc/rfc9221.html}
-}
-@misc{kelly_dod,
-  author = {Kelley, Andrew}, title = {A Practical Guide to Applying Data Oriented Design (DoD)},
-  year = {2021}, organization = {Handmade Seattle}, howpublished = {YouTube video},
-  url = {https://www.youtube.com/watch?v=IroPQ150F6c}
-}
-@misc{uwebsockets,
-  author = {{uNetworking}}, title = {uWebSockets},
-  url = {https://github.com/uNetworking/uWebSockets}
-}
-@misc{h1spec,
-  author = {{uNetworking}}, title = {h1spec: Quick and easy HTTP/1.1 server spec. compliance check},
-  url = {https://github.com/uNetworking/h1spec}
-}
-@misc{libdeflate,
-  author = {Biggers, Eric}, title = {libdeflate: Heavily optimized library for DEFLATE/zlib/gzip compression and decompression},
-  url = {https://github.com/ebiggers/libdeflate}
-}
-@misc{libxev,
-  author = {Hashimoto, Mitchell}, title = {libxev: Cross-platform, high-performance event loop},
-  url = {https://github.com/mitchellh/libxev}
-}
-@misc{libuv,
-  author = {{libuv contributors}}, title = {libuv: Cross-platform asynchronous I/O},
-  url = {https://github.com/libuv/libuv}
-}
-@misc{repo_benchmark,
-  author = {{uWebZockets project}},
-  title = {HTTP Throughput Guarantee v1},
-  howpublished = {Repository benchmark contract},
-  url = {https://github.com/farbenbuilds/uWebZockets/blob/main/benchmarks/http_throughput_guarantee.md},
-  note = {Accessed: 2026-09-14}
-}
-@misc{repo_benchmark_record,
-  author = {{uWebZockets project}},
-  title = {HTTP throughput benchmark record 34327909322-1-7a8b5d3acd49},
-  howpublished = {Benchmark-data branch JSON record and raw wrk outputs},
-  year = {2026},
-  url = {https://github.com/farbenbuilds/uWebZockets/blob/benchmark-data/records/2026/34327909322-1-7a8b5d3acd49.json},
-  note = {Recorded 2026-09-09; accessed 2026-09-14}
-}
-@misc{techempower,
-  author = {{TechEmpower}},
-  title = {TechEmpower Framework Benchmarks, Round 23},
-  howpublished = {Benchmark results and methodology},
-  year = {2025},
-  url = {https://www.techempower.com/benchmarks/},
-  note = {Round published 2025-02-24; accessed 2026-09-14}
-}
-@book{ebpf,
-  author = {Gregg, Brendan},
-  title = {BPF Performance Tools: Linux System and Application Observability},
-  publisher = {Addison-Wesley}, year = {2019}
-}
+\usepackage{tabularx}
+\usepackage[top=15mm, bottom=15mm, left=30mm, right=30mm]{geometry}
+\usepackage[backend=bibtex,style=numeric,natbib=true,sorting=nty,maxbibnames=99]{biblatex}
+\addbibresource{ref.bib}
+\AtBeginBibliography{\small\sloppy}
+\setlength{\emergencystretch}{3em}
+\usepackage{titlesec}
+\providecommand{\tightlist}{\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\setcounter{secnumdepth}{-\maxdimen}
+\DeclareUnicodeCharacter{0301}{}
+\hypersetup{colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue}
+
+\titleformat{\section}{\large\bfseries\color{blue}}{}{1em}{}
+\titleformat{\subsection}{\large\bfseries\color{blue}}{}{1em}{}
+\titleformat{\subsubsection}{\normalsize\color{blue}}{}{1em}{}
+\author{Trần Ngô Anh Quân}
+\date{Tháng 9 năm 2026}
+
+\begin{document}
+
+\begin{table}[!ht]
+\centering
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{m{0.18\textwidth} c m{0.23\textwidth}}
+\IfFileExists{asset/Figure/image1.png}{\includegraphics[width=0.15\textwidth]{asset/Figure/image1.png}}{\fbox{\rule{0pt}{1.2cm}\rule{1.8cm}{0pt}}}
+& \small ĐẠI HỌC QUỐC GIA TP.HCM
+& \small Ngày nhận hồ sơ \\
+& \small \textbf{TRƯỜNG ĐẠI HỌC CÔNG NGHỆ THÔNG TIN}
+& \small \textit{Do cơ quan quản lý ghi}
+\end{tabular}
+\end{adjustbox}
+\end{table}
+
+\begin{quote}
+\centering
+\textbf{\Large THUYẾT MINH}
+
+\Large ĐỀ TÀI KHOA HỌC VÀ CÔNG NGHỆ CẤP SINH VIÊN 2026
+\end{quote}
+
+\section{A. THÔNG TIN CHUNG}
+
+\subsection{A1. Tên đề tài}
+
+\textbf{Tên tiếng Việt:} PHÂN TÍCH TÍNH CỤC BỘ BỘ NHỚ VÀ CÔ LẬP GIAO THỨC CÓ GIỚI HẠN TRONG KIẾN TRÚC \ensuremath{\mu}WEBZOCKETS
+
+\textbf{Tên tiếng Anh:} CACHE LOCALITY AND BOUNDED PROTOCOL CONFINEMENT IN \ensuremath{\mu}WEBZOCKETS: A ZIG ARCHITECTURE FOR HIGH CONCURRENCY
+
+\subsection{A2. Thời gian thực hiện}
+
+Thời gian thực hiện: chưa xác định, tính từ thời điểm đề tài được phê duyệt.
+
+\subsection{A3. Tổng kinh phí}
+
+Tổng kinh phí đề nghị cấp: chưa xác định. Kinh phí chi tiết sẽ được lập sau khi xác định phạm vi thí nghiệm, máy chủ đo kiểm, thiết bị mạng và yêu cầu vận hành.
+
+\subsection{A4. Chủ nhiệm}
+
+\begin{spacing}{1.5}
+Họ và tên: Trần Ngô Anh Quân \par
+Email: \texttt{25521506@gm.uit.edu.vn} \par
+Ngày, tháng, năm sinh: chưa cung cấp \hspace{1cm} Giới tính: chưa cung cấp \par
+Số CMND hoặc giấy tờ tương đương: chưa cung cấp \par
+Mã số sinh viên: chưa cung cấp \par
+Số điện thoại liên lạc: chưa cung cấp \par
+Đơn vị: Khoa Mạng máy tính và Truyền thông dữ liệu \par
+Số tài khoản và ngân hàng: chưa cung cấp
+\end{spacing}
+
+\subsection{A5. Thành viên đề tài}
+
+\begin{longtable}{@{}p{0.08\textwidth}p{0.32\textwidth}p{0.28\textwidth}p{0.22\textwidth}@{}}
+\toprule
+\textbf{TT} & \textbf{Họ tên} & \textbf{MSSV} & \textbf{Khoa} \\
+\midrule
+1 & Trần Ngô Anh Quân & Chưa cung cấp & Mạng máy tính và Truyền thông dữ liệu \\
+\bottomrule
+\end{longtable}
+
+\section{B. MÔ TẢ NGHIÊN CỨU}
+
+\subsection{B1. Giới thiệu về đề tài}
+
+Tôi xây dựng \ensuremath{\mu}WebZockets như một thư viện máy chủ mạng POSIX dùng Zig 0.16.0, hướng đến các hệ thống có nhiều kết nối đồng thời và yêu cầu kiểm soát rõ ràng bộ nhớ trên đường đi nóng. Khác với cách tổ chức dựa trên nhiều đối tượng được cấp phát riêng lẻ, kiến trúc này dành trước các vùng bộ nhớ liên tục cho kết nối, yêu cầu, phản hồi, thông điệp WebSocket, nén, hàng đợi ghi và trạng thái giao thức. Mô hình này được đối chiếu với các thư viện và công cụ liên quan như uWebSockets, h1spec, lsquic, BoringSSL, libdeflate, libxev, zslay do tác giả phát triển cho dự án này và hướng dẫn DoD của Andrew Kelley~\cite{uwebsockets,h1spec,lsquic,boringssl,libdeflate,libxev,kelly_dod}. Mục tiêu nghiên cứu là làm rõ liệu việc giảm cấp phát động, giảm truy đuổi con trỏ và tổ chức dữ liệu theo mẫu truy cập có thể cải thiện tính cục bộ bộ nhớ L1 và L2 cũng như độ trễ đuôi ở mức đồng thời cao hay không.
+
+Đề tài không đưa ra tuyên bố tuyệt đối rằng kiến trúc này tốt hơn mọi máy chủ mạng. Tôi giới hạn luận điểm vào các tải có nhiều kết nối hoạt động không đồng đều, trong đó chi phí truy cập trạng thái nóng và biến thiên do áp lực bộ nhớ có thể chi phối thời gian xử lý. Các số liệu về bộ nhớ đệm và độ trễ trong phần phương pháp là dữ liệu mô phỏng để minh họa thiết kế thí nghiệm, không phải kết quả đo đã được xác nhận.
+
+Tuân thủ tiêu chuẩn web được xem là chuỗi nghĩa vụ kiểm tra và chuyển trạng thái có giới hạn, không phải lý do để mở rộng bộ đệm không giới hạn. Parser HTTP/1.1 kiểm tra framing và giới hạn tích lũy yêu cầu theo RFC~9112; máy trạng thái HTTP/2 kiểm tra preface, frame, flow control và vòng đời stream theo RFC~9113; đồng bộ dynamic table của HPACK tuân theo RFC~7541~\cite{rfc9112,rfc9113,rfc7541}. Handshake, masking, fragmentation, close và kiểm tra UTF-8 của WebSocket tuân theo RFC~6455; bộ Autobahn được ghim trong kho ghi nhận 514 ca \texttt{OK} và ba ca \texttt{INFORMATIONAL} trên 517 ca được chọn~\cite{rfc6455}. Per-Message Deflate tuân theo RFC~7692, thương lượng no context takeover và đặt vùng giải nén cùng vùng xuất trong các vùng bộ nhớ giới hạn thuộc connection~\cite{rfc7692}. HTTP/3 và QUIC đi qua biên C của lsquic với vùng stream, packet, header và body có giới hạn; framing HTTP/3 cùng ánh xạ transport/TLS của QUIC tuân theo RFC~9114, RFC~9000 và RFC~9001, còn metadata khởi tạo WebSocket qua HTTP/3 được kiểm tra theo RFC~9220 mà không tuyên bố đã có tương tác tunnel đầy đủ trên listener sống~\cite{rfc9114,rfc9000,rfc9001,rfc9220}. WebTransport bản nháp 16 được biểu diễn bằng settings, session, stream, datagram, capsule và flow control có giới hạn; năng lực backend chưa hỗ trợ bị từ chối thay vì âm thầm cấp phát. HTTP QUERY tuân theo RFC~10008 bằng cách yêu cầu metadata media type hợp lệ trước khi dispatch~\cite{webtransport,rfc10008}. Cuối cùng, BoringSSL cung cấp TLS~1.3 và ALPN qua các cặp memory BIO cố định; tắt TLS~0-RTT giữ dữ liệu có thể replay bên ngoài đường tiếp nhận và lưu trữ thông thường~\cite{boringssl,rfc7301,rfc8446}. Các ranh giới này bảo toàn memory safety bằng cách biến input sai, cạn dung lượng và extension không hỗ trợ thành các trạng thái từ chối rõ ràng.
+
+\subsection{B2. Mục tiêu, nội dung, kế hoạch nghiên cứu}
+
+\subsubsection{B2.1 Mục tiêu}
+
+Mục tiêu thứ nhất là phân tích cấu trúc slab kết nối liên tục, freelist có thao tác nhận và trả phần tử thời gian hằng số, cùng các vùng dữ liệu giới hạn được cấp phát trong giai đoạn khởi tạo. Mục tiêu thứ hai là phân tích tổ chức Structure of Arrays trong HTTP/2, các vùng lưu trữ HPACK, các pool QUIC và các đường SIMD cho tìm dấu phân cách HTTP, kiểm tra trường và che mặt nạ WebSocket. Mục tiêu thứ ba là mô tả cách cùng một mô hình sở hữu bộ nhớ thích ứng với HTTP/1.1, HTTP/2 và HPACK theo RFC 9113 và RFC 7541, WebSocket theo RFC 6455, nén Per Message Deflate theo RFC 7692, HTTP/3 và QUIC thông qua lsquic, khởi tạo WebSocket theo RFC 9220, WebTransport theo bản nháp phiên bản 16, HTTP QUERY theo RFC 10008 và TLS thông qua BoringSSL \cite{rfc7301,rfc6455,rfc7541,rfc7692,rfc8441,rfc8446,rfc9000,rfc9001,rfc9113,rfc9114,rfc9220,rfc9221,rfc10008,webtransport}. Mục tiêu cuối cùng là thiết kế phép đo có thể tái lập cho cache miss, số lần cấp phát và độ trễ phân vị cao.
+
+\subsubsection{B2.2 Nội dung và phương pháp nghiên cứu}
+
+\paragraph{Nội dung 1: Khảo sát kiến trúc bộ nhớ và đường đi nóng.}
+
+\sloppy
+Tôi đọc và lập bản đồ các mô đun trong thư mục \path{src/}, tập trung vào \path{src/core/pool.zig}, \path{src/core/simd.zig}, \path{src/http2/connection.zig} và \path{src/http2/hpack.zig}.
+
+Tôi tiếp tục kiểm tra \path{src/ws/mask.zig}, \path{src/ws/deflate.zig}, \path{src/quic/engine.zig}, \path{src/quic/webtransport.zig}, \path{src/crypto/tls.zig} và lớp định tuyến. Tôi kiểm tra ranh giới sở hữu, kích thước cố định, điều kiện cạn kiệt và thời điểm giải phóng tài nguyên. Kết quả dự kiến là sơ đồ vùng bộ nhớ cùng phân loại dữ liệu nóng, dữ liệu lạnh và dữ liệu chỉ mượn trong callback.
+\fussy
+
+Về event loop, libxev phù hợp với mục tiêu Zig và zero-allocation vì tài liệu chính thức mô tả API completion, không cấp phát runtime và backend Linux cho \texttt{io\_uring} hoặc epoll~\cite{libxev}. Tuy nhiên, libuv có phạm vi tính năng rộng hơn, gồm TCP/UDP, DNS, filesystem, IPC, process, thread pool và đồng bộ hóa~\cite{libuv}. Vì vậy, nghiên cứu chỉ được kết luận libxev tốt hơn libuv khi hai backend được đo trên cùng workload, compiler, CPU, giới hạn kết nối, API semantics và phương pháp ghi nhận allocation, throughput, p99/p99.9 latency và mức sử dụng CPU.
+
+Kho mã cũng đã định nghĩa hợp đồng benchmark HTTP/1.1 có thể tái lập~\cite{repo_benchmark}: bản dựng \texttt{ReleaseFast}, \texttt{wrk} với 2 thread và 64 connection trong 10 giây, ba mẫu lấy median, cùng quy tắc candidate phải đạt ít nhất 90\% median của baseline. Hợp đồng này đủ để kiểm tra hồi quy và tạo bằng chứng có thể lặp lại, nhưng chưa phải phép chứng minh libxev vượt libuv vì kho hiện chưa có backend libuv và chưa có cặp kết quả cùng điều kiện. TechEmpower Round 23 có thể làm mốc tham chiếu bên ngoài cho các workload như plaintext, JSON và truy vấn cơ sở dữ liệu~\cite{techempower}; các số liệu đó không được trộn trực tiếp với hợp đồng nội bộ do khác biệt về phần cứng, topology, phiên bản và harness.
+
+Bản ghi bền vững trên nhánh benchmark-data cung cấp một lần thực thi của hợp đồng này~\cite{repo_benchmark_record}. Lần chạy theo lịch sử dụng Zig 0.16.0, Nix 2.35.2, 2 thread \texttt{wrk}, 64 connection, ba mẫu 10 giây và cùng một source SHA cho baseline và candidate. Median của candidate là 177{,}024.21 requests/giây, còn baseline là 173{,}923.95 requests/giây; kết quả vượt ngưỡng 90\% là 156{,}531.56 requests/giây. Vì provenance ghi nhận cùng source SHA ở hai phía, bản ghi này nên được hiểu là bằng chứng tái lập và vượt qua contract, không phải bằng chứng cải thiện do một thay đổi kiến trúc. Raw sample thứ ba ghi nhận p99 là 449~$\mu\text{s}$ cho candidate và 459~$\mu\text{s}$ cho baseline; đây chỉ là quan sát mô tả của một mẫu, không phải ước lượng nhân quả hay khoảng tin cậy.
+
+\begin{table}[!ht]
+\centering
+\small
+\caption{Kết quả ghi nhận của \texttt{http-throughput-v1}}
+\label{tab:repo-result}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Bản dựng & Median RPS & Ba giá trị mẫu RPS \\
+\midrule
+Baseline & 173{,}923.95 & 172{,}132.47 / 179{,}453.11 / 173{,}923.95 \\
+Candidate & 177{,}024.21 & 175{,}983.07 / 179{,}375.31 / 177{,}024.21 \\
+Ngưỡng 90\% & 156{,}531.56 & Đạt \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Nội dung 2: Phân tích cô lập giao thức.}
+
+HTTP/1.1 dùng bộ đệm yêu cầu có giới hạn, parser nghiêm ngặt và hàng đợi ghi dạng vòng. HTTP/2 dùng slab luồng theo SoA, kiểm tra preface, frame, flow control, CONTINUATION, SETTINGS, PING và GOAWAY. HPACK dùng dynamic table có giới hạn, vùng header do bên gọi sở hữu và cây Huffman được xây dựng tại thời điểm biên dịch. WebSocket dùng zslay cho khung, kiểm tra UTF 8 và kích thước, bộ đệm thông điệp giới hạn, SIMD masking và backpressure. Per Message Deflate luôn thương lượng no context takeover ở cả phía máy chủ và máy khách, đồng thời tách vùng nén nhận và gửi để tránh phụ thuộc lịch sử không giới hạn.
+
+HTTP/3 dùng lsquic thông qua FFI C, pool luồng, pool header, pool packet và các vùng byte song song cho yêu cầu, phản hồi và QPACK. RFC 9220 được kiểm tra bằng validator CONNECT mở rộng có mượn slice và không giữ lại header. WebTransport phiên bản 16 được mô hình hóa bằng settings, session slab, stream association, datagram, capsule và flow control có giới hạn. Tuy nhiên, khả năng lsquic hiện tại chỉ công bố raw datagram cho phần mở rộng này, do đó WebTransport và một phần khởi tạo WebSocket HTTP/3 là bề mặt kiểm tra giới hạn, chưa phải tuyên bố tương tác đầy đủ trên listener sống. HTTP QUERY được đăng ký trong router như phương thức an toàn có body và được yêu cầu Content Type hợp lệ trước khi dispatch. BoringSSL cung cấp TLS 1.3, ALPN, memory BIO có giới hạn và cố ý tắt TLS 0 RTT để dữ liệu có khả năng replay không vượt qua biên quản lý bộ nhớ.
+
+\paragraph{Nội dung 3: Kiểm thử chức năng và tuân thủ.}
+
+Tôi chạy bộ kiểm thử Zig, kiểm thử C ABI, fuzz smoke cho HTTP, WebSocket masking và QUIC packet boundary, kiểm tra HPACK synchronization, flow control, QUERY, WebTransport state và chính sách ALPN. Bộ chạy Autobahn được ghim vào image phiên bản 0.8.2 và baseline trong kho ghi nhận 514 kết quả \texttt{OK} cùng ba kết quả \texttt{INFORMATIONAL} trên 517 ca được chọn. Kết quả dự kiến là báo cáo phân biệt rõ bằng chứng chức năng với kết quả hiệu năng, đồng thời không gọi helper WebTransport là backend đã triển khai đầy đủ.
+
+\paragraph{Nội dung 4: Đo cache và độ trễ đuôi.}
+
+Tôi xây dựng hai cấu hình có cùng giới hạn giao thức. Cấu hình thứ nhất dùng slab SoA và SIMD hiện tại. Cấu hình đối chứng giữ nguyên ngữ nghĩa giao thức nhưng dùng biểu diễn AoS cho đường nóng và tắt SIMD. Tôi thay đổi số kết nối đồng thời, kích thước yêu cầu, số stream HTTP/2, phân mảnh WebSocket, nén, TLS, áp lực ghi và mất gói QUIC. Tôi ghi nhận chu kỳ, instructions, L1 miss, L2 miss, branch miss, số cấp phát, số yêu cầu hoàn thành, số yêu cầu bị từ chối do cạn dung lượng và các phân vị latency đến 99.9 phần trăm. Cachegrind được dùng như phép mô phỏng ban đầu, còn hardware counters và trace eBPF là bằng chứng chính trên máy mục tiêu.
+
+Để đo độ trễ đuôi ở lớp kernel Linux, tôi đề xuất một thí nghiệm closed-loop để ước lượng service time và một thí nghiệm open-loop để quan sát admission, backpressure và scheduling của event loop. Các eBPF hook sẽ đặt tại tracepoint ingress và egress của socket, kết hợp với uprobe tại điểm chuyển giao completion của libxev. Mỗi sự kiện ghi nhận thời gian bằng \texttt{bpf\_ktime\_get\_ns()} cùng định danh socket vào một BPF ring buffer có giới hạn; sau đó timestamp ở lớp transport được đối chiếu với timestamp completion trong user space. Cách này tách ảnh hưởng queueing và retransmission của kernel khỏi nhiễu xử lý ứng dụng, nhưng không tự loại bỏ overhead của probe và cũng không tự khôi phục ranh giới request của giao thức. Kho hiện chưa có trace eBPF đã ghi nhận, vì vậy đây là quy trình đo đề xuất chứ không phải kết quả đã thực hiện. Tôi sẽ báo cáo median, phân vị 95, 99 và 99.9, cùng queue depth và tỷ lệ từ chối do cạn dung lượng~\cite{ebpf}.
+
+\begin{figure}[!ht]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=0.9\textwidth,
+  height=5.1cm,
+  xmin=0, xmax=1000,
+  ymin=0, ymax=0.5,
+  axis lines=none,
+  clip=false
+]
+  \draw[gray!20] (0,0.1) -- (1000,0.1);
+  \draw[gray!20] (0,0.2) -- (1000,0.2);
+  \draw[gray!20] (0,0.3) -- (1000,0.3);
+  \draw[gray!20] (0,0.4) -- (1000,0.4);
+  \draw[->] (0,0) -- (1000,0) node[below right] {\scriptsize Nhóm độ trễ ($\mu$s)};
+  \draw[->] (0,0) -- (0,0.5) node[above,rotate=90,yshift=0.25cm] {\scriptsize Tỷ lệ chuẩn hóa};
+  \foreach \x/\label in {80/80,160/160,240/240,320/320,400/400,800/800} {
+    \node[below] at (\x,0) {\scriptsize \label};
+  }
+  \foreach \x/\value in {80/0.38,160/0.31,240/0.20,320/0.10,400/0.05,800/0.02} {
+    \draw[fill=blue!45,draw=blue!75] (\x-18,0) rectangle (\x-2,\value);
+  }
+  \foreach \x/\value in {80/0.32,160/0.26,240/0.18,320/0.11,400/0.07,800/0.06} {
+    \draw[fill=red!45,draw=red!75] (\x+2,0) rectangle (\x+18,\value);
+  }
+  \node[anchor=west,align=left] at (520,0.46) {\scriptsize Placeholder tổng hợp; timestamp từ eBPF socket hook};
+  \node[anchor=west] at (520,0.40) {\scriptsize\textcolor{blue}{\rule{0.35cm}{0.4pt} Slab đóng gói}};
+  \node[anchor=west] at (720,0.40) {\scriptsize\textcolor{red}{\rule{0.35cm}{0.4pt} AoS đối chứng}};
+\end{axis}
+\end{tikzpicture}
+\caption{Phân bố độ trễ đuôi (phân vị 99). Placeholder tổng hợp cho phương pháp socket-hook bằng eBPF; các giá trị không phải số đo.}
+\label{fig:tail-vietnamese}
+\end{figure}
+
+\subsection{B2.3 Kế hoạch nghiên cứu}
+
+\begin{longtable}{@{}p{0.15\textwidth}p{0.28\textwidth}p{0.46\textwidth}@{}}
+\toprule
+Giai đoạn & Nội dung & Sản phẩm \\
+\midrule
+1 & Khảo sát mã nguồn và tài liệu giao thức & Bản đồ module, bảng ownership, sơ đồ AoS và SoA \\
+2 & Xây dựng tiêu chí đo & Workload, cấu hình đối chứng, chỉ số cache và latency \\
+3 & Kiểm thử giao thức & Log test, fuzz smoke, báo cáo Autobahn và các giới hạn đã xác nhận \\
+4 & Đo và phân tích & Dữ liệu counter, trace eBPF, phân tích phân vị và tỷ lệ từ chối \\
+5 & Hoàn thiện & Báo cáo tiếng Anh, bản thuyết minh tiếng Việt và hướng phát triển backend \\
+\bottomrule
+\end{longtable}
+
+\subsection{B3. Kết quả dự kiến}
+
+Kết quả thứ nhất là một bản phân tích khoa học về sự liên hệ giữa tổ chức vùng bộ nhớ, mẫu truy cập của giao thức và áp lực cache. Kết quả thứ hai là bộ hình minh họa cho freelist, SoA, SIMD, dòng dữ liệu HTTP, HTTP/2, WebSocket, QUIC và vùng TLS. Kết quả thứ ba là phương pháp đo có thể tái lập, trong đó mọi kết luận về giảm cache miss hoặc giảm latency đuôi đều đi kèm cấu hình phần cứng, compiler, kernel, workload, giới hạn dung lượng và tỷ lệ từ chối.
+
+Tôi dự kiến ghi nhận các giới hạn một cách trung thực. Freelist có thời gian nhận và trả phần tử hằng số nhưng tra cứu stream HTTP/2 vẫn là quét trên slab nhỏ. HTTP/2 extended CONNECT đang có kiểm thử và hỗ trợ trên đường TCP, nhưng số tunnel bị giới hạn bởi slab stream và vùng thông điệp gắn với connection; khi vượt giới hạn, peer phải bị từ chối hoặc dùng connection HTTP/1.1 riêng. WebTransport draft 16 và validator RFC 9220 chưa chứng minh tương tác đầy đủ với listener lsquic hiện tại. TLS 0 RTT bị từ chối để giữ ranh giới replay và ranh giới bộ nhớ. Những giới hạn này là một phần của kết quả nghiên cứu vì chúng xác định điều kiện áp dụng của luận điểm locality.
+
+\nocite{*}
+\printbibliography[heading=bibintoc, title={B4. Tài liệu tham khảo}]
+
+\vspace{1cm}
+\begin{longtable}{@{}p{0.48\textwidth}p{0.42\textwidth}@{}}
+\centering \emph{Ngày \ldots tháng \ldots năm 2026}\\
+\textbf{Giảng viên hướng dẫn}\\
+(Ký và ghi rõ họ tên)
+&
+\centering \emph{Ngày \ldots tháng \ldots năm 2026}\\
+\textbf{Chủ nhiệm đề tài}\\
+(Ký và ghi rõ họ tên)
+\end{longtable}
+
+\end{document}
