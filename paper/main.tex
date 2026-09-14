@@ -387,9 +387,12 @@ The primary comparison would hold protocol mix constant while changing only memo
     \pgfmathsetmacro{\rightbar}{\x+18}
     \draw[fill=red!45,draw=red!75] (\leftbar,0) rectangle (\rightbar,\value);
   }
-  \node[anchor=west,align=left] at (520,0.46) {\scriptsize Synthetic placeholder;\ eBPF socket-hook timestamps};
-  \node[anchor=west] at (520,0.40) {\scriptsize\textcolor{blue}{\rule{0.35cm}{0.4pt} Packed slab}};
-  \node[anchor=west] at (720,0.40) {\scriptsize\textcolor{red}{\rule{0.35cm}{0.4pt} AoS reference}};
+  \node[anchor=west,align=left,text width=3.2cm,fill=white,inner sep=1.5pt]
+    at (520,0.47) {\scriptsize Synthetic placeholder;\\ eBPF socket-hook timestamps};
+  \node[anchor=west,fill=white,inner sep=1.5pt]
+    at (520,0.32) {\scriptsize\textcolor{blue}{\rule{0.35cm}{0.4pt} Packed slab}};
+  \node[anchor=west,fill=white,inner sep=1.5pt]
+    at (520,0.23) {\scriptsize\textcolor{red}{\rule{0.35cm}{0.4pt} AoS reference}};
 \end{scope}
 \end{tikzpicture}
 \caption{Tail Latency (99th percentile) Distribution. Synthetic placeholder; values are not measurements.}
