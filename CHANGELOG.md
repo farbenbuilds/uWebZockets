@@ -60,6 +60,8 @@ uses Semantic Versioning.
   event, the server refuses to emit `RST_STREAM` on stream 0, and a second
   HEADERS section on a stream without a completed request is rejected as an
   unexpected trailer.
+- Enforced `ServerConfig.max_body_size` for HTTP/2 request bodies, both
+  declared and streamed, within the compiled session slab capacity.
 - Fixed macOS/kqueue connection-slot and QUIC-drain leaks: canceled read and
   write callbacks that the backend can drop no longer gate slab release, and
   the close completion clears the outstanding flags.

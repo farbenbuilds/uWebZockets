@@ -606,6 +606,9 @@ pub fn configured_app_with_timeout(
                 close_rejected_socket(socket);
                 return;
             };
+            // HTTP/2 bodies share the HTTP/1 configured ceiling; the compiled
+            // session slab remains the hard capacity when the config is larger.
+            conn.h2.request_body_limit = self.max_body_size;
             conn.ssl = null;
             conn.network_bio = null;
             conn.is_tls_handshake_done = false;

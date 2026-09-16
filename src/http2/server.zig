@@ -21,8 +21,12 @@ pub const ErrorCode = enum(u32) {
 ///
 /// `write_fn` must consume or copy every part before returning because frame
 /// headers use stack storage. `error.WouldBlock` must consume no bytes so the
-/// session can retry the frame. `request_fn` receives a session-owned request
-/// that stays valid until the corresponding stream slot is released.
+/// session can retry the frame. Stream DATA retries through the pending
+/// response state, but control frames (SETTINGS/PING acknowledgements,
+/// RST_STREAM, GOAWAY) are not buffered: a `WouldBlock` while sending one
+/// closes the connection instead of growing an unbounded control queue.
+/// `request_fn` receives a session-owned request that stays valid until the
+/// corresponding stream slot is released.
 pub const Callbacks = struct {
     context: *anyopaque,
     write_fn: *const fn (*anyopaque, []const []const u8) anyerror!void,
@@ -73,6 +77,9 @@ pub fn server_session(
         response_body_storage: [max_streams][body_capacity]u8 = undefined,
         request_storage_lengths: [max_streams]usize = .{0} ** max_streams,
         body_lengths: [max_streams]usize = .{0} ** max_streams,
+        /// Runtime request-body ceiling applied by `ServerConfig.max_body_size`.
+        /// The compiled `body_capacity` slab remains the hard upper bound.
+        request_body_limit: usize = body_capacity,
         pending_header_lengths: [max_streams]usize = .{0} ** max_streams,
         pending_body_lengths: [max_streams]usize = .{0} ** max_streams,
         pending_body_offsets: [max_streams]usize = .{0} ** max_streams,
@@ -129,6 +136,7 @@ pub fn server_session(
             self.closed = false;
             @memset(&self.request_storage_lengths, 0);
             @memset(&self.body_lengths, 0);
+            self.request_body_limit = body_capacity;
             @memset(&self.pending_header_lengths, 0);
             @memset(&self.pending_body_lengths, 0);
             @memset(&self.pending_body_offsets, 0);
@@ -778,6 +786,12 @@ pub fn server_session(
                 return;
             }
 
+            if (self.body_lengths[index] > self.request_body_limit or
+                event.bytes.len > self.request_body_limit - self.body_lengths[index])
+            {
+                try self.send_reset(stream_id, .enhance_your_calm, callbacks);
+                return;
+            }
             if (event.bytes.len > self.body_storage[index].len - self.body_lengths[index]) {
                 try self.send_reset(stream_id, .enhance_your_calm, callbacks);
                 return;
@@ -871,7 +885,7 @@ pub fn server_session(
                         return error.InvalidContentLength;
                     }
                     const content_length = try parse_content_length(field.value);
-                    if (content_length > body_capacity) return error.RequestBodyTooLarge;
+                    if (content_length > self.request_body_limit) return error.RequestBodyTooLarge;
                     self.expected_content_lengths[index] = content_length;
                 }
             }
