@@ -241,7 +241,9 @@ pub const TcpConnection = struct {
 
     fn drain_tls_plaintext(self: *TcpConnection, ssl: *c.SSL) void {
         var plain_buffer: [socket_read_capacity]u8 = undefined;
-        while (!self.closing and !self.dispatch_suspended) {
+        // A rejection or keep-alive drain already decided to close; do not keep
+        // decrypting and dispatching buffered pipelined bytes after that point.
+        while (!self.closing and !self.close_when_drained and !self.dispatch_suspended) {
             const read_bytes = c.SSL_read(ssl, &plain_buffer, plain_buffer.len);
             if (read_bytes > 0) {
                 self.route_decrypted_data(plain_buffer[0..@intCast(read_bytes)]);
@@ -1104,9 +1106,6 @@ fn on_read_complete(
     const now = std.Io.Clock.now(.awake, conn.io);
     conn.last_active_ms = @intCast(@divTrunc(now.nanoseconds, std.time.ns_per_ms));
 
-    // Linux may have reverted to delayed ACKs; re-arm them for this burst.
-    request_quickack(conn.socket.fd);
-
     const data = conn.read_buffer[0..bytes_read];
     if (conn.ssl) |ssl| {
         conn.process_tls_data(ssl, data);
@@ -1428,7 +1427,12 @@ fn init_server_options(
 /// Enables address reuse on an IOCP socket handle.
 ///
 /// Zig's `std.posix` has no socket-option entry point for Windows, so the
-/// winsock call is declared here and only referenced by the Windows branch.
+/// winsock symbol is bound here and only referenced by the Windows branch.
+const winsock_setsockopt = @extern(
+    *const fn (usize, c_int, c_int, [*]const u8, c_int) callconv(.winapi) c_int,
+    .{ .name = "setsockopt", .library_name = "ws2_32" },
+);
+
 fn set_reuse_address_windows(fd: std.os.windows.HANDLE) !void {
     var value: c_int = 1;
     const result = winsock_setsockopt(
@@ -1440,14 +1444,6 @@ fn set_reuse_address_windows(fd: std.os.windows.HANDLE) !void {
     );
     if (result != 0) return error.SocketOptionFailed;
 }
-
-extern "ws2_32" fn winsock_setsockopt(
-    socket: usize,
-    level: c_int,
-    option_name: c_int,
-    option_value: [*]const u8,
-    option_length: c_int,
-) callconv(.winapi) c_int;
 
 /// Defers accepts until the first application byte arrives.
 ///
@@ -1465,10 +1461,12 @@ fn apply_listener_tuning(fd: anytype) void {
     }
 }
 
-/// Requests immediate ACKs for the next inbound segment.
+/// Requests immediate ACKs once per accepted connection.
 ///
-/// Linux resets quickack as the connection progresses, so the read path
-/// re-arms it. Other kernels keep their default ACK policy.
+/// Linux treats quickack as one-shot connection state. Re-arming it on every
+/// read would add a syscall to the hot path and measurably reduce throughput,
+/// so the flag is requested at accept where it still removes the initial
+/// delayed-ACK stall. Other kernels keep their default ACK policy.
 pub fn request_quickack(fd: anytype) void {
     if (builtin.os.tag == .linux) {
         // Best effort: a kernel without TCP_QUICKACK keeps delayed ACKs.

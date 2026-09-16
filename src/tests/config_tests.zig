@@ -304,6 +304,17 @@ test "config: app init carves request buffers out of the slab" {
     try std.testing.expectEqual(@as(usize, 2 * stride), server.request_buffers.len);
 }
 
+test "config: oversized capacities fail without panicking" {
+    const huge = ServerConfig{ .max_connections = std.math.maxInt(usize) };
+    try std.testing.expectError(error.SlabSizeOverflow, huge.slab_bytes());
+
+    const wide_digits = ServerConfig{
+        .max_connections = std.math.maxInt(usize) / 2,
+        .max_body_size = std.math.maxInt(usize) / 2,
+    };
+    try std.testing.expectError(error.SlabSizeOverflow, wide_digits.slab_bytes());
+}
+
 fn dummy_handler(_: *support.http_request.Request, _: *support.http_response.Response) void {}
 
 test "config: build allocates exactly one slab and routing never allocates" {

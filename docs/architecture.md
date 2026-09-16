@@ -85,9 +85,10 @@ Listeners and accepted sockets are tuned per platform:
 
 - Linux listeners set `TCP_DEFER_ACCEPT` so the event loop is not woken by the
   three-way handshake alone; it wakes on the first application byte.
-- Linux accepted sockets request `TCP_QUICKACK` at accept and after each
-  inbound read, eliminating delayed-ACK stalls in HTTP/1.1 ping-pong traffic.
-  The flag is one-shot by design, so the read path re-arms it.
+- Linux accepted sockets request `TCP_QUICKACK` once at accept, removing the
+  initial delayed-ACK stall without adding a syscall to the read path. The flag
+  is one-shot by design, so throughput-sensitive deployments keep it confined
+  to connection setup.
 - Other kernels keep their default accept and ACK policy.
 
 ### Windows fallback

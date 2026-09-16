@@ -26,8 +26,8 @@ uses Semantic Versioning.
   and Windows while keeping restricted cpusets and affinity-less platforms
   running unpinned.
 - Added listener and connection tuning: `SO_REUSEPORT` on POSIX,
-  `TCP_DEFER_ACCEPT` on listeners, and `TCP_QUICKACK` re-armed after each
-  inbound read.
+  `TCP_DEFER_ACCEPT` on listeners, and a one-shot `TCP_QUICKACK` request at
+  accept so the hot read path stays syscall-free.
 - Added a lock-free Vyukov sequence ring for cluster inboxes, removing the
   spinlock from the cross-worker wakeup path and cache-line separating the
   producer and consumer positions.

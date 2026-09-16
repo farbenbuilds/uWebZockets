@@ -169,6 +169,9 @@ pub fn comptime_service(comptime procedures: []const StaticProcedure) type {
             if (encoded_index == 0) return null;
             const index: usize = encoded_index - 1;
             if (hashes[index] != fingerprint) return null;
+            // FNV-1a is a bijection per byte, so a crafted method can collide
+            // with a registered fingerprint; confirm the stored bytes too.
+            if (!std.mem.eql(u8, procedures[index].method, method)) return null;
             return index;
         }
 

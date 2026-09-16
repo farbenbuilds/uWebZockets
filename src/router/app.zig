@@ -162,6 +162,24 @@ pub fn configured_app_with_timeout(
             slab: []u8,
             comptime config: config_module.ServerConfig,
         ) !Self {
+            // The connection setup path slices regions with type-level
+            // capacities, so a mismatched runtime config would index out of
+            // bounds. Reject the mismatch where it originates.
+            comptime {
+                if (config.max_connections != max_connections) @compileError(
+                    "ServerConfig.max_connections must match the generated App capacity",
+                );
+                if (config.max_ws_message_size != max_ws_message_size) @compileError(
+                    "ServerConfig.max_ws_message_size must match the generated App capacity",
+                );
+                if (config.write_queue_size != write_queue_size) @compileError(
+                    "ServerConfig.write_queue_size must match the generated App capacity",
+                );
+                if (config.idle_timeout_ms != idle_timeout_ms) @compileError(
+                    "ServerConfig.idle_timeout_ms must match the generated App timeout",
+                );
+            }
+
             const layout = try config_module.carve(slab, config);
 
             var loop = try core_loop.init();

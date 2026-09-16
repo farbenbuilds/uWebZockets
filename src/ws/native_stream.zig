@@ -6,8 +6,8 @@ pub const NativeAdapter = struct {
     pub fn send(context: *anyopaque, message: []const u8, kind: stream.MessageKind) !void {
         const socket: *WebSocket = @ptrCast(@alignCast(context));
         try socket.send(message, switch (kind) {
-            .binary => zslay.Opcode.Binary,
-            .text => zslay.Opcode.Text,
+            .binary => zslay.Opcode.binary,
+            .text => zslay.Opcode.text,
         });
     }
 

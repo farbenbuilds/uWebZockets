@@ -239,32 +239,32 @@ fn layout_offsets(config: ServerConfig) Error!LayoutOffsets {
     var cursor: usize = 0;
 
     // Hot connection state first so request dispatch stays on the same pages.
-    cursor = std.mem.alignForward(usize, cursor, @alignOf(core_tcp.TcpConnection));
+    cursor = try align_checked(cursor, @alignOf(core_tcp.TcpConnection));
     offsets.pool_start = cursor;
     cursor = try add_product(cursor, @sizeOf(core_tcp.TcpConnection), config.max_connections);
     offsets.pool_end = cursor;
 
-    cursor = std.mem.alignForward(usize, cursor, @alignOf(usize));
+    cursor = try align_checked(cursor, @alignOf(usize));
     offsets.freelist_start = cursor;
     cursor = try add_product(cursor, @sizeOf(usize), config.max_connections);
     offsets.freelist_end = cursor;
 
-    cursor = std.mem.alignForward(usize, cursor, request_buffer_alignment);
+    cursor = try align_checked(cursor, request_buffer_alignment);
     offsets.request_start = cursor;
     cursor = try add_product(cursor, request_stride, config.max_connections);
     offsets.request_end = cursor;
 
-    cursor = std.mem.alignForward(usize, cursor, write_queue_alignment);
+    cursor = try align_checked(cursor, write_queue_alignment);
     offsets.write_start = cursor;
     cursor = try add_product(cursor, config.write_queue_size, config.max_connections);
     offsets.write_end = cursor;
 
-    cursor = std.mem.alignForward(usize, cursor, message_storage_alignment);
+    cursor = try align_checked(cursor, message_storage_alignment);
     offsets.message_start = cursor;
     cursor = try add_product(cursor, config.max_ws_message_size, config.max_connections);
     offsets.message_end = cursor;
 
-    cursor = std.mem.alignForward(usize, cursor, request_buffer_alignment);
+    cursor = try align_checked(cursor, request_buffer_alignment);
     offsets.compression_start = cursor;
     cursor = try add_product(cursor, compression_stride, config.max_connections);
     offsets.compression_end = cursor;

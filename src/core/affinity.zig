@@ -63,7 +63,7 @@ pub fn pin_current_thread(cpu: usize) Error!void {
         .windows => {
             if (cpu >= @bitSizeOf(usize)) return error.NoEligibleCpu;
             const mask = @as(usize, 1) << @intCast(cpu);
-            if (SetThreadAffinityMask(windows.GetCurrentThread(), mask) == 0) {
+            if (set_thread_affinity_mask(windows.GetCurrentThread(), mask) == 0) {
                 return error.AffinityFailed;
             }
         },
@@ -104,7 +104,7 @@ fn allowed_cpus_linux(out: *[max_tracked_cpus]usize) usize {
 fn allowed_cpus_windows(out: *[max_tracked_cpus]usize) usize {
     var process_mask: usize = 0;
     var system_mask: usize = 0;
-    const succeeded = GetProcessAffinityMask(
+    const succeeded = get_process_affinity_mask(
         windows.GetCurrentProcess(),
         &process_mask,
         &system_mask,
@@ -147,7 +147,7 @@ const CpuBitmap = struct {
         self.words[cpu / @bitSizeOf(usize)] |= @as(usize, 1) << @intCast(cpu % @bitSizeOf(usize));
     }
 
-    fn isSet(self: *const CpuBitmap, cpu: usize) bool {
+    fn is_set(self: *const CpuBitmap, cpu: usize) bool {
         if (cpu >= max_tracked_cpus) return false;
         const mask = @as(usize, 1) << @intCast(cpu % @bitSizeOf(usize));
         return self.words[cpu / @bitSizeOf(usize)] & mask != 0;
@@ -188,24 +188,23 @@ fn sibling_list_has_lower(list: []const u8, cpu: usize, allowed: *const CpuBitma
             var sibling = first;
             while (sibling <= last) : (sibling += 1) {
                 if (sibling >= cpu) break;
-                if (allowed.isSet(sibling)) return true;
+                if (allowed.is_set(sibling)) return true;
             }
             continue;
         }
 
         const sibling = std.fmt.parseInt(usize, token, 10) catch continue;
-        if (sibling < cpu and allowed.isSet(sibling)) return true;
+        if (sibling < cpu and allowed.is_set(sibling)) return true;
     }
     return false;
 }
 
-extern "kernel32" fn GetProcessAffinityMask(
-    process: windows.HANDLE,
-    process_mask: *usize,
-    system_mask: *usize,
-) callconv(.winapi) windows.BOOL;
+const get_process_affinity_mask = @extern(
+    *const fn (windows.HANDLE, *usize, *usize) callconv(.winapi) windows.BOOL,
+    .{ .name = "GetProcessAffinityMask", .library_name = "kernel32" },
+);
 
-extern "kernel32" fn SetThreadAffinityMask(
-    thread: windows.HANDLE,
-    thread_affinity_mask: usize,
-) callconv(.winapi) usize;
+const set_thread_affinity_mask = @extern(
+    *const fn (windows.HANDLE, usize) callconv(.winapi) usize,
+    .{ .name = "SetThreadAffinityMask", .library_name = "kernel32" },
+);
