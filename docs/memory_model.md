@@ -66,7 +66,7 @@ defer server.deinit();
 
 Capacities stay compile-time because they size the generated application type;
 pass literals or `const` values. `ServerConfig.slab_bytes()` and
-`Builder.slab_bytes()` report the exact footprint before allocation. The libxev
+`Server.builder(...).slab_bytes()` report the exact footprint before allocation. The libxev
 event loop allocates its fixed 4096-entry backend table during `build`,
 independently of application capacity.
 

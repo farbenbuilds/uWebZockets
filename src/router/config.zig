@@ -111,7 +111,7 @@ pub const ServerConfig = struct {
     /// Named presets for common deployment shapes.
     ///
     /// Every preset is a plain `ServerConfig`, so any field remains overridable
-    /// through `Builder.with_*`. The per-connection footprint is dominated by
+    /// through `Server.builder(...)` and its `with_*` methods. The per-connection footprint is dominated by
     /// the HTTP/2 request slabs embedded in each connection, so these presets
     /// choose conservative connection counts and spend their bytes on the
     /// capacity that each workload actually exercises.

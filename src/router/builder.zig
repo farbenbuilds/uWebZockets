@@ -30,12 +30,12 @@ pub const default_config = config_module.default_config;
 /// ```
 pub const Server = struct {
     /// Starts a builder from the default configuration.
-    pub fn builder(io: std.Io) Builder(default_config) {
+    pub fn builder(io: std.Io) configured_builder(default_config) {
         return .{ .io = io };
     }
 
     /// Starts a builder directly from a named preset.
-    pub fn preset(io: std.Io, comptime config: ServerConfig) Builder(config) {
+    pub fn preset(io: std.Io, comptime config: ServerConfig) configured_builder(config) {
         return .{ .io = io };
     }
 };
@@ -45,7 +45,7 @@ pub const Server = struct {
 /// Capacities stay compile-time because they size the generated application
 /// type. Passing a literal or a `const` value keeps the fluent syntax working;
 /// a runtime-variable capacity is rejected at compile time by design.
-pub fn Builder(comptime config: ServerConfig) type {
+pub fn configured_builder(comptime config: ServerConfig) type {
     comptime {
         config.validate() catch @compileError(
             "invalid ServerConfig: capacities must be non-zero and the idle timeout must fit i64",
@@ -69,7 +69,7 @@ pub fn Builder(comptime config: ServerConfig) type {
         pub fn with_max_clients(
             self: Self,
             comptime value: usize,
-        ) Builder(config.with(.{ .max_connections = value })) {
+        ) configured_builder(config.with(.{ .max_connections = value })) {
             return .{ .io = self.io };
         }
 
@@ -77,7 +77,7 @@ pub fn Builder(comptime config: ServerConfig) type {
         pub fn with_max_ws_message_size(
             self: Self,
             comptime value: usize,
-        ) Builder(config.with(.{ .max_ws_message_size = value })) {
+        ) configured_builder(config.with(.{ .max_ws_message_size = value })) {
             return .{ .io = self.io };
         }
 
@@ -85,7 +85,7 @@ pub fn Builder(comptime config: ServerConfig) type {
         pub fn with_write_queue_size(
             self: Self,
             comptime value: usize,
-        ) Builder(config.with(.{ .write_queue_size = value })) {
+        ) configured_builder(config.with(.{ .write_queue_size = value })) {
             return .{ .io = self.io };
         }
 
@@ -93,7 +93,7 @@ pub fn Builder(comptime config: ServerConfig) type {
         pub fn with_max_body_size(
             self: Self,
             comptime value: usize,
-        ) Builder(config.with(.{ .max_body_size = value })) {
+        ) configured_builder(config.with(.{ .max_body_size = value })) {
             return .{ .io = self.io };
         }
 
@@ -101,7 +101,7 @@ pub fn Builder(comptime config: ServerConfig) type {
         pub fn with_idle_timeout_ms(
             self: Self,
             comptime value: u64,
-        ) Builder(config.with(.{ .idle_timeout_ms = value })) {
+        ) configured_builder(config.with(.{ .idle_timeout_ms = value })) {
             return .{ .io = self.io };
         }
 
@@ -109,12 +109,12 @@ pub fn Builder(comptime config: ServerConfig) type {
         pub fn with_compression(
             self: Self,
             comptime enabled: bool,
-        ) Builder(config.with(.{ .compression = enabled })) {
+        ) configured_builder(config.with(.{ .compression = enabled })) {
             return .{ .io = self.io };
         }
 
         /// Replaces the whole configuration with a named preset or literal.
-        pub fn preset(self: Self, comptime value: ServerConfig) Builder(value) {
+        pub fn preset(self: Self, comptime value: ServerConfig) configured_builder(value) {
             return .{ .io = self.io };
         }
 

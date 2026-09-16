@@ -32,13 +32,23 @@ if [ -n "$bad_files" ]; then
     failed=1
 fi
 
-if rg -n --pcre2 '\b(?:(?:pub|export|inline|noinline)\s+)*fn\s+(?!LLVMFuzzerTestOneInput\b)[A-Za-z_][A-Za-z0-9]*[A-Z][A-Za-z0-9]*\b' build.zig builds src examples tests fuzz; then
+if rg -n -g '*.zig' --pcre2 '\b(?:(?:pub|export|inline|noinline)\s+)*fn\s+(?!LLVMFuzzerTestOneInput\b)(?:[A-Za-z_][A-Za-z0-9]*[A-Z][A-Za-z0-9]*|[A-Z][A-Za-z0-9_]*)\b' build.zig builds src examples tests fuzz; then
     printf '%s\n' "function names must use snake_case"
     failed=1
 fi
 
-if rg -n --pcre2 '\b(?:const|var)\s+[a-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*\b' build.zig builds src examples tests fuzz; then
+if rg -n -g '*.zig' --pcre2 '\b(?:const|var)\s+[a-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*\b' build.zig builds src examples tests fuzz; then
     printf '%s\n' "variable names must use snake_case"
+    failed=1
+fi
+
+if rg -n -g '*.zig' --pcre2 '^(?:pub\s+)?const\s+[a-z][a-z0-9_]*\s*=\s*(?:packed\s+|extern\s+)?(?:(?:struct|enum|union)\s*[({]|error\s*\{)|^\s+pub\s+const\s+[a-z][a-z0-9_]*\s*=\s*(?:packed\s+|extern\s+)?(?:(?:struct|enum|union)\s*[({]|error\s*\{)' build.zig builds src examples tests fuzz; then
+    printf '%s\n' "type names must use PascalCase"
+    failed=1
+fi
+
+if rg -n -g '*.zig' --pcre2 '(?:^\s*|[,(]\s*)[a-z][a-z0-9_]*[A-Z][A-Za-z0-9_]*\s*:' build.zig builds src examples tests fuzz; then
+    printf '%s\n' "field and parameter names must use snake_case"
     failed=1
 fi
 

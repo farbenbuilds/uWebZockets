@@ -11,7 +11,7 @@ uses Semantic Versioning.
   `file_server`), and the fluent `Server.builder` API with compile-time
   `with_*` overrides that translate named limits into one contiguous startup
   slab.
-- Added `Builder.build(allocator)`, `App.init_configured`, and
+- Added `Server.builder(...).build(allocator)`, `App.init_configured`, and
   `App.init_from_slab`, which carve the connection pool, HTTP/1.1 request
   buffers, WebSocket message regions, response write queues, and optional
   RFC 7692 scratch from a single block.
@@ -21,7 +21,7 @@ uses Semantic Versioning.
 - Added `examples/basic_microservice.zig` and `examples/custom_builder.zig`
   with matching `zig build` steps.
 - Added physical-core affinity and shared-nothing startup options:
-  `App.cluster(...).init_with_options`, `Builder.build_cluster`, and
+  `App.cluster(...).init_with_options`, `Server.builder(...).build_cluster`, and
   `ClusterOptions` pin worker `i` to the `i`-th allowed physical core on Linux
   and Windows while keeping restricted cpusets and affinity-less platforms
   running unpinned.
@@ -48,6 +48,10 @@ uses Semantic Versioning.
   `SetThreadAffinityMask` instead of failing when `SO_REUSEPORT` is missing.
 - Rewrote `README.md` as a short onboarding document and moved deep runtime,
   memory, protocol, and operations material into `docs/`.
+- Normalized naming to the coding convention: the JSON-RPC standard-error
+  namespace is now `StandardError` and the internal builder type generator is
+  `configured_builder`. The convention checker now also rejects PascalCase
+  function names, snake_case type names, and camelCase fields or parameters.
 
 ### Fixed
 
