@@ -8,6 +8,8 @@ pub const ConfiguredApp = @import("router/app.zig").configured_app;
 pub const ConfiguredAppWithTimeout = @import("router/app.zig").configured_app_with_timeout;
 /// Fluent compile-time server builder that performs one startup allocation.
 pub const Server = @import("router/builder.zig").Server;
+/// Startup policy for thread-per-core worker groups.
+pub const ClusterOptions = @import("router/app.zig").ClusterOptions;
 /// High-level server capacities and named presets.
 pub const ServerConfig = @import("router/config.zig").ServerConfig;
 /// Named capacity presets for common deployment shapes.

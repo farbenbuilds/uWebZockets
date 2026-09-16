@@ -1,0 +1,238 @@
+# Operations
+
+Build, integration, verification, and release operations for µWebZockets. See
+the [README](../README.md) for the quick start and the other
+[docs](architecture.md) for runtime behavior.
+
+## Requirements
+
+- Zig 0.16.0
+- CMake 3.20 or newer
+- Ninja
+- patch
+- A build target: Linux, macOS, FreeBSD, NetBSD, OpenBSD, DragonFlyBSD, or
+  Windows
+- zlib development headers and a static library
+- Recursive git submodules for the repository's h1spec development suite
+
+The Nix flake pins Nixpkgs 26.05 and provides the supported Zig, CMake, Ninja,
+patch, Go, Python, Perl, and zlib toolchain on all release architectures.
+
+## Build
+
+```sh
+git clone --recurse-submodules https://github.com/farbenbuilds/uWebZockets.git
+cd uWebZockets
+nix develop
+zig build test --summary all
+zig build -Doptimize=ReleaseSafe
+```
+
+The root `build.zig` only injects the graph. Target, vendor, sanitizer, test,
+fuzz, and example construction lives in focused modules under `builds/`.
+Build the edge and kernel-bypass artifacts explicitly:
+
+```sh
+zig build wasm-freestanding -Doptimize=ReleaseSafe
+zig build wasm-wasi -Doptimize=ReleaseSafe
+zig build ebpf
+zig build all-targets -Doptimize=ReleaseSafe
+```
+
+The freestanding target exports linear memory for V8 isolate hosts. Both WASM
+targets export bounded `alloc`/`free` and generation-checked handle functions;
+host code should retain each handle while its shared-memory view is live and
+release it exactly once. The eBPF step emits
+`zig-out/share/uwebzockets/uwz_xdp.o`; attaching it and populating its XSK map
+requires Linux network-administration privileges.
+
+### Sanitizers
+
+The Nix shell exposes a coherent LLVM sanitizer runtime, matching glibc, and
+dynamic linker. Run the complete test graph with ASan, UBSan, LeakSanitizer,
+Zig C-UB checks, and frame pointers:
+
+```sh
+zig build test -Dsanitize=true -Doptimize=ReleaseSafe --summary all
+```
+
+Run the separate x86_64 Linux MemorySanitizer dependency-boundary smoke with
+origin tracking:
+
+```sh
+zig build msan -Dmemory-sanitize=true -Doptimize=ReleaseSafe --summary all
+```
+
+Address/undefined sanitizer mode and MemorySanitizer mode are mutually
+exclusive. The ASan/UBSan mode runs the centralized test and C ABI graph while
+instrumenting the pinned C/C++ libraries and local C shim. The MSan mode
+rebuilds those components with origin tracking and executes a focused C
+dependency-boundary smoke; it does not instrument Zig code or run the complete
+C ABI suite. Both modes use isolated vendor caches and run as separate CI steps.
+
+Outside Nix, also pass `-Dsanitizer-lib-dir=/path/to/compiler/runtime/lib`. If
+that runtime requires a different glibc than the host, pass the matching
+`-Dsanitizer-libc-dir` and `-Dsanitizer-dynamic-linker` paths together.
+Sanitizer builds are restricted to native Linux, set coherent runtime RPATHs,
+and use a separate vendor cache.
+
+### Fuzzing
+
+`zig build test` runs the ordinary unit suite from `src/tests/main.zig`;
+production modules never import that suite. Protocol fuzzing has two layers:
+
+```sh
+zig build fuzz --fuzz=100K -Doptimize=ReleaseSafe
+zig build oss-fuzz-objects -Doptimize=ReleaseSafe
+zig build oss-fuzz-smoke -Doptimize=ReleaseSafe
+```
+
+The Smith harness retains HTTP, zslay, extension-negotiation, and HTTP/3
+validation coverage. The OSS-Fuzz objects export `LLVMFuzzerTestOneInput` for
+HTTP framing, WebSocket masking, and QUIC/WebTransport packet boundaries;
+`oss-fuzz-smoke` runs deterministic seeds without libFuzzer. A reusable
+ClusterFuzzLite workflow links and executes all three targets with the
+OSS-Fuzz ASan/libFuzzer environment on the exact revision under test. This is an
+OSS-Fuzz compatibility gate, not a claim of enrollment in the hosted service;
+`oss-fuzz/README.md` documents the Zig sanitizer boundary.
+
+### Cross targets and zlib
+
+Without Nix, install the requirements above and run the same Zig commands. If
+zlib is not in the compiler's default search path, pass a prefix containing
+`include/` and `lib/libz.a`:
+
+```sh
+zig build -Dzlib-prefix=/path/to/zlib-prefix
+```
+
+Windows builds require a MinGW static zlib prefix. The native Windows CI uses
+the pinned manifest under `scripts/windows`, the `x64-mingw-static` triplet,
+and this PowerShell flow:
+
+```powershell
+$zlib = "$env:TEMP\uwebzockets-zlib"
+.\scripts\windows\prepare_zlib.ps1 -OutputDirectory $zlib
+zig build test-compile -Dtarget=x86_64-windows-gnu "-Dzlib-prefix=$zlib" `
+  -Doptimize=ReleaseSafe --summary all
+zig build lib -Dtarget=x86_64-windows-gnu "-Dzlib-prefix=$zlib" `
+  -Doptimize=ReleaseFast --summary all
+```
+
+Other cross-target builds must pass a zlib prefix built for the selected
+target; the host `UWEBZOCKETS_ZLIB_PREFIX` is deliberately ignored for foreign
+targets.
+
+`zig build lib -Doptimize=ReleaseFast` installs the µWebZockets, BoringSSL,
+lsquic, and libdeflate static archives under `zig-out/lib`. Applications that
+link these archives directly must also link libc, the C++ runtime, zlib, and
+the platform networking libraries required by those dependencies (on Windows:
+`ws2_32`, `mswsock`, `crypt32`, and `advapi32`).
+
+## Use as a Zig dependency
+
+### Zig package manager
+
+From the consuming project, fetch an immutable release tag or commit:
+
+```sh
+zig fetch --save 'git+https://github.com/farbenbuilds/uWebZockets#<tag-or-commit>'
+```
+
+This adds the package under the `uWebZockets` name. Import it from `build.zig`:
+
+```zig
+const uz = b.dependency("uWebZockets", .{
+    .target = target,
+    .optimize = optimize,
+});
+const uz_module = uz.module("uWebZockets");
+exe.root_module.addImport("uWebZockets", uz_module);
+```
+
+Pin a tag or full commit rather than a moving branch so dependency resolution
+stays reproducible.
+
+### Local path dependency
+
+```sh
+git submodule add https://github.com/farbenbuilds/uWebZockets.git vendor/uWebZockets
+git -C vendor/uWebZockets checkout <release-tag-or-full-commit-hash>
+git add .gitmodules vendor/uWebZockets
+```
+
+```zig
+// build.zig.zon
+.dependencies = .{
+    .uWebZockets = .{ .path = "vendor/uWebZockets" },
+},
+```
+
+The package manifest fetches zslay, libxev, BoringSSL, lsquic, ls-qpack,
+ls-hpack, and libdeflate from immutable URLs or commits with Zig package
+hashes, so a downstream path dependency does not need the vendor submodules. The
+public module carries native link metadata, orders dependency builds, and
+supplies the C shim through its clean static-library edge. The
+`tests/package_consumer` fixture compiles this contract in CI against the
+release module surface.
+
+## C ABI
+
+The package includes [`include/uWebZockets.h`](../include/uWebZockets.h), and
+both `zig build install` and `zig build lib` install it as
+`zig-out/include/uWebZockets.h` by default.
+
+- Opaque handles, `uwz_slice` byte views, and a versioned `uwz_error` mapping.
+- `uwz_app_create`, `uwz_app_shutdown`, and `uwz_app_destroy` make ownership
+  explicit; destroy nulls the caller's handle.
+- Shutdown requested from a callback is drained by the active `uwz_app_run`
+  call. Destroying from a callback returns `UWZ_ERROR_INVALID_STATE` and leaves
+  the handle valid for destruction after the run returns.
+- Fixed capacities: 1,024 connections and 64 copied route paths.
+- Request fields or parameters needed after a C callback returns must be copied
+  into caller-owned storage; WebSocket message slices are callback-scoped.
+- Async tokens are copyable, generation-checked values completed exactly once
+  on the owning event loop.
+
+The ABI covers the high-level server operations above. It is not a one-to-one
+binding for compile-time Zig configuration types or the low-level `udp`,
+HTTP/2, HPACK, HTTP/3-extension, and WebTransport helper modules exported from
+`src/root.zig`; those surfaces remain Zig-only.
+
+## Performance contract
+
+The versioned
+[`http-throughput-v1`](../benchmarks/http_throughput_guarantee.md) contract
+compares three same-runner `wrk` samples for a pull request and its base
+revision. The candidate median must remain at least 90 percent of the baseline
+median. Scheduled and manual mainline runs append structured records and raw
+evidence to the `benchmark-data` branch. This is a relative regression
+guarantee, not an absolute requests-per-second claim across hardware or
+toolchain cohorts.
+
+## Platform support
+
+- Tier 1: Linux and macOS on `x86_64` and `aarch64`; these targets are built,
+  tested, and published by CI.
+- Tier 2: `x86_64-windows-gnu`, FreeBSD, NetBSD, OpenBSD, and DragonFlyBSD.
+  Windows libraries and the complete test/ABI graph are compiled on a native
+  Windows runner for tagged releases, with a manual pre-release trigger
+  available; the resulting archive is published. Windows runtime tests remain a
+  Tier 2 validation responsibility. Windows QUIC uses IOCP UDP receives and
+  Winsock `WSASendTo` sends. The BSD targets share the build graph without
+  dedicated CI.
+
+Shared-nothing clustering is fully supported on Linux. Windows uses the
+`SO_REUSEADDR` fallback and native thread affinity; macOS runs workers without
+hard pinning because the platform exposes no affinity API. See
+[architecture.md](architecture.md#windows-fallback).
+
+Request fields, route captures, middleware, async tokens, and transport pools
+have fixed capacities; there is no dynamic overflow fallback.
+
+## Release metadata
+
+The release version is single-sourced across `build.zig.zon`, `build.zig`,
+`flake.nix`, `include/uWebZockets.h`, `src/c_api.zig`, and the changelog.
+`scripts/check_release_version.sh` verifies every copy, the C++ header
+assertions, the C smoke test, and the documentation headers together.

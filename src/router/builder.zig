@@ -137,5 +137,24 @@ pub fn Builder(comptime config: ServerConfig) type {
         pub fn build(self: Self, allocator: std.mem.Allocator) !AppType {
             return AppType.init_configured(self.io, allocator, config);
         }
+
+        /// Builds a shared-nothing worker group from this configuration.
+        ///
+        /// Every worker allocates its own slab, runs its own libxev loop, and
+        /// binds the shared port through SO_REUSEPORT where the kernel supports
+        /// it. Configure routes per worker with `Cluster.configure` before
+        /// calling `listen` and `run`.
+        pub fn build_cluster(
+            self: Self,
+            allocator: std.mem.Allocator,
+            comptime worker_count: usize,
+            options: app_module.ClusterOptions,
+        ) !AppType.cluster(worker_count) {
+            return AppType.cluster(worker_count).init_with_options(
+                allocator,
+                self.io,
+                options,
+            );
+        }
     };
 }

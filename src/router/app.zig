@@ -4,6 +4,7 @@ const core_tcp = @import("../core/tcp.zig");
 const core_context = @import("../core/context.zig");
 const core_pool = @import("../core/pool.zig");
 const core_timer = @import("../core/timer.zig");
+const core_affinity = @import("../core/affinity.zig");
 const radix = @import("radix.zig");
 const xev = @import("xev");
 const PubSubEngine = @import("../ws/pubsub.zig").PubSubEngine;
@@ -27,6 +28,15 @@ pub const default_write_queue_size = core_tcp.default_write_queue_capacity;
 pub const default_idle_timeout_ms: u64 = 120_000;
 /// Reports whether the compiled lsquic transport is available.
 pub const http3_available = quic.available;
+
+/// Startup policy for `App.cluster` worker groups.
+pub const ClusterOptions = struct {
+    /// Pins worker `i` to the `i`-th allowed physical core.
+    ///
+    /// Pinning is best effort: restricted cpusets and platforms without a
+    /// hard-affinity API leave the worker unpinned instead of failing startup.
+    cpu_affinity: bool = true,
+};
 
 /// Returns the default fixed-capacity application type.
 pub fn app(comptime max_connections: usize) type {
@@ -722,14 +732,29 @@ pub fn configured_app_with_timeout(
             return struct {
                 const Cluster = @This();
 
+                /// Concrete application type every worker owns.
+                pub const Worker = Self;
+
                 allocator: std.mem.Allocator,
                 workers: []Self,
                 inboxes: []ClusterInbox,
                 threads: []std.Thread,
                 thread_count: usize = 0,
                 worker_failed: std.atomic.Value(bool) = .init(false),
+                startup_options: ClusterOptions = .{},
+                cores: core_affinity.CoreSelection = .{},
 
                 pub fn init(allocator: std.mem.Allocator, io: std.Io) !Cluster {
+                    return init_with_options(allocator, io, .{});
+                }
+
+                /// Builds every worker slab on this thread; each worker then owns
+                /// its slab exclusively for its whole lifetime.
+                pub fn init_with_options(
+                    allocator: std.mem.Allocator,
+                    io: std.Io,
+                    startup_options: ClusterOptions,
+                ) !Cluster {
                     const workers = try allocator.alloc(Self, worker_count);
                     errdefer allocator.free(workers);
                     const inboxes = try allocator.alloc(ClusterInbox, worker_count);
@@ -752,6 +777,8 @@ pub fn configured_app_with_timeout(
                         .workers = workers,
                         .inboxes = inboxes,
                         .threads = threads,
+                        .startup_options = startup_options,
+                        .cores = core_affinity.CoreSelection.init(),
                     };
                 }
 
@@ -832,9 +859,23 @@ pub fn configured_app_with_timeout(
                 }
 
                 fn worker_main(self: *Cluster, index: usize) void {
+                    pin_worker(self, index);
                     self.workers[index].run() catch {
                         self.worker_failed.store(true, .release);
                         self.request_shutdown();
+                    };
+                }
+
+                /// Pins one worker to its core; failure keeps startup graceful.
+                fn pin_worker(self: *Cluster, index: usize) void {
+                    if (!self.startup_options.cpu_affinity) return;
+                    const cpu = self.cores.cpu(index) orelse return;
+                    core_affinity.pin_current_thread(cpu) catch |err| {
+                        // Restricted cpusets and affinity-less platforms are
+                        // expected; only the first worker reports them.
+                        if (index == 0) {
+                            std.debug.print("worker affinity unavailable: {}\n", .{err});
+                        }
                     };
                 }
             };

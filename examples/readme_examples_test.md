@@ -7,8 +7,8 @@ zig build -Doptimize=ReleaseSafe
 ```
 
 The default install contains `hello_world`, `chat_server`, `rpc_server`,
-`http3_server`, `basic_microservice`, `custom_builder`, `h1spec`, and
-`autobahn_server` under `zig-out/bin`.
+`http3_server`, `basic_microservice`, `custom_builder`,
+`shared_nothing_cluster`, `h1spec`, and `autobahn_server` under `zig-out/bin`.
 
 These examples target the live `App` transports. The bounded HTTP/2/HPACK
 components and the C ABI header are library surfaces rather than standalone
@@ -109,6 +109,24 @@ answers a body above the configured limit with a structured `413` document:
 zig build custom_builder -Doptimize=ReleaseSafe
 head -c 52428801 /dev/zero | curl -i -X POST http://127.0.0.1:3001/upload --data-binary @-
 ```
+
+## Shared-nothing cluster
+
+Start four workers that share one port through `SO_REUSEPORT`, each with its
+own event loop, slabs, and pinned core where the platform allows it:
+
+```sh
+zig build shared_nothing_cluster -Doptimize=ReleaseSafe
+```
+
+```sh
+curl -i http://127.0.0.1:3000/
+```
+
+The kernel load-balances accepted connections across the listeners, and every
+connection stays inside the accepting worker's slab. See
+[docs/architecture.md](../docs/architecture.md) for the affinity and tuning
+details.
 
 ## Compliance targets
 

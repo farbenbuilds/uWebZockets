@@ -7,6 +7,7 @@ pub const simd = @import("core/simd.zig");
 pub const transport = @import("core/transport.zig");
 pub const ktls = @import("core/ktls.zig");
 pub const xdp = @import("xdp/socket.zig");
+pub const affinity = @import("core/affinity.zig");
 
 pub const http_parser = @import("http/parser.zig");
 pub const http_request = @import("http/request.zig");

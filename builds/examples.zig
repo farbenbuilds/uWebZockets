@@ -15,6 +15,7 @@ const examples = [_]Example{
     .{ .name = "rpc_server", .source = "examples/rpc_server.zig", .description = "Run the JSON-RPC example server" },
     .{ .name = "basic_microservice", .source = "examples/basic_microservice.zig", .description = "Run the microservice preset example" },
     .{ .name = "custom_builder", .source = "examples/custom_builder.zig", .description = "Run the custom builder example" },
+    .{ .name = "shared_nothing_cluster", .source = "examples/shared_nothing_cluster.zig", .description = "Run the shared-nothing worker group example" },
 };
 
 pub fn inject(

@@ -22,6 +22,8 @@ const zslay = @import("zslay");
 
 /// Bytes read from one POSIX socket completion at a time.
 pub const socket_read_capacity = 8192;
+/// Seconds a completed handshake waits for data before reporting an accept.
+pub const defer_accept_seconds: c_int = 1;
 /// Default maximum buffered HTTP/1 request bytes per TCP connection.
 pub const request_buffer_capacity = http_parser.max_request_line_size +
     http_parser.max_header_size + http_parser.default_max_body_size + 1024;
@@ -1102,6 +1104,9 @@ fn on_read_complete(
     const now = std.Io.Clock.now(.awake, conn.io);
     conn.last_active_ms = @intCast(@divTrunc(now.nanoseconds, std.time.ns_per_ms));
 
+    // Linux may have reverted to delayed ACKs; re-arm them for this burst.
+    request_quickack(conn.socket.fd);
+
     const data = conn.read_buffer[0..bytes_read];
     if (conn.ssl) |ssl| {
         conn.process_tls_data(ssl, data);
@@ -1394,14 +1399,22 @@ fn init_server_options(
     const parsed_address = try std.Io.net.IpAddress.parse(address, port);
     var listener = try xev.TCP.init(parsed_address);
     errdefer close_unregistered_socket(listener);
-    if (reuse_port and builtin.os.tag != .windows) {
-        try std.posix.setsockopt(
-            listener.fd,
-            std.posix.SOL.SOCKET,
-            std.posix.SO.REUSEPORT,
-            &std.mem.toBytes(@as(c_int, 1)),
-        );
+    if (reuse_port) {
+        if (builtin.os.tag == .windows) {
+            // Windows has no SO_REUSEPORT. SO_REUSEADDR permits every worker to
+            // bind the address, and each accepted connection stays wholly inside
+            // the accepting worker's slab; kernel distribution is unspecified.
+            try set_reuse_address_windows(listener.fd);
+        } else {
+            try std.posix.setsockopt(
+                listener.fd,
+                std.posix.SOL.SOCKET,
+                std.posix.SO.REUSEPORT,
+                &std.mem.toBytes(@as(c_int, 1)),
+            );
+        }
     }
+    apply_listener_tuning(listener.fd);
     try listener.bind(parsed_address);
     try listener.listen(128);
 
@@ -1410,6 +1423,62 @@ fn init_server_options(
         .on_connection = callback,
         .user_data = user_data,
     };
+}
+
+/// Enables address reuse on an IOCP socket handle.
+///
+/// Zig's `std.posix` has no socket-option entry point for Windows, so the
+/// winsock call is declared here and only referenced by the Windows branch.
+fn set_reuse_address_windows(fd: std.os.windows.HANDLE) !void {
+    var value: c_int = 1;
+    const result = winsock_setsockopt(
+        @intFromPtr(fd),
+        std.os.windows.ws2_32.SOL.SOCKET,
+        std.os.windows.ws2_32.SO.REUSEADDR,
+        @ptrCast(&value),
+        @sizeOf(c_int),
+    );
+    if (result != 0) return error.SocketOptionFailed;
+}
+
+extern "ws2_32" fn winsock_setsockopt(
+    socket: usize,
+    level: c_int,
+    option_name: c_int,
+    option_value: [*]const u8,
+    option_length: c_int,
+) callconv(.winapi) c_int;
+
+/// Defers accepts until the first application byte arrives.
+///
+/// Linux-only; other kernels keep their default accept policy, so a handshake
+/// that stalls still occupies a kernel backlog entry instead of a worker slot.
+fn apply_listener_tuning(fd: anytype) void {
+    if (builtin.os.tag == .linux) {
+        // Best effort: a kernel without TCP_DEFER_ACCEPT keeps the default policy.
+        std.posix.setsockopt(
+            fd,
+            std.posix.IPPROTO.TCP,
+            std.os.linux.TCP.DEFER_ACCEPT,
+            &std.mem.toBytes(defer_accept_seconds),
+        ) catch {};
+    }
+}
+
+/// Requests immediate ACKs for the next inbound segment.
+///
+/// Linux resets quickack as the connection progresses, so the read path
+/// re-arms it. Other kernels keep their default ACK policy.
+pub fn request_quickack(fd: anytype) void {
+    if (builtin.os.tag == .linux) {
+        // Best effort: a kernel without TCP_QUICKACK keeps delayed ACKs.
+        std.posix.setsockopt(
+            fd,
+            std.posix.IPPROTO.TCP,
+            std.os.linux.TCP.QUICKACK,
+            &std.mem.toBytes(@as(c_int, 1)),
+        ) catch {};
+    }
 }
 
 /// Arms the listener's recurring accept completion.
@@ -1485,6 +1554,7 @@ fn on_accept_complete(
         return .disarm;
     }
 
+    request_quickack(accepted_socket.fd);
     server.on_connection(accepted_socket, server.user_data);
     return .rearm;
 }

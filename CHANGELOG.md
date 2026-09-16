@@ -3,7 +3,7 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
-## [1.0.6] - 2026-09-16
+## [1.0.6] - 2026-09-17
 
 ### Added
 
@@ -20,6 +20,20 @@ uses Semantic Versioning.
   limit and the `ServerConfig` field to raise.
 - Added `examples/basic_microservice.zig` and `examples/custom_builder.zig`
   with matching `zig build` steps.
+- Added physical-core affinity and shared-nothing startup options:
+  `App.cluster(...).init_with_options`, `Builder.build_cluster`, and
+  `ClusterOptions` pin worker `i` to the `i`-th allowed physical core on Linux
+  and Windows while keeping restricted cpusets and affinity-less platforms
+  running unpinned.
+- Added listener and connection tuning: `SO_REUSEPORT` on POSIX,
+  `TCP_DEFER_ACCEPT` on listeners, and `TCP_QUICKACK` re-armed after each
+  inbound read.
+- Added a lock-free Vyukov sequence ring for cluster inboxes, removing the
+  spinlock from the cross-worker wakeup path and cache-line separating the
+  producer and consumer positions.
+- Added `examples/shared_nothing_cluster.zig` plus the restructured
+  `docs/architecture.md`, `docs/memory_model.md`, `docs/protocols.md`, and
+  `docs/operations.md`.
 
 ### Changed
 
@@ -30,6 +44,10 @@ uses Semantic Versioning.
   leaves that storage intact in `deinit`.
 - `App.init` keeps its existing signature and now builds the same single slab
   through `init_configured`.
+- Windows cluster listeners fall back to `SO_REUSEADDR` and thread affinity to
+  `SetThreadAffinityMask` instead of failing when `SO_REUSEPORT` is missing.
+- Rewrote `README.md` as a short onboarding document and moved deep runtime,
+  memory, protocol, and operations material into `docs/`.
 
 ## [1.0.5] - 2026-09-14
 

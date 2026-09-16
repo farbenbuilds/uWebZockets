@@ -19,6 +19,11 @@ HTTP/3 allocate their fixed slabs when the feature is configured, before
 listening begins. Route arrays are immutable after either listener starts, so
 callbacks never observe a structural mutation.
 
+Thread-per-core cluster workers each own one such slab, run one libxev loop,
+and coordinate only through lock-free sequence rings. Physical-core affinity,
+`SO_REUSEPORT`, `TCP_DEFER_ACCEPT`, and `TCP_QUICKACK` are applied during
+startup and accept; no mutex or spinlock remains on the steady-state I/O path.
+
 ## Design rules
 
 1. Data is grouped by access pattern. The pool's activity bitmap and the
@@ -50,11 +55,13 @@ uWebZockets/
 │       ├── wasm.zig           # freestanding and WASI edge graph
 │       └── ebpf.zig           # XDP BPF object pipeline
 ├── flake.nix                 # native GNU/musl and macOS packages
+├── docs/                     # architecture, memory model, protocols, operations
 ├── include/uWebZockets.h     # versioned C ABI declarations
 ├── src/
 │   ├── root.zig              # supported public API
 │   ├── c_api.zig             # exported C ABI implementation
 │   ├── core/                 # libxev I/O plus transport-neutral protocol core
+│   │   ├── affinity.zig      # physical-core selection and thread pinning
 │   │   ├── ktls.zig          # Linux kTLS and zero-copy file transfer
 │   │   └── udp.zig           # completion-owned UDP/QUIC transport
 │   ├── crypto/               # bounded BoringSSL TLS and Web Crypto
@@ -73,7 +80,7 @@ uWebZockets/
 ├── tests/
 │   ├── autobahn/             # RFC 6455 target, Deno runner, and config
 │   └── h1spec/               # HTTP/1.1 compliance target
-├── examples/                 # HTTP/1.1, WebSocket, and HTTP/3 examples
+├── examples/                 # HTTP, WebSocket, JSON-RPC, builder, and cluster examples
 └── vendor/                   # pinned C/C++ and compliance submodules
 ```
 
