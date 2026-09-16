@@ -827,6 +827,42 @@ test "http2 server: regular CONNECT receives an ordinary 501 response" {
     ) != null);
 }
 
+test "http2 server: rejected CONNECT trailers never dispatch a stale stream" {
+    var session: TestSession = .{};
+    try session.reset();
+    var state = TestState{ .session = &session };
+
+    const connect_headers = [_]u8{
+        0x02, 0x07, 'C', 'O', 'N', 'N', 'E', 'C', 'T',
+        0x01, 0x0b, 'e', 'x', 'a', 'm', 'p', 'l', 'e',
+        '.',  'c',  'o', 'm',
+    };
+    // Valid trailer fields, but no initial request was ever dispatched.
+    const trailer = [_]u8{
+        0x40, 0x06, 'x', '-', 't', 'e', 's', 't', 0x05, 'v', 'a', 'l', 'u', 'e',
+    };
+    var input: [160]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x4, 1, &connect_headers);
+    try append_frame(&input, &input_length, .headers, 0x5, 1, &trailer);
+    try session.receive(input[0..input_length], state.callbacks());
+
+    try std.testing.expect(!session.is_closed());
+    try std.testing.expectEqual(@as(usize, 0), state.dispatch_count);
+    // The stale-slot path must never emit RST_STREAM on stream 0.
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        try frame_count(state.output[0..state.output_length], .rst_stream, 0),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        try frame_count(state.output[0..state.output_length], .rst_stream, 1),
+    );
+    try std.testing.expect(session.connection.streams.find(1) == null);
+}
+
 test "http2 server: 205 responses reject a body" {
     var session: TestSession = .{};
     try session.reset();

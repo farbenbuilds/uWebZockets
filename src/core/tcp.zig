@@ -1245,32 +1245,43 @@ pub fn close_connection(conn: *TcpConnection) void {
     if (conn.ws.initialized) conn.ws.deinit();
     conn.deinit_tls();
 
-    if (conn.read_active) {
-        conn.read_cancel_active = true;
-        core_loop.cancel(
-            conn.loop,
-            &conn.read_completion,
-            &conn.read_cancel_completion,
-            TcpConnection,
-            conn,
-            on_read_cancel_complete,
-        );
-    }
-    if (conn.is_writing) {
-        conn.write_cancel_active = true;
-        core_loop.cancel(
-            conn.loop,
-            &conn.write_completion,
-            &conn.write_cancel_completion,
-            TcpConnection,
-            conn,
-            on_write_cancel_complete,
-        );
+    // kqueue discards armed kevents when the descriptor closes, and a read or
+    // write completion canceled before submission can have its callback
+    // dropped by that backend. Skipping the cancels there is safe: callbacks
+    // already fetched for this tick run before the close completion, and the
+    // close callback clears the outstanding flags.
+    if (xev.backend != .kqueue) {
+        if (conn.read_active) {
+            conn.read_cancel_active = true;
+            core_loop.cancel(
+                conn.loop,
+                &conn.read_completion,
+                &conn.read_cancel_completion,
+                TcpConnection,
+                conn,
+                on_read_cancel_complete,
+            );
+        }
+        if (conn.is_writing) {
+            conn.write_cancel_active = true;
+            core_loop.cancel(
+                conn.loop,
+                &conn.write_completion,
+                &conn.write_cancel_completion,
+                TcpConnection,
+                conn,
+                on_write_cancel_complete,
+            );
+        }
     }
 
     if (builtin.os.tag == .windows) {
         close_socket(conn.socket.fd);
         conn.close_complete = true;
+        // IOCP drops callbacks for completions canceled before submission;
+        // those flags would otherwise keep the slot out of the pool forever.
+        if (conn.read_completion.state() != .active) conn.read_active = false;
+        if (conn.write_completion.state() != .active) conn.is_writing = false;
         release_closed_connection(conn);
         return;
     }
@@ -1298,6 +1309,14 @@ pub fn close_connection(conn: *TcpConnection) void {
 
                 const connection = user_data orelse return .disarm;
                 connection.close_complete = true;
+                if (xev.backend == .kqueue) {
+                    // The descriptor is closed, so no kevent callback can
+                    // arrive now; clear the flags the skipped cancels left set.
+                    connection.read_active = false;
+                    connection.is_writing = false;
+                    connection.read_cancel_active = false;
+                    connection.write_cancel_active = false;
+                }
                 release_closed_connection(connection);
                 return .disarm;
             }

@@ -49,6 +49,37 @@ uses Semantic Versioning.
 - Rewrote `README.md` as a short onboarding document and moved deep runtime,
   memory, protocol, and operations material into `docs/`.
 
+### Fixed
+
+- Fixed an HTTP/2 stream-lifecycle race: an `END_STREAM` HEADERS frame no
+  longer releases its slab slot before the server finishes processing the
+  event, the server refuses to emit `RST_STREAM` on stream 0, and a second
+  HEADERS section on a stream without a completed request is rejected as an
+  unexpected trailer.
+- Fixed macOS/kqueue connection-slot and QUIC-drain leaks: canceled read and
+  write callbacks that the backend can drop no longer gate slab release, and
+  the close completion clears the outstanding flags.
+- Fixed a shutdown hang where stopping a timer or the idle sweeper from inside
+  its own tick callback re-armed it forever.
+- Fixed QUIC shutdown re-entrancy: `shutdown()` from an HTTP/3 handler now
+  defers `lsquic_engine_cooldown` until the active engine callback unwinds.
+- Fixed WebSocket fatal-error handling: a failed parser is terminal, a close
+  frame completes the frame parser instead of being re-emitted, HTTP/2 tunnels
+  are reset on failure or close, and large sends split across DATA frames
+  instead of committing a frame header before a rejected payload.
+- Fixed an absolute-path escape in static file index appending and made static
+  file traversal open every directory component without following symlinks.
+- Fixed JSON-RPC perfect-hash dispatch to confirm stored method bytes after a
+  fingerprint match, and widened the router's copied-path registry offset so
+  filling the 64 KiB limit cannot overflow.
+- Fixed slab-plan alignment so near-maximum layouts return
+  `error.SlabSizeOverflow` instead of panicking, and rejected `ServerConfig`
+  capacities that do not match the generated `App` type at compile time.
+- Fixed `If-None-Match` precedence over `If-Modified-Since`, OpenAPI literal
+  `:`/`*` path segments, `Cluster.deinit` double-call safety, the TLS plaintext
+  drain continuing after close was scheduled, and the native stream adapter's
+  zslay opcode names.
+
 ## [1.0.5] - 2026-09-14
 
 ### Added

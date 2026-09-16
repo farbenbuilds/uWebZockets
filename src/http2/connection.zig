@@ -640,7 +640,16 @@ pub fn connection(comptime max_streams: usize) type {
             }
 
             if (header.flags & 0x4 == 0) self.continuation_stream_id = header.stream_id;
-            if (header.flags & 0x1 != 0) try self.close_remote(index.?);
+            // Apply the peer's half-close now, but defer releasing the slot to
+            // `finish_remote`: the caller still needs this stream index while it
+            // processes the event.
+            if (header.flags & 0x1 != 0) {
+                switch (self.streams.states[index.?]) {
+                    .open => self.streams.states[index.?] = .half_closed_remote,
+                    .half_closed_local => self.streams.states[index.?] = .closed,
+                    else => {},
+                }
+            }
             return .{ .headers = .{
                 .stream_index = index.?,
                 .block = parsed,
@@ -860,29 +869,24 @@ pub fn connection(comptime max_streams: usize) type {
             } };
         }
 
-        fn close_remote(self: *Self, index: u16) !void {
-            switch (self.streams.states[index]) {
-                .open => self.streams.states[index] = .half_closed_remote,
-                .half_closed_local => {
-                    self.streams.states[index] = .closed;
-                    _ = self.streams.release(index);
-                },
-                else => return error.StreamClosed,
-            }
-        }
-
         /// Applies END_STREAM after the caller finishes processing its event.
+        ///
+        /// Idempotent: an END_STREAM HEADERS frame already applied the
+        /// transition in `receive_headers`, and a DATA frame applies it here.
+        /// A stream that reached `closed` is released for its caller.
         pub fn finish_remote(self: *Self, index: u16) !bool {
             switch (self.streams.states[index]) {
                 .open => {
                     self.streams.states[index] = .half_closed_remote;
                     return false;
                 },
+                .half_closed_remote => return false,
                 .half_closed_local => {
                     self.streams.states[index] = .closed;
                     return self.streams.release(index);
                 },
-                else => return error.StreamClosed,
+                .closed => return self.streams.release(index),
+                .idle => return error.StreamClosed,
             }
         }
 

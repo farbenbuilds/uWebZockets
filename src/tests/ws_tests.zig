@@ -269,6 +269,85 @@ test "ws: fragmented message completes with an empty continuation" {
     try std.testing.expectEqual(zslay.Opcode.text, Capture.opcode);
 }
 
+test "ws: invalid UTF-8 is terminal and suppresses later dispatch" {
+    const Capture = struct {
+        var calls: usize = 0;
+
+        fn on_message(_: *WebSocket, _: []const u8, _: zslay.Opcode) void {
+            calls += 1;
+        }
+    };
+
+    var message_buffer: [64]u8 = undefined;
+    var write_queue: [128]u8 = undefined;
+    var tcp_conn = TcpConnection{
+        .socket = undefined,
+        .ws_message_buffer = &message_buffer,
+        .write_queue = &write_queue,
+        // Keep the close frame in the ring instead of arming a socket write.
+        .is_writing = true,
+    };
+    var ws = WebSocket{
+        .conn = &tcp_conn,
+        .behavior = .{
+            .message = Capture.on_message,
+            .max_frame_size = 64,
+            .max_message_size = 64,
+        },
+        .initialized = true,
+    };
+    ws.z_conn = try zslay.Conn.init(&ws.tx_nodes, .{
+        .role = .server,
+        .max_frame_len = 64,
+        .max_message_len = 64,
+    });
+
+    const masking_key = [_]u8{ 1, 2, 3, 4 };
+    var wire: [16]u8 = undefined;
+
+    // A complete masked text frame whose payload is invalid UTF-8.
+    const invalid_len = try zslay.encode_header(
+        &wire,
+        .{
+            .payload_len = 1,
+            .mask = true,
+            .opcode = @intFromEnum(zslay.Opcode.text),
+            .rsv3 = false,
+            .rsv2 = false,
+            .rsv1 = false,
+            .fin = true,
+        },
+        1,
+        masking_key,
+    );
+    wire[invalid_len] = 0xff ^ masking_key[0];
+
+    Capture.calls = 0;
+    ws.on_data(wire[0 .. invalid_len + 1]);
+    try std.testing.expect(ws.failed);
+    try std.testing.expect(ws.close_sent);
+    try std.testing.expectEqual(@as(usize, 0), Capture.calls);
+
+    // A valid frame after the failure must never reach the application.
+    const valid_len = try zslay.encode_header(
+        &wire,
+        .{
+            .payload_len = 1,
+            .mask = true,
+            .opcode = @intFromEnum(zslay.Opcode.text),
+            .rsv3 = false,
+            .rsv2 = false,
+            .rsv1 = false,
+            .fin = true,
+        },
+        1,
+        masking_key,
+    );
+    wire[valid_len] = 'a' ^ masking_key[0];
+    ws.on_data(wire[0 .. valid_len + 1]);
+    try std.testing.expectEqual(@as(usize, 0), Capture.calls);
+}
+
 test "handshake: negotiates bounded no-context permessage-deflate" {
     const negotiated = handshake.negotiate_permessage_deflate(
         "foo, permessage-deflate; client_max_window_bits=12; server_max_window_bits=15",

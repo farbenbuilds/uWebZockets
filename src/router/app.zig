@@ -761,6 +761,7 @@ pub fn configured_app_with_timeout(
                 worker_failed: std.atomic.Value(bool) = .init(false),
                 startup_options: ClusterOptions = .{},
                 cores: core_affinity.CoreSelection = .{},
+                deinitialized: bool = false,
 
                 pub fn init(allocator: std.mem.Allocator, io: std.Io) !Cluster {
                     return init_with_options(allocator, io, .{});
@@ -801,6 +802,7 @@ pub fn configured_app_with_timeout(
                 }
 
                 pub fn deinit(self: *Cluster) void {
+                    if (self.deinitialized) return;
                     if (self.thread_count != 0) {
                         std.debug.panic("cannot deinitialize a running cluster", .{});
                     }
@@ -808,7 +810,10 @@ pub fn configured_app_with_timeout(
                     self.allocator.free(self.threads);
                     self.allocator.free(self.inboxes);
                     self.allocator.free(self.workers);
-                    self.* = undefined;
+                    self.workers = &.{};
+                    self.inboxes = &.{};
+                    self.threads = &.{};
+                    self.deinitialized = true;
                 }
 
                 /// Applies the same route configuration callback to every worker.

@@ -294,7 +294,9 @@ fn format_http_date(buffer: []u8, mtime_ns: i96) ![]const u8 {
 fn not_modified(request: *const Request, etag: []const u8, modified: []const u8) bool {
     if (etag.len != 0) {
         if (request.get_unique_header("if-none-match")) |candidate| {
-            if (std.mem.eql(u8, std.mem.trim(u8, candidate, " \t"), etag)) return true;
+            // RFC 9110: If-Modified-Since is ignored when If-None-Match is
+            // present, even if the ETag does not match.
+            return std.mem.eql(u8, std.mem.trim(u8, candidate, " \t"), etag);
         }
     }
     if (modified.len == 0) return false;

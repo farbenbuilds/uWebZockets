@@ -31,6 +31,8 @@ pub const WebSocket = struct {
     close_sent: bool = false,
     close_received: bool = false,
     close_notified: bool = false,
+    /// Terminal parser failure; no further bytes may be dispatched.
+    failed: bool = false,
     initialized: bool = false,
     heartbeat_ping_ms: i64 = 0,
     heartbeat_pending: bool = false,
@@ -132,6 +134,7 @@ pub const WebSocket = struct {
         self.close_sent = false;
         self.close_received = false;
         self.close_notified = false;
+        self.failed = false;
         self.heartbeat_ping_ms = 0;
         self.heartbeat_pending = false;
         self.initialized = true;
@@ -183,12 +186,37 @@ pub const WebSocket = struct {
         if (compressed) node.header_buf[0] |= 0x40;
         if (self.h2_stream_id) |stream_id| {
             const callbacks = self.conn.http2_callbacks();
-            try self.conn.h2.write_response_data(stream_id, node.header_buf[0..node.header_size], callbacks);
-            if (payload.len > 0) {
-                try self.conn.h2.write_response_data(stream_id, payload, callbacks);
+            self.conn.h2.write_response_data(
+                stream_id,
+                node.header_buf[0..node.header_size],
+                callbacks,
+            ) catch |err| {
+                // Nothing was committed, so the caller may retry this send.
+                return err;
+            };
+            // Split the payload across DATA frames so a bounded frame capacity
+            // cannot commit a frame header with a truncated payload behind it.
+            var remaining = payload;
+            while (remaining.len > 0) {
+                const capacity = self.conn.h2.data_frame_capacity(callbacks);
+                if (capacity == 0) {
+                    self.terminate();
+                    return error.WouldBlock;
+                }
+                const chunk = remaining[0..@min(capacity, remaining.len)];
+                self.conn.h2.write_response_data(stream_id, chunk, callbacks) catch |err| {
+                    // The header is already on the wire; reset the stream so
+                    // the peer never observes a corrupt frame.
+                    self.terminate();
+                    return err;
+                };
+                remaining = remaining[chunk.len..];
             }
             if (opcode == .close) {
-                try self.conn.h2.finish_response(stream_id, callbacks);
+                self.conn.h2.finish_response(stream_id, callbacks) catch |err| {
+                    self.terminate();
+                    return err;
+                };
                 self.close_sent = true;
             }
         } else {
@@ -207,9 +235,12 @@ pub const WebSocket = struct {
 
     /// Consumes mutable network bytes, unmasking client payloads in place.
     pub fn on_data(self: *WebSocket, data: []u8) void {
+        // A failed parser or a completed close handshake is terminal: no
+        // further frame may be assembled or dispatched.
+        if (self.failed or self.close_received) return;
         var offset: usize = 0;
 
-        while (!self.conn.closing) {
+        while (!self.conn.closing and !self.failed and !self.close_received) {
             const action = self.z_conn.advance_rx() catch |err| {
                 const code: u16 = if (err == error.PayloadTooLarge) 1009 else 1002;
                 self.fail(code, if (code == 1009) "Message too large" else "Protocol error");
@@ -350,7 +381,9 @@ pub const WebSocket = struct {
             self.conn.ws_message_buffer[0..self.message_len];
         if (!self.validate_complete_text(message_opcode, message)) return false;
 
-        if (self.behavior.message) |callback| callback(self, message, message_opcode);
+        if (self.behavior.message) |callback| {
+            if (!self.failed and !self.close_received) callback(self, message, message_opcode);
+        }
         self.reset_message();
         self.complete_frame();
         return !self.conn.closing and !self.conn.close_when_drained;
@@ -381,7 +414,9 @@ pub const WebSocket = struct {
             else
                 self.conn.ws_message_buffer[0..self.message_len];
             if (!self.validate_complete_text(message_opcode, message)) return false;
-            if (self.behavior.message) |callback| callback(self, message, message_opcode);
+            if (self.behavior.message) |callback| {
+                if (!self.failed and !self.close_received) callback(self, message, message_opcode);
+            }
             self.reset_message();
         }
 
@@ -515,8 +550,15 @@ pub const WebSocket = struct {
                         return false;
                     };
                 }
+                // Complete the close frame so the parser cannot re-emit it,
+                // then finish the close exchange for this transport.
+                self.complete_frame();
                 self.notify_close();
-                if (self.h2_stream_id == null) tcp.close_after_flush(self.conn);
+                if (self.h2_stream_id == null) {
+                    tcp.close_after_flush(self.conn);
+                } else {
+                    self.terminate();
+                }
                 return false;
             },
             else => {
@@ -528,12 +570,18 @@ pub const WebSocket = struct {
     }
 
     fn fail(self: *WebSocket, code: u16, reason: []const u8) void {
+        self.failed = true;
         self.send_close(code, reason) catch {
             self.terminate();
             return;
         };
         self.notify_close();
-        if (self.h2_stream_id == null) tcp.close_after_flush(self.conn);
+        if (self.h2_stream_id == null) {
+            tcp.close_after_flush(self.conn);
+        } else {
+            // Reset the tunnel so a wedged parser can never be fed more DATA.
+            self.terminate();
+        }
     }
 
     fn notify_close(self: *WebSocket) void {

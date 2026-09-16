@@ -68,6 +68,11 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
         response_body_storage: []u8,
         active_connections: usize = 0,
         global_acquired: bool = false,
+        /// Depth of active lsquic callbacks; cooldown must not re-enter them.
+        callback_depth: usize = 0,
+        /// Cooldown requested while an engine callback was active.
+        cooldown_pending: bool = false,
+        in_cooldown: bool = false,
 
         /// Allocates all stream, header, packet, and payload slabs.
         pub fn init() !Self {
@@ -225,6 +230,9 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
             const engine = self.engine orelse return;
             if (data.len == 0 or data.len > api.max_udp_payload_size) return;
 
+            self.callback_depth += 1;
+            defer self.leave_callback();
+
             const peer_address = api.Sockaddr.init(peer);
             if (c.lsquic_engine_packet_in(
                 engine,
@@ -241,6 +249,9 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
         /// Flushes pending packets and advances ready lsquic connections.
         pub fn process(self: *Self) void {
             const engine = self.engine orelse return;
+            self.callback_depth += 1;
+            defer self.leave_callback();
+
             if (c.lsquic_engine_has_unsent_packets(engine) != 0) {
                 c.lsquic_engine_send_unsent_packets(engine);
             }
@@ -248,8 +259,32 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
         }
 
         /// Begins graceful engine shutdown and advances affected connections.
+        ///
+        /// Safe to call from inside an H3 callback: the engine defers the
+        /// cooldown until the active `lsquic_engine_process_conns` unwinds,
+        /// because lsquic asserts on nested processing.
         pub fn cooldown(self: *Self) void {
+            if (self.engine == null) return;
+            if (self.callback_depth != 0) {
+                self.cooldown_pending = true;
+                return;
+            }
+            self.run_cooldown();
+        }
+
+        fn leave_callback(self: *Self) void {
+            self.callback_depth -= 1;
+            if (self.callback_depth == 0 and self.cooldown_pending) {
+                self.cooldown_pending = false;
+                self.run_cooldown();
+            }
+        }
+
+        fn run_cooldown(self: *Self) void {
             const engine = self.engine orelse return;
+            if (self.in_cooldown) return;
+            self.in_cooldown = true;
+            defer self.in_cooldown = false;
             c.lsquic_engine_cooldown(engine);
             c.lsquic_engine_process_conns(engine);
         }
