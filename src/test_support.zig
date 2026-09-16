@@ -38,6 +38,9 @@ pub const udp = @import("core/udp.zig");
 
 pub const app = @import("router/app.zig");
 pub const radix = @import("router/radix.zig");
+pub const config = @import("router/config.zig");
+pub const builder = @import("router/builder.zig");
+pub const rejection = @import("http/rejection.zig");
 
 pub const ws_deflate = @import("ws/deflate.zig");
 pub const ws_handshake = @import("ws/handshake.zig");

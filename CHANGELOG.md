@@ -3,6 +3,34 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.0.6] - 2026-09-16
+
+### Added
+
+- Added `ServerConfig`, named `Presets` (`microservice`, `websocket_chat`,
+  `file_server`), and the fluent `Server.builder` API with compile-time
+  `with_*` overrides that translate named limits into one contiguous startup
+  slab.
+- Added `Builder.build(allocator)`, `App.init_configured`, and
+  `App.init_from_slab`, which carve the connection pool, HTTP/1.1 request
+  buffers, WebSocket message regions, response write queues, and optional
+  RFC 7692 scratch from a single block.
+- Added structured JSON transport rejections: oversized bodies return `413`
+  and oversized headers return `431` with a document naming the configured
+  limit and the `ServerConfig` field to raise.
+- Added `examples/basic_microservice.zig` and `examples/custom_builder.zig`
+  with matching `zig build` steps.
+
+### Changed
+
+- Moved per-connection HTTP/1.1 request buffers out of `TcpConnection` into
+  the application slab; the parser now enforces a per-connection
+  `max_body_size` policy instead of the fixed module default.
+- `freelist_pool` can adopt caller-owned storage through `from_slices` and
+  leaves that storage intact in `deinit`.
+- `App.init` keeps its existing signature and now builds the same single slab
+  through `init_configured`.
+
 ## [1.0.5] - 2026-09-14
 
 ### Added

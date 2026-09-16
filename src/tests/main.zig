@@ -2,6 +2,7 @@ comptime {
     _ = @import("bleeding_edge_tests.zig");
     _ = @import("c_api_tests.zig");
     _ = @import("c_tests.zig");
+    _ = @import("config_tests.zig");
     _ = @import("core_tests.zig");
     _ = @import("fuzz_main.zig");
     _ = @import("framework_tests.zig");

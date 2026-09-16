@@ -17,13 +17,14 @@ const tls = @import("../crypto/tls.zig");
 const abort = @import("../http/abort.zig");
 const DeflateContext = @import("../ws/deflate.zig").Context;
 const http2_server = @import("../http2/server.zig");
+const http_rejection = @import("../http/rejection.zig");
 const zslay = @import("zslay");
 
 /// Bytes read from one POSIX socket completion at a time.
 pub const socket_read_capacity = 8192;
-/// Maximum buffered HTTP/1 request bytes per TCP connection.
+/// Default maximum buffered HTTP/1 request bytes per TCP connection.
 pub const request_buffer_capacity = http_parser.max_request_line_size +
-    http_parser.max_header_size + http_parser.max_body_size + 1024;
+    http_parser.max_header_size + http_parser.default_max_body_size + 1024;
 /// Default bounded pending-output capacity per TCP connection.
 pub const default_write_queue_capacity = 64 * 1024;
 /// Maximum simultaneous HTTP/2 request streams per TCP connection.
@@ -36,7 +37,7 @@ const Http2Session = http2_server.server_session(
     max_http2_streams,
     http_parser.max_header_size,
     http_parser.max_header_size,
-    http_parser.max_body_size,
+    http_parser.default_max_body_size,
 );
 const Http2AsyncContext = struct {
     connection: *TcpConnection = undefined,
@@ -57,6 +58,7 @@ pub const TcpConnection = struct {
     pubsub: ?*@import("../ws/pubsub.zig").PubSubEngine = null,
     pool_ptr: ?*anyopaque = null,
     on_close_cb: ?*const fn (pool_ptr: *anyopaque, conn: *TcpConnection) void = null,
+    reject_policy: *const http_rejection.RejectionPolicy = &http_rejection.RejectionPolicy.default,
     loop: *xev.Loop = undefined,
     io: std.Io = undefined,
     socket: xev.TCP,
@@ -109,7 +111,9 @@ pub const TcpConnection = struct {
     async_response_state: http_response.AsyncResponseState = .{},
 
     read_buffer: [socket_read_capacity]u8 = undefined,
-    request_buffer: [request_buffer_capacity]u8 = undefined,
+    // Carved by the owning application from its contiguous request slab; the
+    // stride must hold the request line, headers, and the configured body cap.
+    request_buffer: []u8 = &.{},
     tls_write_buffer: [8192]u8 = undefined,
     protocol_probe: [@import("../http2/connection.zig").client_preface.len]u8 = undefined,
     write_queue: []u8 = &.{},
@@ -556,11 +560,12 @@ pub const TcpConnection = struct {
         }
         const available = self.request_buffer.len - self.request_len;
         if (data.len > available) {
-            const status = switch (self.parser.state) {
-                .body, .chunk_size, .chunk_ext, .chunk_data, .chunk_crlf, .chunk_trailer => "413 Payload Too Large",
-                else => "431 Request Header Fields Too Large",
-            };
-            self.reject_http(status, "Request exceeds the configured limit");
+            switch (self.parser.state) {
+                .body, .chunk_size, .chunk_ext, .chunk_data, .chunk_crlf, .chunk_trailer => {
+                    self.reject_payload_too_large();
+                },
+                else => self.reject_headers_too_large(),
+            }
             return;
         }
 
@@ -579,11 +584,11 @@ pub const TcpConnection = struct {
                 return;
             }
             if (self.parser.state == .error_headers_too_large) {
-                self.reject_http("431 Request Header Fields Too Large", "Request headers too large");
+                self.reject_headers_too_large();
                 return;
             }
             if (self.parser.state == .error_too_large) {
-                self.reject_http("413 Payload Too Large", "Payload Too Large");
+                self.reject_payload_too_large();
                 return;
             }
             if (self.parser.state != .done) {
@@ -857,6 +862,33 @@ pub const TcpConnection = struct {
     fn reject_http(self: *TcpConnection, status: []const u8, body: []const u8) void {
         var response = Response{ .target = .{ .tcp = self } };
         response.end_with_headers(status, "Connection: close\r\n", body) catch {
+            close_connection(self);
+            return;
+        };
+        close_after_flush(self);
+    }
+
+    /// Sends the structured 413 document describing the configured body limit.
+    fn reject_payload_too_large(self: *TcpConnection) void {
+        var buffer: [http_rejection.max_document_bytes]u8 = undefined;
+        const body = self.reject_policy.payload_too_large(&buffer);
+        self.reject_http_json("413 Payload Too Large", body);
+    }
+
+    /// Sends the structured 431 document describing the configured header limit.
+    fn reject_headers_too_large(self: *TcpConnection) void {
+        var buffer: [http_rejection.max_document_bytes]u8 = undefined;
+        const body = self.reject_policy.headers_too_large(&buffer);
+        self.reject_http_json("431 Request Header Fields Too Large", body);
+    }
+
+    fn reject_http_json(self: *TcpConnection, status: []const u8, body: []const u8) void {
+        var response = Response{ .target = .{ .tcp = self } };
+        response.end_with_headers(
+            status,
+            "Content-Type: application/json; charset=utf-8\r\nConnection: close\r\n",
+            body,
+        ) catch {
             close_connection(self);
             return;
         };

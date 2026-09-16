@@ -304,6 +304,68 @@ It is not a one-to-one binding for compile-time Zig configuration types or the
 low-level `udp`, HTTP/2, HPACK, HTTP/3-extension, and WebTransport helper
 modules exported from `src/root.zig`; those surfaces remain Zig-only.
 
+## Capacity presets and the builder
+
+`ServerConfig`, `Presets`, and `Server.builder` replace raw capacity arithmetic
+with named limits. Each `with_*` call returns a builder for a new compile-time
+configuration, and `build(allocator)` makes exactly one application allocation:
+the contiguous slab that holds the connection pool, per-connection HTTP/1.1
+request buffers, WebSocket message regions, response write queues, and optional
+compression scratch. The runtime I/O loop never allocates.
+
+```zig
+const std = @import("std");
+const uz = @import("uWebZockets");
+
+fn health(_: *uz.Request, res: *uz.Response) void {
+    res.text("ok") catch {};
+}
+
+pub fn main(init: std.process.Init) !void {
+    var server = try uz.Server.builder(init.io)
+        .preset(uz.Presets.microservice)
+        .with_max_body_size(256 * 1024)
+        .build(std.heap.page_allocator);
+    defer server.deinit();
+
+    _ = try server.get("/health", health);
+    try server.listen("0.0.0.0", 3000);
+    try server.run();
+}
+```
+
+| Preset | Connections | WebSocket message | Write queue | Request body |
+| --- | ---: | ---: | ---: | ---: |
+| `Presets.microservice` | 256 | 8 KiB | 16 KiB | 64 KiB |
+| `Presets.websocket_chat` | 512 | 32 KiB | 32 KiB | 4 KiB |
+| `Presets.file_server` | 128 | 4 KiB | 512 KiB | 8 KiB |
+
+`ServerConfig.slab_bytes()` reports the exact footprint, and
+`Builder.slab_bytes()` reports it after a chain of overrides; `build` then
+allocates that block once. Capacities stay compile-time because they size the
+generated application type, so pass literals or `const` values. WebSocket
+servers that use RFC 7692 compression should enable `.compression` (or
+`with_compression(true)`) so the paired scratch is reserved in the same slab.
+The libxev event loop allocates its fixed 4096-entry backend table during
+`build`, independently of application capacity. Each embedded HTTP/2 session
+dominates the per-connection footprint, so the presets spend bytes on the
+capacity each workload actually exercises. `max_body_size` sizes the HTTP/1.1
+request buffers; HTTP/2 stream bodies and HTTP/3 request bodies stay bounded by
+their compiled 16 KiB transport slabs.
+
+Oversized input is rejected with structured JSON instead of a dropped
+connection. A body larger than `max_body_size` returns `413 Payload Too Large`
+with a document that names the configured limit and the field to raise:
+
+```json
+{"error":{"code":"payload_too_large","message":"Request body exceeded the 64KB limit. Consider increasing 'max_body_size' in ServerConfig.","limit_bytes":65536}}
+```
+
+Oversized headers return the equivalent `431` document. Examples live in
+`examples/basic_microservice.zig` and `examples/custom_builder.zig`, and run
+with `zig build basic_microservice -Doptimize=ReleaseSafe` and
+`zig build custom_builder -Doptimize=ReleaseSafe`.
+
 ## HTTP example
 
 ```zig
@@ -606,7 +668,7 @@ The defaults are deliberately finite:
 | --- | ---: |
 | Request line | 8 KiB |
 | HTTP headers | 16 KiB total, 64 fields |
-| HTTP request body | 16 KiB |
+| HTTP request body | 16 KiB default; `ServerConfig.max_body_size` |
 | Routes | 256 radix nodes |
 | Parameterized routes | 64 patterns, 16 captures per request |
 | Middleware | 32 callbacks |
@@ -633,6 +695,9 @@ The defaults are deliberately finite:
 | Idle timeout | 120 seconds by default |
 
 Oversized or ambiguous input is rejected rather than expanded dynamically.
+`ServerConfig` presets and `Server.builder` select the compile-time capacities
+that size the single startup slab described in
+[Capacity presets and the builder](#capacity-presets-and-the-builder).
 
 ## Web-standard API conventions
 

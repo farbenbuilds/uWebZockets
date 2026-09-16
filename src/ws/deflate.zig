@@ -8,6 +8,23 @@ const final_empty_block = [_]u8{ 0x01, 0x00, 0x00, 0xff, 0xff };
 /// Scratch bytes reserved after a compressed message for decode finalization.
 pub const decode_tail_len = sync_flush_tail.len + final_empty_block.len;
 
+/// Worst-case paired scratch needed for any negotiated window, without a context.
+///
+/// Over-approximates libdeflate's `n + 5 * ceil(n / 5000)` bound and zlib's
+/// `n + (n >> 12) + (n >> 14) + (n >> 25) + 13` bound, plus the decode tail.
+/// The startup slab planner uses this to size per-connection scratch before any
+/// compression context exists.
+pub fn worst_case_scratch_bound(input_len: usize) error{SizeOverflow}!usize {
+    const eighth = input_len / 8 + @intFromBool(input_len % 8 != 0);
+    const sixty_fourth = input_len / 64 + @intFromBool(input_len % 64 != 0);
+
+    var total = std.math.add(usize, input_len, eighth) catch return error.SizeOverflow;
+    total = std.math.add(usize, total, sixty_fourth) catch return error.SizeOverflow;
+    total = std.math.add(usize, total, 64) catch return error.SizeOverflow;
+    total = std.math.add(usize, total, decode_tail_len) catch return error.SizeOverflow;
+    return total;
+}
+
 /// Setup and bounded per-message compression failures.
 pub const Error = error{
     OutOfMemory,

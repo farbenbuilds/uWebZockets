@@ -2,17 +2,22 @@
 
 ## Scope
 
-µWebZockets 1.0.5 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
+µWebZockets 1.0.6 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
 server library with bounded HPACK protocol storage. It combines an
 event-driven cross-platform transport (POSIX and Windows IOCP), fixed-capacity
 protocol state, a data-oriented router, and C libraries for TLS, compression, and QUIC.
 
 The current design makes bounded resource use explicit. Startup allocates one
-contiguous connection slab, one WebSocket message region, and one output region.
-Network callbacks then reuse those regions without general-purpose allocation.
-WebSocket compression and HTTP/3 allocate their fixed slabs when the feature is
-configured, before listening begins. Route arrays are immutable after either
-listener starts, so callbacks never observe a structural mutation.
+contiguous slab that holds the connection pool, per-connection HTTP/1.1 request
+buffers, WebSocket message regions, response write queues, and optional
+compression scratch. `ServerConfig` presets and `Server.builder` compute that
+slab from named limits before allocating it once. The `max_body_size` limit
+sizes the HTTP/1.1 request buffers; HTTP/2 stream bodies and HTTP/3 request
+bodies keep their compiled 16 KiB transport slabs. Network callbacks then reuse
+those regions without general-purpose allocation. WebSocket compression and
+HTTP/3 allocate their fixed slabs when the feature is configured, before
+listening begins. Route arrays are immutable after either listener starts, so
+callbacks never observe a structural mutation.
 
 ## Design rules
 
@@ -57,7 +62,7 @@ uWebZockets/
 │   ├── ffi/                  # bounded generation-checked shared memory
 │   ├── http/                 # strict HTTP/1.1 parser and response writer
 │   ├── http2/                # bounded frames, stream slab, and HPACK
-│   ├── router/               # fixed-capacity radix router and App API
+│   ├── router/               # fixed-capacity radix router, App API, config, builder
 │   ├── rpc/                  # bounded JSON-RPC registry and dispatcher
 │   ├── ws/                   # streams, pure backpressure, framing, pub/sub
 │   ├── xdp/                  # AF_XDP UMEM rings and redirect hook
@@ -103,11 +108,13 @@ UDP read/timer --> lsquic engine --> bounded QPACK header set --> same router
 ```
 
 The connection pool owns a contiguous `TcpConnection` slab and a separate
-activity bitmap. `ConfiguredApp` divides contiguous message and write regions
-into one slice per connection. This avoids one allocation per accepted socket
-and makes cleanup deterministic. A closed slot is not returned to the freelist
-until its close, read, and write completions have all drained, preventing an
-old completion from observing a reused connection.
+activity bitmap. `src/router/config.zig` sizes one larger contiguous region:
+pool state, request buffers, WebSocket message storage, write queues, and
+optional compression scratch. `ConfiguredApp` and the `Server.builder` carve
+per-connection slices from that region. This avoids one allocation per accepted
+socket and makes cleanup deterministic. A closed slot is not returned to the
+freelist until its close, read, and write completions have all drained,
+preventing an old completion from observing a reused connection.
 
 Shutdown reverses that ownership graph. The application first rejects new
 work, stops recurring timers, cancels accept/read/write/UDP completions, closes
@@ -267,7 +274,7 @@ this path, while runtime interoperability remains Tier 2.
 
 ## Build graph
 
-The root `build.zig` declares version 1.0.5 and delegates directly to
+The root `build.zig` declares version 1.0.6 and delegates directly to
 `builds/orchestrator.zig`. Focused modules map Zig optimization modes to CMake
 build types and invoke Ninja for BoringSSL, lsquic, and libdeflate. The
 `zig-cc` and `zig-c++` wrappers pass

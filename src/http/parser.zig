@@ -25,8 +25,10 @@ pub const ParserState = enum {
 pub const max_request_line_size = 8 * 1024;
 /// Maximum accepted header block length in bytes.
 pub const max_header_size = 16 * 1024;
-/// Maximum accepted fixed or decoded chunked body length in bytes.
-pub const max_body_size = 16 * 1024;
+/// Default maximum accepted fixed or decoded chunked body length in bytes.
+pub const default_max_body_size = 16 * 1024;
+/// Default body limit kept for callers that do not configure a policy.
+pub const max_body_size = default_max_body_size;
 
 fn is_tchar(c: u8) bool {
     return switch (c) {
@@ -62,6 +64,9 @@ pub const HttpParser = struct {
     chunk_length: usize = 0,
     body_length: usize = 0,
     body_start: usize = 0,
+    /// Per-connection body policy; the owner's request buffer must be at least
+    /// this large plus request-line, header, and framing slack.
+    max_body_size: usize = default_max_body_size,
 };
 
 /// Parses bytes into `req` and returns the prefix consumed by this request.
@@ -247,7 +252,7 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                                     return buffer.len;
                                 }
                                 if (std.fmt.parseInt(usize, value, 10)) |len| {
-                                    if (len > max_body_size) {
+                                    if (len > parser.max_body_size) {
                                         parser.state = .error_too_large;
                                         return buffer.len;
                                     }
@@ -325,7 +330,9 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                         return buffer.len;
                     }
                     if (std.fmt.parseInt(usize, hex_str, 16)) |len| {
-                        if (parser.body_length > max_body_size or len > max_body_size - parser.body_length) {
+                        if (parser.body_length > parser.max_body_size or
+                            len > parser.max_body_size - parser.body_length)
+                        {
                             parser.state = .error_too_large;
                             return buffer.len;
                         }

@@ -16,6 +16,8 @@ const Response = @import("../http/response.zig").Response;
 const json_rpc_http = @import("../rpc/http.zig");
 const static_files_module = @import("../http/static_files.zig");
 const cluster_module = @import("cluster.zig");
+const config_module = @import("config.zig");
+const http_rejection = @import("../http/rejection.zig");
 
 /// Default maximum complete WebSocket message size per connection.
 pub const default_max_ws_message_size = 16 * 1024;
@@ -71,13 +73,28 @@ pub fn configured_app_with_timeout(
         const StaticFiles = static_files_module.static_files(static_file_capacity);
         const ClusterInbox = cluster_module.message_queue(max_ws_message_size);
         const max_static_routes = 8;
+        const default_config = config_module.ServerConfig{
+            .max_connections = max_connections,
+            .max_ws_message_size = max_ws_message_size,
+            .write_queue_size = write_queue_size,
+            .idle_timeout_ms = idle_timeout_ms,
+        };
 
         io: std.Io,
         loop: core_loop.Loop,
         pool: Pool,
+        // One contiguous startup slab backs the pool, request, message, and
+        // queue regions so deinit releases exactly one allocation.
+        slab: []u8,
+        slab_allocator: std.mem.Allocator,
+        request_buffers: []u8,
+        request_buffer_stride: usize,
+        max_body_size: usize,
+        reject_policy: http_rejection.RejectionPolicy = .{},
         ws_message_storage: []u8,
         ws_compression_storage: []u8 = &.{},
         ws_compression_capacity: usize = 0,
+        ws_compression_owned: bool = false,
         ws_deflate: ?DeflateContext = null,
         write_queue_storage: []u8,
         router: radix.Router,
@@ -102,28 +119,63 @@ pub fn configured_app_with_timeout(
         // embeds the pub/sub engine directly into the app
         pubsub: PubSubEngine,
 
-        /// Initializes a plaintext application and its fixed-capacity slabs.
+        /// Initializes a plaintext application and its single fixed-capacity slab.
         pub fn init(io: std.Io) !Self {
+            return init_configured(io, std.heap.page_allocator, default_config);
+        }
+
+        /// Allocates the whole startup slab once, then initializes from it.
+        ///
+        /// Every pool, request, message, queue, and optional compression region
+        /// comes from this one allocation; the runtime I/O loop never allocates.
+        pub fn init_configured(
+            io: std.Io,
+            allocator: std.mem.Allocator,
+            comptime config: config_module.ServerConfig,
+        ) !Self {
+            const total = try config_module.required_bytes(config);
+            const alignment = comptime std.mem.Alignment.fromByteUnits(config_module.slab_alignment);
+            const slab = try allocator.alignedAlloc(u8, alignment, total);
+            errdefer allocator.free(slab);
+            return init_from_slab(io, allocator, slab, config);
+        }
+
+        /// Initializes from caller-provided storage; ownership transfers on success.
+        ///
+        /// `slab` must be aligned to `config_module.slab_alignment` and hold at
+        /// least `config_module.required_bytes(config)` bytes. The application
+        /// releases the full slice through `allocator` in `deinit`; on failure
+        /// the caller keeps ownership.
+        pub fn init_from_slab(
+            io: std.Io,
+            allocator: std.mem.Allocator,
+            slab: []u8,
+            comptime config: config_module.ServerConfig,
+        ) !Self {
+            const layout = try config_module.carve(slab, config);
+
             var loop = try core_loop.init();
             errdefer core_loop.deinit(&loop);
 
-            var pool = try Pool.init();
-            errdefer pool.deinit();
-
-            const storage_len = max_connections * max_ws_message_size;
-            const ws_message_storage = try std.heap.page_allocator.alloc(u8, storage_len);
-            errdefer std.heap.page_allocator.free(ws_message_storage);
-
-            const write_storage_len = max_connections * write_queue_size;
-            const write_queue_storage = try std.heap.page_allocator.alloc(u8, write_storage_len);
-            errdefer std.heap.page_allocator.free(write_queue_storage);
+            const pool = try Pool.from_slices(layout.pool_storage, layout.freelist);
 
             return Self{
                 .io = io,
                 .loop = loop,
                 .pool = pool,
-                .ws_message_storage = ws_message_storage,
-                .write_queue_storage = write_queue_storage,
+                .slab = slab,
+                .slab_allocator = allocator,
+                .request_buffers = layout.request_buffers,
+                .request_buffer_stride = layout.request_buffer_stride,
+                .max_body_size = config.max_body_size,
+                .reject_policy = config.rejection_policy(),
+                .ws_message_storage = layout.ws_messages,
+                .ws_compression_storage = layout.compression_scratch,
+                .ws_compression_capacity = if (layout.compression_stride == 0)
+                    0
+                else
+                    layout.compression_stride / 2,
+                .write_queue_storage = layout.write_queues,
                 .router = radix.Router.init(),
                 .pubsub = .{},
             };
@@ -182,13 +234,16 @@ pub fn configured_app_with_timeout(
             if (self.cluster_wakeup) |*wakeup| wakeup.deinit();
             self.cluster_wakeup = null;
             core_loop.deinit(&self.loop);
+            // Carved pools stay inside the slab; lazily allocated RFC 7692
+            // scratch is the only separately owned per-connection region.
             self.pool.deinit();
-            std.heap.page_allocator.free(self.ws_message_storage);
-            if (self.ws_compression_storage.len != 0) {
+            if (self.ws_compression_owned and self.ws_compression_storage.len != 0) {
                 std.heap.page_allocator.free(self.ws_compression_storage);
-                self.ws_compression_storage = &.{};
             }
-            std.heap.page_allocator.free(self.write_queue_storage);
+            self.ws_compression_storage = &.{};
+            self.ws_compression_owned = false;
+            self.slab_allocator.free(self.slab);
+            self.slab = &.{};
             self.deinitialized = true;
         }
 
@@ -475,6 +530,16 @@ pub fn configured_app_with_timeout(
             var context = try DeflateContext.init(6);
             errdefer context.deinit();
             const per_connection = try context.scratch_bound(max_ws_message_size);
+
+            if (self.ws_compression_storage.len != 0) {
+                // ServerConfig pre-reserved paired scratch inside the startup slab.
+                if (per_connection > self.ws_compression_capacity) {
+                    return error.CompressionScratchTooSmall;
+                }
+                self.ws_deflate = context;
+                return;
+            }
+
             const per_connection_storage = std.math.mul(
                 usize,
                 per_connection,
@@ -489,6 +554,7 @@ pub fn configured_app_with_timeout(
 
             self.ws_compression_capacity = per_connection;
             self.ws_compression_storage = storage;
+            self.ws_compression_owned = true;
             self.ws_deflate = context;
         }
 
@@ -506,7 +572,7 @@ pub fn configured_app_with_timeout(
             };
 
             conn.req = .{};
-            conn.parser = .{};
+            conn.parser = .{ .max_body_size = self.max_body_size };
             conn.reset_protocol() catch {
                 _ = self.pool.release(conn);
                 close_rejected_socket(socket);
@@ -542,6 +608,9 @@ pub fn configured_app_with_timeout(
             conn.loop = &self.loop.xev_loop;
             // acquire only returns pointers into this pool's contiguous slab.
             const connection_index = self.pool.index_of(conn) orelse unreachable;
+            const request_start = connection_index * self.request_buffer_stride;
+            conn.request_buffer = self.request_buffers[request_start .. request_start + self.request_buffer_stride];
+            conn.reject_policy = &self.reject_policy;
             const message_start = connection_index * max_ws_message_size;
             conn.ws_message_buffer = self.ws_message_storage[message_start .. message_start + max_ws_message_size];
             if (self.ws_deflate) |*context| {
