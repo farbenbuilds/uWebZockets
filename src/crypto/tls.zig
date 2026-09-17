@@ -15,21 +15,27 @@ pub const TlsContext = struct {
     ctx: *c.SSL_CTX,
 
     /// Loads an HTTPS context advertising `h2` then `http/1.1`.
+    ///
+    /// TLS 1.3 0-RTT is enabled. Early data is replayable by a network
+    /// attacker, so the HTTP dispatcher admits only safe methods before the
+    /// handshake is confirmed (see `TcpConnection.early_data_forbids`).
     pub fn init(cert_path: [:0]const u8, key_path: [:0]const u8) !TlsContext {
-        return init_with_alpn(cert_path, key_path, select_http_alpn);
+        return init_with_alpn(cert_path, key_path, select_http_alpn, true);
     }
 
-    /// Loads an HTTP/3-only context advertising `h3` and rejecting 0-RTT.
+    /// Loads an HTTP/3-only context advertising `h3`.
+    ///
+    /// lsquic owns QUIC 0-RTT replay protection, so the engine keeps early
+    /// data disabled until that policy is defined end to end.
     pub fn init_http3(cert_path: [:0]const u8, key_path: [:0]const u8) !TlsContext {
-        const context = try init_with_alpn(cert_path, key_path, select_http3_alpn);
-        c.SSL_CTX_set_early_data_enabled(context.ctx, 0);
-        return context;
+        return init_with_alpn(cert_path, key_path, select_http3_alpn, false);
     }
 
     fn init_with_alpn(
         cert_path: [:0]const u8,
         key_path: [:0]const u8,
         callback: AlpnCallback,
+        early_data: bool,
     ) !TlsContext {
         c.CRYPTO_library_init();
         c.SSL_load_error_strings();
@@ -59,6 +65,8 @@ pub const TlsContext = struct {
         if (c.SSL_CTX_check_private_key(ctx) != 1) {
             return error.KeyMismatch;
         }
+
+        c.SSL_CTX_set_early_data_enabled(ctx, @intFromBool(early_data));
 
         return TlsContext{ .ctx = ctx };
     }

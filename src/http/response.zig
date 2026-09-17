@@ -200,6 +200,44 @@ pub const Response = struct {
         self.state = .ended;
     }
 
+    /// Streams an opened regular file as the response body at the kernel boundary.
+    ///
+    /// On success the plaintext connection owns `file` and closes it when the
+    /// body drains; on any error the caller retains ownership. TLS-framed and
+    /// HTTP/2 and HTTP/3 streams fail with `error.ZeroCopyUnavailable` so the
+    /// caller can fall back to a bounded buffered body.
+    pub fn send_file(
+        self: *Response,
+        status: []const u8,
+        headers: []const u8,
+        file: std.Io.File,
+        offset: u64,
+        length: u64,
+    ) !void {
+        if (self.state != .idle) return error.ResponseAlreadyStarted;
+        const code = status_code(status) orelse return error.InvalidStatus;
+        if (!valid_headers(headers)) return error.InvalidHeaders;
+        if (status_forbids_body(code)) return error.BodyNotAllowed;
+        var combined_buffer: [pending_header_capacity * 2]u8 = undefined;
+        const complete_headers = try self.combine_headers(headers, &combined_buffer);
+
+        switch (self.target) {
+            .tcp => |conn| {
+                const close_requested = headers_have_token(complete_headers, "Connection", "close");
+                try conn.begin_file_response(
+                    status,
+                    complete_headers,
+                    file,
+                    offset,
+                    length,
+                    close_requested,
+                );
+            },
+            .http2, .http3 => return error.ZeroCopyUnavailable,
+        }
+        self.state = .ended;
+    }
+
     /// Starts a bounded streaming response.
     pub fn begin_chunked(
         self: *Response,

@@ -53,7 +53,10 @@ expand their fixed capacities dynamically.
 
 `App.static(prefix, root, options)` mounts a directory with directory-relative
 path confinement, symlinks disabled, MIME detection, ETag and Last-Modified
-validation, cache control, and one RFC 9110 byte range. `App.openapi(path)`
+validation, cache control, and one RFC 9110 byte range. Plaintext `GET` and
+`HEAD` responses stream the file with the kernel `sendfile` boundary
+(`Response.send_file`), so assets are not capped by the per-route file buffer.
+TLS, HTTP/2, and HTTP/3 remain on the bounded buffered path. `App.openapi(path)`
 serves a generated OpenAPI 3.1 document; parameter and wildcard paths are
 emitted with OpenAPI braces.
 
@@ -119,6 +122,14 @@ disable idle sweeping.
 `init_https` loads PEM certificate and private-key paths. The server negotiates
 TLS 1.3 and prefers ALPN `h2`, then `http/1.1`. Plaintext listeners also detect
 the HTTP/2 prior-knowledge preface; h2c Upgrade is not required.
+
+The HTTPS context enables TLS 1.3 0-RTT (early data). Early data is replayable
+by a network attacker, so only safe methods (`GET`, `HEAD`, `OPTIONS`) are
+dispatched before the handshake is confirmed. Any other method receives
+`425 Too Early`: HTTP/1.1 closes the connection, and HTTP/2 rejects the stream.
+Early data that BoringSSL does not accept is dropped server side and the full
+handshake completes in place, so the client resends under 1-RTT. The HTTP/3
+context keeps early data disabled.
 
 ## HTTP/2 and HPACK
 

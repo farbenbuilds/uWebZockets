@@ -6,6 +6,7 @@ pub const timer = @import("core/timer.zig");
 pub const simd = @import("core/simd.zig");
 pub const transport = @import("core/transport.zig");
 pub const ktls = @import("core/ktls.zig");
+pub const zero_copy = @import("core/zero_copy.zig");
 pub const xdp = @import("xdp/socket.zig");
 pub const affinity = @import("core/affinity.zig");
 

@@ -2,7 +2,7 @@
 
 ## Scope
 
-µWebZockets 1.0.6 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
+µWebZockets 1.0.9 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
 server library with bounded HPACK protocol storage. It combines an
 event-driven cross-platform transport (POSIX and Windows IOCP), fixed-capacity
 protocol state, a data-oriented router, and C libraries for TLS, compression, and QUIC.
@@ -281,7 +281,7 @@ this path, while runtime interoperability remains Tier 2.
 
 ## Build graph
 
-The root `build.zig` declares version 1.0.6 and delegates directly to
+The root `build.zig` declares version 1.0.9 and delegates directly to
 `builds/orchestrator.zig`. Focused modules map Zig optimization modes to CMake
 build types and invoke Ninja for BoringSSL, lsquic, and libdeflate. The
 `zig-cc` and `zig-c++` wrappers pass

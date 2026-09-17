@@ -1,4 +1,4 @@
-# µWebZockets 1.0.6 Examples
+# µWebZockets 1.0.9 Examples
 
 Build the supported examples with Zig 0.16.0 and all recursive submodules:
 

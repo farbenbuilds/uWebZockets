@@ -80,10 +80,10 @@ pub fn static_files(comptime file_capacity: usize) type {
             if (path.len == 0 or path[0] == '/') return error.InvalidStaticPath;
 
             var file = try self.open_no_symlinks(path);
-            defer file.close(self.io);
+            var file_owned = true;
+            defer if (file_owned) file.close(self.io);
             const stat = try file.stat(self.io);
             if (stat.kind != .file) return error.FileNotFound;
-            if (stat.size > self.file_buffer.len) return error.FileTooLarge;
 
             var etag_buffer: [80]u8 = undefined;
             const entity_tag = if (self.options.etag)
@@ -107,8 +107,6 @@ pub fn static_files(comptime file_capacity: usize) type {
                 return;
             }
 
-            const bytes_read = try file.readPositionalAll(self.io, self.file_buffer[0..@intCast(stat.size)], 0);
-            if (bytes_read != @as(usize, @intCast(stat.size))) return error.UnexpectedEndOfFile;
             const range = if (request.get_unique_header("range")) |value|
                 parse_range(value, stat.size) catch {
                     var content_range_buffer: [80]u8 = undefined;
@@ -133,13 +131,44 @@ pub fn static_files(comptime file_capacity: usize) type {
                 stat.size,
                 range,
             );
+            const status = if (range != null) "206 Partial Content" else "200 OK";
+            const offset: u64 = if (range) |selected| selected.start else 0;
+            const length: u64 = if (range) |selected| selected.length() else stat.size;
+
+            // The kernel streams the file whenever the transport is plaintext,
+            // lifting the user-space buffer ceiling for large assets.
+            if (try_send_file(response, status, headers, file, offset, length)) {
+                file_owned = false;
+                return;
+            }
+
+            if (stat.size > self.file_buffer.len) return error.FileTooLarge;
+            const bytes_read = try file.readPositionalAll(self.io, self.file_buffer[0..@intCast(stat.size)], 0);
+            if (bytes_read != @as(usize, @intCast(stat.size))) return error.UnexpectedEndOfFile;
             if (range) |selected| {
                 const start: usize = @intCast(selected.start);
                 const end: usize = @intCast(selected.end + 1);
-                try response.end_with_headers("206 Partial Content", headers, self.file_buffer[start..end]);
+                try response.end_with_headers(status, headers, self.file_buffer[start..end]);
                 return;
             }
-            try response.end_with_headers("200 OK", headers, self.file_buffer[0..bytes_read]);
+            try response.end_with_headers(status, headers, self.file_buffer[0..bytes_read]);
+        }
+
+        /// Attempts the kernel boundary path; false means stream in user space.
+        ///
+        /// Any error is retried through the buffered fallback, which owns the
+        /// same failure cases (closed peer, oversized headers, no kernel path)
+        /// and reports the real error when the response cannot be completed.
+        fn try_send_file(
+            response: *Response,
+            status: []const u8,
+            headers: []const u8,
+            file: std.Io.File,
+            offset: u64,
+            length: u64,
+        ) bool {
+            response.send_file(status, headers, file, offset, length) catch return false;
+            return response.is_complete();
         }
 
         /// Opens a relative path without following symlinks in any component.
