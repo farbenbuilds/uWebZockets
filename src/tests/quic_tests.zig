@@ -63,6 +63,25 @@ test "quic: sockaddr conversion preserves address family and port" {
     try std.testing.expectEqual(@as(c.socklen_t, @sizeOf(std.posix.sockaddr.in)), address.length);
 }
 
+test "quic: engine policy pins BBR congestion control and pacing" {
+    const TestEngine = engine.quic_engine(2, 1024);
+    var settings: c.lsquic_engine_settings = std.mem.zeroes(c.lsquic_engine_settings);
+    TestEngine.apply_settings(&settings);
+
+    var settings_error: [256]u8 = undefined;
+    const accepted = c.lsquic_engine_check_settings(
+        &settings,
+        c.LSENG_HTTP_SERVER,
+        &settings_error,
+        settings_error.len,
+    );
+
+    try std.testing.expectEqual(@as(c_int, 0), accepted);
+    try std.testing.expectEqual(@as(c_uint, 2), settings.es_cc_algo);
+    try std.testing.expectEqual(@as(c_int, 1), settings.es_pace_packets);
+    try std.testing.expectEqual(@as(c_uint, 2), settings.es_max_streams_in);
+}
+
 test "quic: each live stream reserves independent request and trailer header slots" {
     const TestEngine = engine.quic_engine(2, 64);
     var quic_engine = try TestEngine.init();

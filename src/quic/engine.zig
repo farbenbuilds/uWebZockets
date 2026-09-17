@@ -10,6 +10,9 @@ const QuicStream = stream.QuicStream;
 /// Reports that the build includes the lsquic-backed QUIC engine.
 pub const available = true;
 
+/// lsquic congestion controller identifier for BBRv1 (`es_cc_algo`).
+const cc_algo_bbr: c_uint = 2;
+
 /// Returns a bounded QUIC server engine type.
 ///
 /// `capacity` bounds concurrent connections and request streams;
@@ -115,6 +118,38 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
             };
         }
 
+        /// Applies the fixed engine policy over lsquic's defaults.
+        ///
+        /// BBRv1 paces against the bottleneck bandwidth estimate, which keeps
+        /// queues short and tail latency low on lossy paths; lsquic's default
+        /// adaptive controller drops to CUBIC at low RTT.
+        pub fn apply_settings(settings: *c.lsquic_engine_settings) void {
+            c.lsquic_engine_init_settings(settings, c.LSENG_HTTP_SERVER);
+            settings.es_cc_algo = cc_algo_bbr;
+            // BBR depends on pacing; pin it so a future default cannot weaken it.
+            settings.es_pace_packets = 1;
+            settings.es_max_streams_in = @intCast(capacity);
+            settings.es_max_inchoate = @intCast(capacity);
+            settings.es_max_header_list_size = stream.header_capacity;
+            settings.es_max_header_sets = 1;
+            settings.es_qpack_dec_max_size = 0;
+            settings.es_qpack_dec_max_blocked = 0;
+            settings.es_init_max_streams_bidi = @intCast(capacity);
+            settings.es_init_max_stream_data_bidi_remote = stream_receive_capacity;
+            settings.es_init_max_data = @intCast(@min(
+                capacity * stream_receive_capacity,
+                std.math.maxInt(c_uint),
+            ));
+            settings.es_max_udp_payload_size_rx = api.max_udp_payload_size;
+            settings.es_base_plpmtu = 1200;
+            settings.es_max_plpmtu = 1472;
+            settings.es_max_batch_size = 16;
+            // TLS rejects 0-RTT, so retaining replayable packets has no application value.
+            settings.es_max_delayed_0rtt_packets = 0;
+            settings.es_rw_once = 1;
+            settings.es_proc_time_thresh = 10_000;
+        }
+
         /// Starts the engine and borrows its TLS context and router until `deinit`.
         pub fn start(
             self: *Self,
@@ -136,27 +171,7 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
             self.udp_fd = udp_fd;
             self.local_address = api.Sockaddr.init(local_address);
 
-            c.lsquic_engine_init_settings(&self.settings, c.LSENG_HTTP_SERVER);
-            self.settings.es_max_streams_in = @intCast(capacity);
-            self.settings.es_max_inchoate = @intCast(capacity);
-            self.settings.es_max_header_list_size = stream.header_capacity;
-            self.settings.es_max_header_sets = 1;
-            self.settings.es_qpack_dec_max_size = 0;
-            self.settings.es_qpack_dec_max_blocked = 0;
-            self.settings.es_init_max_streams_bidi = @intCast(capacity);
-            self.settings.es_init_max_stream_data_bidi_remote = stream_receive_capacity;
-            self.settings.es_init_max_data = @intCast(@min(
-                capacity * stream_receive_capacity,
-                std.math.maxInt(c_uint),
-            ));
-            self.settings.es_max_udp_payload_size_rx = api.max_udp_payload_size;
-            self.settings.es_base_plpmtu = 1200;
-            self.settings.es_max_plpmtu = 1472;
-            self.settings.es_max_batch_size = 16;
-            // TLS rejects 0-RTT, so retaining replayable packets has no application value.
-            self.settings.es_max_delayed_0rtt_packets = 0;
-            self.settings.es_rw_once = 1;
-            self.settings.es_proc_time_thresh = 10_000;
+            Self.apply_settings(&self.settings);
 
             var settings_error: [256]u8 = undefined;
             if (c.lsquic_engine_check_settings(

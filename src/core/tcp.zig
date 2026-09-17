@@ -18,6 +18,7 @@ const abort = @import("../http/abort.zig");
 const DeflateContext = @import("../ws/deflate.zig").Context;
 const http2_server = @import("../http2/server.zig");
 const http_rejection = @import("../http/rejection.zig");
+const zero_copy = @import("zero_copy.zig");
 const zslay = @import("zslay");
 
 /// Bytes read from one POSIX socket completion at a time.
@@ -31,6 +32,8 @@ pub const request_buffer_capacity = http_parser.max_request_line_size +
 pub const default_write_queue_capacity = 64 * 1024;
 /// Maximum simultaneous HTTP/2 request streams per TCP connection.
 pub const max_http2_streams = 8;
+/// Kernel-streamed bytes one connection may push in a single loop tick.
+pub const file_tick_budget: usize = 4 * zero_copy.max_chunk;
 
 const tls_bio_capacity = 32 * 1024;
 const tls_plaintext_record_capacity = 16 * 1024;
@@ -89,6 +92,13 @@ pub const TcpConnection = struct {
     write_head: usize = 0,
     write_len: usize = 0,
     write_in_flight_len: usize = 0,
+
+    // Kernel-streamed response body. The connection owns the handle whenever
+    // `file_body` is set and closes it when the body drains or the peer dies.
+    file_body: ?std.Io.File = null,
+    file_offset: u64 = 0,
+    file_remaining: u64 = 0,
+    file_close_after: bool = false,
 
     ssl: ?*c.SSL = null,
     network_bio: ?*c.BIO = null,
@@ -254,6 +264,8 @@ pub const TcpConnection = struct {
             switch (ssl_error) {
                 c.SSL_ERROR_WANT_READ, c.SSL_ERROR_WANT_WRITE => break,
                 c.SSL_ERROR_ZERO_RETURN => close_after_flush(self),
+                // A server never observes EARLY_DATA_REJECTED: BoringSSL drops
+                // unaccepted 0-RTT bytes and completes the handshake in place.
                 else => close_connection(self),
             }
             break;
@@ -365,6 +377,11 @@ pub const TcpConnection = struct {
             .finish_fn = finish_http2_response,
         } } };
         const method = radix.HttpMethod.parse(request.method);
+        if (self.early_data_forbids(method)) {
+            // RFC 8470: the stream retries once the handshake is confirmed.
+            try response.end("425 Too Early", "Early data is limited to safe methods");
+            return;
+        }
         if (!request.valid_query_content_type()) {
             try response.end("400 Bad Request", "QUERY requires a valid Content-Type");
             return;
@@ -640,6 +657,16 @@ pub const TcpConnection = struct {
         var response = Response{ .target = .{ .tcp = self } };
         const method = radix.HttpMethod.parse(self.req.method);
         self.suppress_response_body = method == .head;
+
+        if (self.early_data_forbids(method)) {
+            // RFC 8470: tell the client to retry once the handshake confirms.
+            response.end_with_headers(
+                "425 Too Early",
+                "Connection: close\r\n",
+                "Early data is limited to safe methods",
+            ) catch close_connection(self);
+            return;
+        }
 
         if (!self.req.valid_query_content_type()) {
             response.end("400 Bad Request", "QUERY requires a valid Content-Type") catch
@@ -1024,6 +1051,177 @@ pub const TcpConnection = struct {
         return self.enqueue_plain_parts(parts);
     }
 
+    /// Streams an owned regular file as the response body at the kernel boundary.
+    ///
+    /// Returns `error.ZeroCopyUnavailable` without taking ownership when TLS
+    /// owns the stream, when the peer only expects headers, or on a platform
+    /// whose completion port the transport cannot observe. On success the
+    /// connection owns `file` and closes it when the body drains. The caller
+    /// must not retain or close `file` after a successful call.
+    pub fn begin_file_response(
+        self: *TcpConnection,
+        status: []const u8,
+        headers: []const u8,
+        file: std.Io.File,
+        offset: u64,
+        length: u64,
+        close_after: bool,
+    ) !void {
+        if (comptime !zero_copy.kernel_send_supported) return error.ZeroCopyUnavailable;
+        if (self.ssl != null) return error.ZeroCopyUnavailable;
+        if (self.file_body != null) return error.FileBodyAlreadyActive;
+
+        var header_buffer: [4096]u8 = undefined;
+        const formatted = std.fmt.bufPrint(
+            &header_buffer,
+            "HTTP/1.1 {s}\r\nContent-Length: {d}\r\n{s}\r\n",
+            .{ status, length, headers },
+        ) catch return error.BufferOverflow;
+        try self.write_data(formatted);
+
+        // HEAD keeps the transfer length but never streams body bytes.
+        if (length == 0 or self.suppress_response_body) {
+            file.close(self.io);
+            if (close_after) close_after_flush(self);
+            return;
+        }
+        self.file_body = file;
+        self.file_offset = offset;
+        self.file_remaining = length;
+        self.file_close_after = close_after;
+        // HTTP/1 responses are ordered: hold pipelined dispatch until the body
+        // drains so no later response can interleave with the file bytes.
+        self.dispatch_suspended = true;
+    }
+
+    /// Releases a pending response file without touching queued socket bytes.
+    fn release_file_body(self: *TcpConnection) void {
+        const file = self.file_body orelse return;
+        self.file_body = null;
+        self.file_remaining = 0;
+        file.close(self.io);
+    }
+
+    fn finish_file_body(self: *TcpConnection) void {
+        const file = self.file_body orelse return;
+        self.file_body = null;
+        self.file_remaining = 0;
+        file.close(self.io);
+
+        if (self.file_close_after) {
+            self.file_close_after = false;
+            self.dispatch_suspended = false;
+            close_after_flush(self);
+            return;
+        }
+        if (self.dispatch_suspended) self.resume_async_dispatch();
+    }
+
+    /// Pushes queued plaintext, then streams the file until the socket stalls.
+    ///
+    /// The kernel path needs a nonblocking socket: a blocking `sendfile` sleeps
+    /// until its full count is transferred. io_uring sockets are blocking, so
+    /// the transfer opens a temporary nonblocking window and closes it before
+    /// any completion is queued. A tick transfers at most `file_tick_budget`
+    /// bytes so one large asset cannot starve the worker.
+    fn pump_file_body(self: *TcpConnection) void {
+        if (comptime !zero_copy.kernel_send_supported) return;
+        const file = self.file_body orelse return;
+        if (self.closing or self.is_writing or self.write_len != 0) return;
+
+        const window = zero_copy.open_nonblocking_window(self.socket.fd);
+        if (window == .failed) {
+            self.dribble_file_body(file);
+            return;
+        }
+
+        var budget = file_tick_budget;
+        while (self.file_remaining != 0 and budget != 0) {
+            const chunk: usize = @intCast(@min(
+                @min(self.file_remaining, zero_copy.max_chunk),
+                budget,
+            ));
+            const sent = zero_copy.send_file_chunk(
+                self.socket.fd,
+                file.handle,
+                &self.file_offset,
+                chunk,
+            ) catch |err| switch (err) {
+                error.WouldBlock => break,
+                else => {
+                    zero_copy.close_nonblocking_window(window, self.socket.fd);
+                    close_connection(self);
+                    return;
+                },
+            };
+            // A short read below Content-Length would desynchronize framing.
+            if (sent == 0) {
+                zero_copy.close_nonblocking_window(window, self.socket.fd);
+                close_connection(self);
+                return;
+            }
+            self.file_remaining -= sent;
+            budget -= sent;
+        }
+        zero_copy.close_nonblocking_window(window, self.socket.fd);
+
+        if (self.closing) return;
+        if (self.file_remaining == 0) {
+            self.finish_file_body();
+            return;
+        }
+        self.dribble_file_body(file);
+    }
+
+    /// Bounded copy fallback used while the kernel path cannot proceed.
+    ///
+    /// Reuses the TLS staging buffer because a plaintext connection never
+    /// touches it, keeping the per-connection footprint unchanged.
+    fn dribble_file_body(self: *TcpConnection, file: std.Io.File) void {
+        const available = self.write_queue.len - self.write_len;
+        if (available == 0) return;
+
+        const wanted: usize = @intCast(@min(
+            @min(self.file_remaining, available),
+            self.tls_write_buffer.len,
+        ));
+        if (wanted == 0) return;
+
+        const read = file.readPositionalAll(
+            self.io,
+            self.tls_write_buffer[0..wanted],
+            self.file_offset,
+        ) catch {
+            close_connection(self);
+            return;
+        };
+        if (read == 0) {
+            close_connection(self);
+            return;
+        }
+        self.enqueue_plain_parts(&.{self.tls_write_buffer[0..read]}) catch {
+            close_connection(self);
+            return;
+        };
+        self.file_offset += read;
+        self.file_remaining -= read;
+        if (self.file_remaining == 0) self.finish_file_body();
+    }
+
+    /// Reports whether an unconfirmed handshake forbids this method.
+    ///
+    /// Early data is replayable, so only safe methods are dispatched before the
+    /// handshake is confirmed.
+    fn early_data_forbids(self: *const TcpConnection, method: ?radix.HttpMethod) bool {
+        const ssl = self.ssl orelse return false;
+        if (c.SSL_in_early_data(ssl) == 0) return false;
+        const parsed = method orelse return true;
+        return switch (parsed) {
+            .get, .head, .options => false,
+            else => true,
+        };
+    }
+
     /// Returns encrypted or plaintext bytes queued for the socket.
     pub fn buffered_amount(self: *const TcpConnection) usize {
         return self.write_len;
@@ -1198,6 +1396,7 @@ fn on_write_complete(
         return .disarm;
     }
 
+    conn.pump_file_body();
     conn.start_write();
     return .disarm;
 }
@@ -1243,6 +1442,7 @@ pub fn close_connection(conn: *TcpConnection) void {
     for (&conn.h2_async_states) |*state| state.cancel();
 
     if (conn.ws.initialized) conn.ws.deinit();
+    conn.release_file_body();
     conn.deinit_tls();
 
     // kqueue discards armed kevents when the descriptor closes, and a read or
@@ -1368,6 +1568,9 @@ pub fn release_closed_connection(conn: *TcpConnection) void {
     conn.write_head = 0;
     conn.write_len = 0;
     conn.write_in_flight_len = 0;
+    conn.release_file_body();
+    conn.file_offset = 0;
+    conn.file_close_after = false;
     conn.was_backpressured = false;
     conn.dispatch_suspended = false;
     conn.pending_request_consumed = 0;

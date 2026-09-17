@@ -327,3 +327,73 @@ test "http: 205 responses reject payloads before transport dispatch" {
         http3.end("205 Reset Content", "not allowed"),
     );
 }
+
+test "http: send_file declines framed transports without taking ownership" {
+    const Sink = struct {
+        fn http2_end(_: *anyopaque, _: u32, _: []const u8, _: []const u8, _: []const u8) !void {
+            return error.UnexpectedDispatch;
+        }
+
+        fn http2_begin(_: *anyopaque, _: u32, _: []const u8, _: []const u8) !void {
+            return error.UnexpectedDispatch;
+        }
+
+        fn http2_write(_: *anyopaque, _: u32, _: []const u8) !void {
+            return error.UnexpectedDispatch;
+        }
+
+        fn http2_finish(_: *anyopaque, _: u32) !void {
+            return error.UnexpectedDispatch;
+        }
+
+        fn http3_end(_: *anyopaque, _: []const u8, _: []const u8, _: []const u8) !void {
+            return error.UnexpectedDispatch;
+        }
+
+        fn http3_begin(_: *anyopaque, _: []const u8, _: []const u8) !void {
+            return error.UnexpectedDispatch;
+        }
+
+        fn http3_write(_: *anyopaque, _: []const u8) !void {
+            return error.UnexpectedDispatch;
+        }
+
+        fn http3_finish(_: *anyopaque) !void {
+            return error.UnexpectedDispatch;
+        }
+    };
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try tmp.dir.createFile(std.testing.io, "asset.bin", .{ .read = true, .truncate = true });
+    defer file.close(std.testing.io);
+
+    var context: u8 = 0;
+    var http2 = response.Response{ .target = .{ .http2 = .{
+        .context = &context,
+        .router = &context,
+        .stream_id = 1,
+        .end_fn = Sink.http2_end,
+        .begin_fn = Sink.http2_begin,
+        .write_fn = Sink.http2_write,
+        .finish_fn = Sink.http2_finish,
+    } } };
+    try std.testing.expectError(
+        error.ZeroCopyUnavailable,
+        http2.send_file("200 OK", "", file, 0, 32),
+    );
+    try std.testing.expect(!http2.is_started());
+
+    var http3 = response.Response{ .target = .{ .http3 = .{
+        .context = &context,
+        .end_fn = Sink.http3_end,
+        .begin_fn = Sink.http3_begin,
+        .write_fn = Sink.http3_write,
+        .finish_fn = Sink.http3_finish,
+    } } };
+    try std.testing.expectError(
+        error.ZeroCopyUnavailable,
+        http3.send_file("200 OK", "", file, 0, 32),
+    );
+    try std.testing.expect(!http3.is_started());
+}

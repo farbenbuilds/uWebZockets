@@ -5,6 +5,7 @@ const loop = support.loop;
 const pool_mod = support.pool;
 const tcp = support.tcp;
 const timer = support.timer;
+const zero_copy = support.zero_copy;
 
 // test generic bitset pool logic.
 test "core: bitset pool acquires and releases slots" {
@@ -102,6 +103,103 @@ test "tcp: drained write ring normalizes its head" {
     try std.testing.expectEqual(@as(usize, 0), tcp.advance_write_head(65_504, 32, 0, 65_536));
     try std.testing.expectEqual(@as(usize, 0), tcp.advance_write_head(65_504, 32, 57, 65_536));
     try std.testing.expectEqual(@as(usize, 25), tcp.advance_write_head(10, 15, 20, 65_536));
+}
+
+test "core: kernel sendfile streams a regular file into a socket" {
+    if (!zero_copy.kernel_send_supported) return error.SkipZigTest;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const payload = "uWebZockets zero-copy payload sent at the kernel boundary";
+    var file = try tmp.dir.createFile(std.testing.io, "asset.bin", .{ .read = true, .truncate = true });
+    defer file.close(std.testing.io);
+    try file.writePositionalAll(std.testing.io, payload, 0);
+
+    var pair: [2]std.posix.fd_t = undefined;
+    if (std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &pair) != 0) {
+        return error.SkipZigTest;
+    }
+    defer {
+        _ = std.posix.system.close(pair[0]);
+        _ = std.posix.system.close(pair[1]);
+    }
+
+    var offset: u64 = 0;
+    const sent = try zero_copy.send_file_chunk(pair[0], file.handle, &offset, payload.len);
+    try std.testing.expectEqual(@as(usize, payload.len), sent);
+    try std.testing.expectEqual(@as(u64, payload.len), offset);
+
+    var received: [payload.len]u8 = undefined;
+    var received_len: usize = 0;
+    while (received_len < received.len) {
+        const read = try std.posix.read(pair[1], received[received_len..]);
+        if (read == 0) break;
+        received_len += read;
+    }
+    try std.testing.expectEqualStrings(payload, received[0..received_len]);
+}
+
+test "core: kernel sendfile defers instead of blocking a saturated socket" {
+    if (!zero_copy.kernel_send_supported) return error.SkipZigTest;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var payload: [64 * 1024]u8 = undefined;
+    for (&payload, 0..) |*byte, index| byte.* = @truncate(index);
+    var file = try tmp.dir.createFile(std.testing.io, "large.bin", .{ .read = true, .truncate = true });
+    defer file.close(std.testing.io);
+    try file.writePositionalAll(std.testing.io, &payload, 0);
+
+    var pair: [2]std.posix.fd_t = undefined;
+    if (std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &pair) != 0) {
+        return error.SkipZigTest;
+    }
+    defer {
+        _ = std.posix.system.close(pair[0]);
+        _ = std.posix.system.close(pair[1]);
+    }
+
+    // Shrink the send buffer, then fill it so the next kernel transfer has to
+    // report EAGAIN instead of sleeping.
+    std.posix.setsockopt(
+        pair[0],
+        std.posix.SOL.SOCKET,
+        std.posix.SO.SNDBUF,
+        &std.mem.toBytes(@as(c_int, 4096)),
+    ) catch {};
+    const fill_window = zero_copy.open_nonblocking_window(pair[0]);
+    try std.testing.expectEqual(zero_copy.NonblockingWindow.enabled, fill_window);
+    var filler: [4096]u8 = @splat(0);
+    while (std.c.write(pair[0], &filler, filler.len) >= 0) {}
+    zero_copy.close_nonblocking_window(fill_window, pair[0]);
+
+    const window = zero_copy.open_nonblocking_window(pair[0]);
+    try std.testing.expectEqual(zero_copy.NonblockingWindow.enabled, window);
+    var offset: u64 = 0;
+    try std.testing.expectError(
+        error.WouldBlock,
+        zero_copy.send_file_chunk(pair[0], file.handle, &offset, payload.len),
+    );
+    try std.testing.expectEqual(@as(u64, 0), offset);
+    zero_copy.close_nonblocking_window(window, pair[0]);
+
+    // Draining the peer gives the kernel path room to make progress again.
+    const drain_window = zero_copy.open_nonblocking_window(pair[1]);
+    try std.testing.expectEqual(zero_copy.NonblockingWindow.enabled, drain_window);
+    var drain: [4096]u8 = undefined;
+    while (true) {
+        _ = std.posix.read(pair[1], &drain) catch break;
+    }
+    zero_copy.close_nonblocking_window(drain_window, pair[1]);
+
+    const resumed = zero_copy.open_nonblocking_window(pair[0]);
+    try std.testing.expectEqual(zero_copy.NonblockingWindow.enabled, resumed);
+    const sent = try zero_copy.send_file_chunk(pair[0], file.handle, &offset, payload.len);
+    zero_copy.close_nonblocking_window(resumed, pair[0]);
+    try std.testing.expect(sent != 0);
+    try std.testing.expectEqual(@as(u64, sent), offset);
 }
 
 test "tcp: closed connection waits for active completions" {

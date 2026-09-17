@@ -171,8 +171,12 @@ one connection permits one active tunnel.
 pseudo-headers directly into the existing `Request` shape and writes structured
 QPACK response headers without converting through HTTP/1.1 text. QUIC
 connections, streams, header sets, packet buffers, and bodies come from
-startup-allocated contiguous pools. The live listener rejects TLS 0-RTT so
-replayable requests never reach a handler.
+startup-allocated contiguous pools. The QUIC listener keeps TLS 0-RTT
+disabled, so replayable requests never reach a handler; the TCP/TLS listener
+enables 0-RTT and admits safe methods only (see [protocols.md](protocols.md)).
+
+Congestion control is pinned to BBRv1 with per-connection pacing so throughput
+and tail latency hold up on lossy paths.
 
 ### Edge and kernel bypass
 
@@ -182,6 +186,11 @@ replayable requests never reach a handler.
   `wasm32-wasi` exports bounded `alloc`/`free` and generation-checked handles.
 - `src/core/ktls.zig` configures Linux kTLS and offers zero-copy
   `sendfile`/`splice` helpers.
+- `src/core/zero_copy.zig` streams static response files through `sendfile` on
+  Linux and macOS. Because a blocking `sendfile` sleeps for its full count, the
+  transfer opens a temporary nonblocking window over the (blocking) io_uring
+  socket and closes it before any completion is queued; stalled bytes fall back
+  to a bounded dribble that reuses the idle TLS staging buffer.
 - `src/xdp/socket.zig` implements AF_XDP UMEM ownership rings, and the `ebpf`
   build step emits the XDP redirect object. Attaching it and populating its XSK
   map requires network-administration privileges.

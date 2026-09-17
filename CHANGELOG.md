@@ -3,6 +3,60 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.0.9] - 2026-09-18
+
+This release supersedes the unreleased 1.0.7 and 1.0.8 lines: their planned
+transport and protocol work ships here together with the zero-copy, 0-RTT, and
+BBR boundaries.
+
+### Added
+
+- Zero-copy static file streaming. `Response.send_file` and
+  `TcpConnection.begin_file_response` hand an open regular file to the kernel
+  with `sendfile` on Linux and macOS, so body bytes never cross a user-space
+  buffer and large assets are no longer capped by the per-route file buffer.
+  The connection takes ownership of the descriptor on success, serves RFC 9110
+  byte ranges with an exact `Content-Length`, answers HEAD without streaming,
+  and closes the descriptor when the body drains or the peer disappears.
+- `src/core/zero_copy.zig` with the per-platform kernel transfer boundary.
+  libxev sockets are blocking (io_uring creates them without `O_NONBLOCK` and
+  Linux does not inherit the flag through `accept`), and a blocking `sendfile`
+  sleeps until its full count is transferred, so the transport opens a
+  temporary nonblocking window for the transfer and closes it before queueing
+  any completion. Bytes that `EAGAIN` fall back to a bounded dribble that
+  reuses the idle TLS staging buffer, and one tick transfers at most four
+  kernel chunks. Windows keeps the bounded buffered path because libxev owns
+  the IOCP completion port, so an overlapped `TransmitFile` cannot be observed
+  by the event loop without stalling a worker.
+- HTTP/1 dispatch now suspends pipelined request processing while a kernel file
+  body is in flight, so a later response can never interleave with it.
+- TLS 1.3 0-RTT (early data) on the HTTPS context via BoringSSL
+  `SSL_CTX_set_early_data_enabled`. Early data is replayable, so only safe
+  methods (`GET`, `HEAD`, `OPTIONS`) are dispatched before the handshake is
+  confirmed; anything else receives `425 Too Early`. The HTTP/1.1 rejection
+  also closes the connection, while HTTP/2 rejects the individual stream.
+  Rejected early data is never dispatched: BoringSSL drops it and completes the
+  full handshake in place, so no reset path is needed on the server.
+- QUIC BBR congestion control. The lsquic engine now pins `es_cc_algo` to BBRv1
+  and enables per-connection pacing explicitly, replacing lsquic's adaptive
+  default that falls back to CUBIC at low RTT.
+- Regression coverage for the kernel sendfile path and the BBR engine policy.
+
+### Changed
+
+- `static_files` parses the request range before touching the file body, then
+  attempts the kernel path and only falls back to the bounded buffer for TLS,
+  HTTP/2, HTTP/3, and oversized assets.
+- `TlsContext.init_with_alpn` takes an explicit early-data policy; the HTTP/3
+  context keeps 0-RTT disabled until lsquic replay protection is defined end to
+  end.
+
+### Security
+
+- 0-RTT admits safe, idempotent methods only on both HTTP/1.1 and HTTP/2. The
+  HTTP/1.1 rejection closes the connection so a replayed request cannot be
+  retried as-is on the same connection.
+
 ## [1.0.6] - 2026-09-17
 
 ### Added
