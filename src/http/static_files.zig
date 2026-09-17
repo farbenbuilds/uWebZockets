@@ -50,7 +50,7 @@ pub fn static_files(comptime file_capacity: usize) type {
         pub fn handler(context: *anyopaque, request: *Request, response: *Response) void {
             const self: *Self = @ptrCast(@alignCast(context));
             self.serve(request, response) catch |err| switch (err) {
-                error.InvalidStaticPath, error.AccessDenied => end_best_effort(response, "403 Forbidden"),
+                error.InvalidStaticPath, error.AccessDenied, error.SymLinkLoop => end_best_effort(response, "403 Forbidden"),
                 error.FileNotFound, error.NotDir => end_best_effort(response, "404 Not Found"),
                 error.FileTooLarge => end_best_effort(response, "413 Content Too Large"),
                 else => end_best_effort(response, "500 Internal Server Error"),
@@ -64,17 +64,22 @@ pub fn static_files(comptime file_capacity: usize) type {
                 path = self.options.index orelse return error.FileNotFound;
             } else if (captured[captured.len - 1] == '/') {
                 const index = self.options.index orelse return error.FileNotFound;
-                if (path.len + 1 + index.len > self.path_buffer.len) return error.InvalidStaticPath;
-                self.path_buffer[path.len] = '/';
-                @memcpy(self.path_buffer[path.len + 1 ..][0..index.len], index);
-                path = self.path_buffer[0 .. path.len + 1 + index.len];
+                // normalize_path trims leading separators, so `path` may be a
+                // subslice; rebuild the index path from its real offset instead
+                // of assuming it starts at path_buffer[0].
+                const offset = @intFromPtr(path.ptr) - @intFromPtr(&self.path_buffer);
+                if (offset > self.path_buffer.len or
+                    path.len + 1 + index.len > self.path_buffer.len - offset)
+                {
+                    return error.InvalidStaticPath;
+                }
+                self.path_buffer[offset + path.len] = '/';
+                @memcpy(self.path_buffer[offset + path.len + 1 ..][0..index.len], index);
+                path = self.path_buffer[offset .. offset + path.len + 1 + index.len];
             }
+            if (path.len == 0 or path[0] == '/') return error.InvalidStaticPath;
 
-            var file = try self.directory.openFile(self.io, path, .{
-                .allow_directory = false,
-                .follow_symlinks = false,
-                .resolve_beneath = true,
-            });
+            var file = try self.open_no_symlinks(path);
             defer file.close(self.io);
             const stat = try file.stat(self.io);
             if (stat.kind != .file) return error.FileNotFound;
@@ -136,7 +141,44 @@ pub fn static_files(comptime file_capacity: usize) type {
             }
             try response.end_with_headers("200 OK", headers, self.file_buffer[0..bytes_read]);
         }
+
+        /// Opens a relative path without following symlinks in any component.
+        ///
+        /// Zig 0.16 ignores `resolve_beneath` on Linux, and `O_NOFOLLOW` only
+        /// covers the final component, so each directory level is opened with
+        /// `follow_symlinks = false` explicitly.
+        fn open_no_symlinks(self: *Self, path: []const u8) !std.Io.File {
+            var current = self.directory;
+            var owns_current = false;
+            defer if (owns_current) current.close(self.io);
+
+            var components = std.mem.splitScalar(u8, path, '/');
+            var component = next_component(&components) orelse return error.InvalidStaticPath;
+            while (next_component(&components)) |next| {
+                const child = try current.openDir(self.io, component, .{
+                    .access_sub_paths = true,
+                    .iterate = false,
+                    .follow_symlinks = false,
+                });
+                if (owns_current) current.close(self.io);
+                current = child;
+                owns_current = true;
+                component = next;
+            }
+            return current.openFile(self.io, component, .{
+                .allow_directory = false,
+                .follow_symlinks = false,
+            });
+        }
     };
+}
+
+/// Returns the next nonempty path component, or null at the end.
+fn next_component(components: anytype) ?[]const u8 {
+    while (components.next()) |component| {
+        if (component.len != 0) return component;
+    }
+    return null;
 }
 
 fn end_best_effort(response: *Response, status: []const u8) void {
@@ -252,7 +294,9 @@ fn format_http_date(buffer: []u8, mtime_ns: i96) ![]const u8 {
 fn not_modified(request: *const Request, etag: []const u8, modified: []const u8) bool {
     if (etag.len != 0) {
         if (request.get_unique_header("if-none-match")) |candidate| {
-            if (std.mem.eql(u8, std.mem.trim(u8, candidate, " \t"), etag)) return true;
+            // RFC 9110: If-Modified-Since is ignored when If-None-Match is
+            // present, even if the ETag does not match.
+            return std.mem.eql(u8, std.mem.trim(u8, candidate, " \t"), etag);
         }
     }
     if (modified.len == 0) return false;

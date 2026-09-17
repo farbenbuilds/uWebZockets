@@ -45,8 +45,11 @@ pub fn start_timer(ctx: *TimerContext, loop: *Loop) void {
 
 /// Requests asynchronous cancellation of an active timer.
 pub fn stop_timer(ctx: *TimerContext, loop: *Loop) void {
-    if (!ctx.active or ctx.stopping) return;
+    if (ctx.stopping) return;
     ctx.stopping = true;
+    // A tick callback runs with `active` cleared; recording `stopping` is
+    // enough because the tick checks it before re-arming.
+    if (!ctx.active) return;
     ctx.timer.cancel(
         loop.get_xev_loop(),
         &ctx.completion,
@@ -75,6 +78,9 @@ fn on_timer_tick(
     ctx.active = false;
     if (ctx.stopping) return .disarm;
     ctx.tick_cb();
+
+    // A tick callback may have requested shutdown; never re-arm past it.
+    if (ctx.stopping) return .disarm;
 
     // io_uring rearms the original absolute timeout, which is already expired.
     ctx.timer.run(loop, completion, ctx.interval_ms, TimerContext, ctx, on_timer_tick);
@@ -149,8 +155,11 @@ pub fn connection_sweeper(comptime PoolType: type, comptime idle_timeout_ms: u64
 
         /// Requests asynchronous cancellation of the periodic scan.
         pub fn stop(self: *Self, loop: *Loop) void {
-            if (!self.active or self.stopping) return;
+            if (self.stopping) return;
             self.stopping = true;
+            // A tick callback runs with `active` cleared; the tick observes
+            // `stopping` and disarms instead of re-arming.
+            if (!self.active) return;
             self.timer.cancel(
                 loop.get_xev_loop(),
                 &self.completion,
@@ -195,6 +204,9 @@ pub fn connection_sweeper(comptime PoolType: type, comptime idle_timeout_ms: u64
                 conn.last_active_ms = 0;
                 tcp.close_connection(conn);
             }
+
+            // A close callback may have requested shutdown; never re-arm past it.
+            if (self.stopping) return .disarm;
 
             // Schedule a new relative timeout instead of reusing an expired one.
             self.timer.run(loop, completion, 5000, Self, self, on_tick);

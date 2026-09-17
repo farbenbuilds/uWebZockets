@@ -7,6 +7,7 @@ pub const simd = @import("core/simd.zig");
 pub const transport = @import("core/transport.zig");
 pub const ktls = @import("core/ktls.zig");
 pub const xdp = @import("xdp/socket.zig");
+pub const affinity = @import("core/affinity.zig");
 
 pub const http_parser = @import("http/parser.zig");
 pub const http_request = @import("http/request.zig");
@@ -38,6 +39,9 @@ pub const udp = @import("core/udp.zig");
 
 pub const app = @import("router/app.zig");
 pub const radix = @import("router/radix.zig");
+pub const config = @import("router/config.zig");
+pub const builder = @import("router/builder.zig");
+pub const rejection = @import("http/rejection.zig");
 
 pub const ws_deflate = @import("ws/deflate.zig");
 pub const ws_handshake = @import("ws/handshake.zig");

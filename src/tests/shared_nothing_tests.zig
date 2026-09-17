@@ -1,0 +1,161 @@
+const std = @import("std");
+const builtin = @import("builtin");
+const support = @import("test_support");
+const test_options = @import("test_options");
+
+const affinity = support.affinity;
+
+fn dummy_handler(_: *support.http_request.Request, _: *support.http_response.Response) void {}
+
+test "cluster queue: FIFO order survives wraparound" {
+    const Queue = support.cluster.message_queue(32);
+    var queue = Queue{};
+
+    var topic_buffer: [64]u8 = undefined;
+    var payload_buffer: [64]u8 = undefined;
+
+    for (0..3) |round| {
+        for (0..support.cluster.queue_capacity) |index| {
+            var payload: [16]u8 = undefined;
+            const text = std.fmt.bufPrint(&payload, "round{d}-{d}", .{ round, index }) catch unreachable;
+            try queue.push("topic", text, index % 2 == 0);
+        }
+        for (0..support.cluster.queue_capacity) |index| {
+            const message = queue.pop_copy(&topic_buffer, &payload_buffer) orelse
+                return error.TestUnexpectedResult;
+            var expected: [16]u8 = undefined;
+            const text = std.fmt.bufPrint(&expected, "round{d}-{d}", .{ round, index }) catch unreachable;
+            try std.testing.expectEqualStrings(text, message.payload);
+            try std.testing.expectEqualStrings("topic", message.topic);
+            try std.testing.expectEqual(index % 2 == 0, message.is_text);
+        }
+        try std.testing.expect(queue.pop_copy(&topic_buffer, &payload_buffer) == null);
+    }
+}
+
+test "cluster queue: bounded producers receive ClusterQueueFull" {
+    const Queue = support.cluster.message_queue(16);
+    var queue = Queue{};
+
+    for (0..support.cluster.queue_capacity) |_| try queue.push("t", "m", true);
+    try std.testing.expectError(error.ClusterQueueFull, queue.push("t", "m", true));
+    try std.testing.expectError(error.EmptyTopic, queue.push("", "m", true));
+    try std.testing.expectError(error.ClusterMessageTooLarge, queue.push("t", "0123456789abcdefg", false));
+
+    var topic_buffer: [64]u8 = undefined;
+    var payload_buffer: [64]u8 = undefined;
+    try std.testing.expect(queue.pop_copy(&topic_buffer, &payload_buffer) != null);
+    try queue.push("t", "m", true);
+}
+
+test "cluster queue: many producers feed one consumer without a lock" {
+    // The ASan runtime aborts this binary while tearing down OS threads; the
+    // default, ReleaseSafe, and fuzz graphs still exercise the concurrent path.
+    if (test_options.sanitize or test_options.memory_sanitize) return error.SkipZigTest;
+
+    const Queue = support.cluster.message_queue(32);
+    var queue = Queue{};
+
+    const producers = 4;
+    const per_producer = 500;
+    const total = producers * per_producer;
+
+    const Producer = struct {
+        queue: *Queue,
+        index: usize,
+
+        fn run(self: *@This()) void {
+            var sequence: usize = 0;
+            while (sequence < per_producer) : (sequence += 1) {
+                var payload_buffer: [24]u8 = undefined;
+                const payload = std.fmt.bufPrint(
+                    &payload_buffer,
+                    "{d}:{d}",
+                    .{ self.index, sequence },
+                ) catch unreachable;
+                while (true) {
+                    self.queue.push("stress", payload, true) catch {
+                        std.atomic.spinLoopHint();
+                        continue;
+                    };
+                    break;
+                }
+            }
+        }
+    };
+
+    var contexts: [producers]Producer = undefined;
+    var threads: [producers]std.Thread = undefined;
+    for (&contexts, 0..) |*context, index| {
+        context.* = .{ .queue = &queue, .index = index };
+        threads[index] = try std.Thread.spawn(.{}, Producer.run, .{context});
+    }
+
+    var topic_buffer: [64]u8 = undefined;
+    var payload_buffer: [64]u8 = undefined;
+    var received: usize = 0;
+    while (received < total) {
+        if (queue.pop_copy(&topic_buffer, &payload_buffer) != null) {
+            received += 1;
+        } else {
+            std.atomic.spinLoopHint();
+        }
+    }
+    for (&threads) |*thread| thread.join();
+    try std.testing.expect(queue.pop_copy(&topic_buffer, &payload_buffer) == null);
+}
+
+test "affinity: physical cores are discoverable and pinning is best effort" {
+    if (test_options.sanitize or test_options.memory_sanitize) return error.SkipZigTest;
+
+    const selection = affinity.CoreSelection.init();
+    if (builtin.os.tag == .linux or builtin.os.tag == .windows) {
+        try std.testing.expect(selection.len > 0);
+        try std.testing.expect(selection.cpu(0) != null);
+        try std.testing.expect(selection.cpu(selection.len) != null);
+    }
+
+    const PinProbe = struct {
+        cpu: usize,
+        result: ?affinity.Error = null,
+
+        fn run(self: *@This()) void {
+            affinity.pin_current_thread(self.cpu) catch |err| {
+                self.result = err;
+            };
+        }
+    };
+
+    var probe = PinProbe{ .cpu = selection.cpu(0) orelse return };
+    const thread = try std.Thread.spawn(.{}, PinProbe.run, .{&probe});
+    thread.join();
+    if (probe.result) |err| {
+        try std.testing.expect(err == error.AffinityFailed or err == error.UnsupportedPlatform);
+    }
+}
+
+test "cluster: workers own disjoint slabs and configure independently" {
+    const TestApp = support.app.configured_app_with_timeout(2, 1024, 4096, 0);
+    var group = try TestApp.cluster(2).init_with_options(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .cpu_affinity = false },
+    );
+    defer group.deinit();
+
+    const first = group.worker(0).?;
+    const second = group.worker(1).?;
+    try std.testing.expect(first.pool.storage.ptr != second.pool.storage.ptr);
+    try std.testing.expect(first.request_buffers.ptr != second.request_buffers.ptr);
+    try std.testing.expect(first.write_queue_storage.ptr != second.write_queue_storage.ptr);
+    try std.testing.expect(first.loop.get_xev_loop() != second.loop.get_xev_loop());
+
+    try group.configure(struct {
+        fn routes(worker: *TestApp, index: usize) !void {
+            if (index == 0) _ = try worker.get("/first", dummy_handler);
+            if (index == 1) _ = try worker.get("/second", dummy_handler);
+        }
+    }.routes);
+
+    try std.testing.expect(group.worker(2) == null);
+}

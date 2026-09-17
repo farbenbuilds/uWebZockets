@@ -21,32 +21,51 @@ pub fn freelist_pool(comptime T: type, comptime capacity: usize) type {
         free_indices: []usize = undefined,
         free_count: usize = capacity,
         active: std.StaticBitSet(capacity) = .empty,
+        // A slab carve hands over caller-owned storage that `deinit` must keep.
+        owned: bool = true,
 
         /// Allocates and zeroes the slab and freelist storage.
         pub fn init() !Self {
+            const storage = try std.heap.page_allocator.alloc(T, capacity);
+            errdefer std.heap.page_allocator.free(storage);
+            const free_indices = try std.heap.page_allocator.alloc(usize, capacity);
+            errdefer std.heap.page_allocator.free(free_indices);
+
+            var pool = try from_slices(storage, free_indices);
+            pool.owned = true;
+            return pool;
+        }
+
+        /// Adopts caller-owned storage and leaves it intact in `deinit`.
+        ///
+        /// The application builder carves every fixed pool, message, and queue
+        /// region from one contiguous startup slab and releases it once.
+        pub fn from_slices(storage: []T, free_indices: []usize) !Self {
+            if (storage.len != capacity or free_indices.len != capacity) {
+                return error.StorageCapacityMismatch;
+            }
+
             var pool: Self = undefined;
+            pool.storage = storage;
+            pool.free_indices = free_indices;
             pool.free_count = capacity;
             pool.active = .empty;
-
-            // allocate memory for the slab and freelist
-            pool.storage = try std.heap.page_allocator.alloc(T, capacity);
-            errdefer std.heap.page_allocator.free(pool.storage);
+            pool.owned = false;
 
             // strictly zero-initialize the slab to prevent garbage state on first use
-            const bytes = std.mem.sliceAsBytes(pool.storage);
+            const bytes = std.mem.sliceAsBytes(storage);
             @memset(bytes, 0);
 
-            pool.free_indices = try std.heap.page_allocator.alloc(usize, capacity);
-
             // push all indices from 0 to capacity-1 into the free stack
-            for (pool.free_indices, 0..) |*item, i| {
+            for (free_indices, 0..) |*item, i| {
                 item.* = i;
             }
             return pool;
         }
 
-        /// Releases the slab and freelist; no acquired slot may be used afterward.
+        /// Releases owned storage; caller-carved slabs are left to their owner.
         pub fn deinit(self: *Self) void {
+            if (!self.owned) return;
             std.heap.page_allocator.free(self.storage);
             std.heap.page_allocator.free(self.free_indices);
         }

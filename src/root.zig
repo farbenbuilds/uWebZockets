@@ -6,6 +6,16 @@ pub const App = @import("router/app.zig").app;
 pub const ConfiguredApp = @import("router/app.zig").configured_app;
 /// Returns an application type with explicit capacities and idle timeout.
 pub const ConfiguredAppWithTimeout = @import("router/app.zig").configured_app_with_timeout;
+/// Fluent compile-time server builder that performs one startup allocation.
+pub const Server = @import("router/builder.zig").Server;
+/// Startup policy for thread-per-core worker groups.
+pub const ClusterOptions = @import("router/app.zig").ClusterOptions;
+/// High-level server capacities and named presets.
+pub const ServerConfig = @import("router/config.zig").ServerConfig;
+/// Named capacity presets for common deployment shapes.
+pub const Presets = @import("router/config.zig").ServerConfig.Preset;
+/// Views over the single contiguous startup slab.
+pub const SlabLayout = @import("router/config.zig").SlabLayout;
 /// Default connection idle timeout in milliseconds.
 pub const default_idle_timeout_ms = @import("router/app.zig").default_idle_timeout_ms;
 /// Reports whether the build includes the HTTP/3 transport.

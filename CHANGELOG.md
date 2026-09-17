@@ -3,6 +3,89 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.0.6] - 2026-09-17
+
+### Added
+
+- Added `ServerConfig`, named `Presets` (`microservice`, `websocket_chat`,
+  `file_server`), and the fluent `Server.builder` API with compile-time
+  `with_*` overrides that translate named limits into one contiguous startup
+  slab.
+- Added `Server.builder(...).build(allocator)`, `App.init_configured`, and
+  `App.init_from_slab`, which carve the connection pool, HTTP/1.1 request
+  buffers, WebSocket message regions, response write queues, and optional
+  RFC 7692 scratch from a single block.
+- Added structured JSON transport rejections: oversized bodies return `413`
+  and oversized headers return `431` with a document naming the configured
+  limit and the `ServerConfig` field to raise.
+- Added `examples/basic_microservice.zig` and `examples/custom_builder.zig`
+  with matching `zig build` steps.
+- Added physical-core affinity and shared-nothing startup options:
+  `App.cluster(...).init_with_options`, `Server.builder(...).build_cluster`, and
+  `ClusterOptions` pin worker `i` to the `i`-th allowed physical core on Linux
+  and Windows while keeping restricted cpusets and affinity-less platforms
+  running unpinned.
+- Added listener and connection tuning: `SO_REUSEPORT` on POSIX,
+  `TCP_DEFER_ACCEPT` on listeners, and a one-shot `TCP_QUICKACK` request at
+  accept so the hot read path stays syscall-free.
+- Added a lock-free Vyukov sequence ring for cluster inboxes, removing the
+  spinlock from the cross-worker wakeup path and cache-line separating the
+  producer and consumer positions.
+- Added `examples/shared_nothing_cluster.zig` plus the restructured
+  `docs/architecture.md`, `docs/memory_model.md`, `docs/protocols.md`, and
+  `docs/operations.md`.
+
+### Changed
+
+- Moved per-connection HTTP/1.1 request buffers out of `TcpConnection` into
+  the application slab; the parser now enforces a per-connection
+  `max_body_size` policy instead of the fixed module default.
+- `freelist_pool` can adopt caller-owned storage through `from_slices` and
+  leaves that storage intact in `deinit`.
+- `App.init` keeps its existing signature and now builds the same single slab
+  through `init_configured`.
+- Windows cluster listeners fall back to `SO_REUSEADDR` and thread affinity to
+  `SetThreadAffinityMask` instead of failing when `SO_REUSEPORT` is missing.
+- Rewrote `README.md` as a short onboarding document and moved deep runtime,
+  memory, protocol, and operations material into `docs/`.
+- Normalized naming to the coding convention: the JSON-RPC standard-error
+  namespace is now `StandardError` and the internal builder type generator is
+  `configured_builder`. The convention checker now also rejects PascalCase
+  function names, snake_case type names, and camelCase fields or parameters.
+
+### Fixed
+
+- Fixed an HTTP/2 stream-lifecycle race: an `END_STREAM` HEADERS frame no
+  longer releases its slab slot before the server finishes processing the
+  event, the server refuses to emit `RST_STREAM` on stream 0, and a second
+  HEADERS section on a stream without a completed request is rejected as an
+  unexpected trailer.
+- Enforced `ServerConfig.max_body_size` for HTTP/2 request bodies, both
+  declared and streamed, within the compiled session slab capacity.
+- Fixed macOS/kqueue connection-slot and QUIC-drain leaks: canceled read and
+  write callbacks that the backend can drop no longer gate slab release, and
+  the close completion clears the outstanding flags.
+- Fixed a shutdown hang where stopping a timer or the idle sweeper from inside
+  its own tick callback re-armed it forever.
+- Fixed QUIC shutdown re-entrancy: `shutdown()` from an HTTP/3 handler now
+  defers `lsquic_engine_cooldown` until the active engine callback unwinds.
+- Fixed WebSocket fatal-error handling: a failed parser is terminal, a close
+  frame completes the frame parser instead of being re-emitted, HTTP/2 tunnels
+  are reset on failure or close, and large sends split across DATA frames
+  instead of committing a frame header before a rejected payload.
+- Fixed an absolute-path escape in static file index appending and made static
+  file traversal open every directory component without following symlinks.
+- Fixed JSON-RPC perfect-hash dispatch to confirm stored method bytes after a
+  fingerprint match, and widened the router's copied-path registry offset so
+  filling the 64 KiB limit cannot overflow.
+- Fixed slab-plan alignment so near-maximum layouts return
+  `error.SlabSizeOverflow` instead of panicking, and rejected `ServerConfig`
+  capacities that do not match the generated `App` type at compile time.
+- Fixed `If-None-Match` precedence over `If-Modified-Since`, OpenAPI literal
+  `:`/`*` path segments, `Cluster.deinit` double-call safety, the TLS plaintext
+  drain continuing after close was scheduled, and the native stream adapter's
+  zslay opcode names.
+
 ## [1.0.5] - 2026-09-14
 
 ### Added

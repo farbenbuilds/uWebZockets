@@ -8,7 +8,7 @@ pub const Route = struct {
 
 pub const Options = struct {
     title: []const u8 = "uWebZockets API",
-    version: []const u8 = "1.0.5",
+    version: []const u8 = "1.0.6",
 };
 
 /// Generates a bounded OpenAPI 3.1 document from registered route metadata.
@@ -80,7 +80,11 @@ fn write_openapi_path(writer: *std.Io.Writer, path: []const u8) !void {
     var index: usize = 0;
     while (index < path.len) {
         const byte = path[index];
-        if (byte != ':' and byte != '*') {
+        // Only a segment-leading ':' or '*' is a parameter, matching the
+        // router's pattern analysis; literal separators stay literal.
+        const dynamic = (byte == ':' or byte == '*') and
+            (index == 0 or path[index - 1] == '/');
+        if (!dynamic) {
             try write_json_byte(writer, byte);
             index += 1;
             continue;

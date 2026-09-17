@@ -21,8 +21,12 @@ pub const ErrorCode = enum(u32) {
 ///
 /// `write_fn` must consume or copy every part before returning because frame
 /// headers use stack storage. `error.WouldBlock` must consume no bytes so the
-/// session can retry the frame. `request_fn` receives a session-owned request
-/// that stays valid until the corresponding stream slot is released.
+/// session can retry the frame. Stream DATA retries through the pending
+/// response state, but control frames (SETTINGS/PING acknowledgements,
+/// RST_STREAM, GOAWAY) are not buffered: a `WouldBlock` while sending one
+/// closes the connection instead of growing an unbounded control queue.
+/// `request_fn` receives a session-owned request that stays valid until the
+/// corresponding stream slot is released.
 pub const Callbacks = struct {
     context: *anyopaque,
     write_fn: *const fn (*anyopaque, []const []const u8) anyerror!void,
@@ -73,11 +77,17 @@ pub fn server_session(
         response_body_storage: [max_streams][body_capacity]u8 = undefined,
         request_storage_lengths: [max_streams]usize = .{0} ** max_streams,
         body_lengths: [max_streams]usize = .{0} ** max_streams,
+        /// Runtime request-body ceiling applied by `ServerConfig.max_body_size`.
+        /// The compiled `body_capacity` slab remains the hard upper bound.
+        request_body_limit: usize = body_capacity,
         pending_header_lengths: [max_streams]usize = .{0} ** max_streams,
         pending_body_lengths: [max_streams]usize = .{0} ** max_streams,
         pending_body_offsets: [max_streams]usize = .{0} ** max_streams,
         expected_content_lengths: [max_streams]?usize = .{null} ** max_streams,
         headers_ready: [max_streams]bool = .{false} ** max_streams,
+        // Tracks whether the initial header block was seen, so a second HEADERS
+        // section is treated as trailers instead of a fresh request.
+        initial_seen: [max_streams]bool = .{false} ** max_streams,
         dispatched: [max_streams]bool = .{false} ** max_streams,
         callback_active: [max_streams]bool = .{false} ** max_streams,
         response_started: [max_streams]bool = .{false} ** max_streams,
@@ -126,11 +136,13 @@ pub fn server_session(
             self.closed = false;
             @memset(&self.request_storage_lengths, 0);
             @memset(&self.body_lengths, 0);
+            self.request_body_limit = body_capacity;
             @memset(&self.pending_header_lengths, 0);
             @memset(&self.pending_body_lengths, 0);
             @memset(&self.pending_body_offsets, 0);
             @memset(&self.expected_content_lengths, null);
             @memset(&self.headers_ready, false);
+            @memset(&self.initial_seen, false);
             @memset(&self.dispatched, false);
             @memset(&self.callback_active, false);
             @memset(&self.response_started, false);
@@ -431,8 +443,11 @@ pub fn server_session(
             event: anytype,
             callbacks: Callbacks,
         ) !void {
-            const is_trailer = self.headers_ready[event.stream_index];
-            if (!is_trailer) self.clear_stream(event.stream_index);
+            const is_trailer = self.initial_seen[event.stream_index];
+            if (!is_trailer) {
+                self.clear_stream(event.stream_index);
+                self.initial_seen[event.stream_index] = true;
+            }
             self.header_block_length = 0;
             self.header_stream_index = event.stream_index;
             self.header_end_stream = event.end_stream;
@@ -612,7 +627,17 @@ pub fn server_session(
                     try self.send_reset(stream_id, .protocol_error, callbacks);
                     return;
                 }
+                if (!self.headers_ready[index]) {
+                    // Trailers arrived without a completed initial request.
+                    const stream_id = self.connection.streams.stream_ids[index];
+                    try self.send_reset(stream_id, .protocol_error, callbacks);
+                    return;
+                }
                 try self.dispatch(index, callbacks);
+                const trailer_stream_id = self.connection.streams.stream_ids[index];
+                if (trailer_stream_id != 0) {
+                    try self.finish_remote(index, trailer_stream_id, callbacks);
+                }
                 return;
             }
             const decoded = decoder.decode_request(
@@ -666,6 +691,9 @@ pub fn server_session(
                     "CONNECT is not supported",
                     callbacks,
                 );
+                if (end_stream and stream_id != 0) {
+                    try self.finish_remote(index, stream_id, callbacks);
+                }
                 return;
             }
 
@@ -685,6 +713,10 @@ pub fn server_session(
             self.headers_ready[index] = true;
             self.finish_header_block();
             if (end_stream or decoded.protocol != null) try self.dispatch(index, callbacks);
+            if (end_stream) {
+                const stream_id = self.connection.streams.stream_ids[index];
+                if (stream_id != 0) try self.finish_remote(index, stream_id, callbacks);
+            }
         }
 
         fn complete_discarded_headers(
@@ -754,6 +786,12 @@ pub fn server_session(
                 return;
             }
 
+            if (self.body_lengths[index] > self.request_body_limit or
+                event.bytes.len > self.request_body_limit - self.body_lengths[index])
+            {
+                try self.send_reset(stream_id, .enhance_your_calm, callbacks);
+                return;
+            }
             if (event.bytes.len > self.body_storage[index].len - self.body_lengths[index]) {
                 try self.send_reset(stream_id, .enhance_your_calm, callbacks);
                 return;
@@ -777,16 +815,17 @@ pub fn server_session(
 
         fn dispatch(self: *Self, index: u16, callbacks: Callbacks) !void {
             if (self.dispatched[index]) return;
+            const stream_id = self.connection.streams.stream_ids[index];
+            // A released slot reports stream 0; never dispatch a stale stream.
+            if (stream_id == 0) return;
             if (self.expected_content_lengths[index]) |expected| {
                 if (expected != self.body_lengths[index]) {
-                    const stream_id = self.connection.streams.stream_ids[index];
                     try self.send_reset(stream_id, .protocol_error, callbacks);
                     return;
                 }
             }
             self.dispatched[index] = true;
             self.requests[index].body = self.body_storage[index][0..self.body_lengths[index]];
-            const stream_id = self.connection.streams.stream_ids[index];
             self.callback_active[index] = true;
             callbacks.request_fn(callbacks.context, &self.requests[index], stream_id) catch {
                 self.callback_active[index] = false;
@@ -846,7 +885,7 @@ pub fn server_session(
                         return error.InvalidContentLength;
                     }
                     const content_length = try parse_content_length(field.value);
-                    if (content_length > body_capacity) return error.RequestBodyTooLarge;
+                    if (content_length > self.request_body_limit) return error.RequestBodyTooLarge;
                     self.expected_content_lengths[index] = content_length;
                 }
             }
@@ -916,7 +955,8 @@ pub fn server_session(
             }
         }
 
-        fn data_frame_capacity(self: *const Self, callbacks: Callbacks) usize {
+        /// Largest DATA payload accepted by the peer and transport for this call.
+        pub fn data_frame_capacity(self: *const Self, callbacks: Callbacks) usize {
             return @min(
                 @as(usize, self.connection.peer_settings.max_frame_size),
                 callbacks.max_frame_payload,
@@ -1067,6 +1107,8 @@ pub fn server_session(
             code: ErrorCode,
             callbacks: Callbacks,
         ) !void {
+            // RST_STREAM on stream 0 is a connection error; refuse to emit it.
+            if (stream_id == 0) return;
             if (self.connection.streams.find(stream_id)) |index| {
                 self.notify_stream_closed(stream_id, index, callbacks);
                 _ = self.connection.reset_local(index);
@@ -1158,6 +1200,7 @@ pub fn server_session(
             self.body_lengths[index] = 0;
             self.expected_content_lengths[index] = null;
             self.headers_ready[index] = false;
+            self.initial_seen[index] = false;
             self.dispatched[index] = false;
             self.callback_active[index] = false;
             self.response_started[index] = false;

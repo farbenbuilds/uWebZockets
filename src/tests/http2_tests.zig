@@ -210,6 +210,14 @@ test "http2: half closed local streams still accept peer data" {
     const trailers = try append_frame(&storage, .headers, 0x5, 1, "t");
     const trailer_event = try connection.receive_frame(trailers);
     try std.testing.expect(trailer_event.headers.end_stream);
+    // END_STREAM marks the stream closed, but the slot is released only after
+    // the caller finishes processing the event.
+    try std.testing.expectEqual(
+        http2.StreamState.closed,
+        connection.streams.states[trailer_event.headers.stream_index],
+    );
+    try std.testing.expect(connection.streams.find(1) != null);
+    try std.testing.expect(try connection.finish_remote(trailer_event.headers.stream_index));
     try std.testing.expect(connection.streams.find(1) == null);
 
     const next_headers = try append_frame(&storage, .headers, 0x4, 3, "h");

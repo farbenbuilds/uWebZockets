@@ -10,7 +10,7 @@ pub const scanner_scratch_capacity = 2048;
 pub const typed_params_scratch_capacity = 4096;
 pub const min_response_capacity = 128;
 
-pub const standard_error = struct {
+pub const StandardError = struct {
     pub const parse_error: i32 = -32700;
     pub const invalid_request: i32 = -32600;
     pub const method_not_found: i32 = -32601;
@@ -169,6 +169,9 @@ pub fn comptime_service(comptime procedures: []const StaticProcedure) type {
             if (encoded_index == 0) return null;
             const index: usize = encoded_index - 1;
             if (hashes[index] != fingerprint) return null;
+            // FNV-1a is a bijection per byte, so a crafted method can collide
+            // with a registered fingerprint; confirm the stored bytes too.
+            if (!std.mem.eql(u8, procedures[index].method, method)) return null;
             return index;
         }
 
@@ -392,7 +395,7 @@ fn dispatch_to_buffer(
         error.WriteFailed => return error.ResponseTooLarge,
         else => {
             writer.end = 0;
-            write_error(&writer, standard_error.parse_error, "Parse error", null) catch {
+            write_error(&writer, StandardError.parse_error, "Parse error", null) catch {
                 return error.ResponseTooLarge;
             };
         },
@@ -493,7 +496,7 @@ fn dispatch_document(
         else => {
             try scanner.skipValue();
             try expect_document_end(&scanner);
-            try write_error(writer, standard_error.invalid_request, "Invalid Request", null);
+            try write_error(writer, StandardError.invalid_request, "Invalid Request", null);
         },
     }
 }
@@ -510,7 +513,7 @@ fn dispatch_batch(
     if (try scanner.peekNextTokenType() == .array_end) {
         _ = try scanner.next();
         try expect_document_end(scanner);
-        return write_error(writer, standard_error.invalid_request, "Invalid Request", null);
+        return write_error(writer, StandardError.invalid_request, "Invalid Request", null);
     }
 
     const response_start = writer.end;
@@ -522,7 +525,7 @@ fn dispatch_batch(
         if (try scanner.peekNextTokenType() != .object_begin) {
             try scanner.skipValue();
             if (response_count != 0) try writer.writeByte(',');
-            try write_error(writer, standard_error.invalid_request, "Invalid Request", null);
+            try write_error(writer, StandardError.invalid_request, "Invalid Request", null);
             response_count += 1;
             continue;
         }
@@ -556,13 +559,13 @@ fn dispatch_request(
 ) !bool {
     if (signal) |value| try value.checkpoint();
     if (!request.valid) {
-        try write_error(writer, standard_error.invalid_request, "Invalid Request", null);
+        try write_error(writer, StandardError.invalid_request, "Invalid Request", null);
         return true;
     }
 
     const procedure_index = service.find(request.method) orelse {
         if (!request.wants_response()) return false;
-        try write_error(writer, standard_error.method_not_found, "Method not found", request.id);
+        try write_error(writer, StandardError.method_not_found, "Method not found", request.id);
         return true;
     };
 
@@ -582,7 +585,7 @@ fn dispatch_request(
         switch (err) {
             error.InvalidParams => try write_error(
                 writer,
-                standard_error.invalid_params,
+                StandardError.invalid_params,
                 "Invalid params",
                 request.id,
             ),
@@ -590,7 +593,7 @@ fn dispatch_request(
                 const fault = call.fault orelse {
                     try write_error(
                         writer,
-                        standard_error.internal_error,
+                        StandardError.internal_error,
                         "Internal error",
                         request.id,
                     );
@@ -600,7 +603,7 @@ fn dispatch_request(
             },
             else => try write_error(
                 writer,
-                standard_error.internal_error,
+                StandardError.internal_error,
                 "Internal error",
                 request.id,
             ),
@@ -611,7 +614,7 @@ fn dispatch_request(
     if (!request.wants_response()) return false;
     if (!call.result_written) {
         writer.end = response_start;
-        try write_error(writer, standard_error.internal_error, "Internal error", request.id);
+        try write_error(writer, StandardError.internal_error, "Internal error", request.id);
         return true;
     }
     try writer.writeAll(",\"id\":");

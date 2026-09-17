@@ -205,7 +205,8 @@ const PatternInfo = struct {
 };
 
 const RouteRecord = struct {
-    offset: u16,
+    // u32 keeps the 64 KiB registry representable; u16 overflowed at 65536.
+    offset: u32,
     length: u16,
     method: HttpMethod,
     websocket: bool,
@@ -233,7 +234,7 @@ pub const Router = struct {
     pattern_count: u8 = 0,
     middleware_count: u8 = 0,
     route_storage_length: u32 = 0,
-    registry_storage_length: u16 = 0,
+    registry_storage_length: u32 = 0,
     route_record_count: u16 = 0,
 
     /// Initializes an empty router with fixed inline storage.
@@ -535,7 +536,7 @@ pub const Router = struct {
 
     fn ensure_route_record(self: *const Router, path: []const u8) !void {
         if (self.route_record_count == self.route_records.len) return error.RouteCapacityReached;
-        if (path.len > self.registry_storage.len - self.registry_storage_length) {
+        if (path.len > self.registry_storage.len - @as(usize, self.registry_storage_length)) {
             return error.RouteStorageCapacityReached;
         }
     }

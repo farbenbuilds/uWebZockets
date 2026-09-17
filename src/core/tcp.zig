@@ -17,13 +17,16 @@ const tls = @import("../crypto/tls.zig");
 const abort = @import("../http/abort.zig");
 const DeflateContext = @import("../ws/deflate.zig").Context;
 const http2_server = @import("../http2/server.zig");
+const http_rejection = @import("../http/rejection.zig");
 const zslay = @import("zslay");
 
 /// Bytes read from one POSIX socket completion at a time.
 pub const socket_read_capacity = 8192;
-/// Maximum buffered HTTP/1 request bytes per TCP connection.
+/// Seconds a completed handshake waits for data before reporting an accept.
+pub const defer_accept_seconds: c_int = 1;
+/// Default maximum buffered HTTP/1 request bytes per TCP connection.
 pub const request_buffer_capacity = http_parser.max_request_line_size +
-    http_parser.max_header_size + http_parser.max_body_size + 1024;
+    http_parser.max_header_size + http_parser.default_max_body_size + 1024;
 /// Default bounded pending-output capacity per TCP connection.
 pub const default_write_queue_capacity = 64 * 1024;
 /// Maximum simultaneous HTTP/2 request streams per TCP connection.
@@ -36,7 +39,7 @@ const Http2Session = http2_server.server_session(
     max_http2_streams,
     http_parser.max_header_size,
     http_parser.max_header_size,
-    http_parser.max_body_size,
+    http_parser.default_max_body_size,
 );
 const Http2AsyncContext = struct {
     connection: *TcpConnection = undefined,
@@ -57,6 +60,7 @@ pub const TcpConnection = struct {
     pubsub: ?*@import("../ws/pubsub.zig").PubSubEngine = null,
     pool_ptr: ?*anyopaque = null,
     on_close_cb: ?*const fn (pool_ptr: *anyopaque, conn: *TcpConnection) void = null,
+    reject_policy: *const http_rejection.RejectionPolicy = &http_rejection.RejectionPolicy.default,
     loop: *xev.Loop = undefined,
     io: std.Io = undefined,
     socket: xev.TCP,
@@ -109,7 +113,9 @@ pub const TcpConnection = struct {
     async_response_state: http_response.AsyncResponseState = .{},
 
     read_buffer: [socket_read_capacity]u8 = undefined,
-    request_buffer: [request_buffer_capacity]u8 = undefined,
+    // Carved by the owning application from its contiguous request slab; the
+    // stride must hold the request line, headers, and the configured body cap.
+    request_buffer: []u8 = &.{},
     tls_write_buffer: [8192]u8 = undefined,
     protocol_probe: [@import("../http2/connection.zig").client_preface.len]u8 = undefined,
     write_queue: []u8 = &.{},
@@ -235,7 +241,9 @@ pub const TcpConnection = struct {
 
     fn drain_tls_plaintext(self: *TcpConnection, ssl: *c.SSL) void {
         var plain_buffer: [socket_read_capacity]u8 = undefined;
-        while (!self.closing and !self.dispatch_suspended) {
+        // A rejection or keep-alive drain already decided to close; do not keep
+        // decrypting and dispatching buffered pipelined bytes after that point.
+        while (!self.closing and !self.close_when_drained and !self.dispatch_suspended) {
             const read_bytes = c.SSL_read(ssl, &plain_buffer, plain_buffer.len);
             if (read_bytes > 0) {
                 self.route_decrypted_data(plain_buffer[0..@intCast(read_bytes)]);
@@ -556,11 +564,12 @@ pub const TcpConnection = struct {
         }
         const available = self.request_buffer.len - self.request_len;
         if (data.len > available) {
-            const status = switch (self.parser.state) {
-                .body, .chunk_size, .chunk_ext, .chunk_data, .chunk_crlf, .chunk_trailer => "413 Payload Too Large",
-                else => "431 Request Header Fields Too Large",
-            };
-            self.reject_http(status, "Request exceeds the configured limit");
+            switch (self.parser.state) {
+                .body, .chunk_size, .chunk_ext, .chunk_data, .chunk_crlf, .chunk_trailer => {
+                    self.reject_payload_too_large();
+                },
+                else => self.reject_headers_too_large(),
+            }
             return;
         }
 
@@ -579,11 +588,11 @@ pub const TcpConnection = struct {
                 return;
             }
             if (self.parser.state == .error_headers_too_large) {
-                self.reject_http("431 Request Header Fields Too Large", "Request headers too large");
+                self.reject_headers_too_large();
                 return;
             }
             if (self.parser.state == .error_too_large) {
-                self.reject_http("413 Payload Too Large", "Payload Too Large");
+                self.reject_payload_too_large();
                 return;
             }
             if (self.parser.state != .done) {
@@ -857,6 +866,33 @@ pub const TcpConnection = struct {
     fn reject_http(self: *TcpConnection, status: []const u8, body: []const u8) void {
         var response = Response{ .target = .{ .tcp = self } };
         response.end_with_headers(status, "Connection: close\r\n", body) catch {
+            close_connection(self);
+            return;
+        };
+        close_after_flush(self);
+    }
+
+    /// Sends the structured 413 document describing the configured body limit.
+    fn reject_payload_too_large(self: *TcpConnection) void {
+        var buffer: [http_rejection.max_document_bytes]u8 = undefined;
+        const body = self.reject_policy.payload_too_large(&buffer);
+        self.reject_http_json("413 Payload Too Large", body);
+    }
+
+    /// Sends the structured 431 document describing the configured header limit.
+    fn reject_headers_too_large(self: *TcpConnection) void {
+        var buffer: [http_rejection.max_document_bytes]u8 = undefined;
+        const body = self.reject_policy.headers_too_large(&buffer);
+        self.reject_http_json("431 Request Header Fields Too Large", body);
+    }
+
+    fn reject_http_json(self: *TcpConnection, status: []const u8, body: []const u8) void {
+        var response = Response{ .target = .{ .tcp = self } };
+        response.end_with_headers(
+            status,
+            "Content-Type: application/json; charset=utf-8\r\nConnection: close\r\n",
+            body,
+        ) catch {
             close_connection(self);
             return;
         };
@@ -1209,32 +1245,43 @@ pub fn close_connection(conn: *TcpConnection) void {
     if (conn.ws.initialized) conn.ws.deinit();
     conn.deinit_tls();
 
-    if (conn.read_active) {
-        conn.read_cancel_active = true;
-        core_loop.cancel(
-            conn.loop,
-            &conn.read_completion,
-            &conn.read_cancel_completion,
-            TcpConnection,
-            conn,
-            on_read_cancel_complete,
-        );
-    }
-    if (conn.is_writing) {
-        conn.write_cancel_active = true;
-        core_loop.cancel(
-            conn.loop,
-            &conn.write_completion,
-            &conn.write_cancel_completion,
-            TcpConnection,
-            conn,
-            on_write_cancel_complete,
-        );
+    // kqueue discards armed kevents when the descriptor closes, and a read or
+    // write completion canceled before submission can have its callback
+    // dropped by that backend. Skipping the cancels there is safe: callbacks
+    // already fetched for this tick run before the close completion, and the
+    // close callback clears the outstanding flags.
+    if (xev.backend != .kqueue) {
+        if (conn.read_active) {
+            conn.read_cancel_active = true;
+            core_loop.cancel(
+                conn.loop,
+                &conn.read_completion,
+                &conn.read_cancel_completion,
+                TcpConnection,
+                conn,
+                on_read_cancel_complete,
+            );
+        }
+        if (conn.is_writing) {
+            conn.write_cancel_active = true;
+            core_loop.cancel(
+                conn.loop,
+                &conn.write_completion,
+                &conn.write_cancel_completion,
+                TcpConnection,
+                conn,
+                on_write_cancel_complete,
+            );
+        }
     }
 
     if (builtin.os.tag == .windows) {
         close_socket(conn.socket.fd);
         conn.close_complete = true;
+        // IOCP drops callbacks for completions canceled before submission;
+        // those flags would otherwise keep the slot out of the pool forever.
+        if (conn.read_completion.state() != .active) conn.read_active = false;
+        if (conn.write_completion.state() != .active) conn.is_writing = false;
         release_closed_connection(conn);
         return;
     }
@@ -1262,6 +1309,14 @@ pub fn close_connection(conn: *TcpConnection) void {
 
                 const connection = user_data orelse return .disarm;
                 connection.close_complete = true;
+                if (xev.backend == .kqueue) {
+                    // The descriptor is closed, so no kevent callback can
+                    // arrive now; clear the flags the skipped cancels left set.
+                    connection.read_active = false;
+                    connection.is_writing = false;
+                    connection.read_cancel_active = false;
+                    connection.write_cancel_active = false;
+                }
                 release_closed_connection(connection);
                 return .disarm;
             }
@@ -1362,14 +1417,22 @@ fn init_server_options(
     const parsed_address = try std.Io.net.IpAddress.parse(address, port);
     var listener = try xev.TCP.init(parsed_address);
     errdefer close_unregistered_socket(listener);
-    if (reuse_port and builtin.os.tag != .windows) {
-        try std.posix.setsockopt(
-            listener.fd,
-            std.posix.SOL.SOCKET,
-            std.posix.SO.REUSEPORT,
-            &std.mem.toBytes(@as(c_int, 1)),
-        );
+    if (reuse_port) {
+        if (builtin.os.tag == .windows) {
+            // Windows has no SO_REUSEPORT. SO_REUSEADDR permits every worker to
+            // bind the address, and each accepted connection stays wholly inside
+            // the accepting worker's slab; kernel distribution is unspecified.
+            try set_reuse_address_windows(listener.fd);
+        } else {
+            try std.posix.setsockopt(
+                listener.fd,
+                std.posix.SOL.SOCKET,
+                std.posix.SO.REUSEPORT,
+                &std.mem.toBytes(@as(c_int, 1)),
+            );
+        }
     }
+    apply_listener_tuning(listener.fd);
     try listener.bind(parsed_address);
     try listener.listen(128);
 
@@ -1378,6 +1441,61 @@ fn init_server_options(
         .on_connection = callback,
         .user_data = user_data,
     };
+}
+
+/// Enables address reuse on an IOCP socket handle.
+///
+/// Zig's `std.posix` has no socket-option entry point for Windows, so the
+/// winsock symbol is bound here and only referenced by the Windows branch.
+const winsock_setsockopt = @extern(
+    *const fn (usize, c_int, c_int, [*]const u8, c_int) callconv(.winapi) c_int,
+    .{ .name = "setsockopt", .library_name = "ws2_32" },
+);
+
+fn set_reuse_address_windows(fd: std.os.windows.HANDLE) !void {
+    var value: c_int = 1;
+    const result = winsock_setsockopt(
+        @intFromPtr(fd),
+        std.os.windows.ws2_32.SOL.SOCKET,
+        std.os.windows.ws2_32.SO.REUSEADDR,
+        @ptrCast(&value),
+        @sizeOf(c_int),
+    );
+    if (result != 0) return error.SocketOptionFailed;
+}
+
+/// Defers accepts until the first application byte arrives.
+///
+/// Linux-only; other kernels keep their default accept policy, so a handshake
+/// that stalls still occupies a kernel backlog entry instead of a worker slot.
+fn apply_listener_tuning(fd: anytype) void {
+    if (builtin.os.tag == .linux) {
+        // Best effort: a kernel without TCP_DEFER_ACCEPT keeps the default policy.
+        std.posix.setsockopt(
+            fd,
+            std.posix.IPPROTO.TCP,
+            std.os.linux.TCP.DEFER_ACCEPT,
+            &std.mem.toBytes(defer_accept_seconds),
+        ) catch {};
+    }
+}
+
+/// Requests immediate ACKs once per accepted connection.
+///
+/// Linux treats quickack as one-shot connection state. Re-arming it on every
+/// read would add a syscall to the hot path and measurably reduce throughput,
+/// so the flag is requested at accept where it still removes the initial
+/// delayed-ACK stall. Other kernels keep their default ACK policy.
+pub fn request_quickack(fd: anytype) void {
+    if (builtin.os.tag == .linux) {
+        // Best effort: a kernel without TCP_QUICKACK keeps delayed ACKs.
+        std.posix.setsockopt(
+            fd,
+            std.posix.IPPROTO.TCP,
+            std.os.linux.TCP.QUICKACK,
+            &std.mem.toBytes(@as(c_int, 1)),
+        ) catch {};
+    }
 }
 
 /// Arms the listener's recurring accept completion.
@@ -1453,6 +1571,7 @@ fn on_accept_complete(
         return .disarm;
     }
 
+    request_quickack(accepted_socket.fd);
     server.on_connection(accepted_socket, server.user_data);
     return .rearm;
 }

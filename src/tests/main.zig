@@ -2,6 +2,7 @@ comptime {
     _ = @import("bleeding_edge_tests.zig");
     _ = @import("c_api_tests.zig");
     _ = @import("c_tests.zig");
+    _ = @import("config_tests.zig");
     _ = @import("core_tests.zig");
     _ = @import("fuzz_main.zig");
     _ = @import("framework_tests.zig");
@@ -13,6 +14,7 @@ comptime {
     _ = @import("quic_phase3_tests.zig");
     _ = @import("rpc_tests.zig");
     _ = @import("router_tests.zig");
+    _ = @import("shared_nothing_tests.zig");
     _ = @import("udp_tests.zig");
     _ = @import("ws_tests.zig");
     _ = @import("web_standards_tests.zig");

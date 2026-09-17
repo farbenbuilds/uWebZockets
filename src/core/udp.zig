@@ -186,6 +186,8 @@ pub fn quic_transport(comptime Engine: type) type {
             if (bytes_read != 0) {
                 self.engine.process_datagram(self.read_buffer[0..bytes_read], peer);
             }
+            // A handler may have started shutdown during datagram processing.
+            if (self.shutting_down) return .disarm;
             self.read_active = true;
             return .rearm;
         }
@@ -194,7 +196,10 @@ pub fn quic_transport(comptime Engine: type) type {
             if (!self.started or self.close_started or self.close_complete) return;
             const loop = self.loop orelse return;
 
-            if (self.read_active and !self.read_cancel_active) {
+            // kqueue drops the callback of a receive canceled before
+            // submission and discards armed kevents when the socket closes;
+            // the close callback clears the receive flags instead.
+            if (xev.backend != .kqueue and self.read_active and !self.read_cancel_active) {
                 self.read_cancel_active = true;
                 core_loop.cancel(
                     loop,
@@ -209,6 +214,9 @@ pub fn quic_transport(comptime Engine: type) type {
             if (builtin.os.tag == .windows) {
                 tcp.close_socket(self.socket.fd);
                 self.close_complete = true;
+                // IOCP drops callbacks for completions canceled before
+                // submission; clear a receive flag that can never clear.
+                if (self.read_completion.state() != .active) self.read_active = false;
                 return;
             }
             self.socket.close(
@@ -244,6 +252,11 @@ pub fn quic_transport(comptime Engine: type) type {
             const self = user_data.?;
             _ = result catch |err| std.debug.print("udp close error: {}\n", .{err});
             self.close_complete = true;
+            if (xev.backend == .kqueue) {
+                // The socket is closed, so no kevent callback can arrive now.
+                self.read_active = false;
+                self.read_cancel_active = false;
+            }
             return .disarm;
         }
 
@@ -291,6 +304,8 @@ pub fn quic_transport(comptime Engine: type) type {
             if (self.shutting_down) return .disarm;
 
             self.engine.process();
+            // A handler may have started shutdown during processing.
+            if (self.shutting_down) return .disarm;
             self.timer_active = true;
             self.timer.run(
                 loop,

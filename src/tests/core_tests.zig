@@ -170,3 +170,32 @@ test "timer: stop drains the active completion" {
     try loop.run(&event_loop);
     try std.testing.expect(!active_timer.active);
 }
+
+test "timer: stop from inside the tick callback terminates the timer" {
+    const Stop = struct {
+        var timer_context: ?*timer.TimerContext = null;
+        var loop_ptr: ?*loop.Loop = null;
+        var ticks: usize = 0;
+
+        fn tick() void {
+            ticks += 1;
+            timer.stop_timer(timer_context.?, loop_ptr.?);
+        }
+    };
+
+    var event_loop = try loop.init();
+    defer loop.deinit(&event_loop);
+    var stopping_timer = try timer.init_timer(1, Stop.tick);
+    defer timer.deinit_timer(&stopping_timer);
+    Stop.timer_context = &stopping_timer;
+    Stop.loop_ptr = &event_loop;
+    Stop.ticks = 0;
+
+    timer.start_timer(&stopping_timer, &event_loop);
+    // A single tick is enough: the callback stops the timer and the tick must
+    // not re-arm it, otherwise an until_done run would never return.
+    try event_loop.xev_loop.run(.once);
+    try std.testing.expectEqual(@as(usize, 1), Stop.ticks);
+    try std.testing.expect(!stopping_timer.active);
+    try std.testing.expect(stopping_timer.stopping);
+}
