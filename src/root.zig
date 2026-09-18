@@ -101,6 +101,12 @@ pub const transport = @import("core/transport.zig");
 pub const ktls = @import("core/ktls.zig");
 /// AF_XDP zero-copy socket and UMEM ring support.
 pub const xdp = @import("xdp/socket.zig");
+/// Opportunistic AF_XDP transport policy, UMEM helpers, and fallback state.
+pub const xdp_transport = @import("xdp/transport.zig");
+/// Fixed-capacity zero-allocation Prometheus metrics registry.
+pub const metrics = @import("observability/metrics.zig");
+/// Pinned eBPF per-CPU histogram reader.
+pub const ebpf = @import("observability/ebpf.zig");
 /// Generation-checked shared memory and Cap'n Proto envelopes.
 pub const shared_memory = @import("ffi/shared_memory.zig");
 /// Completion-driven UDP/QUIC transport API.
@@ -115,6 +121,12 @@ pub const http2_server = @import("http2/server.zig");
 pub const http3_extensions = @import("quic/http3_extensions.zig");
 /// Bounded WebTransport-over-HTTP/3 draft protocol state.
 pub const webtransport = @import("quic/webtransport.zig");
+/// Fixed-capacity SoA queue for pending WebTransport datagrams.
+pub const datagram_ring = @import("quic/datagram_ring.zig");
+/// Fixed-capacity WebTransport datagram route table.
+pub const datagram = @import("router/datagram.zig");
+/// Requested transport backend selected through `ServerConfig.transport`.
+pub const TransportMode = @import("router/config.zig").TransportMode;
 
 comptime {
     _ = @import("c_api.zig");

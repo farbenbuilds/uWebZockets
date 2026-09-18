@@ -3,6 +3,65 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.1.0] - 2026-09-19
+
+This release adds the unreliable low-latency datagram surface, an opportunistic
+AF_XDP transport, and continuous kernel-level observability. Every new hot path
+draws from the one startup slab and performs no heap allocation.
+
+### Added
+
+- WebTransport datagram routing in the server builder.
+  `Server.builder(...).with_webtransport_datagrams(max_size, slots)` reserves
+  the capacity and applications register session paths with `App.datagram` or
+  `App.datagram_context`, mirroring the HTTP route surface. One `DatagramRing`
+  per connection is carved from the startup slab as parallel metadata arrays
+  plus a fixed-stride payload region, so enqueue and drain never allocate; a
+  full ring drops without blocking the transport and increments
+  `datagrams_dropped`. `App.dispatch_datagram` is the HTTP/3 DATAGRAM boundary
+  and `App.next_datagram` drains a connection's queued copies.
+- `src/quic/datagram_ring.zig`, a bounded SoA FIFO over caller storage with
+  wrapping u32 cursors, drop-oldest support, and a lifetime drop counter.
+- `Preset.webtransport_realtime` reserves 1200-byte datagrams at depth 64 for
+  512 connections and enables the metrics endpoint.
+- Opt-in AF_XDP kernel bypass. `Preset.kernel_bypass` and
+  `with_kernel_bypass(true)` request the zero-copy path. `resolve_mode` removes
+  the request at compile time on non-Linux targets, and the runtime probe falls
+  back to the standard stack when the kernel or process privileges refuse
+  AF_XDP while recording the reason in `transport_availability`. The UMEM
+  region is page aligned inside the same startup slab as the connection pools,
+  and `src/xdp/transport.zig` owns the rings with a fixed free-frame stack so
+  frame recycling never allocates.
+- `src/xdp/socket.zig` now maps the TX ring, validates descriptor bounds, and
+  exposes `receive_frame`, `release_frame`, `transmit_frame`, and `reclaim_tx`.
+- Continuous eBPF observability. `src/observability/metrics.zig` renders a
+  fixed-capacity counter registry and an optional kernel latency histogram into
+  Prometheus text through one `std.Io.Writer.fixed` cursor, so formatting never
+  allocates. The hidden `/metrics` route (configurable with `with_metrics_path`)
+  serves it from a fixed stack buffer and folds in the pinned `uwz_latency`
+  per-CPU histogram through `src/observability/ebpf.zig`.
+- `src/observability/uwz_latency_bpf.c` and the extended `zig build ebpf` step
+  build the XDP redirect and latency histogram objects from one pipeline.
+- `with_observability(true)` carves a cache-line-aligned registry in the
+  startup slab; `observability`, `ebpf`, `xdp_transport`, `datagram`, and
+  `datagram_ring` are exported from the package root.
+
+### Changed
+
+- `ServerConfig` gains `transport`, `max_datagram_size`, `datagram_slots`,
+  `xdp_frame_size`, `xdp_frame_count`, `observability`, and `metrics_path`.
+  `required_alignment` reports the page alignment the bypass layout needs;
+  `init_configured` allocates with it and `init_from_slab` rejects misaligned
+  storage with `error.MisalignedSlab`.
+- The centralized test module re-exports the new modules through
+  `test_support`, so the suite runs without relative imports outside the module
+  root.
+
+### Security
+
+- AF_XDP remains a request, never an assumption: probe and ring failures cannot
+  fail startup and always leave the standard transport serving traffic.
+
 ## [1.0.9] - 2026-09-18
 
 This release supersedes the unreleased 1.0.7 and 1.0.8 lines: their planned

@@ -74,6 +74,7 @@ pub const Ring = struct {
     descriptors: [*]Descriptor,
     mask: u32,
     cached_consumer: u32 = 0,
+    cached_producer: u32 = 0,
 
     /// Returns one raw frame view directly into registered UMEM.
     pub fn receive(self: *Ring, umem: []u8) Error![]u8 {
@@ -89,6 +90,26 @@ pub const Ring = struct {
     pub fn release(self: *Ring) void {
         self.cached_consumer +%= 1;
         @atomicStore(u32, self.consumer, self.cached_consumer, .release);
+    }
+
+    /// Publishes one descriptor to the kernel consumer with release ordering.
+    pub fn produce(self: *Ring, address: u64, length: u32) Error!void {
+        const consumer = @atomicLoad(u32, self.consumer, .acquire);
+        const capacity = self.mask + 1;
+        if (self.cached_producer -% consumer >= capacity) return error.RingFull;
+        self.descriptors[self.cached_producer & self.mask] = .{
+            .address = address,
+            .length = length,
+            .options = 0,
+        };
+        self.cached_producer +%= 1;
+        @atomicStore(u32, self.producer, self.cached_producer, .release);
+    }
+
+    /// Frames published by the producer but not yet consumed by this side.
+    pub fn pending(self: *Ring) u32 {
+        const producer = @atomicLoad(u32, self.producer, .acquire);
+        return producer -% self.cached_consumer;
     }
 };
 
@@ -128,6 +149,7 @@ pub const XskSocket = struct {
     chunk_size: u32,
     offsets: MmapOffsets = undefined,
     receive_ring: ?Ring = null,
+    transmit_ring: ?Ring = null,
     fill_ring: ?AddressRing = null,
     completion_ring: ?AddressRing = null,
 
@@ -183,6 +205,12 @@ pub const XskSocket = struct {
             xdp_pgoff_rx_ring,
         );
         errdefer self.unmap_rings();
+        self.transmit_ring = try map_descriptor_ring(
+            self.fd,
+            self.offsets.transmit,
+            entries,
+            xdp_pgoff_tx_ring,
+        );
         self.fill_ring = try map_address_ring(
             self.fd,
             self.offsets.fill,
@@ -195,6 +223,49 @@ pub const XskSocket = struct {
             entries,
             xdp_umem_pgoff_completion_ring,
         );
+    }
+
+    /// Returns one received frame without advancing the consumer.
+    pub fn receive_frame(self: *XskSocket) Error!?[]u8 {
+        if (self.receive_ring) |*ring| {
+            const frame = ring.receive(self.umem) catch |err| switch (err) {
+                error.RingEmpty => return null,
+                else => return err,
+            };
+            return frame;
+        }
+        return null;
+    }
+
+    /// Advances the RX consumer after the caller finished with the frame.
+    pub fn release_frame(self: *XskSocket) void {
+        if (self.receive_ring) |*ring| ring.release();
+    }
+
+    /// Hands one aligned, bounded UMEM frame to the kernel TX path.
+    pub fn transmit_frame(self: *XskSocket, address: u64, length: u32) Error!void {
+        if (address > std.math.maxInt(usize)) return error.InvalidArgument;
+        const start: usize = @intCast(address);
+        if (start % self.chunk_size != 0) return error.InvalidArgument;
+        if (start > self.umem.len or self.chunk_size > self.umem.len - start) {
+            return error.InvalidArgument;
+        }
+        // The descriptor length must fit the frame the kernel may read from.
+        if (length > self.chunk_size) return error.InvalidArgument;
+        if (self.transmit_ring) |*ring| return ring.produce(address, length);
+        return error.InvalidArgument;
+    }
+
+    /// Reclaims one completed TX frame address; null when nothing completed.
+    pub fn reclaim_tx(self: *XskSocket) Error!?u64 {
+        if (self.completion_ring) |*ring| {
+            const address = ring.consume() catch |err| switch (err) {
+                error.RingEmpty => return null,
+                else => return err,
+            };
+            return address;
+        }
+        return null;
     }
 
     /// Gives one aligned UMEM frame to the kernel RX path without copying.
@@ -240,6 +311,10 @@ pub const XskSocket = struct {
             _ = linux.munmap(ring.mapping.ptr, ring.mapping.len);
             self.receive_ring = null;
         }
+        if (self.transmit_ring) |ring| {
+            _ = linux.munmap(ring.mapping.ptr, ring.mapping.len);
+            self.transmit_ring = null;
+        }
         if (self.fill_ring) |ring| {
             _ = linux.munmap(ring.mapping.ptr, ring.mapping.len);
             self.fill_ring = null;
@@ -259,12 +334,17 @@ fn map_descriptor_ring(fd: i32, offsets: RingOffset, entries: u32, offset: i64) 
         return error.InvalidArgument;
     };
     const mapping = try map_ring(fd, map_length, offset);
+    const producer: *u32 = @ptrCast(@alignCast(mapping.ptr + offsets.producer));
+    const consumer: *u32 = @ptrCast(@alignCast(mapping.ptr + offsets.consumer));
     return .{
         .mapping = mapping,
-        .producer = @ptrCast(@alignCast(mapping.ptr + offsets.producer)),
-        .consumer = @ptrCast(@alignCast(mapping.ptr + offsets.consumer)),
+        .producer = producer,
+        .consumer = consumer,
         .descriptors = @ptrCast(@alignCast(mapping.ptr + offsets.descriptor)),
         .mask = entries - 1,
+        // A reused mapping may already carry kernel progress; never start at zero.
+        .cached_consumer = @atomicLoad(u32, consumer, .monotonic),
+        .cached_producer = @atomicLoad(u32, producer, .monotonic),
     };
 }
 

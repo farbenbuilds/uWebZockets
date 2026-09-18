@@ -10,6 +10,9 @@ const core_tcp = @import("../core/tcp.zig");
 const http_parser = @import("../http/parser.zig");
 const ws_deflate = @import("../ws/deflate.zig");
 const rejection = @import("../http/rejection.zig");
+const xdp_transport = @import("../xdp/transport.zig");
+const datagram_ring = @import("../quic/datagram_ring.zig");
+const metrics_module = @import("../observability/metrics.zig");
 
 /// Request buffer stride alignment; keeps every body start SIMD-friendly.
 pub const request_buffer_alignment = 16;
@@ -20,6 +23,13 @@ pub const message_storage_alignment = 16;
 /// Every carved region starts on at least a cache line.
 pub const slab_alignment = @max(64, @alignOf(core_tcp.TcpConnection));
 
+/// Transport backend selected by a configuration.
+///
+/// `kernel_bypass` is a request, not a guarantee: `xdp_transport.resolve_mode`
+/// drops it on non-Linux targets and the runtime probe falls back to the
+/// standard stack when the kernel or process privileges refuse AF_XDP.
+pub const TransportMode = xdp_transport.Mode;
+
 /// Failures raised while validating a configuration or planning its slab.
 pub const Error = error{
     InvalidConnectionCapacity,
@@ -27,6 +37,10 @@ pub const Error = error{
     InvalidWriteQueueCapacity,
     InvalidBodyCapacity,
     InvalidIdleTimeout,
+    InvalidDatagramCapacity,
+    InvalidTransportConfiguration,
+    InvalidMetricsPath,
+    MisalignedSlab,
     SlabSizeOverflow,
     SlabTooSmall,
 };
@@ -49,6 +63,20 @@ pub const ServerConfig = struct {
     idle_timeout_ms: u64 = 120_000,
     /// Reserves per-connection RFC 7692 scratch inside the startup slab.
     compression: bool = false,
+    /// Requested transport backend; see `TransportMode`.
+    transport: TransportMode = .standard,
+    /// Largest single WebTransport datagram payload; zero disables datagrams.
+    max_datagram_size: usize = 0,
+    /// Pending datagram slots reserved per connection; zero disables datagrams.
+    datagram_slots: usize = 0,
+    /// AF_XDP UMEM chunk size in bytes; must be a power of two.
+    xdp_frame_size: usize = 2048,
+    /// AF_XDP UMEM frame count; must be a power of two.
+    xdp_frame_count: usize = 1024,
+    /// Serves the hidden Prometheus endpoint when enabled.
+    observability: bool = false,
+    /// Path of the observability endpoint; retained for the app lifetime.
+    metrics_path: []const u8 = "/metrics",
 
     /// Returns a copy with the named fields replaced.
     pub fn with(self: ServerConfig, overrides: anytype) ServerConfig {
@@ -69,6 +97,64 @@ pub const ServerConfig = struct {
         if (self.write_queue_size == 0) return error.InvalidWriteQueueCapacity;
         if (self.max_body_size == 0) return error.InvalidBodyCapacity;
         if (self.idle_timeout_ms > std.math.maxInt(i64)) return error.InvalidIdleTimeout;
+        try self.validate_datagrams();
+        try self.validate_transport();
+    }
+
+    fn validate_datagrams(self: ServerConfig) Error!void {
+        if (self.max_datagram_size == 0) {
+            if (self.datagram_slots != 0) return error.InvalidDatagramCapacity;
+            return;
+        }
+        if (self.datagram_slots == 0) return error.InvalidDatagramCapacity;
+        // The ring stores lengths as u32 and addresses slots with u32 cursors.
+        if (self.max_datagram_size > std.math.maxInt(u32)) return error.InvalidDatagramCapacity;
+        if (self.datagram_slots > std.math.maxInt(u32)) return error.InvalidDatagramCapacity;
+    }
+
+    fn validate_transport(self: ServerConfig) Error!void {
+        if (self.transport == .kernel_bypass) {
+            if (!std.math.isPowerOfTwo(self.xdp_frame_size)) {
+                return error.InvalidTransportConfiguration;
+            }
+            if (self.xdp_frame_size < 1024 or self.xdp_frame_size > 64 * 1024) {
+                return error.InvalidTransportConfiguration;
+            }
+            if (!std.math.isPowerOfTwo(self.xdp_frame_count) or self.xdp_frame_count == 0) {
+                return error.InvalidTransportConfiguration;
+            }
+            if (self.xdp_frame_count > xdp_transport.max_frames) {
+                return error.InvalidTransportConfiguration;
+            }
+        }
+        if (self.observability) {
+            if (self.metrics_path.len == 0 or self.metrics_path[0] != '/') {
+                return error.InvalidMetricsPath;
+            }
+        }
+    }
+
+    /// Bytes reserved per connection for all pending datagrams.
+    pub fn datagram_stride(self: ServerConfig) Error!usize {
+        if (self.max_datagram_size == 0) return 0;
+        return std.math.mul(usize, self.datagram_slots, self.max_datagram_size) catch
+            return error.SlabSizeOverflow;
+    }
+
+    /// AF_XDP UMEM bytes; zero when the standard transport is selected.
+    pub fn xdp_umem_bytes(self: ServerConfig) Error!usize {
+        if (self.transport != .kernel_bypass) return 0;
+        return std.math.mul(usize, self.xdp_frame_count, self.xdp_frame_size) catch
+            return error.SlabSizeOverflow;
+    }
+
+    /// Base alignment the owning allocation must satisfy for this configuration.
+    ///
+    /// AF_XDP registers the slab region itself as UMEM, and the kernel rejects
+    /// any registration that is not page aligned.
+    pub fn required_alignment(self: ServerConfig) usize {
+        if (self.transport == .kernel_bypass) return std.heap.page_size_min;
+        return slab_alignment;
     }
 
     /// Bytes reserved per connection for one HTTP/1.1 request.
@@ -141,6 +227,30 @@ pub const ServerConfig = struct {
             .max_body_size = 8 * 1024,
             .idle_timeout_ms = 300_000,
         };
+        /// AF_XDP kernel bypass with a page-aligned UMEM carved from the slab.
+        ///
+        /// The bypass is opportunistic: platforms without AF_XDP and processes
+        /// without the required privileges transparently use the standard path.
+        pub const kernel_bypass: ServerConfig = .{
+            .max_connections = 512,
+            .max_ws_message_size = 8 * 1024,
+            .write_queue_size = 32 * 1024,
+            .max_body_size = 16 * 1024,
+            .idle_timeout_ms = 60_000,
+            .transport = .kernel_bypass,
+            .observability = true,
+        };
+        /// Unreliable WebTransport datagrams with one SoA ring per connection.
+        pub const webtransport_realtime: ServerConfig = .{
+            .max_connections = 512,
+            .max_ws_message_size = 8 * 1024,
+            .write_queue_size = 32 * 1024,
+            .max_body_size = 4 * 1024,
+            .idle_timeout_ms = 60_000,
+            .max_datagram_size = 1200,
+            .datagram_slots = 64,
+            .observability = true,
+        };
     };
 };
 
@@ -164,6 +274,22 @@ const LayoutOffsets = struct {
     message_end: usize,
     compression_start: usize,
     compression_end: usize,
+    datagram_session_start: usize,
+    datagram_session_end: usize,
+    datagram_sequence_start: usize,
+    datagram_sequence_end: usize,
+    datagram_length_start: usize,
+    datagram_length_end: usize,
+    datagram_ring_start: usize,
+    datagram_ring_end: usize,
+    datagram_payload_start: usize,
+    datagram_payload_end: usize,
+    xdp_umem_start: usize,
+    xdp_umem_end: usize,
+    xdp_transport_start: usize,
+    xdp_transport_end: usize,
+    metrics_start: usize,
+    metrics_end: usize,
     total_bytes: usize,
 };
 
@@ -183,6 +309,26 @@ pub const SlabLayout = struct {
     ws_messages: []u8,
     /// Optional paired DEFLATE scratch, zero-length when compression is off.
     compression_scratch: []u8,
+    /// Per-connection datagram session ids, `datagram_slots` per connection.
+    datagram_session_ids: []u64,
+    /// Per-connection datagram sequence numbers.
+    datagram_sequences: []u64,
+    /// Per-connection datagram payload lengths.
+    datagram_payload_lengths: []u32,
+    /// One persistent ring cursor struct per connection.
+    datagram_rings: []datagram_ring.DatagramRing,
+    /// Per-connection fixed-stride datagram payload storage.
+    datagram_payloads: []u8,
+    /// Byte distance between consecutive connections' datagram payload slabs.
+    datagram_stride: usize,
+    /// AF_XDP UMEM region; zero-length unless kernel bypass is selected.
+    xdp_umem: []align(std.heap.page_size_min) u8,
+    /// Storage for the optional `xdp_transport.XdpTransport`; zero-length
+    /// unless kernel bypass is selected. The consumer casts it after checking
+    /// the configuration because the region may be empty.
+    xdp_transport_bytes: []u8,
+    /// Cache-line-aligned metrics registry; null unless observability is on.
+    metrics_registry: ?*metrics_module.Registry,
     /// Byte distance between consecutive request buffers.
     request_buffer_stride: usize,
     /// Byte distance between consecutive paired compression scratch regions.
@@ -196,6 +342,9 @@ pub const SlabLayout = struct {
     pub fn carve(slab: []u8, config: ServerConfig) Error!SlabLayout {
         const offsets = try layout_offsets(config);
         if (slab.len < offsets.total_bytes) return error.SlabTooSmall;
+        if (@intFromPtr(slab.ptr) % config.required_alignment() != 0) {
+            return error.MisalignedSlab;
+        }
 
         return .{
             .slab = slab[0..offsets.total_bytes],
@@ -211,10 +360,45 @@ pub const SlabLayout = struct {
             .write_queues = slab[offsets.write_start..offsets.write_end],
             .ws_messages = slab[offsets.message_start..offsets.message_end],
             .compression_scratch = slab[offsets.compression_start..offsets.compression_end],
+            .datagram_session_ids = std.mem.bytesAsSlice(
+                u64,
+                region_bytes(u64, slab, offsets.datagram_session_start, offsets.datagram_session_end),
+            ),
+            .datagram_sequences = std.mem.bytesAsSlice(
+                u64,
+                region_bytes(u64, slab, offsets.datagram_sequence_start, offsets.datagram_sequence_end),
+            ),
+            .datagram_payload_lengths = std.mem.bytesAsSlice(
+                u32,
+                region_bytes(u32, slab, offsets.datagram_length_start, offsets.datagram_length_end),
+            ),
+            .datagram_rings = if (config.max_datagram_size != 0)
+                std.mem.bytesAsSlice(
+                    datagram_ring.DatagramRing,
+                    region_bytes(
+                        datagram_ring.DatagramRing,
+                        slab,
+                        offsets.datagram_ring_start,
+                        offsets.datagram_ring_end,
+                    ),
+                )
+            else
+                empty_datagram_rings(),
+            .datagram_payloads = slab[offsets.datagram_payload_start..offsets.datagram_payload_end],
+            .datagram_stride = try config.datagram_stride(),
+            .xdp_umem = if (config.transport == .kernel_bypass)
+                @alignCast(slab[offsets.xdp_umem_start..offsets.xdp_umem_end])
+            else
+                empty_page_region(),
+            .xdp_transport_bytes = slab[offsets.xdp_transport_start..offsets.xdp_transport_end],
+            .metrics_registry = if (config.observability)
+                @ptrCast(@alignCast(slab[offsets.metrics_start..offsets.metrics_end].ptr))
+            else
+                null,
             .request_buffer_stride = try config.request_buffer_stride(),
             .compression_stride = if (config.compression) try config.compression_stride() else 0,
             .total_bytes = offsets.total_bytes,
-            .alignment = slab_alignment,
+            .alignment = config.required_alignment(),
         };
     }
 };
@@ -269,9 +453,98 @@ fn layout_offsets(config: ServerConfig) Error!LayoutOffsets {
     cursor = try add_product(cursor, compression_stride, config.max_connections);
     offsets.compression_end = cursor;
 
+    // Datagram metadata stays in its own arrays so a queue drain touches only
+    // the hot length/round-trip fields and never the payload pages.
+    const datagram_stride = try config.datagram_stride();
+    const datagram_slot_count = std.math.mul(
+        usize,
+        config.datagram_slots,
+        config.max_connections,
+    ) catch return error.SlabSizeOverflow;
+
+    cursor = try align_checked(cursor, @alignOf(u64));
+    offsets.datagram_session_start = cursor;
+    cursor = try add_product(cursor, @sizeOf(u64), datagram_slot_count);
+    offsets.datagram_session_end = cursor;
+
+    offsets.datagram_sequence_start = cursor;
+    cursor = try add_product(cursor, @sizeOf(u64), datagram_slot_count);
+    offsets.datagram_sequence_end = cursor;
+
+    cursor = try align_checked(cursor, @alignOf(u32));
+    offsets.datagram_length_start = cursor;
+    cursor = try add_product(cursor, @sizeOf(u32), datagram_slot_count);
+    offsets.datagram_length_end = cursor;
+
+    // The cursors must outlive any single call, so the ring structs are carved
+    // per connection instead of being rebuilt from the metadata arrays.
+    cursor = try align_checked(cursor, @alignOf(datagram_ring.DatagramRing));
+    offsets.datagram_ring_start = cursor;
+    cursor = try add_product(
+        cursor,
+        @sizeOf(datagram_ring.DatagramRing),
+        config.max_connections,
+    );
+    offsets.datagram_ring_end = cursor;
+
+    cursor = try align_checked(cursor, request_buffer_alignment);
+    offsets.datagram_payload_start = cursor;
+    cursor = try add_product(cursor, datagram_stride, config.max_connections);
+    offsets.datagram_payload_end = cursor;
+
+    // UMEM is registered directly from the slab, so the bypass path pays for a
+    // page-aligned region while the standard path carves nothing at all.
+    if (config.transport == .kernel_bypass) {
+        const umem_bytes = try config.xdp_umem_bytes();
+        cursor = try align_checked(cursor, std.heap.page_size_min);
+        offsets.xdp_umem_start = cursor;
+        cursor = std.math.add(usize, cursor, umem_bytes) catch return error.SlabSizeOverflow;
+        offsets.xdp_umem_end = cursor;
+
+        cursor = try align_checked(cursor, @alignOf(xdp_transport.XdpTransport));
+        offsets.xdp_transport_start = cursor;
+        cursor = std.math.add(
+            usize,
+            cursor,
+            @sizeOf(xdp_transport.XdpTransport),
+        ) catch return error.SlabSizeOverflow;
+        offsets.xdp_transport_end = cursor;
+    } else {
+        offsets.xdp_umem_start = cursor;
+        offsets.xdp_umem_end = cursor;
+        offsets.xdp_transport_start = cursor;
+        offsets.xdp_transport_end = cursor;
+    }
+
+    // The registry is always carved with its cache-line alignment so the
+    // owning App struct never has to embed a 64-byte-aligned value.
+    cursor = try align_checked(cursor, @alignOf(metrics_module.Registry));
+    offsets.metrics_start = cursor;
+    if (config.observability) {
+        cursor = std.math.add(
+            usize,
+            cursor,
+            @sizeOf(metrics_module.Registry),
+        ) catch return error.SlabSizeOverflow;
+    }
+    offsets.metrics_end = cursor;
+
     offsets.total_bytes = cursor;
     return offsets;
 }
+
+/// Page-aligned empty region returned when the bypass layout is not carved.
+pub fn empty_page_region() []align(std.heap.page_size_min) u8 {
+    return empty_page_storage[0..];
+}
+
+/// Empty ring slice returned when datagrams are disabled.
+pub fn empty_datagram_rings() []datagram_ring.DatagramRing {
+    return empty_datagram_ring_storage[0..];
+}
+
+var empty_page_storage: [0]u8 align(std.heap.page_size_min) = .{};
+var empty_datagram_ring_storage: [0]datagram_ring.DatagramRing = .{};
 
 fn add_product(cursor: usize, element_size: usize, count: usize) Error!usize {
     const bytes = std.math.mul(usize, element_size, count) catch return error.SlabSizeOverflow;
