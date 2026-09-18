@@ -22,7 +22,8 @@ apply.
   `skills-lock.json`. If a referenced skill is missing, stop and report drift
   instead of guessing.
 - **Global skills**: supplied by the host opencode install, currently
-  `graphify`. They are not vendored here; treat them as read-only tooling.
+  `graphify`. The skill is not vendored here; its opencode plugin is registered
+  locally under `.opencode/`.
 - **Process**: `using-agent-skills` routes the phase; `spec-driven-development`,
   `planning-and-task-breakdown`, and `incremental-implementation` shape new
   work; `test-driven-development` proves behavior changes;
@@ -38,19 +39,21 @@ apply.
 - **Domain**: Zig and systems (`zig-*`, `cmake`, `ninja`, `gcc`,
   `c-systems-programming`, `nix-best-practices`) and design (`dod`, `ponytail`,
   `caveman`, `functional-programming-fundamentals`).
-- `frontend-ui-engineering` and `browser-testing-with-devtools` target
-  browser-rendered UIs and do not apply to this repository; load them only if
-  such a surface is ever introduced.
-
-## Knowledge Graph (graphify)
-`graphify` is a global opencode plugin that builds a persistent knowledge graph
-under `graphify-out/` (generated, git-ignored, never committed). For any
-architecture, file-relationship, or "how does X work" question, check
-`graphify-out/graph.json` first and query it instead of re-scanning the tree.
-Rebuild only on explicit request; a scoped code change must not regenerate the
-graph.
 
 ## Integrations
 - Seamlessly interact with C/C++ and Go projects via Zig FFI.
 - Target libraries: BoringSSL, lsquic, libdeflate.
 - **Compilation Strategy**: Actively utilize the `cmake`, `ninja`, `gcc`, and `c-systems-programming` skills to configure robust compilation steps in `build.zig` for all C/C++ git submodules.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+When the user types `/graphify`, use the installed graphify skill or instructions before doing anything else.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip graphify. Only skip graphify if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).

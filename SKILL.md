@@ -72,8 +72,3 @@ fits the current step and never stack processes that do not apply.
 - Rebuild only on explicit request (`/graphify`); never regenerate the graph as a side effect of a scoped code change.
 - `graphify-out/` is generated and git-ignored; do not commit it.
 - Treat graph answers as navigation hints and confirm behavior in the source.
-
-## Not Applicable
-`frontend-ui-engineering` and `browser-testing-with-devtools` target
-browser-rendered UIs; this repository has no such surface. Load them only if one
-is ever introduced.
