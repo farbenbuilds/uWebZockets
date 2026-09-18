@@ -1,5 +1,10 @@
 name: Setup build environment
-description: Install Nix and restore the shared Zig and C/C++ build caches.
+description: Install Nix and restore the per-mode Zig and C/C++ build caches.
+
+inputs:
+  cache-suffix:
+    description: Per-mode cache discriminator (for example debug, asan, release).
+    required: true
 
 runs:
   using: composite
@@ -16,6 +21,20 @@ runs:
         path: |
           ~/.cache/zig
           .zig-cache/vendor-build-v4
-        key: ${{ runner.os }}-zig-v6-${{ hashFiles('build.zig', 'builds/**/*.zig', 'build.zig.zon', 'flake.nix', 'flake.lock', 'vendor/**/CMakeLists.txt') }}
+          tests/package_consumer/.zig-cache/vendor-build-v4
+        key: ${{ runner.os }}-zig-v7-${{ inputs.cache-suffix }}-${{ hashFiles('build.zig', 'builds/**/*.zig', 'build.zig.zon', 'flake.nix', 'flake.lock', 'patches/**', 'vendor/**') }}
         restore-keys: |
-          ${{ runner.os }}-zig-v6-
+          ${{ runner.os }}-zig-v7-${{ inputs.cache-suffix }}-
+
+    # The cache restores build outputs with their original mtimes, which are older
+    # than the fresh checkout. Ninja would then treat every restored object as
+    # stale and rebuild it. Bumping the restored trees past the checkout keeps a
+    # cache hit from turning into a full C/C++ rebuild.
+    - name: Refresh restored vendor timestamps
+      shell: bash
+      run: |
+        for tree in .zig-cache/vendor-build-v4 tests/package_consumer/.zig-cache/vendor-build-v4; do
+          if [ -d "$tree" ]; then
+            find "$tree" -exec touch {} +
+          fi
+        done
