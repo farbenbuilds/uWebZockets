@@ -25,3 +25,6 @@ tests/autobahn/reports/
 
 # certificates
 certs/
+
+# generated knowledge graph (graphify)
+graphify-out/

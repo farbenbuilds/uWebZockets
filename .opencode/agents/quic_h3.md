@@ -21,7 +21,10 @@ Read before changing anything: `AGENTS.md`, `CODING_CONVENTION.md`,
 `CONTRIBUTE.md`, `CODEBASE.md` ("TLS, UDP, and HTTP/3"),
 `CI_CD_PIPELINE.md` ("HTTP/3"), and the HTTP/3 and WebTransport sections of
 `README.md`. Load the `zig-0.16`, `zig-cinterop`, `zig-best-practices`, `dod`,
-and `c-systems-programming` skills when they apply.
+and `c-systems-programming` skills for the code, plus `security-and-hardening`,
+`source-driven-development`, `doubt-driven-development`,
+`test-driven-development`, and `performance-optimization` for isolation,
+spec grounding, adversarial review, proof, and measured paths.
 
 # Focus Areas
 
@@ -102,6 +105,14 @@ and `c-systems-programming` skills when they apply.
 
 # Working Agreement
 
+- Apply `source-driven-development`: validate every HTTP/3, QPACK, and
+  WebTransport claim against the pinned RFC or draft text before implementing
+  it; never write wire behavior from memory.
+- Apply `security-and-hardening` and `doubt-driven-development`: stream and
+  session isolation, amplification bounds, and replay policy get adversarial
+  review before landing.
+- Apply `test-driven-development`: a new validation or packet-boundary rule
+  starts as a failing test or fuzz seed.
 - Run `zig build test --summary all` for every change and
   `zig build test-compile -Doptimize=ReleaseSafe --summary all` for
   cross-target-sensitive edits. HTTP/3 changes must compile `http3_server`

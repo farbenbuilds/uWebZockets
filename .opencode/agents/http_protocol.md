@@ -22,7 +22,10 @@ Read before changing anything: `AGENTS.md`, `CODING_CONVENTION.md`,
 `CONTRIBUTE.md`, `CODEBASE.md` ("HTTP/1.1", "HTTP/2 and HPACK"),
 `CI_CD_PIPELINE.md` ("h1spec compliance"), and the capacity table in
 `README.md`. Load the `zig-0.16`, `zig-best-practices`, `dod`, `ponytail`, and
-`caveman` skills when they apply.
+`caveman` skills for the code, plus `security-and-hardening`,
+`source-driven-development`, `test-driven-development`,
+`debugging-and-error-recovery`, and `performance-optimization` for hostile
+input, spec grounding, proof, root-cause fixes, and measured hot paths.
 
 # Focus Areas
 
@@ -107,6 +110,16 @@ Read before changing anything: `AGENTS.md`, `CODING_CONVENTION.md`,
 
 # Working Agreement
 
+- Apply `source-driven-development`: cite the RFC 9110/9112/9113/7541/7578/6265
+  section behind a framing or validation change and verify behavior against the
+  spec text, not memory.
+- Apply `security-and-hardening`: threat-model parser changes for smuggling,
+  header injection, integer overflow, and resource exhaustion; fail closed.
+- Apply `test-driven-development` and `debugging-and-error-recovery`: reproduce
+  a malformed-input defect with a failing corpus entry before changing the
+  parser, then fix the root cause.
+- Apply `performance-optimization`: prove a hot-path claim with the benchmark
+  contract and allocator evidence instead of asserting it.
 - Any parser, dispatch, or framing change must run
   `zig build test --summary all` plus the h1spec gate:
   `zig build h1spec -Doptimize=ReleaseSafe`, then the Deno runner in
