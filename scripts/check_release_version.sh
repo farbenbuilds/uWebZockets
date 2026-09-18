@@ -28,30 +28,26 @@ printf '%s\n' "$expected_version" | grep -Eq \
     '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$' ||
     fail "release version is not valid Semantic Versioning"
 
-root_version=$(sed -n \
-    's/^pub const version = std.SemanticVersion{ \.major = \([0-9][0-9]*\), \.minor = \([0-9][0-9]*\), \.patch = \([0-9][0-9]*\) };$/\1.\2.\3/p' \
-    build.zig)
-require_single_value "build.zig" "$root_version"
+# The Zig source of truth. Every other copy is compared against it.
+source_version=$(sed -n \
+    's/^pub const semantic = std.SemanticVersion{ \.major = \([0-9][0-9]*\), \.minor = \([0-9][0-9]*\), \.patch = \([0-9][0-9]*\) };$/\1.\2.\3/p' \
+    src/version.zig)
+require_single_value "src/version.zig" "$source_version"
+
+grep -Fq 'pub const version = @import("src/version.zig").semantic;' build.zig ||
+    fail "build.zig must derive its version from src/version.zig"
 
 flake_version=$(sed -n \
     's/^[[:space:]]*releaseVersion = "\([^"]*\)";/\1/p' flake.nix)
 require_single_value "flake.nix" "$flake_version"
 
-abi_major=$(sed -n \
-    's/^#define UWZ_VERSION_MAJOR \([0-9][0-9]*\)$/\1/p' include/uWebZockets.h)
-abi_minor=$(sed -n \
-    's/^#define UWZ_VERSION_MINOR \([0-9][0-9]*\)$/\1/p' include/uWebZockets.h)
-abi_patch=$(sed -n \
-    's/^#define UWZ_VERSION_PATCH \([0-9][0-9]*\)$/\1/p' include/uWebZockets.h)
+abi_major=$(sed -n 's/^#define UWZ_VERSION_MAJOR \([0-9][0-9]*\)$/\1/p' include/uWebZockets.h)
+abi_minor=$(sed -n 's/^#define UWZ_VERSION_MINOR \([0-9][0-9]*\)$/\1/p' include/uWebZockets.h)
+abi_patch=$(sed -n 's/^#define UWZ_VERSION_PATCH \([0-9][0-9]*\)$/\1/p' include/uWebZockets.h)
 require_single_value "UWZ_VERSION_MAJOR" "$abi_major"
 require_single_value "UWZ_VERSION_MINOR" "$abi_minor"
 require_single_value "UWZ_VERSION_PATCH" "$abi_patch"
 abi_version="${abi_major}.${abi_minor}.${abi_patch}"
-
-c_api_version=$(sed -n \
-    '/^pub export fn uwz_version()/,/^}/s/^[[:space:]]*return "\([^"]*\)";/\1/p' \
-    src/c_api.zig)
-require_single_value "uwz_version" "$c_api_version"
 
 version_core=${expected_version%%+*}
 version_core=${version_core%%-*}
@@ -61,14 +57,12 @@ version_patch=$(printf '%s\n' "$version_core" | cut -d. -f3)
 
 [ "$expected_version" = "$manifest_version" ] ||
     fail "build.zig.zon version does not match $expected_version"
-[ "$version_core" = "$root_version" ] ||
-    fail "build.zig version does not match $version_core"
+[ "$version_core" = "$source_version" ] ||
+    fail "src/version.zig version does not match $version_core"
 [ "$expected_version" = "$flake_version" ] ||
     fail "flake.nix version does not match $expected_version"
 [ "$version_core" = "$abi_version" ] ||
     fail "C ABI macros do not match $version_core"
-[ "$expected_version" = "$c_api_version" ] ||
-    fail "uwz_version does not match $expected_version"
 
 grep -Fq "static_assert(UWZ_VERSION_MAJOR == $version_major);" \
     tests/c_api/header_cpp.cc || fail "C++ major-version assertion is stale"

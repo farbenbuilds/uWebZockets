@@ -10,6 +10,7 @@ const WebSocket = @import("ws/socket.zig").WebSocket;
 const TcpConnection = @import("core/tcp.zig").TcpConnection;
 const QuicStream = @import("quic/stream.zig").QuicStream;
 const zslay = @import("zslay");
+const version = @import("version.zig");
 
 const max_connections = 1024;
 const max_c_routes = 64;
@@ -110,7 +111,7 @@ const CreateMode = enum {
 
 /// Returns the versioned C ABI string.
 pub export fn uwz_version() [*c]const u8 {
-    return "1.1.0";
+    return version.string;
 }
 
 /// Returns a static name for a versioned C error code.

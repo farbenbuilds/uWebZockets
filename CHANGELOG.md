@@ -56,6 +56,12 @@ draws from the one startup slab and performs no heap allocation.
 - The centralized test module re-exports the new modules through
   `test_support`, so the suite runs without relative imports outside the module
   root.
+- `src/version.zig` is now the single Zig source of truth for the release
+  version; `build.zig` derives its `std.SemanticVersion` from it, and the C ABI
+  and OpenAPI defaults read the same module. `scripts/bump_version.sh` rewrites
+  the manifest, C ABI macros, C/C++ version assertions, documentation headers,
+  and the changelog skeleton in one command, and
+  `scripts/check_release_version.sh` fails lint CI when any copy drifts.
 
 ### Security
 

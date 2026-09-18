@@ -59,6 +59,7 @@ uWebZockets/
 ├── include/uWebZockets.h     # versioned C ABI declarations
 ├── src/
 │   ├── root.zig              # supported public API
+│   ├── version.zig           # single Zig source of truth for the release version
 │   ├── c_api.zig             # exported C ABI implementation
 │   ├── core/                 # libxev I/O plus transport-neutral protocol core
 │   │   ├── affinity.zig      # physical-core selection and thread pinning
@@ -282,8 +283,12 @@ this path, while runtime interoperability remains Tier 2.
 
 ## Build graph
 
-The root `build.zig` declares version 1.1.0 and delegates directly to
-`builds/orchestrator.zig`. Focused modules map Zig optimization modes to CMake
+`src/version.zig` is the single Zig source of truth for the release version;
+the root `build.zig` derives its `std.SemanticVersion` from it and delegates
+directly to `builds/orchestrator.zig`. `scripts/bump_version.sh` rewrites the
+package manifest, the C ABI macros, the C/C++ tests, the documentation
+headers, and the changelog skeleton, and `scripts/check_release_version.sh`
+fails the lint workflow if any copy drifts. Focused modules map Zig optimization modes to CMake
 build types and invoke Ninja for BoringSSL, lsquic, and libdeflate. The
 `zig-cc` and `zig-c++` wrappers pass
 the selected target triple to cross builds. Vendor caches are separated by
