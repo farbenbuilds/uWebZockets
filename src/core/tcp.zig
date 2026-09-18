@@ -19,6 +19,7 @@ const DeflateContext = @import("../ws/deflate.zig").Context;
 const http2_server = @import("../http2/server.zig");
 const http_rejection = @import("../http/rejection.zig");
 const zero_copy = @import("zero_copy.zig");
+const tcp_file = @import("tcp_file.zig");
 const zslay = @import("zslay");
 
 /// Bytes read from one POSIX socket completion at a time.
@@ -343,7 +344,7 @@ pub const TcpConnection = struct {
 
     fn write_http2_parts(context: *anyopaque, parts: []const []const u8) !void {
         const self: *TcpConnection = @ptrCast(@alignCast(context));
-        try self.write_data_parts(parts);
+        try tcp_file.write_data_parts(self, parts);
     }
 
     fn ws_http2_data(
@@ -785,7 +786,7 @@ pub const TcpConnection = struct {
         self.resume_async_dispatch();
     }
 
-    fn resume_async_dispatch(self: *TcpConnection) void {
+    pub fn resume_async_dispatch(self: *TcpConnection) void {
         self.dispatch_suspended = false;
         const consumed = self.pending_request_consumed;
         self.pending_request_consumed = 0;
@@ -940,30 +941,11 @@ pub const TcpConnection = struct {
             if (read_bytes <= 0) return error.TlsWriteFailed;
 
             const encrypted = self.tls_write_buffer[0..@intCast(read_bytes)];
-            try self.enqueue_plain_parts(&.{encrypted});
+            try tcp_file.enqueue_plain_parts(self, &.{encrypted});
         }
     }
 
-    fn enqueue_plain_parts(self: *TcpConnection, parts: []const []const u8) !void {
-        if (self.closing) return error.ConnectionClosed;
-
-        var total_len: usize = 0;
-        for (parts) |part| {
-            if (part.len > self.write_queue.len - total_len) return error.WouldBlock;
-            total_len += part.len;
-        }
-        if (total_len > self.write_queue.len - self.write_len) return error.WouldBlock;
-        if (total_len == 0) return;
-
-        const tail = (self.write_head + self.write_len) % self.write_queue.len;
-        _ = copy_parts_to_ring(self.write_queue, tail, parts);
-
-        self.write_len += total_len;
-        if (self.write_len >= self.write_queue.len / 2) self.was_backpressured = true;
-        self.start_write();
-    }
-
-    fn write_tls_parts(self: *TcpConnection, parts: []const []const u8) !void {
+    pub fn write_tls_parts(self: *TcpConnection, parts: []const []const u8) !void {
         const ssl = self.ssl orelse return error.TlsUnavailable;
         const network_bio = self.network_bio orelse return error.TlsUnavailable;
 
@@ -1023,7 +1005,7 @@ pub const TcpConnection = struct {
         try self.flush_tls_out();
     }
 
-    fn start_write(self: *TcpConnection) void {
+    pub fn start_write(self: *TcpConnection) void {
         if (self.is_writing or self.write_len == 0 or self.closing) return;
 
         const contiguous_len = @min(self.write_len, self.write_queue.len - self.write_head);
@@ -1041,14 +1023,7 @@ pub const TcpConnection = struct {
 
     /// Copies one plaintext slice into the bounded transport write path.
     pub fn write_data(self: *TcpConnection, data: []const u8) !void {
-        try self.write_data_parts(&.{data});
-    }
-
-    /// Copies scatter/gather plaintext parts atomically into the write path.
-    pub fn write_data_parts(self: *TcpConnection, parts: []const []const u8) !void {
-        if (self.closing or self.close_when_drained) return error.ConnectionClosed;
-        if (self.ssl != null) return self.write_tls_parts(parts);
-        return self.enqueue_plain_parts(parts);
+        try tcp_file.write_data_parts(self, &.{data});
     }
 
     /// Streams an owned regular file as the response body at the kernel boundary.
@@ -1100,112 +1075,6 @@ pub const TcpConnection = struct {
         self.file_body = null;
         self.file_remaining = 0;
         file.close(self.io);
-    }
-
-    fn finish_file_body(self: *TcpConnection) void {
-        const file = self.file_body orelse return;
-        self.file_body = null;
-        self.file_remaining = 0;
-        file.close(self.io);
-
-        if (self.file_close_after) {
-            self.file_close_after = false;
-            self.dispatch_suspended = false;
-            close_after_flush(self);
-            return;
-        }
-        if (self.dispatch_suspended) self.resume_async_dispatch();
-    }
-
-    /// Pushes queued plaintext, then streams the file until the socket stalls.
-    ///
-    /// The kernel path needs a nonblocking socket: a blocking `sendfile` sleeps
-    /// until its full count is transferred. io_uring sockets are blocking, so
-    /// the transfer opens a temporary nonblocking window and closes it before
-    /// any completion is queued. A tick transfers at most `file_tick_budget`
-    /// bytes so one large asset cannot starve the worker.
-    fn pump_file_body(self: *TcpConnection) void {
-        if (comptime !zero_copy.kernel_send_supported) return;
-        const file = self.file_body orelse return;
-        if (self.closing or self.is_writing or self.write_len != 0) return;
-
-        const window = zero_copy.open_nonblocking_window(self.socket.fd);
-        if (window == .failed) {
-            self.dribble_file_body(file);
-            return;
-        }
-
-        var budget = file_tick_budget;
-        while (self.file_remaining != 0 and budget != 0) {
-            const chunk: usize = @intCast(@min(
-                @min(self.file_remaining, zero_copy.max_chunk),
-                budget,
-            ));
-            const sent = zero_copy.send_file_chunk(
-                self.socket.fd,
-                file.handle,
-                &self.file_offset,
-                chunk,
-            ) catch |err| switch (err) {
-                error.WouldBlock => break,
-                else => {
-                    zero_copy.close_nonblocking_window(window, self.socket.fd);
-                    close_connection(self);
-                    return;
-                },
-            };
-            // A short read below Content-Length would desynchronize framing.
-            if (sent == 0) {
-                zero_copy.close_nonblocking_window(window, self.socket.fd);
-                close_connection(self);
-                return;
-            }
-            self.file_remaining -= sent;
-            budget -= sent;
-        }
-        zero_copy.close_nonblocking_window(window, self.socket.fd);
-
-        if (self.closing) return;
-        if (self.file_remaining == 0) {
-            self.finish_file_body();
-            return;
-        }
-        self.dribble_file_body(file);
-    }
-
-    /// Bounded copy fallback used while the kernel path cannot proceed.
-    ///
-    /// Reuses the TLS staging buffer because a plaintext connection never
-    /// touches it, keeping the per-connection footprint unchanged.
-    fn dribble_file_body(self: *TcpConnection, file: std.Io.File) void {
-        const available = self.write_queue.len - self.write_len;
-        if (available == 0) return;
-
-        const wanted: usize = @intCast(@min(
-            @min(self.file_remaining, available),
-            self.tls_write_buffer.len,
-        ));
-        if (wanted == 0) return;
-
-        const read = file.readPositionalAll(
-            self.io,
-            self.tls_write_buffer[0..wanted],
-            self.file_offset,
-        ) catch {
-            close_connection(self);
-            return;
-        };
-        if (read == 0) {
-            close_connection(self);
-            return;
-        }
-        self.enqueue_plain_parts(&.{self.tls_write_buffer[0..read]}) catch {
-            close_connection(self);
-            return;
-        };
-        self.file_offset += read;
-        self.file_remaining -= read;
-        if (self.file_remaining == 0) self.finish_file_body();
     }
 
     /// Reports whether an unconfirmed handshake forbids this method.
@@ -1396,7 +1265,7 @@ fn on_write_complete(
         return .disarm;
     }
 
-    conn.pump_file_body();
+    tcp_file.pump_file_body(conn);
     conn.start_write();
     return .disarm;
 }

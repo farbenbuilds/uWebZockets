@@ -1,5 +1,6 @@
 const std = @import("std");
 const tcp = @import("../core/tcp.zig");
+const tcp_file = @import("../core/tcp_file.zig");
 const TcpConnection = tcp.TcpConnection;
 const Request = @import("../http/request.zig").Request;
 const Response = @import("../http/response.zig").Response;
@@ -220,7 +221,7 @@ pub const WebSocket = struct {
                 self.close_sent = true;
             }
         } else {
-            try self.conn.write_data_parts(&.{ node.header_buf[0..node.header_size], payload });
+            try tcp_file.write_data_parts(self.conn, &.{ node.header_buf[0..node.header_size], payload });
             if (opcode == .close) {
                 self.close_sent = true;
                 tcp.close_after_flush(self.conn);
