@@ -32,6 +32,8 @@ jobs:
 
       - name: Setup build environment
         uses: ./.github/actions/setup-build
+        with:
+          cache-suffix: debug
 
       - name: Run debug tests
         run: nix develop "path:." -c zig build test --summary all
@@ -51,6 +53,8 @@ jobs:
 
       - name: Setup build environment
         uses: ./.github/actions/setup-build
+        with:
+          cache-suffix: asan
 
       - name: Run ASan and UBSan tests
         env:
@@ -73,6 +77,8 @@ jobs:
 
       - name: Setup build environment
         uses: ./.github/actions/setup-build
+        with:
+          cache-suffix: msan
 
       - name: Run MemorySanitizer tests
         env:
@@ -94,6 +100,8 @@ jobs:
 
       - name: Setup build environment
         uses: ./.github/actions/setup-build
+        with:
+          cache-suffix: release
 
       - name: Compile ReleaseSafe tests
         run: nix develop "path:." -c zig build test-compile -Doptimize=ReleaseSafe --summary all
@@ -113,6 +121,8 @@ jobs:
 
       - name: Setup build environment
         uses: ./.github/actions/setup-build
+        with:
+          cache-suffix: consumer
 
       - name: Compile downstream package consumer
         working-directory: tests/package_consumer
@@ -133,6 +143,8 @@ jobs:
 
       - name: Setup build environment
         uses: ./.github/actions/setup-build
+        with:
+          cache-suffix: release
 
       - name: Fuzz bounded protocol parsers
         run: nix develop "path:." -c zig build fuzz --fuzz=100K -Doptimize=ReleaseSafe
@@ -152,6 +164,8 @@ jobs:
 
       - name: Setup build environment
         uses: ./.github/actions/setup-build
+        with:
+          cache-suffix: artifacts
 
       - name: Compile OSS-Fuzz ABI objects
         run: nix develop "path:." -c zig build oss-fuzz-objects -Doptimize=ReleaseSafe --summary all

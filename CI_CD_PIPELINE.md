@@ -22,10 +22,12 @@ it is not a proof that all memory or security defects are absent.
 Every workflow uses a GitHub environment so repository deployments and any
 environment protection rules remain visible in GitHub.
 
-`test.yml`, `autobahn_compliance.yml`, `h1spec_compliance.yml`, and
-`benchmark.yml` share the `.github/actions/setup-build` composite action, so
-they restore the same Zig global cache and vendored C/C++ build cache instead of
-rebuilding BoringSSL, lsquic, and libdeflate from scratch.
+`test.yml`, `autobahn_compliance.yml`, and `h1spec_compliance.yml` share the
+`.github/actions/setup-build` composite action. It caches the Zig global cache
+and the vendored C/C++ build tree under a per-optimization-mode key, then
+refreshes the restored tree's timestamps so Ninja treats a cache hit as current
+work instead of rebuilding BoringSSL, lsquic, and libdeflate. `benchmark.yml`
+uses the same approach for its candidate and baseline checkouts.
 
 ## Lint
 
