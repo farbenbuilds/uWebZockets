@@ -144,6 +144,9 @@ A closed pool slot returns to the freelist only through
 completions have all drained. That gate prevents a stale completion from
 observing a reused connection.
 
+The registration-to-handler map for every native callback is in
+[callback_lifecycle.md](callback_lifecycle.md).
+
 ## Transports
 
 ### TCP, TLS, and HTTP/1.1

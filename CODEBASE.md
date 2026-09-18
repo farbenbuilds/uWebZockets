@@ -60,7 +60,7 @@ uWebZockets/
 ├── src/
 │   ├── root.zig              # supported public API
 │   ├── version.zig           # single Zig source of truth for the release version
-│   ├── c_api.zig             # exported C ABI implementation
+│   ├── c_api.zig             # exported C ABI facade (handlers in c_api/)
 │   ├── core/                 # libxev I/O plus transport-neutral protocol core
 │   │   ├── affinity.zig      # physical-core selection and thread pinning
 │   │   ├── ktls.zig          # Linux kTLS and zero-copy file transfer
@@ -131,6 +131,9 @@ descriptors through libxev, and runs the loop until every callback is disarmed.
 `src/core/udp.zig` owns its fixed receive buffer, QUIC engine, read, timer,
 cancellation, and close completions as one unit. Only after both transports
 drain are TLS state, QUIC state, the loop, and contiguous slabs released.
+
+The registration-to-handler map for native callbacks is in
+[docs/callback_lifecycle.md](docs/callback_lifecycle.md).
 
 ## HTTP/1.1
 
