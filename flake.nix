@@ -183,7 +183,6 @@
                 [
                   zig
                   # Shell tools run on the host; only zlib follows the target libc.
-                  pkgs.zls
                   pkgs.cmake
                   pkgs.ninja
                   pkgs.pkg-config
@@ -191,10 +190,7 @@
                   pkgs.perl
                   pkgs.python3
                   pkgs.ripgrep
-                  pkgs.gnutar
-                  pkgs.gzip
                   pkgs.patch
-                  pkgs.xz
                   packagePkgs.zlib
                   pkgs.wrk
                 ]
