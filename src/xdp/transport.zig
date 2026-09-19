@@ -118,16 +118,22 @@ pub const XdpTransport = struct {
             return error.InvalidConfiguration;
         }
 
-        var transport = XdpTransport{
-            .socket = try socket.XskSocket.init(umem, config.chunk_size, 0),
-            .umem = umem,
-            .config = config,
-            .availability = .{ .mode = .kernel_bypass, .reason = .none },
-        };
-        errdefer transport.socket.deinit();
-        try transport.socket.configure_rings(config.frame_count);
-        transport.fill_free_stack(config.frame_count);
-        return transport;
+        // AF_XDP exists only on Linux. Keep the socket setup inside a comptime
+        // branch so non-Linux targets reject the request without analyzing the
+        // Linux syscall path (which carries a compile error by design).
+        if (builtin.os.tag == .linux) {
+            var transport = XdpTransport{
+                .socket = try socket.XskSocket.init(umem, config.chunk_size, 0),
+                .umem = umem,
+                .config = config,
+                .availability = .{ .mode = .kernel_bypass, .reason = .none },
+            };
+            errdefer transport.socket.deinit();
+            try transport.socket.configure_rings(config.frame_count);
+            transport.fill_free_stack(config.frame_count);
+            return transport;
+        }
+        return error.KernelSupportUnavailable;
     }
 
     pub fn deinit(self: *XdpTransport) void {
