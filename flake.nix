@@ -183,6 +183,7 @@
                 [
                   zig
                   # Shell tools run on the host; only zlib follows the target libc.
+                  pkgs.zls
                   pkgs.cmake
                   pkgs.ninja
                   pkgs.pkg-config
