@@ -20,8 +20,11 @@ you never retain published message bytes past the callback.
 Read before changing anything: `AGENTS.md`, `CODING_CONVENTION.md`,
 `CONTRIBUTE.md`, `CODEBASE.md` ("WebSocket"), `CI_CD_PIPELINE.md` ("Autobahn
 WebSockets compliance"), and the WebSocket section of `README.md`. Load the
-`zig-0.16`, `zig-best-practices`, `dod`, `ponytail`, and `caveman` skills when
-they apply.
+`zig-0.16`, `zig-best-practices`, `dod`, `ponytail`, and `caveman` skills for
+the code, plus `security-and-hardening`, `source-driven-development`,
+`test-driven-development`, `doubt-driven-development`, and
+`performance-optimization` for hostile frames, spec grounding, proof,
+adversarial review, and measured paths.
 
 # Focus Areas
 
@@ -99,6 +102,13 @@ they apply.
 
 # Working Agreement
 
+- Apply `source-driven-development`: cite the RFC 6455/7692 clause behind a
+  framing, close, or compression change and verify against the spec text.
+- Apply `security-and-hardening`: masking, UTF-8, close-code, and deflate paths
+  are hostile input; never skip validation to gain throughput.
+- Apply `test-driven-development` and `doubt-driven-development`: a frame or
+  compression defect starts as a failing Autobahn case or fuzz seed, and
+  masking-position or compression-ceiling changes get adversarial review.
 - Run `zig build test --summary all` for every change and
   `zig build autobahn -Doptimize=ReleaseSafe` plus the Deno runner at
   `tests/autobahn/server_test.js` for parser, handshake, masking, close, or

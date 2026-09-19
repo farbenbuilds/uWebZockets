@@ -1,5 +1,6 @@
 const std = @import("std");
 const tcp = @import("../core/tcp.zig");
+const tcp_file = @import("../core/tcp_file.zig");
 const streams = @import("streams.zig");
 const cookie_module = @import("cookie.zig");
 const TcpConnection = tcp.TcpConnection;
@@ -186,7 +187,7 @@ pub const Response = struct {
                 if (conn.suppress_response_body or status_forbids_body(code)) {
                     try conn.write_data(formatted_headers);
                 } else {
-                    try conn.write_data_parts(&.{ formatted_headers, body });
+                    try tcp_file.write_data_parts(conn, &.{ formatted_headers, body });
                 }
                 if (close_requested) tcp.close_after_flush(conn);
             },

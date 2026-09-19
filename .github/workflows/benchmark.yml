@@ -4,6 +4,19 @@ on:
   pull_request:
     branches:
       - main
+    paths:
+      - 'src/**'
+      - 'builds/**'
+      - 'build.zig'
+      - 'build.zig.zon'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'include/**'
+      - 'examples/**'
+      - 'benchmarks/**'
+      - 'scripts/**'
+      - 'vendor/**'
+      - '.github/workflows/benchmark.yml'
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
@@ -44,6 +57,26 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
+
+      - name: Cache candidate and baseline build artifacts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.cache/zig
+            candidate/.zig-cache/vendor-build-v4
+            baseline/.zig-cache/vendor-build-v4
+          key: ${{ runner.os }}-bench-zig-v2-${{ hashFiles('candidate/build.zig', 'candidate/builds/**/*.zig', 'candidate/build.zig.zon', 'candidate/flake.nix', 'candidate/flake.lock', 'candidate/patches/**', 'candidate/vendor/**', 'baseline/build.zig', 'baseline/builds/**/*.zig', 'baseline/build.zig.zon', 'baseline/flake.nix', 'baseline/flake.lock', 'baseline/patches/**', 'baseline/vendor/**') }}
+          restore-keys: |
+            ${{ runner.os }}-bench-zig-v2-
+
+      - name: Refresh restored vendor timestamps
+        shell: bash
+        run: |
+          for tree in candidate/.zig-cache/vendor-build-v4 baseline/.zig-cache/vendor-build-v4; do
+            if [ -d "$tree" ]; then
+              find "$tree" -exec touch {} +
+            fi
+          done
 
       - name: Capture benchmark revisions
         id: revisions

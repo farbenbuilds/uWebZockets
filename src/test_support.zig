@@ -8,7 +8,10 @@ pub const transport = @import("core/transport.zig");
 pub const ktls = @import("core/ktls.zig");
 pub const zero_copy = @import("core/zero_copy.zig");
 pub const xdp = @import("xdp/socket.zig");
+pub const xdp_transport = @import("xdp/transport.zig");
 pub const affinity = @import("core/affinity.zig");
+pub const ebpf = @import("observability/ebpf.zig");
+pub const metrics = @import("observability/metrics.zig");
 
 pub const http_parser = @import("http/parser.zig");
 pub const http_request = @import("http/request.zig");
@@ -36,12 +39,14 @@ pub const quic_packet = @import("quic/packet.zig");
 pub const quic_stream = @import("quic/stream.zig");
 pub const quic_validation = @import("quic/validation.zig");
 pub const webtransport = @import("quic/webtransport.zig");
+pub const datagram_ring = @import("quic/datagram_ring.zig");
 pub const udp = @import("core/udp.zig");
 
 pub const app = @import("router/app.zig");
 pub const radix = @import("router/radix.zig");
 pub const config = @import("router/config.zig");
 pub const builder = @import("router/builder.zig");
+pub const datagram = @import("router/datagram.zig");
 pub const rejection = @import("http/rejection.zig");
 
 pub const ws_deflate = @import("ws/deflate.zig");

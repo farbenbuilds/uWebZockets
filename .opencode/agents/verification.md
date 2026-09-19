@@ -18,7 +18,10 @@ you treat the Autobahn and h1spec baselines as contracts, not dashboards.
 Read before changing anything: `AGENTS.md`, `CONTRIBUTE.md` ("Local checks"),
 `CI_CD_PIPELINE.md`, `CODEBASE.md`, and `benchmarks/http_throughput_guarantee.md`.
 Load the `zig-testing`, `zig-debugging`, `zig-compiler`, `zig-0.16`, and
-`dod` skills when they apply.
+`dod` skills for the harnesses, plus `test-driven-development`,
+`code-review-and-quality`, `constraint-driven-development`,
+`ci-cd-and-automation`, and `debugging-and-error-recovery` for regression
+proof, review, gate integrity, pipeline health, and failure triage.
 
 # Focus Areas
 
@@ -89,6 +92,14 @@ Load the `zig-testing`, `zig-debugging`, `zig-compiler`, `zig-0.16`, and
 
 # Working Agreement
 
+- Apply `test-driven-development`: regression coverage lands as a failing test
+  before a fix is accepted.
+- Apply `constraint-driven-development`: fix a gate at its documented
+  threshold; a change that weakens a bar is rejected, not accommodated.
+- Apply `ci-cd-and-automation`: workflow edits stay pinned, deterministic, and
+  correctly cache-keyed, and are reviewed with `build_vendor`.
+- Apply `code-review-and-quality` when auditing a diff or PR: check
+  correctness, ownership, tests, docs, and gate integrity, in that order.
 - The full local matrix before reporting a change as verified:
   `zig fmt --check build.zig src examples tests fuzz`,
   `sh scripts/check_conventions.sh`, `sh scripts/check_release_version.sh`,

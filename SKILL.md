@@ -5,7 +5,12 @@ description: Master high-performance workflow integrating all specialized skills
 
 # µWebZockets High-Performance Master Workflow
 
-This document outlines the unified workflow combining all specialized skills available in `.agents/skills/*` to build a blazingly fast, zero-allocation WebSocket/HTTP library.
+This document outlines the unified workflow combining the specialized skills in
+`.agents/skills/*` with the global `graphify` skill to build a blazingly fast,
+zero-allocation WebSocket/HTTP library.
+
+Route work by phase (`using-agent-skills`): load the narrowest skill set that
+fits the current step and never stack processes that do not apply.
 
 ## 1. Mindset & Optimization (`ponytail`, `caveman`, `dod`, `functional-programming-fundamentals`)
 - **Functional & Pure (No OOP)**: Zero Object-Oriented Programming allowed. Emphasize pure functions, explicit state passing, and immutability where it doesn't cost performance. Never bind state and behavior into "classes".
@@ -34,3 +39,36 @@ This document outlines the unified workflow combining all specialized skills ava
 ## 5. Debugging & QA (`zig-testing`, `zig-debugging`, `zig-compiler`)
 - **Zero-Leak Testing (`zig-testing`)**: Use `std.testing.allocator` whenever the code under test owns allocations. Exercise fixed-buffer paths with caller-owned storage, malformed-input corpora, Autobahn, and h1spec compliance tests.
 - **Compiler Optimization (`zig-compiler`)**: Distinguish between `ReleaseFast` and `ReleaseSafe`. Always ensure safe runtime checks during development, optimizing to `ReleaseFast` only for proven hot paths.
+
+## 6. Engineering Process (`using-agent-skills`, `interview-me`, `idea-refine`, `spec-driven-development`, `planning-and-task-breakdown`, `incremental-implementation`, `test-driven-development`, `context-engineering`)
+- **Route first (`using-agent-skills`)**: Identify the phase before acting; a bug fix does not need a spec, a new protocol surface does.
+- **Refine the ask (`interview-me`, `idea-refine`)**: When a requirement is underspecified, close the gap before designing anything.
+- **Spec the contract (`spec-driven-development`)**: For new surfaces write the observable contract first: capacities, error names, ownership, RFC clauses, platform matrix.
+- **Slice the work (`planning-and-task-breakdown`, `incremental-implementation`)**: Land thin, verifiable slices; never mix a refactor with a protocol change.
+- **Prove behavior (`test-driven-development`)**: New behavior starts as a failing test under `src/tests/`; bug fixes start as a failing reproduction. RED, then GREEN, then refactor, using the project's own commands.
+- **Engineer context (`context-engineering`)**: Keep sessions scoped; reload `AGENTS.md`, `CODEBASE.md`, and the owning module before cross-cutting edits.
+
+## 7. Quality, Security & Performance (`code-review-and-quality`, `doubt-driven-development`, `debugging-and-error-recovery`, `security-and-hardening`, `performance-optimization`, `observability-and-instrumentation`, `code-simplification`, `constraint-driven-development`)
+- **Review before merge (`code-review-and-quality`)**: check correctness, ownership, tests, docs, and gate integrity, in that order.
+- **Doubt the hard parts (`doubt-driven-development`)**: Crypto, C ABI, framing, completion ordering, and release changes get a fresh-context adversarial pass before landing.
+- **Debug to root cause (`debugging-and-error-recovery`)**: reproduce, isolate, fix, and prevent; never paper over a failure with a retry.
+- **Harden (`security-and-hardening`)**: threat-model every input boundary (TLS, HTTP, WebSocket, QUIC, C ABI) for smuggling, injection, replay, timing, and exhaustion; fail closed.
+- **Measure (`performance-optimization`)**: prove hot-path claims with the benchmark contract and allocator evidence, never with assertions.
+- **Instrument (`observability-and-instrumentation`)**: counters and timers stay zero-cost when disabled and truthful when enabled.
+- **Simplify (`code-simplification`, `ponytail`)**: prefer the smallest correct change; delete code before adding it.
+- **Guard the bar (`constraint-driven-development`)**: never lower a gate, threshold, or baseline to land a change.
+
+## 8. Delivery & Documentation (`api-and-interface-design`, `source-driven-development`, `documentation-and-adrs`, `deprecation-and-migration`, `git-workflow-and-versioning`, `ci-cd-and-automation`, `shipping-and-launch`)
+- **Design interfaces (`api-and-interface-design`)**: public surfaces are contracts: fixed capacities, explicit ownership, specific error names, additive evolution.
+- **Cite sources (`source-driven-development`)**: ground RFC and upstream API decisions in the pinned specs and headers, not memory.
+- **Record decisions (`documentation-and-adrs`)**: non-obvious choices land in `CODEBASE.md`, `docs/`, or `CHANGELOG.md`, not buried in code comments.
+- **Migrate deliberately (`deprecation-and-migration`)**: removals ship with a migration path, a changelog entry, and a consumer rebuild.
+- **Version atomically (`git-workflow-and-versioning`)**: one logical change per commit, conventional prefixes, synchronized version surfaces.
+- **Automate (`ci-cd-and-automation`)**: workflows stay pinned, deterministic, and cache-correct; never weakened to pass.
+- **Ship (`shipping-and-launch`)**: releases follow the documented checklist, and rollback precedes announcement.
+
+## 9. Knowledge Graph (`graphify`, global plugin)
+- Ask the graph first: for architecture, file-relationship, or "how does X work" questions, query `graphify-out/graph.json` when it exists instead of re-scanning the tree.
+- Rebuild only on explicit request (`/graphify`); never regenerate the graph as a side effect of a scoped code change.
+- `graphify-out/` is generated and git-ignored; do not commit it.
+- Treat graph answers as navigation hints and confirm behavior in the source.

@@ -1,4 +1,5 @@
 const std = @import("std");
+const tcp_file = @import("../core/tcp_file.zig");
 const TcpConnection = @import("../core/tcp.zig").TcpConnection;
 
 /// Queues one HTTP/1.1 chunk without retaining `data`.
@@ -7,7 +8,7 @@ pub fn send_chunk(conn: *TcpConnection, data: []const u8) !void {
 
     var hex_buf: [16]u8 = undefined;
     const hex_len = std.fmt.bufPrint(&hex_buf, "{x}\r\n", .{data.len}) catch return error.BufferOverflow;
-    try conn.write_data_parts(&.{ hex_len, data, "\r\n" });
+    try tcp_file.write_data_parts(conn, &.{ hex_len, data, "\r\n" });
 }
 
 /// Queues each non-empty HTTP/1.1 chunk without retaining caller slices.

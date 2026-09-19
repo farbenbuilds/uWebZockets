@@ -144,6 +144,9 @@ A closed pool slot returns to the freelist only through
 completions have all drained. That gate prevents a stale completion from
 observing a reused connection.
 
+The registration-to-handler map for every native callback is in
+[callback_lifecycle.md](callback_lifecycle.md).
+
 ## Transports
 
 ### TCP, TLS, and HTTP/1.1
@@ -191,9 +194,17 @@ and tail latency hold up on lossy paths.
   transfer opens a temporary nonblocking window over the (blocking) io_uring
   socket and closes it before any completion is queued; stalled bytes fall back
   to a bounded dribble that reuses the idle TLS staging buffer.
-- `src/xdp/socket.zig` implements AF_XDP UMEM ownership rings, and the `ebpf`
-  build step emits the XDP redirect object. Attaching it and populating its XSK
-  map requires network-administration privileges.
+- `src/xdp/socket.zig` implements AF_XDP UMEM ownership rings and the TX path;
+  `src/xdp/transport.zig` selects the bypass opportunistically and falls back
+  to the standard stack when the probe or ring setup is refused.
+- `src/observability/metrics.zig` renders a fixed-capacity registry into
+  Prometheus text without allocating, `src/observability/ebpf.zig` reads the
+  pinned per-CPU histogram, and the `ebpf` build step emits the XDP redirect
+  and latency histogram objects. Attaching the redirect, pinning the histogram,
+  and populating its XSK map requires network-administration privileges.
+- `src/quic/datagram_ring.zig` and `src/router/datagram.zig` route WebTransport
+  datagrams by session path into per-connection SoA rings carved from the
+  startup slab.
 
 ## Shutdown ordering
 

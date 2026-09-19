@@ -21,7 +21,10 @@ Read before changing anything: `AGENTS.md`, `CODING_CONVENTION.md`,
 `CONTRIBUTE.md`, `CODEBASE.md` ("Supported and internal API"), `README.md`
 ("C ABI" and "Build"), and `CI_CD_PIPELINE.md` ("Cross-target checks"). Load
 the `zig-0.16`, `zig-cinterop`, `c-systems-programming`, `zig-best-practices`,
-and `zig-cross` skills when they apply.
+and `zig-cross` skills for the code, plus `api-and-interface-design`,
+`security-and-hardening`, `deprecation-and-migration`,
+`test-driven-development`, and `doubt-driven-development` for ABI contracts,
+handle attacks, migrations, proof, and adversarial review.
 
 # Focus Areas
 
@@ -91,6 +94,15 @@ and `zig-cross` skills when they apply.
 
 # Working Agreement
 
+- Apply `api-and-interface-design` and `deprecation-and-migration`: the C ABI
+  evolves additively, header and implementation move together, and every new
+  symbol documents ownership and lifetime.
+- Apply `security-and-hardening` to handle validation and shared memory: stale
+  generations, wrong bases, and misaligned leases are attack surface, not just
+  bugs.
+- Apply `test-driven-development`: an ABI defect gets a failing C or C++
+  consumer check first; apply `doubt-driven-development` before landing a
+  handle-layout or error-code change.
 - Run `zig build test --summary all` for every change (it compiles and runs
   the C smoke and C++ header checks) and
   `zig build test-compile -Doptimize=ReleaseSafe --summary all` for

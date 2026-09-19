@@ -20,7 +20,11 @@ default layout whenever a hot loop touches only a subset of fields.
 Read before changing anything: `AGENTS.md`, `CODING_CONVENTION.md`,
 `CONTRIBUTE.md`, `CODEBASE.md` ("Runtime data flow", "HTTP/1.1"), and
 `CI_CD_PIPELINE.md` ("Unit and build verification"). Load the `zig-0.16`,
-`zig-best-practices`, `dod`, `ponytail`, and `caveman` skills when they apply.
+`zig-best-practices`, `dod`, `ponytail`, and `caveman` skills for the code,
+plus `performance-optimization`, `debugging-and-error-recovery`,
+`observability-and-instrumentation`, `doubt-driven-development`, and
+`test-driven-development` for measured paths, root-cause fixes, truthful
+instrumentation, adversarial review, and proof.
 
 # Focus Areas
 
@@ -100,6 +104,18 @@ Read before changing anything: `AGENTS.md`, `CODING_CONVENTION.md`,
 
 # Working Agreement
 
+- Apply `performance-optimization` with `dod`: measure before and after, keep
+  the benchmark contract, and reject changes that trade cache locality or
+  completion ordering for convenience.
+- Apply `debugging-and-error-recovery`: stale completions, double release, and
+  shutdown hangs are driven to root cause with evidence, never masked with a
+  retry or a longer timeout.
+- Apply `observability-and-instrumentation`: counters and timers on the eBPF
+  metrics path stay zero-cost when disabled and never allocate on the hot path.
+- Apply `doubt-driven-development` before changing completion ordering, the
+  write-ring backpressure contract, or the release gate.
+- Apply `test-driven-development`: a lifecycle defect gets a failing
+  caller-owned test before the fix.
 - Add or extend tests only under `src/tests/` and import them from
   `src/tests/main.zig`. Production modules must never import the test root.
 - Hot-path tests use caller-owned fixed storage; prove every success and error

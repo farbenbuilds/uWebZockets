@@ -18,6 +18,11 @@ const json_rpc_http = @import("../rpc/http.zig");
 const static_files_module = @import("../http/static_files.zig");
 const cluster_module = @import("cluster.zig");
 const config_module = @import("config.zig");
+const datagram_module = @import("datagram.zig");
+const datagram_ring_module = @import("../quic/datagram_ring.zig");
+const metrics_module = @import("../observability/metrics.zig");
+const ebpf_module = @import("../observability/ebpf.zig");
+const xdp_transport_module = @import("../xdp/transport.zig");
 const http_rejection = @import("../http/rejection.zig");
 
 /// Default maximum complete WebSocket message size per connection.
@@ -82,6 +87,9 @@ pub fn configured_app_with_timeout(
         const static_file_capacity = if (write_queue_size > 4096) write_queue_size - 4096 else write_queue_size;
         const StaticFiles = static_files_module.static_files(static_file_capacity);
         const ClusterInbox = cluster_module.message_queue(max_ws_message_size);
+        const DatagramRing = datagram_ring_module.DatagramRing;
+        const DatagramRouter = datagram_module.Router;
+        const XdpTransport = xdp_transport_module.XdpTransport;
         const max_static_routes = 8;
         const default_config = config_module.ServerConfig{
             .max_connections = max_connections,
@@ -108,6 +116,27 @@ pub fn configured_app_with_timeout(
         ws_deflate: ?DeflateContext = null,
         write_queue_storage: []u8,
         router: radix.Router,
+        // WebTransport datagram state. The metadata arrays are SoA and the
+        // payload slab is one fixed stride per connection, all carved from the
+        // startup slab so no datagram ever allocates.
+        datagram_router: DatagramRouter = .{},
+        datagram_session_ids: []u64 = &.{},
+        datagram_sequences: []u64 = &.{},
+        datagram_payload_lengths: []u32 = &.{},
+        datagram_rings: []DatagramRing = &.{},
+        datagram_payloads: []u8 = &.{},
+        datagram_stride: usize = 0,
+        // Kernel-bypass observability state.
+        xdp_transport: ?*XdpTransport = null,
+        transport_availability: xdp_transport_module.Availability = .{
+            .mode = .standard,
+            .reason = .none,
+        },
+        metrics_registry: ?*metrics_module.Registry = null,
+        metrics_enabled: bool = false,
+        metrics_installed: bool = false,
+        metrics_path: []const u8 = "/metrics",
+        ebpf_map_fd: i32 = -1,
         static_handlers: [max_static_routes]?*StaticFiles = .{null} ** max_static_routes,
         static_handler_count: u8 = 0,
         cluster_inbox: ?*ClusterInbox = null,
@@ -144,7 +173,9 @@ pub fn configured_app_with_timeout(
             comptime config: config_module.ServerConfig,
         ) !Self {
             const total = try config_module.required_bytes(config);
-            const alignment = comptime std.mem.Alignment.fromByteUnits(config_module.slab_alignment);
+            const alignment = comptime std.mem.Alignment.fromByteUnits(
+                config.required_alignment(),
+            );
             const slab = try allocator.alignedAlloc(u8, alignment, total);
             errdefer allocator.free(slab);
             return init_from_slab(io, allocator, slab, config);
@@ -152,7 +183,7 @@ pub fn configured_app_with_timeout(
 
         /// Initializes from caller-provided storage; ownership transfers on success.
         ///
-        /// `slab` must be aligned to `config_module.slab_alignment` and hold at
+        /// `slab` must be aligned to `config.required_alignment()` and hold at
         /// least `config_module.required_bytes(config)` bytes. The application
         /// releases the full slice through `allocator` in `deinit`; on failure
         /// the caller keeps ownership.
@@ -187,7 +218,7 @@ pub fn configured_app_with_timeout(
 
             const pool = try Pool.from_slices(layout.pool_storage, layout.freelist);
 
-            return Self{
+            var instance = Self{
                 .io = io,
                 .loop = loop,
                 .pool = pool,
@@ -205,8 +236,73 @@ pub fn configured_app_with_timeout(
                     layout.compression_stride / 2,
                 .write_queue_storage = layout.write_queues,
                 .router = radix.Router.init(),
+                .datagram_session_ids = layout.datagram_session_ids,
+                .datagram_sequences = layout.datagram_sequences,
+                .datagram_payload_lengths = layout.datagram_payload_lengths,
+                .datagram_rings = layout.datagram_rings,
+                .datagram_payloads = layout.datagram_payloads,
+                .datagram_stride = layout.datagram_stride,
+                .metrics_registry = layout.metrics_registry,
+                .metrics_enabled = config.observability,
+                .metrics_path = if (config.observability) config.metrics_path else "/metrics",
                 .pubsub = .{},
             };
+
+            if (instance.metrics_registry) |registry| registry.* = .{};
+
+            if (layout.datagram_rings.len != 0) {
+                const slots = config.datagram_slots;
+                const payload_stride = config.max_datagram_size;
+                for (layout.datagram_rings, 0..) |*ring, index| {
+                    const metadata_start = index * slots;
+                    const payload_start = index * layout.datagram_stride;
+                    // Validation bounded the slot count and stride, and the
+                    // slab carved exactly `stride * connections` payload bytes.
+                    ring.* = DatagramRing.init(
+                        layout.datagram_session_ids[metadata_start .. metadata_start + slots],
+                        layout.datagram_sequences[metadata_start .. metadata_start + slots],
+                        layout.datagram_payload_lengths[metadata_start .. metadata_start + slots],
+                        layout.datagram_payloads[payload_start .. payload_start + layout.datagram_stride],
+                        payload_stride,
+                    ) catch unreachable;
+                }
+            }
+
+            // The bypass is requested at compile time but confirmed at runtime;
+            // a refused probe or a failed ring setup leaves the standard
+            // transport active and records why.
+            if (comptime config.transport == .kernel_bypass) {
+                instance.transport_availability = xdp_transport_module.probe();
+                if (instance.transport_availability.mode == .kernel_bypass) {
+                    const storage: *XdpTransport = @ptrCast(
+                        @alignCast(layout.xdp_transport_bytes.ptr),
+                    );
+                    if (XdpTransport.init(layout.xdp_umem, .{
+                        .chunk_size = @intCast(config.xdp_frame_size),
+                        .frame_count = @intCast(config.xdp_frame_count),
+                    })) |transport| {
+                        storage.* = transport;
+                        instance.xdp_transport = storage;
+                    } else |err| {
+                        instance.transport_availability = .{
+                            .mode = .standard,
+                            .reason = map_xdp_error(err),
+                        };
+                    }
+                }
+                if (instance.metrics_registry) |registry| {
+                    if (instance.xdp_transport == null) {
+                        registry.set(.xdp_kernel_bypass_fallbacks, 1);
+                    } else {
+                        registry.set(.kernel_bypass_active, 1);
+                    }
+                }
+            }
+
+            if (config.observability and ebpf_module.available()) {
+                instance.ebpf_map_fd = ebpf_module.open_pinned(ebpf_map_path) catch -1;
+            }
+            return instance;
         }
 
         /// Initializes an HTTPS application from NUL-terminated certificate paths.
@@ -270,6 +366,16 @@ pub fn configured_app_with_timeout(
             }
             self.ws_compression_storage = &.{};
             self.ws_compression_owned = false;
+            // The transport lives inside the slab; its rings must be unmapped
+            // before the backing storage is released.
+            if (self.xdp_transport) |transport| {
+                transport.deinit();
+                self.xdp_transport = null;
+            }
+            if (self.ebpf_map_fd >= 0) {
+                ebpf_module.close(self.ebpf_map_fd);
+                self.ebpf_map_fd = -1;
+            }
             self.slab_allocator.free(self.slab);
             self.slab = &.{};
             self.deinitialized = true;
@@ -547,9 +653,98 @@ pub fn configured_app_with_timeout(
             return self;
         }
 
+        /// Registers a WebTransport datagram handler for one session path.
+        ///
+        /// `path` must stay valid for the application lifetime; string literals
+        /// are the intended form. The application itself is the handler context
+        /// unless `datagram_context` supplies another.
+        pub fn datagram(
+            self: *Self,
+            path: []const u8,
+            handler: datagram_module.Handler,
+        ) !*Self {
+            return self.datagram_context(path, self, handler);
+        }
+
+        /// Registers a datagram handler with explicit caller-owned context.
+        pub fn datagram_context(
+            self: *Self,
+            path: []const u8,
+            context: *anyopaque,
+            handler: datagram_module.Handler,
+        ) !*Self {
+            try self.ensure_routes_mutable();
+            try self.datagram_router.register(path, handler, context);
+            return self;
+        }
+
+        /// Delivers one inbound WebTransport datagram to its registered path.
+        ///
+        /// The payload is copied into the connection ring before the handler
+        /// runs; the handler receives the caller's slice, which stays valid
+        /// only for the call. Returns false for an unregistered path or a full
+        /// ring, and a rejected datagram increments `datagrams_dropped`.
+        pub fn dispatch_datagram(
+            self: *Self,
+            connection_index: usize,
+            session_id: u64,
+            sequence_number: u64,
+            path: []const u8,
+            payload: []const u8,
+        ) bool {
+            const route = self.datagram_router.find(path) orelse return false;
+            const ring = self.datagram_ring_for(connection_index) orelse return false;
+            ring.push(.{
+                .session_id = session_id,
+                .sequence_number = sequence_number,
+                .payload = payload,
+            }) catch |err| switch (err) {
+                error.Full => {
+                    ring.note_dropped();
+                    if (self.metrics_registry) |registry| registry.add(.datagrams_dropped, 1);
+                    return false;
+                },
+                error.PayloadTooLarge, error.InvalidCapacity, error.InvalidStride => {
+                    if (self.metrics_registry) |registry| registry.add(.datagrams_dropped, 1);
+                    return false;
+                },
+            };
+            if (self.metrics_registry) |registry| registry.add(.datagrams_received, 1);
+            route.handler(route.context, session_id, payload);
+            return true;
+        }
+
+        /// Removes the oldest queued datagram for one connection.
+        pub fn next_datagram(
+            self: *Self,
+            connection_index: usize,
+        ) ?datagram_ring_module.DatagramView {
+            const ring = self.datagram_ring_for(connection_index) orelse return null;
+            return ring.pop();
+        }
+
+        /// Returns the fixed-capacity registry, or null when observability is
+        /// disabled in the configuration.
+        pub fn metrics(self: *Self) ?*metrics_module.Registry {
+            return self.metrics_registry;
+        }
+
+        fn datagram_ring_for(self: *Self, connection_index: usize) ?*DatagramRing {
+            if (connection_index >= self.datagram_rings.len) return null;
+            return &self.datagram_rings[connection_index];
+        }
+
         fn ensure_routes_mutable(self: *const Self) !void {
             if (self.shutting_down or self.deinitialized) return error.ApplicationUnavailable;
             if (self.routes_locked) return error.RoutesLocked;
+        }
+
+        /// Installs the hidden metrics route once, before routes are locked.
+        fn install_observability(self: *Self) !void {
+            if (!self.metrics_enabled or self.metrics_registry == null) return;
+            if (self.metrics_installed) return;
+            _ = try self.get_context(self.metrics_path, self, serve_metrics);
+            self.metrics_installed = true;
         }
 
         fn ensure_ws_compression(self: *Self) !void {
@@ -693,6 +888,7 @@ pub fn configured_app_with_timeout(
                 sweeper = try core_timer.connection_sweeper(Pool, idle_timeout_ms).init(self.io, &self.pool);
             }
 
+            try self.install_observability();
             self.routes_locked = true;
             self.server = server;
             self.sweeper = sweeper;
@@ -724,6 +920,7 @@ pub fn configured_app_with_timeout(
                 try transport.start(self.loop.get_xev_loop());
             } else unreachable;
 
+            try self.install_observability();
             self.routes_locked = true;
 
             std.debug.print("http/3 server listening on {s}:{d}\n", .{ address, port });
@@ -982,6 +1179,43 @@ pub fn configured_app_with_timeout(
             return .rearm;
         }
 
+        /// Serves the hidden Prometheus endpoint from a fixed stack buffer.
+        ///
+        /// The formatter writes straight into the buffer and the response
+        /// engine copies it to the transport, so metric serving performs no
+        /// heap allocation at all.
+        fn serve_metrics(context: *anyopaque, _: *Request, response: *Response) void {
+            const self: *Self = @ptrCast(@alignCast(context));
+            const registry = self.metrics_registry orelse {
+                response.end("404 Not Found", "") catch {};
+                return;
+            };
+
+            var histogram: ?ebpf_module.Histogram = null;
+            if (self.ebpf_map_fd >= 0) {
+                if (ebpf_module.read_latency_histogram(self.ebpf_map_fd)) |observed| {
+                    histogram = observed;
+                } else |_| {
+                    // A transient kernel read still leaves the counters usable.
+                }
+            }
+            const buckets: ?[]const u64 = if (histogram) |observed|
+                observed.buckets[0..]
+            else
+                null;
+
+            var buffer: [4096]u8 = undefined;
+            const body = registry.write_prometheus(buckets, &buffer) catch {
+                response.end("500 Internal Server Error", "metrics buffer exhausted") catch {};
+                return;
+            };
+            response.end_with_headers(
+                "200 OK",
+                "Content-Type: text/plain; version=0.0.4\r\n",
+                body,
+            ) catch {};
+        }
+
         fn serve_openapi(context: *anyopaque, _: *Request, response: *Response) void {
             const router: *const radix.Router = @ptrCast(@alignCast(context));
             var buffer: [32 * 1024]u8 = undefined;
@@ -1024,6 +1258,18 @@ pub fn compression_buffers(
     return .{
         .incoming = storage[start..incoming_end],
         .outgoing = storage[incoming_end..outgoing_end],
+    };
+}
+
+/// bpffs path where the latency histogram map is pinned by the loader.
+const ebpf_map_path = "/sys/fs/bpf/uwz_latency";
+
+/// Narrows a bypass startup error into the reported fallback reason.
+fn map_xdp_error(err: anyerror) xdp_transport_module.FallbackReason {
+    return switch (err) {
+        error.PermissionDenied => .permission_denied,
+        error.InvalidConfiguration, error.InvalidArgument => .invalid_configuration,
+        else => .kernel_unavailable,
     };
 }
 

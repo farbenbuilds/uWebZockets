@@ -30,11 +30,10 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install Nix
-        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build
         with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
+          cache-suffix: release
 
       - name: Setup Deno
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2

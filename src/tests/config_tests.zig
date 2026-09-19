@@ -317,6 +317,181 @@ test "config: oversized capacities fail without panicking" {
 
 fn dummy_handler(_: *support.http_request.Request, _: *support.http_response.Response) void {}
 
+test "config: datagram and bypass presets validate and plan slabs" {
+    inline for (.{ Preset.kernel_bypass, Preset.webtransport_realtime }) |preset| {
+        try preset.validate();
+        try std.testing.expect((try preset.slab_bytes()) > 0);
+    }
+
+    try std.testing.expectError(
+        error.InvalidDatagramCapacity,
+        (ServerConfig{ .max_datagram_size = 0, .datagram_slots = 4 }).validate(),
+    );
+    try std.testing.expectError(
+        error.InvalidDatagramCapacity,
+        (ServerConfig{ .max_datagram_size = 100, .datagram_slots = 0 }).validate(),
+    );
+    try std.testing.expectError(
+        error.InvalidTransportConfiguration,
+        (ServerConfig{ .transport = .kernel_bypass, .xdp_frame_size = 3000 }).validate(),
+    );
+    try std.testing.expectError(
+        error.InvalidMetricsPath,
+        (ServerConfig{ .observability = true, .metrics_path = "metrics" }).validate(),
+    );
+    try std.testing.expectEqual(
+        std.heap.page_size_min,
+        (ServerConfig{ .transport = .kernel_bypass }).required_alignment(),
+    );
+}
+
+test "config: datagram regions are one fixed stride per connection" {
+    const config = ServerConfig{
+        .max_connections = 4,
+        .max_datagram_size = 256,
+        .datagram_slots = 8,
+    };
+    const total = try config_module.required_bytes(config);
+    const slab = try std.testing.allocator.alignedAlloc(
+        u8,
+        std.mem.Alignment.fromByteUnits(config_module.slab_alignment),
+        total,
+    );
+    defer std.testing.allocator.free(slab);
+
+    const layout = try config_module.carve(slab, config);
+    try std.testing.expectEqual(@as(usize, 32), layout.datagram_session_ids.len);
+    try std.testing.expectEqual(@as(usize, 32), layout.datagram_sequences.len);
+    try std.testing.expectEqual(@as(usize, 32), layout.datagram_payload_lengths.len);
+    try std.testing.expectEqual(@as(usize, 4), layout.datagram_rings.len);
+    try std.testing.expectEqual(@as(usize, 8 * 256), layout.datagram_stride);
+    try std.testing.expectEqual(@as(usize, 4 * 8 * 256), layout.datagram_payloads.len);
+    try std.testing.expectEqual(@as(usize, 0), layout.xdp_umem.len);
+}
+
+test "config: datagram router rejects duplicates and unknown paths" {
+    const datagram_module = support.datagram;
+    const handler = struct {
+        fn handle(_: *anyopaque, _: u64, _: []const u8) void {}
+    }.handle;
+
+    var router = datagram_module.Router{};
+    var context: u8 = 0;
+    try router.register("/chat", handler, &context);
+    try std.testing.expect(router.find("/chat") != null);
+    try std.testing.expect(router.find("/other") == null);
+    try std.testing.expectError(
+        error.RouteAlreadyRegistered,
+        router.register("/chat", handler, &context),
+    );
+    try std.testing.expectError(
+        error.InvalidPath,
+        router.register("chat", handler, &context),
+    );
+}
+
+test "config: app dispatch copies datagrams into the persistent ring" {
+    const TestApp = app_module.configured_app_with_timeout(2, 1024, 4096, 0);
+    const config = ServerConfig{
+        .max_connections = 2,
+        .max_ws_message_size = 1024,
+        .write_queue_size = 4096,
+        .idle_timeout_ms = 0,
+        .max_datagram_size = 64,
+        .datagram_slots = 4,
+        .observability = true,
+    };
+    var server = try TestApp.init_configured(std.testing.io, std.testing.allocator, config);
+    defer server.deinit();
+
+    const State = struct {
+        calls: usize = 0,
+        session: u64 = 0,
+        first: u8 = 0,
+    };
+    const handler = struct {
+        fn handle(context: *anyopaque, session_id: u64, payload: []const u8) void {
+            const state: *State = @ptrCast(@alignCast(context));
+            state.calls += 1;
+            state.session = session_id;
+            state.first = if (payload.len > 0) payload[0] else 0;
+        }
+    }.handle;
+
+    var state = State{};
+    _ = try server.datagram_context("/chat", &state, handler);
+    try std.testing.expect(server.dispatch_datagram(0, 7, 1, "/chat", "hello"));
+    try std.testing.expectEqual(@as(usize, 1), state.calls);
+    try std.testing.expectEqual(@as(u64, 7), state.session);
+    try std.testing.expectEqual(@as(u8, 'h'), state.first);
+
+    const queued = server.next_datagram(0) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("hello", queued.payload);
+    try std.testing.expectEqual(@as(u64, 7), queued.session_id);
+    try std.testing.expect(server.next_datagram(0) == null);
+    try std.testing.expect(!server.dispatch_datagram(0, 7, 2, "/missing", "x"));
+
+    const registry = server.metrics() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u64, 1), registry.get(.datagrams_received));
+
+    for (0..4) |index| {
+        try std.testing.expect(server.dispatch_datagram(
+            0,
+            7,
+            @intCast(index + 2),
+            "/chat",
+            "x",
+        ));
+    }
+    try std.testing.expect(!server.dispatch_datagram(0, 7, 99, "/chat", "overflow"));
+    try std.testing.expectEqual(@as(u64, 1), registry.get(.datagrams_dropped));
+}
+
+test "config: kernel bypass falls back safely and records the verdict" {
+    const TestApp = app_module.configured_app_with_timeout(2, 1024, 4096, 0);
+    const config = comptime Preset.kernel_bypass.with(.{
+        .max_connections = 2,
+        .max_ws_message_size = 1024,
+        .write_queue_size = 4096,
+        .idle_timeout_ms = 0,
+    });
+    var server = try TestApp.init_configured(std.testing.io, std.testing.allocator, config);
+    defer server.deinit();
+
+    const registry = server.metrics() orelse return error.TestUnexpectedResult;
+    if (server.xdp_transport == null) {
+        try std.testing.expectEqual(@as(u64, 1), registry.get(.xdp_kernel_bypass_fallbacks));
+        try std.testing.expect(server.transport_availability.reason != .none);
+    } else {
+        try std.testing.expectEqual(@as(u64, 1), registry.get(.kernel_bypass_active));
+    }
+}
+
+test "config: builder exposes datagram, bypass, and observability knobs" {
+    const builder = builder_module.Server.builder(std.testing.io)
+        .with_max_clients(2)
+        .with_max_ws_message_size(1024)
+        .with_write_queue_size(4096)
+        .with_max_body_size(8192)
+        .with_idle_timeout_ms(0)
+        .with_webtransport_datagrams(128, 4)
+        .with_observability(true)
+        .with_metrics_path("/internal/metrics");
+
+    const configuration = builder.configuration();
+    try std.testing.expectEqual(@as(usize, 128), configuration.max_datagram_size);
+    try std.testing.expectEqual(@as(usize, 4), configuration.datagram_slots);
+    try std.testing.expect(configuration.observability);
+    try std.testing.expectEqualStrings("/internal/metrics", configuration.metrics_path);
+
+    var server = try builder.build(std.testing.allocator);
+    defer server.deinit();
+    try std.testing.expect(server.metrics() != null);
+    try std.testing.expectEqual(@as(usize, 2), server.datagram_rings.len);
+    try std.testing.expectEqual(@as(usize, 2 * 4), server.datagram_session_ids.len);
+    try std.testing.expectEqual(@as(usize, 4 * 128), server.datagram_stride);
+}
+
 test "config: build allocates exactly one slab and routing never allocates" {
     var counting = CountingAllocator{ .parent = std.testing.allocator };
     const builder = builder_module.Server.builder(std.testing.io)

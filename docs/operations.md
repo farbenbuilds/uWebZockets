@@ -43,8 +43,11 @@ The freestanding target exports linear memory for V8 isolate hosts. Both WASM
 targets export bounded `alloc`/`free` and generation-checked handle functions;
 host code should retain each handle while its shared-memory view is live and
 release it exactly once. The eBPF step emits
-`zig-out/share/uwebzockets/uwz_xdp.o`; attaching it and populating its XSK map
-requires Linux network-administration privileges.
+`zig-out/share/uwebzockets/uwz_xdp.o` for the XSK redirect and
+`zig-out/share/uwebzockets/uwz_latency.o` for the per-CPU packet-length
+histogram served by the hidden `/metrics` endpoint when the map is pinned at
+`/sys/fs/bpf/uwz_latency`. Attaching the redirect, pinning the histogram, and
+populating the XSK map require Linux network-administration privileges.
 
 ### Sanitizers
 

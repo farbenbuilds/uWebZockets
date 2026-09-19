@@ -20,7 +20,10 @@ Read before changing anything: `AGENTS.md`, `CONTRIBUTE.md` ("Dependency
 updates", "Releasing"), `CODEBASE.md` ("Build graph"), `CI_CD_PIPELINE.md`,
 and `build.zig.zon`. Load the `zig-build-system`, `zig-cross`, `zig-compiler`,
 `cmake`, `ninja`, `gcc`, `c-systems-programming`, and `nix-best-practices`
-skills when they apply.
+skills for the build graph, plus `ci-cd-and-automation`,
+`git-workflow-and-versioning`, `shipping-and-launch`,
+`deprecation-and-migration`, and `documentation-and-adrs` for gates, releases,
+dependency migrations, and decisions.
 
 # Focus Areas
 
@@ -108,8 +111,20 @@ skills when they apply.
   --summary all` and `zig build lib -Doptimize=ReleaseFast --summary all`;
   use `zig build all-targets -Doptimize=ReleaseSafe --summary all` for WASM
   and eBPF, remembering that the eBPF step requires a Linux host.
-- For dependency updates, rebuild `tests/package_consumer` and document the
-  migration in the commit body and `CHANGELOG.md`.
+- For dependency updates, apply `deprecation-and-migration`: bump, migration
+  note, consumer rebuild, and `CHANGELOG.md` entry in one change. Rebuild
+  `tests/package_consumer` and document the migration in the commit body.
+- Apply `ci-cd-and-automation`: workflows stay deterministic and pinned, cache
+  keys include triple, optimize mode, and sanitizer mode, and no gate is
+  weakened to make a change pass.
+- Apply `git-workflow-and-versioning` and `shipping-and-launch`: release
+  commits are atomic, version surfaces move together, and the published
+  checklist runs before any tag.
+- Apply `documentation-and-adrs` when a build-graph decision is non-obvious
+  (cache layout, patch policy, target tiering); record it where the next
+  engineer will look.
+- Apply `doubt-driven-development` to dependency pin or vendor patch changes:
+  treat supply-chain updates as high-stakes and adversarially review the diff.
 - Coordinate with `crypto_tls` before changing BoringSSL flags, with `quic_h3`
   before touching lsquic patches or revisions, and with `verification` before
   changing any workflow gate or benchmark threshold.

@@ -22,8 +22,10 @@ Read before changing anything: `AGENTS.md`, `CODING_CONVENTION.md`,
 `CONTRIBUTE.md`, `CODEBASE.md` ("HTTP/1.1", "JSON-RPC", "Supported and internal
 API"), the capacity table in `README.md`, and `CHANGELOG.md` for compatibility
 history. Load the `zig-0.16`, `zig-best-practices`, `zig-comptime`, `dod`,
-`functional-programming-fundamentals`, `ponytail`, and `caveman` skills when
-they apply.
+`functional-programming-fundamentals`, `ponytail`, and `caveman` skills for the
+code, plus `api-and-interface-design`, `spec-driven-development`,
+`deprecation-and-migration`, and `documentation-and-adrs` for public surfaces,
+new work, migrations, and decisions.
 
 # Focus Areas
 
@@ -103,6 +105,17 @@ they apply.
 
 # Working Agreement
 
+- Apply `api-and-interface-design`: design public signatures, capacities,
+  ownership, and error names as a contract before implementing; prefer additive
+  evolution over breaking edits.
+- Apply `spec-driven-development` for a new builder, route, or RPC surface:
+  write the observable contract first (usage example, capacity table, error
+  set) and land it in verifiable slices.
+- Apply `deprecation-and-migration`: a rename or removal ships with a
+  documented migration path, a `CHANGELOG.md` entry, and the package-consumer
+  update.
+- Apply `documentation-and-adrs` when a public decision is non-obvious; record
+  it in `docs/`, `CODEBASE.md`, or the changelog instead of a code comment.
 - Run `zig build test --summary all` for every change, then
   `zig build hello_world -Doptimize=ReleaseSafe`,
   `zig build rpc_server -Doptimize=ReleaseSafe`,

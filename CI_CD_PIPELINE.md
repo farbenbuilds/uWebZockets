@@ -10,7 +10,7 @@ it is not a proof that all memory or security defects are absent.
 | Workflow | Trigger | Environment | Purpose |
 | --- | --- | --- | --- |
 | `lint.yml` | pushes and pull requests to `main`, manual | `Linting` | Zig formatting and repository conventions |
-| `test.yml` | pushes and pull requests to `main`, manual | `Testing` | Debug, sanitizer, fuzz, ReleaseSafe, and ReleaseFast verification |
+| `test.yml` | pushes and pull requests to `main`, manual | `Testing` | Parallel Debug, sanitizer, fuzz, ReleaseSafe, and ReleaseFast verification |
 | `windows.yml` | manual, reusable from tagged publishing | `Testing` | Native `x86_64-windows-gnu` test compilation and static-library build |
 | `oss_fuzz.yml` | pushes and pull requests to `main`, manual, reusable | `Testing` | OSS-Fuzz-compatible ASan/libFuzzer build and execution |
 | `autobahn_compliance.yml` | pushes and pull requests to `main`, manual | `autobahn Compliance` | RFC 6455 server compliance |
@@ -22,9 +22,18 @@ it is not a proof that all memory or security defects are absent.
 Every workflow uses a GitHub environment so repository deployments and any
 environment protection rules remain visible in GitHub.
 
+`test.yml`, `autobahn_compliance.yml`, and `h1spec_compliance.yml` share the
+`.github/actions/setup-build` composite action. It caches the Zig global cache
+and the vendored C/C++ build tree under a per-optimization-mode key, then
+refreshes the restored tree's timestamps so Ninja treats a cache hit as current
+work instead of rebuilding BoringSSL, lsquic, and libdeflate. `benchmark.yml`
+uses the same approach for its candidate and baseline checkouts.
+
 ## Lint
 
-The lint job uses Zig 0.16.0 and runs:
+The lint job installs Zig 0.16.0 directly instead of entering the Nix
+development shell, and uses the runner's ripgrep for the convention scan
+(installing it only if absent). It runs:
 
 ```sh
 zig fmt --check build.zig src examples tests fuzz
@@ -40,8 +49,12 @@ changelog, and versioned documentation synchronized.
 
 ## Unit and build verification
 
-The test job checks out all submodules and enters the Nix development shell.
-It then runs:
+The test workflow fans the checks out into parallel jobs: Debug tests, ASan and
+UBSan, MemorySanitizer, ReleaseSafe compilation, the downstream package
+consumer, the bounded fuzz run, and ReleaseFast artifacts. Each job checks out
+all submodules and restores the shared build cache before entering the Nix
+development shell. A final `Checks & Tests` job aggregates the parallel results,
+so one status reflects the whole workflow. The jobs run:
 
 ```sh
 zig build test --summary all
@@ -78,7 +91,7 @@ shim with MemorySanitizer and origin tracking, then runs a focused C
 dependency-boundary smoke. It does not instrument Zig code or execute the full
 C ABI suite, and MSan cannot be combined with ASan.
 
-The test job also runs Zig's native fuzzer for 100,000 iterations over bounded
+The fuzz job runs Zig's native fuzzer for 100,000 iterations over bounded
 HTTP, HTTP/3 metadata, WebSocket extension, and zslay receive-state targets.
 Seed corpora include valid, fragmented, malformed, and control-frame inputs.
 It separately compiles the three sanitizer-coverage libFuzzer objects used by
@@ -170,7 +183,10 @@ on ignored developer certificates.
 
 The benchmark workflow checks the pull request and its `main` base out into
 separate directories, then builds each checkout from its own working directory
-with ReleaseFast on the same Ubuntu runner. Candidate and baseline builds use
+with ReleaseFast on the same Ubuntu runner. Both checkouts restore the shared
+benchmark build cache, and the pull-request trigger is limited to
+build-relevant paths so documentation-only changes do not spend a runner on the
+comparison. Candidate and baseline builds use
 three bounded attempts with 10- and 20-second backoff so a transient immutable
 dependency fetch does not discard the comparison.
 

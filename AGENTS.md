@@ -14,7 +14,46 @@ You prioritize performance, zero-allocation data paths, and data-oriented design
 - **Asynchronous IO**: Maximize throughput using event-driven, non-blocking IO architecture.
 - **Data-Oriented Design**: Optimize for CPU caches. Group similar data together; use Struct of Arrays where applicable.
 
+## Skill Library
+Load skills on demand with the `skill` tool by directory name. Prefer the
+narrowest skill that matches the current phase; do not load skills that do not
+apply.
+- **Local project skills**: `.agents/skills/<name>/SKILL.md`, pinned by
+  `skills-lock.json`. If a referenced skill is missing, stop and report drift
+  instead of guessing.
+- **Global skills**: supplied by the host opencode install, currently
+  `graphify`. The skill is not vendored here; its opencode plugin is registered
+  locally under `.opencode/`.
+- **Process**: `using-agent-skills` routes the phase; `spec-driven-development`,
+  `planning-and-task-breakdown`, and `incremental-implementation` shape new
+  work; `test-driven-development` proves behavior changes;
+  `debugging-and-error-recovery` owns failures; `code-review-and-quality` and
+  `doubt-driven-development` gate high-stakes diffs;
+  `constraint-driven-development` guards the quality bar.
+- **Non-functional**: `security-and-hardening`, `performance-optimization`,
+  `observability-and-instrumentation`, and `code-simplification`.
+- **Delivery**: `api-and-interface-design`, `source-driven-development`,
+  `documentation-and-adrs`, `deprecation-and-migration`,
+  `git-workflow-and-versioning`, `ci-cd-and-automation`, and
+  `shipping-and-launch`.
+- **Domain**: Zig and systems (`zig-*`, `cmake`, `ninja`, `gcc`,
+  `c-systems-programming`, `nix-best-practices`) and design (`dod`, `ponytail`,
+  `caveman`, `functional-programming-fundamentals`).
+
 ## Integrations
 - Seamlessly interact with C/C++ and Go projects via Zig FFI.
 - Target libraries: BoringSSL, lsquic, libdeflate.
 - **Compilation Strategy**: Actively utilize the `cmake`, `ninja`, `gcc`, and `c-systems-programming` skills to configure robust compilation steps in `build.zig` for all C/C++ git submodules.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+When the user types `/graphify`, use the installed graphify skill or instructions before doing anything else.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip graphify. Only skip graphify if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).

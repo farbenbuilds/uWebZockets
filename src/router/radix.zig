@@ -6,6 +6,7 @@ const AsyncResponse = @import("../http/response.zig").AsyncResponse;
 const WebSocket = @import("../ws/socket.zig").WebSocket;
 const zslay = @import("zslay");
 const openapi = @import("../http/openapi.zig");
+const radix_pattern = @import("radix_pattern.zig");
 
 /// Existing synchronous route callback ABI.
 pub const Handler = *const fn (req: *Request, res: *Response) void;
@@ -177,10 +178,10 @@ pub const RouteMatch = struct {
 };
 
 const max_nodes = 256;
-const max_route_path_size = 2048;
 /// Maximum number of parameterized route patterns.
 pub const max_pattern_routes = 64;
-const max_route_storage_size = (max_nodes + max_pattern_routes) * max_route_path_size;
+const max_route_storage_size = (max_nodes + max_pattern_routes) *
+    radix_pattern.max_route_path_size;
 /// Maximum number of ordered global middleware callbacks.
 pub const max_middleware = 32;
 /// Maximum number of routes retained for introspection.
@@ -192,13 +193,6 @@ const empty_handlers = [_]?RouteHandler{null} ** method_count;
 const PatternRoute = struct {
     handlers: [method_count]?RouteHandler = empty_handlers,
     ws_behavior: ?WsBehavior = null,
-    static_bytes: u16 = 0,
-    parameter_count: u8 = 0,
-    has_wildcard: bool = false,
-};
-
-const PatternInfo = struct {
-    dynamic: bool = false,
     static_bytes: u16 = 0,
     parameter_count: u8 = 0,
     has_wildcard: bool = false,
@@ -253,7 +247,7 @@ pub const Router = struct {
 
     fn alloc_node(self: *Router, bytes: []const u8) !u16 {
         if (self.node_count >= max_nodes) return error.RouteCapacityReached;
-        if (bytes.len > max_route_path_size) return error.InvalidRoutePath;
+        if (bytes.len > radix_pattern.max_route_path_size) return error.InvalidRoutePath;
 
         const index = self.node_count;
         self.segment_offsets[index] = try self.store_path(bytes);
@@ -295,15 +289,8 @@ pub const Router = struct {
         return index;
     }
 
-    fn valid_path(path: []const u8) bool {
-        if (path.len == 0 or path.len > max_route_path_size) return false;
-        if (path[0] != '/') return false;
-        if (std.mem.indexOfAny(u8, path, "?#\r\n") != null) return false;
-        return true;
-    }
-
     fn insert_path(self: *Router, path: []const u8) !u16 {
-        if (!valid_path(path)) return error.InvalidRoutePath;
+        if (!radix_pattern.valid_path(path)) return error.InvalidRoutePath;
 
         var current = self.root_idx;
         var search = path;
@@ -367,7 +354,7 @@ pub const Router = struct {
         handler: RouteHandler,
     ) !void {
         try self.ensure_route_record(path);
-        const pattern = try analyze_pattern(path);
+        const pattern = try radix_pattern.analyze_pattern(path);
         if (pattern.dynamic) {
             const route = try self.get_or_add_pattern(path, pattern);
             const method_index = @intFromEnum(method);
@@ -499,7 +486,7 @@ pub const Router = struct {
     /// Registers a WebSocket upgrade route.
     pub fn ws(self: *Router, path: []const u8, behavior: WsBehavior) !void {
         try self.ensure_route_record(path);
-        const pattern = try analyze_pattern(path);
+        const pattern = try radix_pattern.analyze_pattern(path);
         if (pattern.dynamic) {
             const route = try self.get_or_add_pattern(path, pattern);
             if (route.ws_behavior != null) return error.RouteAlreadyRegistered;
@@ -669,7 +656,7 @@ pub const Router = struct {
     fn get_or_add_pattern(
         self: *Router,
         path: []const u8,
-        info: PatternInfo,
+        info: radix_pattern.PatternInfo,
     ) !*PatternRoute {
         for (0..self.pattern_count) |index| {
             if (std.mem.eql(u8, self.pattern_path(@intCast(index)), path)) {
@@ -792,74 +779,6 @@ fn allowed_handler_mask(
     }
     if (has_websocket) mask |= method_bit(.get);
     return mask;
-}
-
-fn analyze_pattern(path: []const u8) !PatternInfo {
-    if (!Router.valid_path(path)) return error.InvalidRoutePath;
-
-    var info = PatternInfo{};
-    var cursor: usize = 1;
-    while (cursor <= path.len) {
-        const end = std.mem.indexOfScalarPos(u8, path, cursor, '/') orelse path.len;
-        const segment = path[cursor..end];
-        if (segment.len != 0 and (segment[0] == ':' or segment[0] == '*')) {
-            if (segment.len == 1 or !valid_parameter_name(segment[1..])) {
-                return error.InvalidRoutePattern;
-            }
-            info.dynamic = true;
-            if (info.parameter_count == request_module.max_route_params) {
-                return error.RouteParameterCapacityReached;
-            }
-            info.parameter_count += 1;
-            if (segment[0] == '*') {
-                if (end != path.len) return error.InvalidRoutePattern;
-                info.has_wildcard = true;
-            }
-        } else {
-            if (segment.len > std.math.maxInt(u16) - info.static_bytes) {
-                return error.InvalidRoutePattern;
-            }
-            info.static_bytes += @intCast(segment.len);
-        }
-
-        if (end == path.len) break;
-        cursor = end + 1;
-    }
-    if (duplicate_parameter_name(path)) return error.InvalidRoutePattern;
-    return info;
-}
-
-fn valid_parameter_name(name: []const u8) bool {
-    for (name) |byte| {
-        if (!std.ascii.isAlphanumeric(byte) and byte != '_' and byte != '-') return false;
-    }
-    return true;
-}
-
-fn duplicate_parameter_name(pattern: []const u8) bool {
-    var outer: usize = 1;
-    while (outer < pattern.len) {
-        const outer_end = std.mem.indexOfScalarPos(u8, pattern, outer, '/') orelse pattern.len;
-        const outer_segment = pattern[outer..outer_end];
-        if (outer_segment.len > 1 and (outer_segment[0] == ':' or outer_segment[0] == '*')) {
-            var inner = outer_end + @as(usize, @intFromBool(outer_end < pattern.len));
-            while (inner < pattern.len) {
-                const inner_end = std.mem.indexOfScalarPos(u8, pattern, inner, '/') orelse pattern.len;
-                const inner_segment = pattern[inner..inner_end];
-                if (inner_segment.len > 1 and
-                    (inner_segment[0] == ':' or inner_segment[0] == '*') and
-                    std.mem.eql(u8, outer_segment[1..], inner_segment[1..]))
-                {
-                    return true;
-                }
-                if (inner_end == pattern.len) break;
-                inner = inner_end + 1;
-            }
-        }
-        if (outer_end == pattern.len) break;
-        outer = outer_end + 1;
-    }
-    return false;
 }
 
 fn pattern_matches(pattern: []const u8, path: []const u8) bool {

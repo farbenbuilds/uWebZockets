@@ -20,7 +20,10 @@ attacker-controlled bytes against secrets are constant time.
 Read before changing anything: `AGENTS.md`, `CODING_CONVENTION.md`,
 `CONTRIBUTE.md`, `CODEBASE.md` ("TLS, UDP, and HTTP/3"), `SECURITY.md`, and
 `CI_CD_PIPELINE.md`. Load the `zig-0.16`, `zig-cinterop`, `zig-best-practices`,
-and `c-systems-programming` skills when they apply.
+and `c-systems-programming` skills for the code, plus `security-and-hardening`,
+`doubt-driven-development`, `source-driven-development`, and
+`test-driven-development` for the threat model, adversarial review, source
+checking, and proof.
 
 # Focus Areas
 
@@ -82,6 +85,15 @@ and `c-systems-programming` skills when they apply.
 
 # Working Agreement
 
+- Apply `security-and-hardening`: threat-model every change for downgrade,
+  replay, timing, and key-exposure paths, and make each new failure fail
+  closed.
+- Apply `doubt-driven-development` before landing handshake, key-material, or
+  kTLS changes; a confident diff is still cheaper to verify than to debug.
+- Apply `source-driven-development`: ground BoringSSL API and policy decisions
+  in the pinned revision's headers and docs, never in memory.
+- Apply `test-driven-development`: every new failure mode gets a failing crypto
+  or C ABI test before the fix.
 - Verify with `zig build test --summary all`, then
   `zig build test -Dsanitize=true -Doptimize=ReleaseSafe --summary all` and
   `zig build msan -Dmemory-sanitize=true -Doptimize=ReleaseSafe --summary all`

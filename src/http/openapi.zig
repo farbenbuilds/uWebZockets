@@ -1,4 +1,5 @@
 const std = @import("std");
+const release = @import("../version.zig");
 
 pub const Route = struct {
     method: []const u8,
@@ -8,7 +9,7 @@ pub const Route = struct {
 
 pub const Options = struct {
     title: []const u8 = "uWebZockets API",
-    version: []const u8 = "1.0.9",
+    version: []const u8 = release.string,
 };
 
 /// Generates a bounded OpenAPI 3.1 document from registered route metadata.

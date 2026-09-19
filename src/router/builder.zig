@@ -14,6 +14,8 @@ const config_module = @import("config.zig");
 pub const ServerConfig = config_module.ServerConfig;
 /// Named capacity presets such as `Preset.microservice`.
 pub const Preset = config_module.ServerConfig.Preset;
+/// Transport backend selector accepted by `with_kernel_bypass`.
+pub const TransportMode = config_module.TransportMode;
 /// Views over the single contiguous startup slab.
 pub const SlabLayout = config_module.SlabLayout;
 /// Defaults used when no `with_*` override is applied.
@@ -110,6 +112,62 @@ pub fn configured_builder(comptime config: ServerConfig) type {
             self: Self,
             comptime enabled: bool,
         ) configured_builder(config.with(.{ .compression = enabled })) {
+            return .{ .io = self.io };
+        }
+
+        /// Requests the opportunistic AF_XDP kernel-bypass transport.
+        ///
+        /// Non-Linux targets compile the request out, and Linux hosts that
+        /// refuse the probe keep the standard stack and report the reason.
+        pub fn with_kernel_bypass(
+            self: Self,
+            comptime enabled: bool,
+        ) configured_builder(config.with(.{
+            .transport = if (enabled) .kernel_bypass else .standard,
+        })) {
+            return .{ .io = self.io };
+        }
+
+        /// Reserves one SoA datagram ring per connection in the startup slab.
+        ///
+        /// `max_datagram_size` bounds each payload and `datagram_slots` bounds
+        /// the queued depth; both must be nonzero to enable datagrams.
+        pub fn with_webtransport_datagrams(
+            self: Self,
+            comptime max_datagram_size: usize,
+            comptime datagram_slots: usize,
+        ) configured_builder(config.with(.{
+            .max_datagram_size = max_datagram_size,
+            .datagram_slots = datagram_slots,
+        })) {
+            return .{ .io = self.io };
+        }
+
+        /// Overrides the AF_XDP UMEM geometry.
+        pub fn with_xdp_umem(
+            self: Self,
+            comptime frame_size: usize,
+            comptime frame_count: usize,
+        ) configured_builder(config.with(.{
+            .xdp_frame_size = frame_size,
+            .xdp_frame_count = frame_count,
+        })) {
+            return .{ .io = self.io };
+        }
+
+        /// Serves the hidden Prometheus endpoint when enabled.
+        pub fn with_observability(
+            self: Self,
+            comptime enabled: bool,
+        ) configured_builder(config.with(.{ .observability = enabled })) {
+            return .{ .io = self.io };
+        }
+
+        /// Overrides the hidden observability endpoint path.
+        pub fn with_metrics_path(
+            self: Self,
+            comptime path: []const u8,
+        ) configured_builder(config.with(.{ .metrics_path = path })) {
             return .{ .io = self.io };
         }
 

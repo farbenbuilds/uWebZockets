@@ -28,7 +28,7 @@
       }: let
         lib = pkgs.lib;
         isLinux = pkgs.stdenv.hostPlatform.isLinux;
-        releaseVersion = "1.0.9";
+        releaseVersion = "1.1.0";
         pkgsMusl =
           if isLinux
           then pkgs.pkgsMusl
@@ -191,10 +191,7 @@
                   pkgs.perl
                   pkgs.python3
                   pkgs.ripgrep
-                  pkgs.gnutar
-                  pkgs.gzip
                   pkgs.patch
-                  pkgs.xz
                   packagePkgs.zlib
                   pkgs.wrk
                 ]

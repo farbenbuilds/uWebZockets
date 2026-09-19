@@ -2,7 +2,7 @@
 
 ## Scope
 
-µWebZockets 1.0.9 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
+µWebZockets 1.1.0 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
 server library with bounded HPACK protocol storage. It combines an
 event-driven cross-platform transport (POSIX and Windows IOCP), fixed-capacity
 protocol state, a data-oriented router, and C libraries for TLS, compression, and QUIC.
@@ -53,13 +53,14 @@ uWebZockets/
 │   └── targets/
 │       ├── native.zig         # TCP, io_uring/IOCP, TLS, and QUIC graph
 │       ├── wasm.zig           # freestanding and WASI edge graph
-│       └── ebpf.zig           # XDP BPF object pipeline
+│       └── ebpf.zig           # XDP redirect and latency histogram objects
 ├── flake.nix                 # native GNU/musl and macOS packages
 ├── docs/                     # architecture, memory model, protocols, operations
 ├── include/uWebZockets.h     # versioned C ABI declarations
 ├── src/
 │   ├── root.zig              # supported public API
-│   ├── c_api.zig             # exported C ABI implementation
+│   ├── version.zig           # single Zig source of truth for the release version
+│   ├── c_api.zig             # exported C ABI facade (handlers in c_api/)
 │   ├── core/                 # libxev I/O plus transport-neutral protocol core
 │   │   ├── affinity.zig      # physical-core selection and thread pinning
 │   │   ├── ktls.zig          # Linux kTLS and zero-copy file transfer
@@ -72,8 +73,9 @@ uWebZockets/
 │   ├── router/               # fixed-capacity radix router, App API, config, builder
 │   ├── rpc/                  # bounded JSON-RPC registry and dispatcher
 │   ├── ws/                   # streams, pure backpressure, framing, pub/sub
-│   ├── xdp/                  # AF_XDP UMEM rings and redirect hook
-│   ├── quic/                 # lsquic HTTP/3 and extension primitives
+│   ├── observability/        # Prometheus registry and pinned eBPF histogram reader
+│   ├── xdp/                  # AF_XDP UMEM rings, TX path, and bypass policy
+│   ├── quic/                 # lsquic HTTP/3, WebTransport, and datagram ring
 │   └── tests/                # centralized ordinary Zig unit tests
 ├── fuzz/                     # libFuzzer ABI targets and local smoke drivers
 ├── oss-fuzz/                 # Google OSS-Fuzz build and corpus metadata
@@ -129,6 +131,9 @@ descriptors through libxev, and runs the loop until every callback is disarmed.
 `src/core/udp.zig` owns its fixed receive buffer, QUIC engine, read, timer,
 cancellation, and close completions as one unit. Only after both transports
 drain are TLS state, QUIC state, the loop, and contiguous slabs released.
+
+The registration-to-handler map for native callbacks is in
+[docs/callback_lifecycle.md](docs/callback_lifecycle.md).
 
 ## HTTP/1.1
 
@@ -281,8 +286,12 @@ this path, while runtime interoperability remains Tier 2.
 
 ## Build graph
 
-The root `build.zig` declares version 1.0.9 and delegates directly to
-`builds/orchestrator.zig`. Focused modules map Zig optimization modes to CMake
+`src/version.zig` is the single Zig source of truth for the release version;
+the root `build.zig` derives its `std.SemanticVersion` from it and delegates
+directly to `builds/orchestrator.zig`. `scripts/bump_version.sh` rewrites the
+package manifest, the C ABI macros, the C/C++ tests, the documentation
+headers, and the changelog skeleton, and `scripts/check_release_version.sh`
+fails the lint workflow if any copy drifts. Focused modules map Zig optimization modes to CMake
 build types and invoke Ninja for BoringSSL, lsquic, and libdeflate. The
 `zig-cc` and `zig-c++` wrappers pass
 the selected target triple to cross builds. Vendor caches are separated by

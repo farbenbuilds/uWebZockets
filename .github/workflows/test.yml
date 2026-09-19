@@ -13,35 +13,48 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
-  test:
-    name: Checks & Tests
+  debug:
+    name: Debug tests
     runs-on: ubuntu-24.04
     environment: Testing
+    timeout-minutes: 30
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: recursive
+          persist-credentials: false
 
-      - name: Install Nix
-        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build
         with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-
-      - name: Cache Zig and C/C++ build artifacts
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: |
-            ~/.cache/zig
-            .zig-cache/vendor-build-v4
-          key: ${{ runner.os }}-zig-v6-${{ hashFiles('build.zig', 'builds/**/*.zig', 'build.zig.zon', 'flake.nix', 'flake.lock', 'vendor/**/CMakeLists.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-zig-v6-
+          cache-suffix: debug
 
       - name: Run debug tests
         run: nix develop "path:." -c zig build test --summary all
+
+  asan-ubsan:
+    name: ASan and UBSan
+    runs-on: ubuntu-24.04
+    environment: Testing
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build
+        with:
+          cache-suffix: asan
 
       - name: Run ASan and UBSan tests
         env:
@@ -49,23 +62,139 @@ jobs:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: nix develop "path:." -c zig build test -Dsanitize=true -Doptimize=ReleaseSafe --summary all
 
+  msan:
+    name: MemorySanitizer
+    runs-on: ubuntu-24.04
+    environment: Testing
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build
+        with:
+          cache-suffix: msan
+
       - name: Run MemorySanitizer tests
         env:
           MSAN_OPTIONS: halt_on_error=1:track_origins=2
         run: nix develop "path:." -c zig build msan -Dmemory-sanitize=true -Doptimize=ReleaseSafe --summary all
 
+  release-compile:
+    name: ReleaseSafe compile
+    runs-on: ubuntu-24.04
+    environment: Testing
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build
+        with:
+          cache-suffix: release
+
       - name: Compile ReleaseSafe tests
         run: nix develop "path:." -c zig build test-compile -Doptimize=ReleaseSafe --summary all
+
+  consumer:
+    name: Downstream consumer
+    runs-on: ubuntu-24.04
+    environment: Testing
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build
+        with:
+          cache-suffix: consumer
 
       - name: Compile downstream package consumer
         working-directory: tests/package_consumer
         run: nix develop "path:../.." -c zig build check -Doptimize=ReleaseSafe --summary all
 
+  fuzz:
+    name: Fuzz smoke
+    runs-on: ubuntu-24.04
+    environment: Testing
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build
+        with:
+          cache-suffix: release
+
       - name: Fuzz bounded protocol parsers
         run: nix develop "path:." -c zig build fuzz --fuzz=100K -Doptimize=ReleaseSafe
+
+  artifacts:
+    name: Release artifacts
+    runs-on: ubuntu-24.04
+    environment: Testing
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build
+        with:
+          cache-suffix: artifacts
 
       - name: Compile OSS-Fuzz ABI objects
         run: nix develop "path:." -c zig build oss-fuzz-objects -Doptimize=ReleaseSafe --summary all
 
       - name: Build ReleaseFast library
         run: nix develop "path:." -c zig build lib -Doptimize=ReleaseFast --summary all
+
+  checks:
+    name: Checks & Tests
+    needs:
+      - debug
+      - asan-ubsan
+      - msan
+      - release-compile
+      - consumer
+      - fuzz
+      - artifacts
+    if: always()
+    runs-on: ubuntu-24.04
+    environment: Testing
+    timeout-minutes: 5
+
+    steps:
+      - name: Verify every verification job succeeded
+        shell: bash
+        run: |
+          set -euo pipefail
+          results='${{ join(needs.*.result, ',') }}'
+          case ",$results," in
+            *,failure,*|*,cancelled,*) printf 'failed jobs: %s\n' "$results" >&2; exit 1 ;;
+          esac
+          printf 'all verification jobs succeeded: %s\n' "$results"
