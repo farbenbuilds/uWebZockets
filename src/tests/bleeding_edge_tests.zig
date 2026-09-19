@@ -268,11 +268,14 @@ test "bleeding edge: SIMD scans HTTP delimiters and rejects controls" {
 }
 
 test "bleeding edge: Linux ABI structures and invalid setup fail safely" {
-    if (builtin.os.tag != .linux) return;
-    try std.testing.expectEqual(@as(usize, 16), @sizeOf(support.xdp.Descriptor));
-    try std.testing.expectEqual(@as(usize, 40), @sizeOf(support.ktls.AesGcm128));
-    var empty: [0]u8 = .{};
-    try std.testing.expectError(error.InvalidArgument, support.xdp.XskSocket.init(&empty, 4096, 0));
+    // The XDP socket entry point is comptime-gated to Linux; keep the call inside
+    // a comptime branch so non-Linux targets never analyze it.
+    if (builtin.os.tag == .linux) {
+        try std.testing.expectEqual(@as(usize, 16), @sizeOf(support.xdp.Descriptor));
+        try std.testing.expectEqual(@as(usize, 40), @sizeOf(support.ktls.AesGcm128));
+        var empty: [0]u8 = .{};
+        try std.testing.expectError(error.InvalidArgument, support.xdp.XskSocket.init(&empty, 4096, 0));
+    }
 }
 
 test "bleeding edge: GPA and request arena release all lifecycle memory" {
