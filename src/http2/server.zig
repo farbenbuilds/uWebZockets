@@ -440,7 +440,7 @@ pub fn server_session(
 
         fn receive_headers(
             self: *Self,
-            event: anytype,
+            event: connection_module.HeadersEvent,
             callbacks: Callbacks,
         ) !void {
             const is_trailer = self.initial_seen[event.stream_index];
@@ -459,7 +459,7 @@ pub fn server_session(
 
         fn receive_continuation(
             self: *Self,
-            event: anytype,
+            event: connection_module.HeadersContinuationEvent,
             callbacks: Callbacks,
         ) !void {
             const index = self.header_stream_index orelse {
@@ -477,7 +477,7 @@ pub fn server_session(
 
         fn receive_refused_headers(
             self: *Self,
-            event: anytype,
+            event: connection_module.DiscardedHeadersEvent,
             callbacks: Callbacks,
         ) !void {
             self.header_block_length = 0;
@@ -492,7 +492,7 @@ pub fn server_session(
 
         fn receive_refused_continuation(
             self: *Self,
-            event: anytype,
+            event: connection_module.DiscardedHeadersEvent,
             callbacks: Callbacks,
         ) !void {
             const stream_id = self.refused_header_stream_id orelse {
@@ -510,7 +510,7 @@ pub fn server_session(
 
         fn receive_locally_reset_headers(
             self: *Self,
-            event: anytype,
+            event: connection_module.DiscardedHeadersEvent,
             callbacks: Callbacks,
         ) !void {
             self.header_block_length = 0;
@@ -525,7 +525,7 @@ pub fn server_session(
 
         fn receive_locally_reset_continuation(
             self: *Self,
-            event: anytype,
+            event: connection_module.DiscardedHeadersEvent,
             callbacks: Callbacks,
         ) !void {
             const stream_id = self.local_reset_header_stream_id orelse {
@@ -543,7 +543,7 @@ pub fn server_session(
 
         fn receive_closed_headers(
             self: *Self,
-            event: anytype,
+            event: connection_module.DiscardedHeadersEvent,
             callbacks: Callbacks,
         ) !void {
             self.header_block_length = 0;
@@ -558,7 +558,7 @@ pub fn server_session(
 
         fn receive_closed_continuation(
             self: *Self,
-            event: anytype,
+            event: connection_module.DiscardedHeadersEvent,
             callbacks: Callbacks,
         ) !void {
             const stream_id = self.closed_header_stream_id orelse {
@@ -753,7 +753,7 @@ pub fn server_session(
         fn receive_data(
             self: *Self,
             flow_length: u32,
-            event: anytype,
+            event: connection_module.DataEvent,
             callbacks: Callbacks,
         ) !void {
             const index = event.stream_index;

@@ -1,4 +1,3 @@
-const std = @import("std");
 const parser = @import("fuzz_support").http_parser;
 
 const max_input_size = parser.max_request_line_size +

@@ -14,6 +14,7 @@ fits the current step and never stack processes that do not apply.
 
 ## 1. Mindset & Optimization (`ponytail`, `caveman`, `dod`, `functional-programming-fundamentals`)
 - **Functional & Pure (No OOP)**: Zero Object-Oriented Programming allowed. Emphasize pure functions, explicit state passing, and immutability where it doesn't cost performance. Never bind state and behavior into "classes".
+- **Anti-Slop Gate**: `CODING_CONVENTION.md` section 7 is mandatory. No `anytype` at module boundaries when the type set is known, no `std.debug.print` outside tests, no dead code or TODO markers, no forwarding wrappers, and no weakening of lints or tests. Run `sh scripts/check_conventions.sh` before review.
 - **Data-Oriented Design (`dod`)**: Performance starts with memory. Group data by access pattern, not by object. Use Struct of Arrays (SoA) to maximize CPU cache utilization and minimize pointer chasing. Functional pipelines must operate over these DOD-optimized structures without allocating.
 - **Ponytail Mode (`ponytail`)**: Embrace extreme laziness and simplicity. Ask "Do we even need this?" before writing any code. Prefer native Zig language features over dependencies. Keep solutions minimal.
 - **Caveman Mode (`caveman`)**: Keep communication dense and concise. High signal-to-noise ratio in documentation, commit messages, and PRs.

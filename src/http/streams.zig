@@ -3,8 +3,6 @@
 //! Provides zero-allocation readable and writable byte-stream abstractions
 //! with Bring-Your-Own-Buffer (BYOB) reading, chunk writing, and backpressure control.
 
-const std = @import("std");
-
 /// Stream state reflecting the local adapter lifecycle.
 pub const StreamState = enum(u8) {
     readable,

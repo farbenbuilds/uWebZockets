@@ -1,6 +1,8 @@
 const std = @import("std");
 const c = @import("c");
 
+const log = std.log.scoped(.tls);
+
 /// Non-blocking TLS handshake outcome for one BoringSSL step.
 pub const HandshakeStatus = enum {
     success, // handshake complete, ready for cleartext data
@@ -21,7 +23,7 @@ pub fn step(ssl: *c.SSL) HandshakeStatus {
         c.SSL_ERROR_WANT_WRITE => return .want_write,
         else => {
             // unrecoverable errors like syscall failures or protocol violations
-            std.debug.print("tls handshake failed. boringssl error code: {d}\n", .{err});
+            log.warn("tls handshake failed: boringssl error code {d}", .{err});
             return .failed;
         },
     }

@@ -52,6 +52,21 @@ if rg -n -g '*.zig' --pcre2 '(?:^\s*|[,(]\s*)[a-z][a-z0-9_]*[A-Z][A-Za-z0-9_]*\s
     failed=1
 fi
 
+if rg -n -g '*.zig' 'std\.debug\.print' src -g '!src/tests/**'; then
+    printf '%s\n' "library code must use std.log.scoped instead of std.debug.print"
+    failed=1
+fi
+
+if rg -n -g '*.zig' 'std\.io\.getStdOut|std\.io\.getStdErr' src; then
+    printf '%s\n' "library code must not write directly to stdout or stderr"
+    failed=1
+fi
+
+if rg -n -g '*.zig' -g '*.zon' --pcre2 '\b(?:TODO|FIXME|XXX|HACK)\b' build.zig builds src examples tests fuzz; then
+    printf '%s\n' "TODO, FIXME, XXX, and HACK markers are not permitted"
+    failed=1
+fi
+
 if rg -n --pcre2 '[\x{1F1E6}-\x{1FAFF}\x{2600}-\x{27BF}]' . -g '*.{c,h,json,md,nix,sh,ts,yaml,yml,zig,zon}' -g '!.agents/**' -g '!.git/**' -g '!.zig-cache/**' -g '!vendor/**' -g '!zig-out/**' -g '!zig-pkg/**'; then
     printf '%s\n' "emoji characters are not permitted"
     failed=1

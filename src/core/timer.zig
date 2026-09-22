@@ -3,6 +3,8 @@ const xev = @import("xev");
 const tcp = @import("tcp.zig");
 const Loop = @import("loop.zig").Loop;
 
+const log = std.log.scoped(.timer);
+
 /// Repeating libxev timer with inline completion storage.
 pub const TimerContext = struct {
     timer: xev.Timer,
@@ -71,7 +73,7 @@ fn on_timer_tick(
     _ = result catch |err| {
         ctx.active = false;
         if (err == error.Canceled) return .disarm;
-        std.debug.print("timer error: {}\n", .{err});
+        log.err("timer error: {}", .{err});
         return .disarm;
     };
 
@@ -96,7 +98,7 @@ fn on_timer_cancel(
 ) xev.CallbackAction {
     const ctx = user_data.?;
     _ = result catch |err| {
-        if (err != error.NotFound) std.debug.print("timer cancel error: {}\n", .{err});
+        if (err != error.NotFound) log.debug("timer cancel error: {}", .{err});
         return .disarm;
     };
     ctx.active = false;
@@ -181,7 +183,7 @@ pub fn connection_sweeper(comptime PoolType: type, comptime idle_timeout_ms: u64
             _ = result catch |err| {
                 self.active = false;
                 if (err == error.Canceled) return .disarm;
-                std.debug.print("sweeper timer error: {}\n", .{err});
+                log.err("sweeper timer error: {}", .{err});
                 return .disarm;
             };
 
@@ -222,7 +224,7 @@ pub fn connection_sweeper(comptime PoolType: type, comptime idle_timeout_ms: u64
         ) xev.CallbackAction {
             const self = user_data.?;
             _ = result catch |err| {
-                if (err != error.NotFound) std.debug.print("sweeper cancel error: {}\n", .{err});
+                if (err != error.NotFound) log.debug("sweeper cancel error: {}", .{err});
                 return .disarm;
             };
             self.active = false;

@@ -3,6 +3,47 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.1.1] - 2026-09-22
+
+This release tightens the functional-purity contract across the library and
+makes it machine-checked. No wire behavior, capacity, or ownership semantics
+change.
+
+### Added
+
+- Named HTTP/2 frame event payload types (`HeadersEvent`,
+  `HeadersContinuationEvent`, `DiscardedHeadersEvent`, `DataEvent`) in
+  `src/http2/connection.zig`.
+- `CODING_CONVENTION.md` section 7, the mandatory functional-purity and
+  anti-slop contract: no OOP or hidden state, pure transformations, explicit
+  types over `anytype` at module boundaries, scoped logging instead of console
+  output, no dead code or TODO markers, three-level control-flow limit, no
+  forwarding wrappers, and error-discipline rules.
+- `AGENTS.md` Code Hygiene section so agents apply the same contract and run
+  the format, convention, release, and test gates.
+- `scripts/check_conventions.sh` now rejects `std.debug.print` and direct
+  stdout/stderr writes in `src/`, plus `TODO`, `FIXME`, `XXX`, and `HACK`
+  markers in the Zig sources.
+
+### Changed
+
+- `src/http2/server.zig` frame handlers take the named event payload types
+  instead of `anytype`, so every payload shape is checked at compile time.
+- Transport and TLS diagnostics in `src/core/tcp.zig`, `src/core/udp.zig`,
+  `src/core/timer.zig`, `src/router/app.zig`, and `src/crypto/handshake.zig`
+  use `std.log.scoped` at the matching severity; the listening messages are
+  `info`, recoverable I/O failures are `warn`, and cancellation noise is
+  `debug`.
+- Removed unused imports in `src/router/app.zig`, `src/http/streams.zig`,
+  `src/ws/stream.zig`, and `fuzz/http_framing.zig`.
+- `CONTRIBUTE.md` and `SKILL.md` point contributors and agents at the section 7
+  contract.
+
+### Security
+
+- No security-relevant behavior changed; diagnostics no longer write directly
+  to stderr, so host logging policy applies to every transport error.
+
 ## [1.1.0] - 2026-09-19
 
 This release adds the unreliable low-latency datagram surface, an opportunistic

@@ -223,6 +223,48 @@ pub fn stream_slab(comptime capacity: usize) type {
     };
 }
 
+/// Initial fragment of an HPACK header block for an active stream.
+pub const HeadersEvent = struct {
+    /// Active slab slot for the stream at event creation.
+    stream_index: u16,
+    /// Header-block fragment borrowed from the input frame.
+    block: []const u8,
+    /// Whether this fragment completes the header block.
+    end_headers: bool,
+    /// Whether the peer ended its sending side.
+    end_stream: bool,
+};
+
+/// Subsequent fragment of an HPACK header block for an active stream.
+pub const HeadersContinuationEvent = struct {
+    /// Active slab slot for the stream at event creation.
+    stream_index: u16,
+    /// Header-block fragment borrowed from the input frame.
+    block: []const u8,
+    /// Whether this fragment completes the header block.
+    end_headers: bool,
+};
+
+/// Header-block fragment for a stream that cannot be dispatched.
+pub const DiscardedHeadersEvent = struct {
+    /// Peer stream identifier.
+    stream_id: u32,
+    /// Header-block fragment borrowed from the input frame.
+    block: []const u8,
+    /// Whether this fragment completes the header block.
+    end_headers: bool,
+};
+
+/// Application bytes from a DATA frame.
+pub const DataEvent = struct {
+    /// Active slab slot for the stream at event creation.
+    stream_index: u16,
+    /// Unpadded bytes borrowed from the input frame.
+    bytes: []const u8,
+    /// Whether the peer ended its sending side.
+    end_stream: bool,
+};
+
 /// A validated frame event whose payload borrows the input frame.
 pub const Event = union(enum) {
     /// A valid but unsupported or intentionally unhandled frame.
@@ -232,88 +274,23 @@ pub const Event = union(enum) {
     /// The peer acknowledged local settings.
     settings_ack,
     /// Initial fragment of an HPACK header block.
-    headers: struct {
-        /// Active slab slot for the stream at event creation.
-        stream_index: u16,
-        /// Header-block fragment borrowed from the input frame.
-        block: []const u8,
-        /// Whether this fragment completes the header block.
-        end_headers: bool,
-        /// Whether the peer ended its sending side.
-        end_stream: bool,
-    },
+    headers: HeadersEvent,
     /// Initial header fragment for a new stream refused at slab capacity.
-    refused_headers: struct {
-        /// Refused peer stream identifier.
-        stream_id: u32,
-        /// Header-block fragment borrowed from the input frame.
-        block: []const u8,
-        /// Whether this fragment completes the header block.
-        end_headers: bool,
-    },
+    refused_headers: DiscardedHeadersEvent,
     /// Initial header fragment received after this endpoint reset the stream.
-    locally_reset_headers: struct {
-        /// Locally reset peer stream identifier.
-        stream_id: u32,
-        /// Header-block fragment borrowed from the input frame.
-        block: []const u8,
-        /// Whether this fragment completes the header block.
-        end_headers: bool,
-    },
+    locally_reset_headers: DiscardedHeadersEvent,
     /// Initial header fragment received for an ordinarily closed stream.
-    closed_headers: struct {
-        /// Closed peer stream identifier.
-        stream_id: u32,
-        /// Header-block fragment borrowed from the input frame.
-        block: []const u8,
-        /// Whether this fragment completes the header block.
-        end_headers: bool,
-    },
+    closed_headers: DiscardedHeadersEvent,
     /// Subsequent fragment of an HPACK header block.
-    continuation: struct {
-        /// Active slab slot for the stream at event creation.
-        stream_index: u16,
-        /// Header-block fragment borrowed from the input frame.
-        block: []const u8,
-        /// Whether this fragment completes the header block.
-        end_headers: bool,
-    },
+    continuation: HeadersContinuationEvent,
     /// Subsequent header fragment for a stream refused at slab capacity.
-    refused_continuation: struct {
-        /// Refused peer stream identifier.
-        stream_id: u32,
-        /// Header-block fragment borrowed from the input frame.
-        block: []const u8,
-        /// Whether this fragment completes the header block.
-        end_headers: bool,
-    },
+    refused_continuation: DiscardedHeadersEvent,
     /// Subsequent header fragment received after a local stream reset.
-    locally_reset_continuation: struct {
-        /// Locally reset peer stream identifier.
-        stream_id: u32,
-        /// Header-block fragment borrowed from the input frame.
-        block: []const u8,
-        /// Whether this fragment completes the header block.
-        end_headers: bool,
-    },
+    locally_reset_continuation: DiscardedHeadersEvent,
     /// Subsequent header fragment received for an ordinarily closed stream.
-    closed_continuation: struct {
-        /// Closed peer stream identifier.
-        stream_id: u32,
-        /// Header-block fragment borrowed from the input frame.
-        block: []const u8,
-        /// Whether this fragment completes the header block.
-        end_headers: bool,
-    },
+    closed_continuation: DiscardedHeadersEvent,
     /// Application bytes from a DATA frame.
-    data: struct {
-        /// Active slab slot for the stream at event creation.
-        stream_index: u16,
-        /// Unpadded bytes borrowed from the input frame.
-        bytes: []const u8,
-        /// Whether the peer ended its sending side.
-        end_stream: bool,
-    },
+    data: DataEvent,
     /// DATA discarded during the bounded local-reset grace window.
     discarded_data: struct {
         /// Full flow-controlled payload size, including padding.

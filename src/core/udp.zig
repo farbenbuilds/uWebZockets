@@ -7,6 +7,8 @@ const tcp = @import("tcp.zig");
 const Router = @import("../router/radix.zig").Router;
 const max_udp_payload_size = @import("../quic/lsquic_api.zig").max_udp_payload_size;
 
+const log = std.log.scoped(.udp);
+
 /// Returns a bounded UDP/QUIC transport backed by completion-driven I/O.
 ///
 /// `Engine` must provide `init`, `start`, `process_datagram`, `process`,
@@ -178,7 +180,7 @@ pub fn quic_transport(comptime Engine: type) type {
 
             const bytes_read = result catch |err| {
                 if (self.shutting_down or err == error.Canceled) return .disarm;
-                std.debug.print("udp read error: {}\n", .{err});
+                log.warn("udp read error: {}", .{err});
                 self.read_active = true;
                 return .rearm;
             };
@@ -236,7 +238,7 @@ pub fn quic_transport(comptime Engine: type) type {
         ) xev.CallbackAction {
             const self = user_data.?;
             _ = result catch |err| {
-                if (err != error.NotFound) std.debug.print("udp read cancel error: {}\n", .{err});
+                if (err != error.NotFound) log.debug("udp read cancel error: {}", .{err});
             };
             self.read_cancel_active = false;
             return .disarm;
@@ -250,7 +252,7 @@ pub fn quic_transport(comptime Engine: type) type {
             result: xev.CloseError!void,
         ) xev.CallbackAction {
             const self = user_data.?;
-            _ = result catch |err| std.debug.print("udp close error: {}\n", .{err});
+            _ = result catch |err| log.debug("udp close error: {}", .{err});
             self.close_complete = true;
             if (xev.backend == .kqueue) {
                 // The socket is closed, so no kevent callback can arrive now.
@@ -298,7 +300,7 @@ pub fn quic_transport(comptime Engine: type) type {
             self.timer_active = false;
             _ = result catch |err| {
                 if (self.shutting_down or err == error.Canceled) return .disarm;
-                std.debug.print("quic timer error: {}\n", .{err});
+                log.err("quic timer error: {}", .{err});
                 return .disarm;
             };
             if (self.shutting_down) return .disarm;
@@ -326,7 +328,7 @@ pub fn quic_transport(comptime Engine: type) type {
         ) xev.CallbackAction {
             const self = user_data.?;
             _ = result catch |err| {
-                if (err != error.NotFound) std.debug.print("quic timer cancel error: {}\n", .{err});
+                if (err != error.NotFound) log.debug("quic timer cancel error: {}", .{err});
             };
             self.timer_cancel_active = false;
             return .disarm;
