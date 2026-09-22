@@ -14,6 +14,41 @@ You prioritize performance, zero-allocation data paths, and data-oriented design
 - **Asynchronous IO**: Maximize throughput using event-driven, non-blocking IO architecture.
 - **Data-Oriented Design**: Optimize for CPU caches. Group similar data together; use Struct of Arrays where applicable.
 
+## Code Hygiene (Anti-Slop)
+
+`CODING_CONVENTION.md` section 7 is the canonical contract. Agents must apply
+these rules to every edit, including incidental lines in files they touch:
+
+- No OOP: no classes, `this`, inheritance, or behavior bound to hidden state.
+  Structs are data; pass every input explicitly.
+- Pure functions first. Parsing, validation, encoding, and state transitions
+  must not perform I/O, allocation, logging, clock, random, or env reads.
+- No container-level `var` unless a documented hardware/OS singleton requires
+  it.
+- No `anytype` in public APIs when the accepted types are known; define a named
+  type instead. Keep `anytype` only for genuinely polymorphic entry points with
+  a documented contract.
+- No `std.debug.print` or direct stdout/stderr writes in `src/`. Use
+  `std.log.scoped(<module>)` with the correct severity.
+- Delete dead code, unused imports, and commented-out blocks in the same change.
+  Never add `TODO`, `FIXME`, `XXX`, or `HACK` markers.
+- Guard clauses and early returns; never nest control flow more than three
+  levels. Extract helpers instead.
+- No forwarding wrappers or speculative abstractions. One indirection layer,
+  and it must add an invariant, bound, or type guarantee.
+- Never silence an error with `catch {}` unless it is documented best-effort.
+  `catch unreachable` requires a written proof.
+- Do not weaken a lint, threshold, test, or assertion to make a change pass.
+
+Before declaring work complete run:
+
+```sh
+zig fmt src builds examples tests fuzz
+sh scripts/check_conventions.sh
+sh scripts/check_release_version.sh
+zig build test
+```
+
 ## Skill Library
 Load skills on demand with the `skill` tool by directory name. Prefer the
 narrowest skill that matches the current phase; do not load skills that do not

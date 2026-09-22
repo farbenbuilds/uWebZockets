@@ -22,6 +22,8 @@ const zero_copy = @import("zero_copy.zig");
 const tcp_file = @import("tcp_file.zig");
 const zslay = @import("zslay");
 
+const log = std.log.scoped(.tcp);
+
 /// Bytes read from one POSIX socket completion at a time.
 pub const socket_read_capacity = 8192;
 /// Seconds a completed handshake waits for data before reporting an accept.
@@ -1157,7 +1159,7 @@ fn on_read_complete(
 
     const bytes_read = result catch |err| {
         if (err != error.EOF and err != error.ConnectionResetByPeer) {
-            std.debug.print("read error: {}\n", .{err});
+            log.warn("read error: {}", .{err});
         }
         close_connection(conn);
         release_closed_connection(conn);
@@ -1212,7 +1214,7 @@ fn on_write_complete(
     }
 
     const written = result catch |err| {
-        std.debug.print("write error: {}\n", .{err});
+        log.warn("write error: {}", .{err});
         close_connection(conn);
         release_closed_connection(conn);
         return .disarm;
@@ -1373,7 +1375,7 @@ pub fn close_connection(conn: *TcpConnection) void {
                 _ = socket;
                 // The descriptor is already closed regardless of the reported close status.
                 _ = result catch |err| {
-                    std.debug.print("socket close error: {}\n", .{err});
+                    log.debug("socket close error: {}", .{err});
                 };
 
                 const connection = user_data orelse return .disarm;
@@ -1401,7 +1403,7 @@ fn on_read_cancel_complete(
 ) xev.CallbackAction {
     const conn = user_data.?;
     _ = result catch |err| {
-        if (err != error.NotFound) std.debug.print("read cancel error: {}\n", .{err});
+        if (err != error.NotFound) log.debug("read cancel error: {}", .{err});
     };
     conn.read_cancel_active = false;
     release_closed_connection(conn);
@@ -1416,7 +1418,7 @@ fn on_write_cancel_complete(
 ) xev.CallbackAction {
     const conn = user_data.?;
     _ = result catch |err| {
-        if (err != error.NotFound) std.debug.print("write cancel error: {}\n", .{err});
+        if (err != error.NotFound) log.debug("write cancel error: {}", .{err});
     };
     conn.write_cancel_active = false;
     release_closed_connection(conn);
@@ -1617,7 +1619,7 @@ fn on_accept_cancel_complete(
     result: xev.CancelError!void,
 ) xev.CallbackAction {
     _ = result catch |err| {
-        if (err != error.NotFound) std.debug.print("accept cancel error: {}\n", .{err});
+        if (err != error.NotFound) log.debug("accept cancel error: {}", .{err});
     };
     return .disarm;
 }
@@ -1634,7 +1636,7 @@ fn on_accept_complete(
     const server = user_data.?;
     const accepted_socket = result catch |err| {
         if (server.closing) return .disarm;
-        std.debug.print("accept error: {}\n", .{err});
+        log.warn("accept error: {}", .{err});
         return .rearm;
     };
 
@@ -1657,7 +1659,7 @@ fn on_server_close_complete(
 ) xev.CallbackAction {
     const server = user_data.?;
     _ = result catch |err| {
-        std.debug.print("listener close error: {}\n", .{err});
+        log.warn("listener close error: {}", .{err});
     };
     server.close_complete = true;
     return .disarm;

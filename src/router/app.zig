@@ -1,7 +1,6 @@
 const std = @import("std");
 const core_loop = @import("../core/loop.zig");
 const core_tcp = @import("../core/tcp.zig");
-const core_context = @import("../core/context.zig");
 const core_pool = @import("../core/pool.zig");
 const core_timer = @import("../core/timer.zig");
 const core_affinity = @import("../core/affinity.zig");
@@ -24,6 +23,8 @@ const metrics_module = @import("../observability/metrics.zig");
 const ebpf_module = @import("../observability/ebpf.zig");
 const xdp_transport_module = @import("../xdp/transport.zig");
 const http_rejection = @import("../http/rejection.zig");
+
+const log = std.log.scoped(.server);
 
 /// Default maximum complete WebSocket message size per connection.
 pub const default_max_ws_message_size = 16 * 1024;
@@ -785,12 +786,12 @@ pub fn configured_app_with_timeout(
         fn on_new_connection(socket: xev.TCP, user_data: ?*anyopaque) void {
             const self: *Self = @ptrCast(@alignCast(user_data));
             if (self.shutting_down) {
-                close_rejected_socket(socket);
+                close_socket_now(socket);
                 return;
             }
             const conn = self.pool.acquire() orelse {
                 // No I/O was registered for this descriptor, so direct close is safe.
-                close_rejected_socket(socket);
+                close_socket_now(socket);
                 return;
             };
 
@@ -798,7 +799,7 @@ pub fn configured_app_with_timeout(
             conn.parser = .{ .max_body_size = self.max_body_size };
             conn.reset_protocol() catch {
                 _ = self.pool.release(conn);
-                close_rejected_socket(socket);
+                close_socket_now(socket);
                 return;
             };
             // HTTP/2 bodies share the HTTP/1 configured ceiling; the compiled
@@ -897,7 +898,7 @@ pub fn configured_app_with_timeout(
                 sw.start(&self.loop);
             }
 
-            std.debug.print("server listening on {s}:{d}\n", .{ address, port });
+            log.info("server listening on {s}:{d}", .{ address, port });
         }
 
         /// Binds and starts the UDP/QUIC listener, locking route mutation.
@@ -916,14 +917,12 @@ pub fn configured_app_with_timeout(
                 if (self.quic_transport) |*transport| transport.deinit();
                 self.quic_transport = null;
             }
-            if (self.quic_transport) |*transport| {
-                try transport.start(self.loop.get_xev_loop());
-            } else unreachable;
+            try self.quic_transport.?.start(self.loop.get_xev_loop());
 
             try self.install_observability();
             self.routes_locked = true;
 
-            std.debug.print("http/3 server listening on {s}:{d}\n", .{ address, port });
+            log.info("http/3 server listening on {s}:{d}", .{ address, port });
         }
 
         /// Runs the event loop until shutdown completes or no work remains.
@@ -1097,7 +1096,7 @@ pub fn configured_app_with_timeout(
                         // Restricted cpusets and affinity-less platforms are
                         // expected; only the first worker reports them.
                         if (index == 0) {
-                            std.debug.print("worker affinity unavailable: {}\n", .{err});
+                            log.debug("worker affinity unavailable: {}", .{err});
                         }
                     };
                 }
@@ -1273,10 +1272,6 @@ fn map_xdp_error(err: anyerror) xdp_transport_module.FallbackReason {
     };
 }
 
-fn close_rejected_socket(socket: xev.TCP) void {
-    close_socket_now(socket);
-}
-
-fn close_socket_now(socket: anytype) void {
+fn close_socket_now(socket: xev.TCP) void {
     core_tcp.close_socket(socket.fd);
 }

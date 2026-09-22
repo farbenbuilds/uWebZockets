@@ -203,7 +203,7 @@ pub fn static_files(comptime file_capacity: usize) type {
 }
 
 /// Returns the next nonempty path component, or null at the end.
-fn next_component(components: anytype) ?[]const u8 {
+fn next_component(components: *std.mem.SplitIterator(u8, .scalar)) ?[]const u8 {
     while (components.next()) |component| {
         if (component.len != 0) return component;
     }

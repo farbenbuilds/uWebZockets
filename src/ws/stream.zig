@@ -1,4 +1,3 @@
-const std = @import("std");
 const abort_module = @import("../http/abort.zig");
 const backpressure = @import("backpressure.zig");
 
