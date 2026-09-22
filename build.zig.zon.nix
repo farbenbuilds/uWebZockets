@@ -157,11 +157,11 @@ linkFarm name [
     };
   }
   {
-    name = "zslay-0.1.5-OB-IfAocAQAzPdN5Y-1_lmzsu2ZZEofMg3sD92yYrP22";
+    name = "zslay-0.1.9-OB-IfMEpAQA5ZHz3hczXhFn_CvHTU9EZFJot2bkdlArv";
     path = fetchZigArtifact {
       name = "zslay";
-      url = "https://github.com/farbenbuilds/zslay/archive/refs/tags/v0.1.5.tar.gz";
-      hash = "sha256-H9tyvg383wAgSEiHLIDr2mEcxhLTJVKOek0V7GeuHQQ=";
+      url = "https://github.com/farbenbuilds/zslay/archive/refs/tags/v0.1.9.tar.gz";
+      hash = "sha256-Am5s5aQSdAgmM5CQIY/gnjEhrh2VR2Lro8hMgR6seqE=";
       unpack = true;
     };
   }

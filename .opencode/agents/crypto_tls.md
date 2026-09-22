@@ -56,10 +56,11 @@ checking, and proof.
    QUIC context advertises only `h3`. Never add `h3` to TCP or `h2` to QUIC.
    The HTTP/2 prior-knowledge path on plaintext is separate and must not depend
    on ALPN.
-3. 0-RTT and early data stay disabled on every live listener. Replayable
-   application data must be rejected before route dispatch. Do not enable
-   early data without a per-request replay policy and an updated HTTP/3
-   compliance gate.
+3. The HTTPS context enables TLS 1.3 0-RTT for safe methods only: `GET`,
+   `HEAD`, and `OPTIONS` dispatch before the handshake is confirmed, everything
+   else gets `425 Too Early`. The HTTP/3 context keeps early data disabled.
+   Do not widen early data without a per-request replay policy and an updated
+   HTTP/3 compliance gate.
 4. Crypto failures fail closed. Never expose partial plaintext, never continue
    a handshake after a verification error, and never return an unverified key
    schedule.

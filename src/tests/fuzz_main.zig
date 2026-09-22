@@ -125,7 +125,7 @@ fn fuzz_zslay_receive(smith: *std.testing.Smith) !void {
     // Smith generates malformed frames, so parser errors end the current sample.
     var input: [4096]u8 = undefined;
     const input_len: usize = @intCast(smith.slice(&input));
-    var nodes: [4]zslay.Conn.FrameNode = undefined;
+    var nodes: [4]zslay.FrameNode = undefined;
     var conn = zslay.Conn.init(&nodes, .{
         .role = .server,
         .max_frame_len = input.len,
@@ -148,7 +148,7 @@ fn fuzz_zslay_receive(smith: *std.testing.Smith) !void {
             .need_payload => {
                 if (offset == input_len) return;
                 const decoded = conn.decoded_header orelse return;
-                const remaining = decoded.extended_len - conn.payload_bytes_processed;
+                const remaining = decoded.payload_len - conn.payload_bytes_processed;
                 const available: u64 = @intCast(input_len - offset);
                 const copy_len = @min(remaining, available);
                 conn.advance_payload_read(copy_len) catch return;

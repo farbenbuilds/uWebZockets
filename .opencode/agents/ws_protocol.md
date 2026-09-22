@@ -29,7 +29,7 @@ adversarial review, and measured paths.
 # Focus Areas
 
 - `src/ws/socket.zig`: `WebSocket` wrapper over the TCP connection (and the
-  single RFC 8441 HTTP/2 tunnel stream), zslay 0.1.5 drive, in-place unmasking,
+  single RFC 8441 HTTP/2 tunnel stream), zslay 0.1.9 drive, in-place unmasking,
   fragmented and compressed message assembly, control-frame buffering (125
   bytes), outgoing payload validation, close send/receive, `heartbeat_tick`.
 - `src/ws/handshake.zig`: strict upgrade validation (GET, `Connection: upgrade`
@@ -93,7 +93,7 @@ adversarial review, and measured paths.
    close. Published bytes are never retained after the callback returns.
 10. No allocation in frame parse, unmask, UTF-8, or dispatch paths. No OOP, no
     hidden state, no emojis, no camelCase identifiers, no comments that
-    restate the code. Keep `zslay` pinned at 0.1.5 unless the release process
+    restate the code. Keep `zslay` pinned at 0.1.9 unless the release process
     is followed.
 11. The Autobahn baseline is exact: all 517 selected cases, 514 `OK` and 3
     `INFORMATIONAL`, groups 12 and 13 included, with no exclusions and no

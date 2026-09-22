@@ -3,6 +3,45 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.1.5] - 2026-09-22
+
+This release tracks the zslay 0.1.9 frame-parser surface and confirms libxev is
+already at the latest upstream revision. Wire behavior, capacities, and
+ownership semantics are unchanged.
+
+### Added
+
+- Adopted the zslay 0.1.9 named wire constants `zslay.MaxFrameHeaderLen` and
+  `zslay.FrameHeaderBuffer` in the WebSocket tests, replacing the local 14-byte
+  header literals.
+- `zslay.ConnConfig` is now named explicitly where the server WebSocket
+  context is constructed in `src/ws/socket.zig`.
+
+### Changed
+
+- Dependency: zslay 0.1.5 to 0.1.9 (`farbenbuilds/zslay`). The release renames
+  `DecodedHeader.extended_len` and `DecodedHeader.header_size` to `payload_len`
+  and `header_len`, moves `FrameNode` to the module root with `header_len`,
+  `header_sent`, and `payload_sent` fields, and replaces the loose
+  fragmentation fields with `rx_fragment` and `tx_fragment`. `src/ws/socket.zig`,
+  `src/tests/ws_tests.zig`, and `src/tests/fuzz_main.zig` follow the new names.
+- `build.zig.zon.json`, `build.zig.zon.nix`, and `build.zig.zon.txt` were
+  regenerated with zon2nix for the new package hash.
+- libxev remains pinned to upstream `main`
+  `9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf`. Upstream publishes no newer tag,
+  release, or commit, so no pin change was required.
+- Documentation references zslay 0.1.9 in `README.md`, `SKILL.md`,
+  `CODEBASE.md`, and `THIRD_PARTY_NOTICES.md`. `SECURITY.md` tracks the `1.1.x`
+  line as the supported release, and the WebSocket, transport, router, and TLS
+  agent guidance was corrected to match the current code (zslay pin, 0-RTT
+  policy, lock-free cluster ring, and current `file:line` references).
+
+### Security
+
+- No security-relevant behavior changed. Frame validation, masking, and message
+  limits stay enforced by µWebZockets; zslay 0.1.9 adds no new live protocol
+  path to the server.
+
 ## [1.1.1] - 2026-09-22
 
 This release tightens the functional-purity contract across the library and

@@ -4,7 +4,7 @@
 
 | Component | Version or revision | License |
 | --- | --- | --- |
-| zslay | 0.1.5 | MIT |
+| zslay | 0.1.9 | MIT |
 | libxev | 9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf | MIT |
 | BoringSSL | 7c1efd8d6ffb36a57feba44e8c73cf674801f3cb | ISC-style and component licenses |
 | Fiat Crypto (via BoringSSL) | BoringSSL revision above | Apache-2.0 |

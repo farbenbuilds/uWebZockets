@@ -55,13 +55,13 @@ test "ws: validates the complete upgrade handshake" {
 }
 
 test "ws: zslay server rejects unmasked client frames" {
-    var nodes: [2]zslay.Conn.FrameNode = undefined;
+    var nodes: [2]zslay.FrameNode = undefined;
     var conn = try zslay.Conn.init(&nodes, .{
         .role = .server,
         .max_frame_len = 1024,
         .max_message_len = 1024,
     });
-    var header: [14]u8 = undefined;
+    var header: zslay.FrameHeaderBuffer = undefined;
     const header_len = try zslay.encode_header(&header, .{
         .payload_len = 0,
         .mask = false,
@@ -78,13 +78,13 @@ test "ws: zslay server rejects unmasked client frames" {
 }
 
 test "ws: zslay enforces frame limits from extended headers" {
-    var nodes: [2]zslay.Conn.FrameNode = undefined;
+    var nodes: [2]zslay.FrameNode = undefined;
     var conn = try zslay.Conn.init(&nodes, .{
         .role = .server,
         .max_frame_len = 1024,
         .max_message_len = 1024,
     });
-    var header: [14]u8 = undefined;
+    var header: zslay.FrameHeaderBuffer = undefined;
     const masking_key = [_]u8{ 1, 2, 3, 4 };
     const header_len = try zslay.encode_header(&header, .{
         .payload_len = 126,
@@ -226,7 +226,7 @@ test "ws: fragmented message completes with an empty continuation" {
         .max_message_len = message_size,
     });
 
-    var wire: [14 + fragment_size]u8 = undefined;
+    var wire: [zslay.MaxFrameHeaderLen + fragment_size]u8 = undefined;
     for (0..message_size / fragment_size) |fragment_index| {
         const opcode: zslay.Opcode = if (fragment_index == 0) .text else .continuation;
         const header_len = try zslay.encode_header(
