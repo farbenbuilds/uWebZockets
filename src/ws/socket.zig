@@ -20,7 +20,7 @@ pub const WebSocket = struct {
     h2_stream_id: ?u32 = null,
     behavior: WsBehavior = .{},
     z_conn: zslay.Conn = undefined,
-    tx_nodes: [4]zslay.Conn.FrameNode = undefined,
+    tx_nodes: [4]zslay.FrameNode = undefined,
     current_opcode: ?zslay.Opcode = null,
     message_len: usize = 0,
     compressed_len: usize = 0,
@@ -76,11 +76,12 @@ pub const WebSocket = struct {
             }
         }
 
-        self.z_conn = zslay.Conn.init(&self.tx_nodes, .{
+        const config: zslay.ConnConfig = .{
             .role = .server,
             .max_frame_len = behavior.max_frame_size,
             .max_message_len = behavior.max_message_size,
-        }) catch {
+        };
+        self.z_conn = zslay.Conn.init(&self.tx_nodes, config) catch {
             reject_upgrade(res, self.conn, "500 Internal Server Error", "Invalid WebSocket limits", false);
             return;
         };
@@ -189,7 +190,7 @@ pub const WebSocket = struct {
             const callbacks = self.conn.http2_callbacks();
             self.conn.h2.write_response_data(
                 stream_id,
-                node.header_buf[0..node.header_size],
+                node.header_buf[0..node.header_len],
                 callbacks,
             ) catch |err| {
                 // Nothing was committed, so the caller may retry this send.
@@ -221,7 +222,7 @@ pub const WebSocket = struct {
                 self.close_sent = true;
             }
         } else {
-            try tcp_file.write_data_parts(self.conn, &.{ node.header_buf[0..node.header_size], payload });
+            try tcp_file.write_data_parts(self.conn, &.{ node.header_buf[0..node.header_len], payload });
             if (opcode == .close) {
                 self.close_sent = true;
                 tcp.close_after_flush(self.conn);
@@ -274,7 +275,7 @@ pub const WebSocket = struct {
                     };
                     const opcode: zslay.Opcode = @enumFromInt(decoded.header.opcode);
                     if (!self.validate_frame_compression(opcode)) return;
-                    const remaining = decoded.extended_len - self.z_conn.payload_bytes_processed;
+                    const remaining = decoded.payload_len - self.z_conn.payload_bytes_processed;
                     const available: u64 = @intCast(data.len - offset);
                     const process_len_u64 = @min(remaining, available);
                     const process_len: usize = @intCast(process_len_u64);
@@ -308,7 +309,7 @@ pub const WebSocket = struct {
                         opcode != .continuation and
                         self.message_len == 0 and
                         self.z_conn.payload_bytes_processed == 0 and
-                        process_len_u64 == decoded.extended_len and
+                        process_len_u64 == decoded.payload_len and
                         decoded.header.fin;
 
                     if (opcode.is_control()) {
@@ -332,7 +333,7 @@ pub const WebSocket = struct {
                     };
                     offset += process_len;
 
-                    if (self.z_conn.payload_bytes_processed != decoded.extended_len) continue;
+                    if (self.z_conn.payload_bytes_processed != decoded.payload_len) continue;
                     if (!self.complete_payload_frame(decoded, opcode, chunk, fast_path)) return;
                 },
                 .emit_frame => {
@@ -357,7 +358,7 @@ pub const WebSocket = struct {
         fast_path: bool,
     ) bool {
         if (opcode.is_control()) {
-            const payload_len: usize = @intCast(decoded.extended_len);
+            const payload_len: usize = @intCast(decoded.payload_len);
             const payload = self.control_buffer[0..payload_len];
             if (!self.handle_control(opcode, payload)) return false;
             self.complete_frame();

@@ -4,4 +4,4 @@ git+https://github.com/litespeedtech/ls-hpack#cf0f70dd10b352194c97448eb5d00b4aa4
 git+https://github.com/litespeedtech/ls-qpack#91567706c41c0d97ab8dc576873ecd472d7869fa
 git+https://github.com/litespeedtech/lsquic#19547405c24f60c4537478d38f4214e990be1f95
 git+https://github.com/mitchellh/libxev#9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf
-https://github.com/farbenbuilds/zslay/archive/refs/tags/v0.1.5.tar.gz
+https://github.com/farbenbuilds/zslay/archive/refs/tags/v0.1.9.tar.gz

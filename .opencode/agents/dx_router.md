@@ -40,8 +40,9 @@ new work, migrations, and decisions.
   `*name`), static-specificity matching, method fallback (HEAD to GET, `any`),
   `Allow` computation, `WsBehavior`/`WsCompression` limits.
 - `src/router/cluster.zig` and `App.cluster`: thread-per-core workers with
-  independent App state, 64-message bounded inbox per worker, spinlock-guarded
-  SoA queues, SO_REUSEPORT bind, cross-worker publish that skips full queues.
+  independent App state, 64-message bounded inbox per worker, lock-free
+  sequence-ring SoA queues, SO_REUSEPORT bind, cross-worker publish that skips
+  full queues.
 - `src/rpc/json_rpc.zig` and `src/rpc/http.zig`: fixed-capacity JSON-RPC 2.0
   registry (64 procedures, 4 KiB method storage, 16 KiB response, 255-byte
   names, 2 KiB scanner scratch, 4 KiB typed-param scratch), open-addressed

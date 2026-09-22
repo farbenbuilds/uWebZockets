@@ -60,7 +60,7 @@ on kqueue and IOCP instead of calling the backend directly.
   `route_decrypted_data` at `src/core/tcp.zig:260`.
 - `route_decrypted_data` (`src/core/tcp.zig:279`) selects HTTP/1
   `route_http_data` (`src/core/tcp.zig:578`), HTTP/2 `route_http2_data`
-  (`src/core/tcp.zig:313`), or `WebSocket.on_data` (`src/ws/socket.zig:238`).
+  (`src/core/tcp.zig:313`), or `WebSocket.on_data` (`src/ws/socket.zig:239`).
 - HTTP/2 runs synchronously inside the read callback: `route_http2_data`
   calls `h2.receive` (`src/core/tcp.zig:315`), whose entries come from
   `http2_callbacks` (`src/core/tcp.zig:322`): `write_http2_parts`

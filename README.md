@@ -166,7 +166,7 @@ snapshots, and the current source tree may include unreleased changes.
 [![h1spec Compliance](https://github.com/farbenbuilds/uWebZockets/actions/workflows/h1spec_compliance.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/h1spec_compliance.yml)
 [![Benchmark](https://github.com/farbenbuilds/uWebZockets/actions/workflows/benchmark.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/benchmark.yml)
 
-BoringSSL provides TLS, libxev drives non-blocking I/O, zslay 0.1.5 provides the
+BoringSSL provides TLS, libxev drives non-blocking I/O, zslay 0.1.9 provides the
 WebSocket frame state machine, and lsquic provides QUIC. Use a released tag or
 pin an exact source commit.
 

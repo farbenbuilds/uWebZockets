@@ -29,7 +29,7 @@ instrumentation, adversarial review, and proof.
 # Focus Areas
 
 - `src/core/loop.zig`: `xev.Loop` wrapper, the single backend-aware `cancel`
-  shim at line 27, `init` with 4096 entries, `run` using `.until_done`.
+  shim at line 14, `init` with 4096 entries, `run` using `.until_done`.
 - `src/core/pool.zig`: page-backed `freelist_pool(T, capacity)` with O(1)
   acquire/release, range and alignment validation in `release`, `index_of`.
 - `src/core/context.zig`: inline zero-allocation `bitset_pool` (O(capacity)
@@ -66,7 +66,7 @@ instrumentation, adversarial review, and proof.
    completion pointer past `deinit`, and never let a callback observe storage
    that has been released.
 3. A closed pool slot returns to the freelist only through
-   `release_closed_connection` (`src/core/tcp.zig:1303`) when `closing`,
+   `release_closed_connection` (`src/core/tcp.zig:1429`) when `closing`,
    `close_complete`, `!read_active`, `!is_writing`, `!read_cancel_active`, and
    `!write_cancel_active` all hold. Keep the callback nulling and
    `pool_ptr` clearing intact so double release cannot happen.
