@@ -1,5 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std");
+const clangd = @import("clangd.zig");
 const ebpf = @import("targets/ebpf.zig");
 const native = @import("targets/native.zig");
 const wasm = @import("targets/wasm.zig");
@@ -29,6 +30,11 @@ pub fn inject(b: *std.Build, version: std.SemanticVersion) void {
     const target_is_native = target.query.isNative() or
         (target.result.cpu.arch == builtin.cpu.arch and target.result.os.tag == builtin.os.tag);
     _ = native.inject(b, version, target, optimize, target_is_native);
+    const clangd_step = b.step(
+        "clangd",
+        "Write the local clangd compile_flags.txt from the fetched dependencies",
+    );
+    clangd_step.dependOn(clangd.inject(b));
     const wasm_steps = wasm.inject_named(b, version, optimize);
     const ebpf_step = ebpf.inject(b);
     const all_targets = b.step("all-targets", "Build native, WASM/WASI, and eBPF artifacts");

@@ -27,6 +27,9 @@ application logic are unchanged.
   windows and gQUIC certificate compression that libdeflate cannot express.
 - `scripts/check_vendor_overlay.sh` verifies the overlay against the audit
   patch and the pinned lsquic version enum; the lint workflow runs it.
+- `zig build clangd` writes a gitignored `compile_flags.txt` at the repository
+  root with the fetched dependency include roots, so editors can analyze
+  `src/c.h`, the lsquic shim, and the C ABI tests.
 
 ### Changed
 

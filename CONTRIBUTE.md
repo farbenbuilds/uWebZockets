@@ -23,6 +23,10 @@ The flake pins Nixpkgs 26.05 and provides Zig 0.16.0 plus development tooling.
 Every C and C++ dependency is fetched and compiled by Zig, so no CMake, Ninja,
 Go, Perl, Python, `patch`, or zlib installation is required.
 
+clangd users run `zig build clangd` after the first fetch. It writes a
+gitignored `compile_flags.txt` at the repository root with the resolved include
+roots for `src/c.h`, the lsquic shim, and the C ABI tests.
+
 ## Engineering requirements
 
 - Do not allocate in request parsing, frame parsing, masking, routing, or

@@ -22,6 +22,7 @@ tests/autobahn/reports/
 .vscode/
 *.swp
 .cache/
+compile_flags.txt
 
 # certificates
 certs/
