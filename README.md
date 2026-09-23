@@ -28,7 +28,7 @@ thread each, and reused without locking.
 With Nix installed, the shortest path to a running server is:
 
 ```sh
-git clone --recurse-submodules https://github.com/farbenbuilds/uWebZockets.git
+git clone https://github.com/farbenbuilds/uWebZockets.git
 cd uWebZockets
 nix develop
 zig build hello_world -Doptimize=ReleaseSafe
@@ -41,6 +41,9 @@ curl -i http://127.0.0.1:3000/
 ```
 
 The `hello_world` build step compiles and starts the example on port 3000.
+The first build downloads the pinned dependency packages through Zig's
+package manager and caches them; later builds reuse the caches. The
+`vendor/h1spec` submodule is only needed for the h1spec compliance suite.
 
 ## Shared-nothing by default
 
@@ -169,9 +172,9 @@ snapshots, and the current source tree may include unreleased changes.
 [![Benchmark](https://github.com/farbenbuilds/uWebZockets/actions/workflows/benchmark.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/benchmark.yml)
 
 BoringSSL provides TLS, libxev drives non-blocking I/O, zslay 0.2.0 provides the
-WebSocket frame state machine, and lsquic provides QUIC. Zig compiles all four
-C and C++ dependencies, plus libdeflate and zlib, from pinned packages, so the
-build needs only Zig. Use a released tag or pin an exact source commit.
+WebSocket frame state machine, and lsquic provides QUIC. Zig compiles BoringSSL,
+lsquic (with ls-qpack and ls-hpack), libdeflate, and zlib from pinned packages,
+so the build needs only Zig. Use a released tag or pin an exact source commit.
 
 ## License
 

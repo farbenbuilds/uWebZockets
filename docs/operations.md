@@ -13,18 +13,23 @@ the [README](../README.md) for the quick start and the other
 
 Zig fetches and compiles BoringSSL, lsquic, ls-qpack, ls-hpack, libdeflate, and
 zlib itself. No CMake, Ninja, Go, Perl, Python, `patch`, or system zlib
-installation is required. The Nix flake pins Nixpkgs 26.05 and provides the
-supported Zig toolchain on all release architectures.
+installation is required. The first build downloads the pinned packages through
+Zig's package manager into the global and local caches, so later builds need no
+re-fetch. The Nix flake pins Nixpkgs 26.05 and provides the supported Zig
+toolchain on all release architectures.
 
 ## Build
 
 ```sh
-git clone --recurse-submodules https://github.com/farbenbuilds/uWebZockets.git
+git clone https://github.com/farbenbuilds/uWebZockets.git
 cd uWebZockets
 nix develop
 zig build test --summary all
 zig build -Doptimize=ReleaseSafe
 ```
+
+Add `--recurse-submodules` to the clone when running the h1spec compliance
+target.
 
 The root `build.zig` only injects the graph. Target, vendor, sanitizer, test,
 fuzz, and example construction lives in focused modules under `builds/`.
