@@ -40,9 +40,12 @@ application logic are unchanged.
 - libdeflate keeps its runtime dispatch: the AVX-512 and VPCLMULQDQ paths are
   disabled because the bundled Clang requires the explicit `evex512` target
   feature, and dispatch falls back to AVX2 and SSSE3.
-- Sanitizer builds compile the vendor sources with `_FORTIFY_SOURCE=0`.
-  MemorySanitizer does not intercept the fortified `__memset_chk` family, so
-  leaving fortification enabled left zeroed stack buffers visibly poisoned.
+- Vendor C and C++ is compiled with explicit upstream-compatible flags.
+  Zig's release modes are stopped from injecting undefined-behavior traps,
+  `_FORTIFY_SOURCE`, and stack protectors into third-party code: lsquic's
+  packet-header path tripped an injected `ud1` trap in the HTTP/3 server, and
+  the fortified wrappers also hide zeroed buffers from MemorySanitizer. The
+  sanitizer modes still enable their own reporting checks afterwards.
 - `build.zig.zon` adds the zlib dependency; `build.zig.zon.json`,
   `build.zig.zon.nix`, and `build.zig.zon.txt` were regenerated.
 - `flake.nix` provides Zig plus development tooling only. CI caches Zig's

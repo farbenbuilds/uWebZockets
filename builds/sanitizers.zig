@@ -78,7 +78,15 @@ pub const Config = struct {
     }
 };
 
-/// Appends the active sanitizer instrumentation to a base flag list.
+/// Appends the active sanitizer instrumentation and the upstream-compatible
+/// hardening profile to a base flag list.
+///
+/// Zig's release modes inject undefined-behavior traps, `_FORTIFY_SOURCE`, and
+/// stack protectors into C and C++ sources. Upstream never builds these
+/// libraries with that instrumentation, and lsquic's packet-header path trips
+/// an injected `ud1` trap on CI. The fortified wrappers also hide zeroed
+/// buffers from MemorySanitizer, so all three are disabled here and sanitizer
+/// mode enables its own reporting checks after this point.
 pub fn instrumented_flags(
     b: *std.Build,
     base: []const []const u8,
@@ -86,14 +94,13 @@ pub fn instrumented_flags(
 ) CFlags {
     var flags: std.ArrayList([]const u8) = .empty;
     flags.appendSlice(b.allocator, base) catch @panic("out of memory");
+    flags.appendSlice(b.allocator, &.{
+        "-D_FORTIFY_SOURCE=0",
+        "-fno-sanitize=undefined",
+        "-fno-stack-protector",
+    }) catch @panic("out of memory");
     flags.appendSlice(b.allocator, sanitizer.instrument_flags()) catch @panic("out of memory");
-    if (sanitizer.instrument_c) {
-        // MemorySanitizer does not intercept the `_FORTIFY_SOURCE` variants of
-        // memset and friends (`__memset_chk`), so fortified zeroing leaves the
-        // destination shadow poisoned. Zig's release modes enable
-        // fortification; disable it for every instrumented vendor source.
-        flags.append(b.allocator, "-D_FORTIFY_SOURCE=0") catch @panic("out of memory");
-    }
+    flags.append(b.allocator, "-fno-sanitize-trap=undefined") catch @panic("out of memory");
     return flags.items;
 }
 
