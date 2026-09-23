@@ -28,7 +28,6 @@ pub fn inject(
         target,
         optimize,
         module,
-        dependencies,
         sanitizer,
     );
     add_compliance_server(
@@ -39,7 +38,6 @@ pub fn inject(
         target,
         optimize,
         module,
-        dependencies,
         sanitizer,
     );
 
@@ -86,7 +84,6 @@ pub fn inject(
     sanitizer.attach(test_module);
 
     const centralized_tests = b.addTest(.{ .root_module = test_module });
-    dependencies.add_build_dependencies(centralized_tests);
     const run_tests = sanitizers.add_run_artifact(b, centralized_tests, sanitizer.run);
 
     const test_step = b.step("test", "Run tests");
@@ -119,7 +116,6 @@ fn add_compliance_server(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     module: *std.Build.Module,
-    dependencies: vendor.Artifacts,
     sanitizer: sanitizers.Config,
 ) void {
     const artifact_name = if (std.mem.eql(u8, step_name, "autobahn")) "autobahn_server" else step_name;
@@ -132,7 +128,6 @@ fn add_compliance_server(
         }),
     });
     executable.root_module.addImport("uWebZockets", module);
-    dependencies.add_build_dependencies(executable);
     b.installArtifact(executable);
     const run = sanitizers.add_run_artifact(b, executable, sanitizer.run);
     b.step(step_name, description).dependOn(&run.step);
@@ -179,7 +174,6 @@ fn add_c_api_smoke(
     if (sanitizer.sanitize) sanitizer.attach(c_api_module);
 
     const executable = b.addExecutable(.{ .name = "c_api_smoke", .root_module = c_api_module });
-    dependencies.add_build_dependencies(executable);
     const run = sanitizers.add_run_artifact(b, executable, sanitizer.run);
     test_step.dependOn(&run.step);
     test_compile_step.dependOn(&executable.step);
@@ -247,7 +241,6 @@ fn add_msan_smoke(
     sanitizer.attach(module);
     const executable = b.addExecutable(.{ .name = "msan_smoke", .root_module = module });
     executable.pie = true;
-    dependencies.add_build_dependencies(executable);
     executable.step.dependOn(&library.step);
     const run = sanitizers.add_run_artifact(b, executable, .{
         .enabled = false,

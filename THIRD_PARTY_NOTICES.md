@@ -12,19 +12,19 @@
 | ls-qpack | 2.7.0 | MIT |
 | ls-hpack | 2.3.5 | MIT |
 | libdeflate | 1.26 | MIT |
-| zlib | system-provided | zlib License |
+| zlib | 1.3.2 | zlib License |
 | h1spec | f0a5650a20c575fbea0f7179a3a9cfa50f20ba6e | MIT |
 
-The zslay and libxev license texts are in the licenses directory. C/C++ sources
-are selected by immutable Zig package hashes; the repository's submodules are
-retained for auditability. Binary release archives copy every license needed by
-the included static libraries into `licenses/vendor`, including Fiat Crypto's
-license and author attribution. zlib is linked from the
-target toolchain and is not copied into release archives; downstream
-applications must satisfy its license and linkage terms.
+The zslay, libxev, and zlib license texts are in the licenses directory. C/C++
+sources are selected by immutable Zig package hashes or pinned release archives;
+the repository's submodules are retained for auditability. Binary release
+archives copy every license needed by the included static libraries into
+`licenses/vendor`, including Fiat Crypto's license and author attribution.
 
-The build applies `patches/lsquic_h3_message_error.patch` to generated lsquic
-sources so positive header-callback results remain `H3_MESSAGE_ERROR` stream
-errors as documented by the pinned API. The h1spec CI job applies
-`patches/h1spec_deno_cleanup.patch` only to close and unreference completed test
-connections. Both upstream submodules remain unchanged.
+The pre-generated files in `vendor/lsquic_overlay` apply
+`patches/lsquic_h3_message_error.patch` to the pinned lsquic sources so positive
+header-callback results remain `H3_MESSAGE_ERROR` stream errors as documented by
+the pinned API. `scripts/check_vendor_overlay.sh` verifies the overlay against
+the audit patch, and the build no longer runs `patch` or Perl. The h1spec CI job
+applies `patches/h1spec_deno_cleanup.patch` only to close and unreference
+completed test connections. The upstream submodules remain unchanged.

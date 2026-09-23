@@ -23,10 +23,10 @@ Every workflow uses a GitHub environment so repository deployments and any
 environment protection rules remain visible in GitHub.
 
 `test.yml`, `autobahn_compliance.yml`, and `h1spec_compliance.yml` share the
-`.github/actions/setup-build` composite action. It caches the Zig global cache
-and the vendored C/C++ build tree under a per-optimization-mode key, then
-refreshes the restored tree's timestamps so Ninja treats a cache hit as current
-work instead of rebuilding BoringSSL, lsquic, and libdeflate. `benchmark.yml`
+`.github/actions/setup-build` composite action. It caches the Zig global package
+cache and the content-addressed local build cache under a
+per-optimization-mode key, so a cache hit reuses the compiled BoringSSL,
+lsquic, libdeflate, and zlib objects instead of rebuilding them. `benchmark.yml`
 uses the same approach for its candidate and baseline checkouts.
 
 ## Lint
@@ -83,7 +83,7 @@ repository-relative vendor paths.
 The sanitizer pass is native Linux only. The Nix shell supplies matching LLVM
 sanitizer, glibc, and dynamic-linker paths. `build.zig` sets coherent RPATHs
 and launches sanitizer executables through that matching loader, instruments
-BoringSSL, lsquic, libdeflate, and the local C ABI shim with ASan/UBSan, enables
+BoringSSL, lsquic, libdeflate, zlib, and the local C ABI shim with ASan/UBSan, enables
 Zig's full C-UB checks, preserves frame pointers, and isolates the vendor cache.
 CI enables ASan leak detection and makes both ASan and UBSan fail fast. A
 separate x86_64 Linux pass rebuilds the pinned C/C++ dependencies and local C
@@ -160,7 +160,7 @@ publish matrix runs natively on these GitHub-hosted architectures:
 
 The reusable Windows workflow runs separately on `windows-2025` in the
 `Windows Publishing` deployment environment. It installs
-the exact Zig release and vcpkg `x64-mingw-static` zlib, compiles the complete
+the exact Zig release, compiles the complete
 ReleaseSafe test and C ABI graph as Windows executables, builds ReleaseFast
 static libraries, and retains the packaged result as a 14-day workflow
 artifact. Tag publishing calls the same workflow and includes its archive as
@@ -219,7 +219,7 @@ A `v*` tag gates four release phases.
    package, centralized Nix version, C ABI macros/string, C/C++ smoke tests,
    changelog, and versioned documentation before the package builds.
 3. Each of the seven targets is packaged as one `.tar.gz` containing the
-   µWebZockets, BoringSSL, lsquic, and libdeflate static archives,
+   µWebZockets, BoringSSL, lsquic, libdeflate, and zlib static archives,
    `include/uWebZockets.h`, metadata, and all relevant licenses.
 4. The release job enters the `Publish` environment, requires exactly seven
    archives, writes `SHA256SUMS`, extracts matching changelog notes, and creates

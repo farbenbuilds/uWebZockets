@@ -3,6 +3,59 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.2.0] - 2026-09-24
+
+This release makes the repository a self-contained Zig package. Every C and
+C++ dependency is compiled by Zig's own toolchain from pinned sources; the
+public API, wire behavior, capacities, ownership semantics, C ABI, and
+application logic are unchanged.
+
+### Added
+
+- Native dependency builders in `builds/`: `boringssl.zig`, `lsquic.zig`,
+  `libdeflate.zig`, and `zlib.zig` compile the static vendor libraries with
+  `zig cc` and `zig c++` instead of CMake, Ninja, Go, Perl, `patch`, or a
+  system zlib. `builds/vendor.zig` links the resulting artifacts transitively.
+- `vendor/lsquic_overlay/` holds the pre-generated
+  `lsquic_versions_to_string.c` and the pre-patched `lsquic_qdec_hdl.{c,h}`
+  and `lsquic_stream.c`, so the build no longer runs `gen-verstrs.pl` or
+  applies `patches/lsquic_h3_message_error.patch` at build time. The patch
+  remains the auditable source of the overlay.
+- Bundled zlib 1.3.2 as a pinned package dependency for the RFC 7692 small
+  windows and gQUIC certificate compression that libdeflate cannot express.
+- `scripts/check_vendor_overlay.sh` verifies the overlay against the audit
+  patch and the pinned lsquic version enum; the lint workflow runs it.
+
+### Changed
+
+- BoringSSL is compiled from the pinned package's `gen/sources.json` source
+  lists, with the committed `gen/crypto/err_data.cc` and perlasm sources used
+  as shipped upstream. Windows and MemorySanitizer builds disable assembly
+  exactly as upstream does.
+- libdeflate keeps its runtime dispatch: the AVX-512 and VPCLMULQDQ paths are
+  disabled because the bundled Clang requires the explicit `evex512` target
+  feature, and dispatch falls back to AVX2 and SSSE3.
+- Sanitizer builds compile the vendor sources with `_FORTIFY_SOURCE=0`.
+  MemorySanitizer does not intercept the fortified `__memset_chk` family, so
+  leaving fortification enabled left zeroed stack buffers visibly poisoned.
+- `build.zig.zon` adds the zlib dependency; `build.zig.zon.json`,
+  `build.zig.zon.nix`, and `build.zig.zon.txt` were regenerated.
+- `flake.nix` provides Zig plus development tooling only. CI caches Zig's
+  content-addressed package and local caches instead of the CMake/Ninja
+  vendor trees, and the timestamp-refresh workaround is gone.
+- Removed the `-Dzlib-prefix` option, the `UWEBZOCKETS_ZLIB_PREFIX`
+  environment variable, the Windows vcpkg zlib bootstrap under
+  `scripts/windows`, `scripts/prepare_lsquic_source.sh`, and the `zig-cc` and
+  `zig-c++` compiler wrappers.
+- Release archives include the bundled zlib license next to the other
+  third-party notices.
+
+### Security
+
+- No security-relevant behavior changed. Dependency revisions, compiler
+  flags, sanitizer instrumentation, and validation bounds are unchanged; the
+  packaged libraries are built from the same pinned sources as before.
+
 ## [1.1.9] - 2026-09-23
 
 This release is a type-readability pass. Wire behavior, capacities, ownership

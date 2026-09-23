@@ -169,8 +169,9 @@ snapshots, and the current source tree may include unreleased changes.
 [![Benchmark](https://github.com/farbenbuilds/uWebZockets/actions/workflows/benchmark.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/benchmark.yml)
 
 BoringSSL provides TLS, libxev drives non-blocking I/O, zslay 0.2.0 provides the
-WebSocket frame state machine, and lsquic provides QUIC. Use a released tag or
-pin an exact source commit.
+WebSocket frame state machine, and lsquic provides QUIC. Zig compiles all four
+C and C++ dependencies, plus libdeflate and zlib, from pinned packages, so the
+build needs only Zig. Use a released tag or pin an exact source commit.
 
 ## License
 

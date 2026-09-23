@@ -7,16 +7,14 @@ the [README](../README.md) for the quick start and the other
 ## Requirements
 
 - Zig 0.16.0
-- CMake 3.20 or newer
-- Ninja
-- patch
 - A build target: Linux, macOS, FreeBSD, NetBSD, OpenBSD, DragonFlyBSD, or
   Windows
-- zlib development headers and a static library
 - Recursive git submodules for the repository's h1spec development suite
 
-The Nix flake pins Nixpkgs 26.05 and provides the supported Zig, CMake, Ninja,
-patch, Go, Python, Perl, and zlib toolchain on all release architectures.
+Zig fetches and compiles BoringSSL, lsquic, ls-qpack, ls-hpack, libdeflate, and
+zlib itself. No CMake, Ninja, Go, Perl, Python, `patch`, or system zlib
+installation is required. The Nix flake pins Nixpkgs 26.05 and provides the
+supported Zig toolchain on all release architectures.
 
 ## Build
 
@@ -99,38 +97,30 @@ OSS-Fuzz ASan/libFuzzer environment on the exact revision under test. This is an
 OSS-Fuzz compatibility gate, not a claim of enrollment in the hosted service;
 `oss-fuzz/README.md` documents the Zig sanitizer boundary.
 
-### Cross targets and zlib
+### Cross targets
 
-Without Nix, install the requirements above and run the same Zig commands. If
-zlib is not in the compiler's default search path, pass a prefix containing
-`include/` and `lib/libz.a`:
+Without Nix, install Zig 0.16.0 and run the same Zig commands. The bundled zlib
+package compiles for the selected target, so cross builds need no external
+zlib prefix. A musl cross build is one command:
 
 ```sh
-zig build -Dzlib-prefix=/path/to/zlib-prefix
+zig build -Dtarget=aarch64-linux-musl -Doptimize=ReleaseSafe
 ```
 
-Windows builds require a MinGW static zlib prefix. The native Windows CI uses
-the pinned manifest under `scripts/windows`, the `x64-mingw-static` triplet,
-and this PowerShell flow:
+Windows builds use the same package and require no MinGW zlib installation:
 
 ```powershell
-$zlib = "$env:TEMP\uwebzockets-zlib"
-.\scripts\windows\prepare_zlib.ps1 -OutputDirectory $zlib
-zig build test-compile -Dtarget=x86_64-windows-gnu "-Dzlib-prefix=$zlib" `
+zig build test-compile -Dtarget=x86_64-windows-gnu `
   -Doptimize=ReleaseSafe --summary all
-zig build lib -Dtarget=x86_64-windows-gnu "-Dzlib-prefix=$zlib" `
+zig build lib -Dtarget=x86_64-windows-gnu `
   -Doptimize=ReleaseFast --summary all
 ```
 
-Other cross-target builds must pass a zlib prefix built for the selected
-target; the host `UWEBZOCKETS_ZLIB_PREFIX` is deliberately ignored for foreign
-targets.
-
 `zig build lib -Doptimize=ReleaseFast` installs the µWebZockets, BoringSSL,
-lsquic, and libdeflate static archives under `zig-out/lib`. Applications that
-link these archives directly must also link libc, the C++ runtime, zlib, and
-the platform networking libraries required by those dependencies (on Windows:
-`ws2_32`, `mswsock`, `crypt32`, and `advapi32`).
+lsquic, libdeflate, and zlib static archives under `zig-out/lib`. Applications
+that link these archives directly must also link libc, the C++ runtime, the
+installed `libz.a`, and the platform networking libraries required by those
+dependencies (on Windows: `ws2_32`, `mswsock`, `crypt32`, and `advapi32`).
 
 ## Use as a Zig dependency
 

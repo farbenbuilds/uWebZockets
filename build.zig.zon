@@ -1,6 +1,6 @@
 .{
     .name = .uWebZockets,
-    .version = "1.1.9",
+    .version = "1.2.0",
     .fingerprint = 0xbbf152173cd23d48,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
@@ -45,6 +45,12 @@
             .url = "git+https://github.com/ebiggers/libdeflate#92e6a0db9fa848d742f9eb286c92afc60f2c3dda",
             .hash = "N-V-__8AAEaRCwCsYb_rSsH72Pb6DNFQLSjdRzTFOVsJWcoB",
         },
+
+        // madler/zlib — Jean-loup Gailly and Mark Adler
+        .zlib = .{
+            .url = "https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.gz",
+            .hash = "N-V-__8AAJ2cNgAgfBtAw33Bxfu1IWISDeKKSr3DAqoAysIJ",
+        },
     },
     .paths = .{
         "build.zig",
@@ -68,11 +74,8 @@
         "tests",
         "fuzz",
         "patches",
-        "scripts/windows",
         "scripts/check_static_archive.sh",
-        "scripts/prepare_lsquic_source.sh",
-        "zig-cc",
-        "zig-c++",
+        "vendor/lsquic_overlay",
         "flake.nix",
         "flake.lock",
     },

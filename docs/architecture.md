@@ -15,8 +15,8 @@ capacity details and [protocols.md](protocols.md) for wire behavior.
 3. Hot paths have fixed capacity. Exhaustion returns an error or closes the
    offending peer instead of allocating.
 4. Non-blocking I/O (epoll, io_uring, kqueue, and IOCP via libxev) drives
-   callbacks. CMake and Ninja build the vendored C and C++ libraries with Zig
-   compiler wrappers.
+   callbacks. Zig's C and C++ toolchain compiles the vendored BoringSSL,
+   lsquic, libdeflate, and zlib sources from pinned packages.
 5. WebSocket masking operates on native SIMD vectors before handling the
    scalar tail.
 6. Cross-thread data movement is lock-free. Producer and consumer state occupy

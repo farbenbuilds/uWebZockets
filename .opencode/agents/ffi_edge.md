@@ -115,7 +115,7 @@ handle attacks, migrations, proof, and adversarial review.
 - Run `sh scripts/check_release_version.sh` when touching version macros,
   `uwz_version()`, or the header.
 - For Windows ABI changes, keep the MinGW compile path in mind:
-  `zig build test-compile -Dtarget=x86_64-windows-gnu -Dzlib-prefix=<prefix>
+  `zig build test-compile -Dtarget=x86_64-windows-gnu
   -Doptimize=ReleaseSafe --summary all`.
 - Coordinate with `dx_router` for App lifecycle semantics, `transport_io` for
   callback lifetime, `crypto_tls` for TLS exports, `quic_h3` for HTTP/3

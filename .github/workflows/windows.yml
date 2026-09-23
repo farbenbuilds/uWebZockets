@@ -34,25 +34,16 @@ jobs:
         shell: bash
         run: sh scripts/check_release_version.sh
 
-      - name: Install MinGW zlib
-        shell: pwsh
-        run: |
-          $prefix = Join-Path $env:RUNNER_TEMP "uwebzockets-zlib"
-          .\scripts\windows\prepare_zlib.ps1 -OutputDirectory $prefix
-          "UWEBZOCKETS_ZLIB_PREFIX=$prefix" >> $env:GITHUB_ENV
-
       - name: Compile Windows tests
         shell: pwsh
         run: |
           zig build test-compile -Dtarget=x86_64-windows-gnu `
-            "-Dzlib-prefix=$env:UWEBZOCKETS_ZLIB_PREFIX" `
             -Doptimize=ReleaseSafe --summary all
 
       - name: Build Windows static libraries
         shell: pwsh
         run: |
           zig build lib -Dtarget=x86_64-windows-gnu `
-            "-Dzlib-prefix=$env:UWEBZOCKETS_ZLIB_PREFIX" `
             -Doptimize=ReleaseFast --summary all
 
       - name: Package Windows build

@@ -2,7 +2,7 @@
 
 ## Scope
 
-µWebZockets 1.1.9 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
+µWebZockets 1.2.0 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
 server library with bounded HPACK protocol storage. It combines an
 event-driven cross-platform transport (POSIX and Windows IOCP), fixed-capacity
 protocol state, a data-oriented router, and C libraries for TLS, compression, and QUIC.
@@ -33,7 +33,7 @@ startup and accept; no mutex or spinlock remains on the steady-state I/O path.
 3. Hot paths have fixed capacity. Exhaustion returns an error or closes the
    offending peer instead of allocating.
 4. Non-blocking I/O (epoll, io_uring, kqueue, and IOCP via libxev) drive callbacks.
-   CMake and Ninja build the vendored C and C++ libraries with Zig compiler wrappers.
+   Zig's C and C++ toolchain compiles the vendored libraries from pinned sources.
 5. WebSocket masking operates on native SIMD vectors before handling the scalar
    tail.
 
@@ -59,7 +59,11 @@ uWebZockets/
 ├── build.zig.zon             # Zig 0.16 package manifest
 ├── builds/
 │   ├── orchestrator.zig        # target selection and aggregate steps
-│   ├── vendor.zig              # CMake/Ninja C and C++ dependencies
+│   ├── vendor.zig              # native C and C++ dependency graph
+│   ├── boringssl.zig           # BoringSSL source lists, defines, and C++ flags
+│   ├── lsquic.zig              # assembled lsquic tree, overlay, and sources
+│   ├── libdeflate.zig          # libdeflate sources
+│   ├── zlib.zig                # bundled zlib sources
 │   ├── sanitizers.zig          # ASan/MSan runtime configuration
 │   ├── testing.zig             # unit, C ABI, h1spec, and Autobahn steps
 │   ├── fuzzing.zig             # deterministic and OSS-Fuzz targets
@@ -306,28 +310,30 @@ the root `build.zig` derives its `std.SemanticVersion` from it and delegates
 directly to `builds/orchestrator.zig`. `scripts/bump_version.sh` rewrites the
 package manifest, the C ABI macros, the C/C++ tests, the documentation
 headers, and the changelog skeleton, and `scripts/check_release_version.sh`
-fails the lint workflow if any copy drifts. Focused modules map Zig optimization modes to CMake
-build types and invoke Ninja for BoringSSL, lsquic, and libdeflate. The
-`zig-cc` and `zig-c++` wrappers pass
-the selected target triple to cross builds. Vendor caches are separated by
-target and optimization mode. Sanitizer mode adds another isolated cache,
-instruments BoringSSL, lsquic, libdeflate, and the local C shim with ASan/UBSan,
-enables Zig's full C-UB checks, and preserves frame pointers. A mutually
-exclusive x86_64 Linux MemorySanitizer mode rebuilds the pinned C/C++ graph
-and local C shim with origin tracking in a separate cache, then runs a focused
-C dependency-boundary smoke. It does not instrument Zig code or execute the
-complete C ABI test graph.
+fails the lint workflow if any copy drifts. `builds/boringssl.zig`,
+`builds/lsquic.zig`, `builds/libdeflate.zig`, and `builds/zlib.zig` compile the
+pinned C and C++ sources with Zig's own toolchain: BoringSSL reads the
+generated source lists in `gen/sources.json`, lsquic assembles its fetched tree
+with the pre-generated overlay in `vendor/lsquic_overlay/`, and libdeflate and
+zlib use fixed source lists. No CMake, Ninja, Go, Perl, Python, `patch`, or
+system zlib runs during the build. Sanitizer mode changes the compile flags on
+the same graph, instruments BoringSSL, lsquic, libdeflate, zlib, and the local
+C shim with ASan/UBSan, enables Zig's full C-UB checks, and preserves frame
+pointers. A mutually exclusive x86_64 Linux MemorySanitizer mode rebuilds the
+pinned C/C++ graph and local C shim with origin tracking, disables BoringSSL
+assembly as upstream does, then runs a focused C dependency-boundary smoke. It
+does not instrument Zig code or execute the complete C ABI test graph.
 
 The Nix flake pins Nixpkgs 26.05, seeds Zig package dependencies
 deterministically, and defines native and musl compile checks. `build.zig.zon`
-pins zslay, libxev, BoringSSL, lsquic, ls-qpack, ls-hpack, and libdeflate by
-immutable URL or commit plus Zig package hash. A downstream project can pin an
-exact checkout at a local path without inheriting the repository's vendor
-submodules. Release archives contain the µWebZockets, BoringSSL, lsquic, and
-libdeflate static libraries, `uWebZockets.h`, and their license texts.
-`tests/package_consumer` imports the public module from a pinned local path in
-CI. That module carries native link metadata and a clean static-library edge
-that orders vendor builds without nesting dependency archives. The fixture
+pins zslay, libxev, BoringSSL, lsquic, ls-qpack, ls-hpack, libdeflate, and zlib
+by immutable URL or commit plus Zig package hash. A downstream project can pin
+an exact checkout at a local path without inheriting the repository's vendor
+submodules. Release archives contain the µWebZockets, BoringSSL, lsquic,
+libdeflate, and zlib static libraries, `uWebZockets.h`, and their license
+texts. `tests/package_consumer` imports the public module from a pinned local
+path in CI. That module carries native link metadata and a clean static-library
+edge that orders vendor builds without nesting dependency archives. The fixture
 catches package-root and exported-name drift.
 The build rejects any non-object member in the µWebZockets static archive.
 
