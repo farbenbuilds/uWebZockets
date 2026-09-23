@@ -5,10 +5,8 @@ const sanitizers = @import("../sanitizers.zig");
 const testing = @import("../testing.zig");
 const vendor = @import("../vendor.zig");
 
-pub const Steps = struct {
-    test_step: *std.Build.Step,
-    test_compile: *std.Build.Step,
-};
+/// Step handles produced by the native testing graph.
+pub const Steps = testing.Steps;
 
 pub fn inject(
     b: *std.Build,

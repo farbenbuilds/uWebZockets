@@ -8,13 +8,16 @@ pub const Phase = enum(u8) {
     aborted,
 };
 
+/// Rejection of a zero high-water mark or an inverted mark pair.
+pub const InitError = error{InvalidWaterMarks};
+
 pub const State = struct {
     queued_bytes: usize = 0,
     high_water_mark: usize,
     low_water_mark: usize,
     phase: Phase = .writable,
 
-    pub fn init(high_water_mark: usize, low_water_mark: usize) error{InvalidWaterMarks}!State {
+    pub fn init(high_water_mark: usize, low_water_mark: usize) InitError!State {
         if (high_water_mark == 0 or low_water_mark > high_water_mark) {
             return error.InvalidWaterMarks;
         }

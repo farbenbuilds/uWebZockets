@@ -2,6 +2,9 @@ const std = @import("std");
 const http_parser = @import("../http/parser.zig");
 const Request = @import("../http/request.zig").Request;
 
+/// Receives one parsed request borrowed from the protocol core's storage.
+pub const RequestHandler = *const fn (*anyopaque, *const Request) void;
+
 /// Protocol-only HTTP core. It owns bounded parsing state but no socket state.
 pub fn protocol_core(comptime capacity: usize) type {
     if (capacity < http_parser.max_request_line_size + 4) {
@@ -21,7 +24,7 @@ pub fn protocol_core(comptime capacity: usize) type {
             self: *Self,
             input: []const u8,
             context: *anyopaque,
-            handler: *const fn (*anyopaque, *const Request) void,
+            handler: RequestHandler,
         ) !usize {
             if (input.len > self.storage.len - self.length) return error.InputBufferFull;
             @memcpy(self.storage[self.length .. self.length + input.len], input);

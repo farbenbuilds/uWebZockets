@@ -10,11 +10,13 @@ const tls_rx = 2;
 const tls_1_2_version = 0x0303;
 const tls_cipher_aes_gcm_128 = 51;
 
+/// Record direction a kTLS socket option applies to.
 pub const Direction = enum(u8) {
     transmit,
     receive,
 };
 
+/// Linux `tls12_crypto_info_aes_gcm_128` record state.
 pub const AesGcm128 = extern struct {
     version: u16 = tls_1_2_version,
     cipher_type: u16 = tls_cipher_aes_gcm_128,

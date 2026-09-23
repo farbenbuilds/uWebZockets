@@ -4,6 +4,7 @@ const std = @import("std");
 
 pub const cache_line = 64;
 
+/// Named counters exposed through the Prometheus rendering.
 pub const Slot = enum(u8) {
     connections_accepted,
     connections_closed,
@@ -22,6 +23,7 @@ pub const Slot = enum(u8) {
 
 const slot_fields = @typeInfo(Slot).@"enum".fields;
 
+/// Fixed-capacity counter set aligned to one cache line.
 pub const Registry = struct {
     counters: [slot_fields.len]u64 align(cache_line) = .{0} ** slot_fields.len,
 

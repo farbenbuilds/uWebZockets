@@ -13,6 +13,11 @@ pub const available = true;
 /// lsquic congestion controller identifier for BBRv1 (`es_cc_algo`).
 const cc_algo_bbr: c_uint = 2;
 
+/// One fixed-size outbound UDP packet buffer owned by the engine packet pool.
+pub const PacketSlot = struct {
+    bytes: [api.max_udp_payload_size]u8,
+};
+
 /// Returns a bounded QUIC server engine type.
 ///
 /// `capacity` bounds concurrent connections and request streams;
@@ -42,9 +47,6 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
     }
 
     const packet_slot_count = @max(@as(usize, 16), capacity * 4);
-    const PacketSlot = struct {
-        bytes: [api.max_udp_payload_size]u8,
-    };
     const StreamPool = pool.freelist_pool(QuicStream, capacity);
     const HeaderPool = pool.freelist_pool(HeaderSet, header_slot_count);
     const PacketPool = pool.freelist_pool(PacketSlot, packet_slot_count);

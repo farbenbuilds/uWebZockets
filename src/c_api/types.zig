@@ -6,6 +6,9 @@
 const std = @import("std");
 const app_module = @import("../router/app.zig");
 const radix = @import("../router/radix.zig");
+const Request = @import("../http/request.zig").Request;
+const WebSocket = @import("../ws/socket.zig").WebSocket;
+const zslay = @import("zslay");
 
 pub const max_connections = 1024;
 pub const max_c_routes = 64;
@@ -54,6 +57,27 @@ pub const CWsMessageHandler = *const fn (
 ) callconv(.c) void;
 pub const CWsEventHandler = *const fn (?*anyopaque, ?*anyopaque) callconv(.c) void;
 
+/// Internal trampoline slot authorizing one WebSocket upgrade.
+pub const WsUpgradeSlot = *const fn (*const Request) bool;
+
+/// Internal trampoline slot for WebSocket open, drain, and close events.
+pub const WsEventSlot = *const fn (*WebSocket) void;
+
+/// Internal trampoline slot receiving one decoded WebSocket message.
+pub const WsMessageSlot = *const fn (*WebSocket, []const u8, zslay.Opcode) void;
+
+/// Fixed synchronous HTTP trampoline table indexed by route registration order.
+pub const HttpHandlerTable = [max_c_routes]radix.Handler;
+
+/// Fixed WebSocket upgrade trampoline table indexed by route registration order.
+pub const WsUpgradeTable = [max_c_routes]WsUpgradeSlot;
+
+/// Fixed WebSocket open, drain, and close trampoline table by route index.
+pub const WsEventTable = [max_c_routes]WsEventSlot;
+
+/// Fixed WebSocket message trampoline table indexed by route registration order.
+pub const WsMessageTable = [max_c_routes]WsMessageSlot;
+
 /// C-compatible borrowed byte slice.
 pub const CSlice = extern struct {
     data: [*c]const u8,
@@ -89,13 +113,18 @@ pub const CMiddlewareEntry = struct {
     user_data: ?*anyopaque = null,
 };
 
+/// Fixed copied-route storage; the capacity is part of the C ABI contract.
+pub const CRouteTable = [max_c_routes]CRoute;
+
+/// Fixed middleware storage; the capacity is part of the C ABI contract.
+pub const CMiddlewareTable = [max_c_middleware]CMiddlewareEntry;
+
 pub const CApp = struct {
     threaded: std.Io.Threaded,
     app: App,
-    routes: [max_c_routes]CRoute = [_]CRoute{.{}} ** max_c_routes,
+    routes: CRouteTable = [_]CRoute{.{}} ** max_c_routes,
     route_count: usize = 0,
-    middleware: [max_c_middleware]CMiddlewareEntry =
-        [_]CMiddlewareEntry{.{}} ** max_c_middleware,
+    middleware: CMiddlewareTable = [_]CMiddlewareEntry{.{}} ** max_c_middleware,
     middleware_count: usize = 0,
 };
 

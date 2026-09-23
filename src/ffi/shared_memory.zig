@@ -1,5 +1,6 @@
 const std = @import("std");
 
+/// One fixed-block lease: block index, anti-reuse generation, leased length.
 pub const Handle = packed struct(u64) {
     block: u16,
     generation: u24,
@@ -26,12 +27,20 @@ pub fn region(comptime block_size: usize, comptime block_count: usize) type {
 
     return struct {
         const Self = @This();
+
+        /// One atomic per-block state word: generation plus leased/retired bits.
+        const BlockState = std.atomic.Value(u32);
+        /// Fixed per-block state table indexed by block number.
+        const StateTable = [block_count]BlockState;
+
         const leased_bit: u32 = 1;
         const retired_bit: u32 = 2;
         const state_shift = 2;
 
+        /// Byte storage for all blocks; 64-byte aligned for host zero-copy views.
         storage: [block_size * block_count]u8 align(64) = undefined,
-        states: [block_count]std.atomic.Value(u32) = init_states(),
+        /// Lease and generation state for each block.
+        states: StateTable = init_states(),
 
         pub fn acquire(self: *Self, length: usize) RegionError!Handle {
             if (length == 0 or length > block_size) return error.InvalidLength;
@@ -129,8 +138,8 @@ pub fn region(comptime block_size: usize, comptime block_count: usize) type {
             }
         }
 
-        fn init_states() [block_count]std.atomic.Value(u32) {
-            var result: [block_count]std.atomic.Value(u32) = undefined;
+        fn init_states() StateTable {
+            var result: StateTable = undefined;
             for (&result) |*state| state.* = .init(0);
             return result;
         }

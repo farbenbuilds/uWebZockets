@@ -265,6 +265,38 @@ pub const DataEvent = struct {
     end_stream: bool,
 };
 
+/// DATA discarded during the bounded local-reset grace window.
+pub const DiscardedDataEvent = struct {
+    /// Full flow-controlled payload size, including padding.
+    flow_length: u32,
+};
+
+/// Peer reset carrying both the released slab index and stable wire ID.
+pub const StreamResetEvent = struct {
+    /// Slab index that was released and may now be reused.
+    stream_index: u16,
+    /// Peer stream identifier retained after the slab fields are cleared.
+    stream_id: u32,
+};
+
+/// Peer graceful-shutdown notification.
+pub const GoAwayEvent = struct {
+    /// Last peer-selected stream that may have been processed.
+    last_stream_id: u32,
+    /// Peer-supplied HTTP/2 error code.
+    error_code: u32,
+    /// Optional diagnostic bytes borrowed from the input frame.
+    debug_data: []const u8,
+};
+
+/// Applied connection- or stream-level send-credit increment.
+pub const WindowUpdateEvent = struct {
+    /// Active stream slot, or `null` for the connection window.
+    stream_index: ?u16,
+    /// Nonzero credit increment.
+    increment: u32,
+};
+
 /// A validated frame event whose payload borrows the input frame.
 pub const Event = union(enum) {
     /// A valid but unsupported or intentionally unhandled frame.
@@ -292,37 +324,17 @@ pub const Event = union(enum) {
     /// Application bytes from a DATA frame.
     data: DataEvent,
     /// DATA discarded during the bounded local-reset grace window.
-    discarded_data: struct {
-        /// Full flow-controlled payload size, including padding.
-        flow_length: u32,
-    },
+    discarded_data: DiscardedDataEvent,
     /// Peer reset carrying both the released slab index and stable wire ID.
-    stream_reset: struct {
-        /// Slab index that was released and may now be reused.
-        stream_index: u16,
-        /// Peer stream identifier retained after the slab fields are cleared.
-        stream_id: u32,
-    },
+    stream_reset: StreamResetEvent,
     /// Opaque bytes from a PING that requires an acknowledgement.
     ping: [8]u8,
     /// Opaque bytes from a PING acknowledgement.
     ping_ack: [8]u8,
     /// Peer graceful-shutdown notification.
-    goaway: struct {
-        /// Last peer-selected stream that may have been processed.
-        last_stream_id: u32,
-        /// Peer-supplied HTTP/2 error code.
-        error_code: u32,
-        /// Optional diagnostic bytes borrowed from the input frame.
-        debug_data: []const u8,
-    },
+    goaway: GoAwayEvent,
     /// Applied connection- or stream-level send-credit increment.
-    window_update: struct {
-        /// Active stream slot, or `null` for the connection window.
-        stream_index: ?u16,
-        /// Nonzero credit increment.
-        increment: u32,
-    },
+    window_update: WindowUpdateEvent,
 };
 
 /// Returns bounded, allocation-free server-side HTTP/2 connection state.

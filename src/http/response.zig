@@ -5,13 +5,36 @@ const streams = @import("streams.zig");
 const cookie_module = @import("cookie.zig");
 const TcpConnection = tcp.TcpConnection;
 
+/// HTTP/3 end callback: status, response fields, and body bytes.
+pub const Http3EndFn = *const fn (*anyopaque, []const u8, []const u8, []const u8) anyerror!void;
+/// HTTP/3 begin callback: status and response fields.
+pub const Http3BeginFn = *const fn (*anyopaque, []const u8, []const u8) anyerror!void;
+/// HTTP/3 write callback for one body chunk.
+pub const Http3WriteFn = *const fn (*anyopaque, []const u8) anyerror!void;
+/// HTTP/3 finish callback for a completed streaming response.
+pub const Http3FinishFn = *const fn (*anyopaque) anyerror!void;
+
+/// HTTP/2 end callback: stream id, status, response fields, and body bytes.
+pub const Http2EndFn = *const fn (*anyopaque, u32, []const u8, []const u8, []const u8) anyerror!void;
+/// HTTP/2 begin callback: stream id, status, and response fields.
+pub const Http2BeginFn = *const fn (*anyopaque, u32, []const u8, []const u8) anyerror!void;
+/// HTTP/2 write callback for one body chunk.
+pub const Http2WriteFn = *const fn (*anyopaque, u32, []const u8) anyerror!void;
+/// HTTP/2 finish callback for a completed streaming response.
+pub const Http2FinishFn = *const fn (*anyopaque, u32) anyerror!void;
+
+/// Deferred completion callback: status, response fields, and body bytes.
+pub const AsyncCompleteFn = *const fn (*anyopaque, []const u8, []const u8, []const u8) anyerror!void;
+/// Wakes the suspended transport dispatch after deferred completion.
+pub const AsyncWakeFn = *const fn (*anyopaque) void;
+
 /// HTTP/3 stream callbacks used by the transport-neutral response writer.
 pub const Http3Target = struct {
     context: *anyopaque,
-    end_fn: *const fn (*anyopaque, []const u8, []const u8, []const u8) anyerror!void,
-    begin_fn: *const fn (*anyopaque, []const u8, []const u8) anyerror!void,
-    write_fn: *const fn (*anyopaque, []const u8) anyerror!void,
-    finish_fn: *const fn (*anyopaque) anyerror!void,
+    end_fn: Http3EndFn,
+    begin_fn: Http3BeginFn,
+    write_fn: Http3WriteFn,
+    finish_fn: Http3FinishFn,
 };
 
 /// HTTP/2 stream callbacks backed by a connection-owned bounded session.
@@ -19,10 +42,10 @@ pub const Http2Target = struct {
     context: *anyopaque,
     router: *const anyopaque,
     stream_id: u32,
-    end_fn: *const fn (*anyopaque, u32, []const u8, []const u8, []const u8) anyerror!void,
-    begin_fn: *const fn (*anyopaque, u32, []const u8, []const u8) anyerror!void,
-    write_fn: *const fn (*anyopaque, u32, []const u8) anyerror!void,
-    finish_fn: *const fn (*anyopaque, u32) anyerror!void,
+    end_fn: Http2EndFn,
+    begin_fn: Http2BeginFn,
+    write_fn: Http2WriteFn,
+    finish_fn: Http2FinishFn,
 };
 
 /// Active transport receiving response bytes.
@@ -42,8 +65,8 @@ pub const ResponseState = enum(u8) {
 /// Transport callbacks retained by a connection-owned async response state.
 pub const AsyncTarget = struct {
     context: *anyopaque,
-    complete_fn: *const fn (*anyopaque, []const u8, []const u8, []const u8) anyerror!void,
-    wake_fn: *const fn (*anyopaque) void,
+    complete_fn: AsyncCompleteFn,
+    wake_fn: AsyncWakeFn,
 };
 
 /// Lifecycle of one connection-owned async response slot.

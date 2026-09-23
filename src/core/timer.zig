@@ -5,19 +5,22 @@ const Loop = @import("loop.zig").Loop;
 
 const log = std.log.scoped(.timer);
 
+/// Invoked once per elapsed periodic timer interval.
+pub const TickCallback = *const fn () void;
+
 /// Repeating libxev timer with inline completion storage.
 pub const TimerContext = struct {
     timer: xev.Timer,
     completion: xev.Completion = .{},
     cancel_completion: xev.Completion = .{},
     interval_ms: u64,
-    tick_cb: *const fn () void,
+    tick_cb: TickCallback,
     active: bool = false,
     stopping: bool = false,
 };
 
 /// Initializes a recurring timer without arming it.
-pub fn init_timer(interval_ms: u64, tick_callback: *const fn () void) !TimerContext {
+pub fn init_timer(interval_ms: u64, tick_callback: TickCallback) !TimerContext {
     const t = try xev.Timer.init();
     return TimerContext{
         .timer = t,

@@ -1,13 +1,14 @@
 const std = @import("std");
 const c = @import("c");
 
+/// BoringSSL ALPN selection callback signature shared by the TCP and QUIC contexts.
 const AlpnCallback = *const fn (
-    ?*c.SSL,
-    [*c][*c]const u8,
-    [*c]u8,
-    [*c]const u8,
-    c_uint,
-    ?*anyopaque,
+    ssl: ?*c.SSL,
+    out: [*c][*c]const u8,
+    outlen: [*c]u8,
+    in: [*c]const u8,
+    inlen: c_uint,
+    arg: ?*anyopaque,
 ) callconv(.c) c_int;
 
 /// Owning BoringSSL server context with a fixed ALPN policy.

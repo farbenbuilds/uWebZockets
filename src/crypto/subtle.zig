@@ -4,6 +4,7 @@ pub const sha256_length = 32;
 pub const aes_gcm_tag_length = 16;
 pub const aes_gcm_nonce_length = 12;
 
+/// Failure modes shared by AES-GCM seal, open, and algorithm selection.
 pub const AesGcmError = error{
     AuthenticationFailed,
     BufferTooSmall,

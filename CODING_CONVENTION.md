@@ -123,3 +123,29 @@ review. A change that violates them is rejected, not negotiated.
   requesting review.
 - Reviewers verify that a change does not weaken these rules, delete or skip
   tests, or silence a lint. The lint gate is the quality contract.
+
+## 8. Type Readability (Mandatory)
+
+Readability wins over cleverness. A reader must understand a type without
+reconstructing it from reflection, anonymous structure, or nesting.
+
+- Every value that crosses a function boundary has a named type. Do not use an
+  inline `struct { ... }` as a union payload, struct field, or collection
+  element; declare a named alias with a one-line doc comment (`GoAwayEvent`,
+  `ContextualRoute`).
+- Function-pointer fields and parameters use named callback aliases
+  (`CloseCallback`, `WsMessageCallback`). Optionality belongs on the field
+  (`close: ?WsCloseCallback = null`), not inside the alias.
+- Partial-update records are explicit named structs with optional fields
+  (`ServerConfig.Overrides`), not `anytype` plus `@typeInfo`.
+- Comptime specialization is limited to capacity and platform parameters
+  (`freelist_pool`, `connection_sweeper`, `configured_service`). Do not build
+  types through reflection when a named type can state the contract.
+- Aliases are zero-cost. Never add a wrapper, vtable, or runtime indirection
+  for readability alone.
+- Do not alias primitives or plain slices. Alias anonymous or nested types, or
+  a repeated compound type whose name states a protocol bound
+  (`ControlFrameBuffer = [125]u8`).
+- Extraction is additive: keep exported names, field names, and defaults
+  stable. Renaming an exported symbol is a breaking change that needs a
+  changelog entry and a migration note.

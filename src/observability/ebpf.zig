@@ -11,6 +11,7 @@ pub const max_buckets = 16;
 /// this report Unsupported rather than risk an undersized lookup buffer.
 const max_possible_cpus = 256;
 
+/// Summed per-CPU latency histogram read from a pinned BPF map.
 pub const Histogram = struct {
     buckets: [max_buckets]u64 = .{0} ** max_buckets,
     total: u64 = 0,
@@ -30,12 +31,14 @@ pub const Error = error{
 const bpf_obj_get = 7;
 const bpf_map_lookup_elem = 1;
 
+/// `BPF_OBJ_GET` attribute block.
 const ObjGetAttr = extern struct {
     pathname: u64,
     bpf_fd: u32,
     file_flags: u32,
 };
 
+/// `BPF_MAP_LOOKUP_ELEM` attribute block.
 const LookupAttr = extern struct {
     map_fd: u32,
     key: u64,

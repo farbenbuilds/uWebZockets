@@ -71,6 +71,8 @@ pub const Call = struct {
     }
 
     /// Writes one typed result directly into the caller-owned response buffer.
+    ///
+    /// `value` accepts any value that `std.json.fmt` can serialize.
     pub fn result(self: *Call, value: anytype) HandlerError!void {
         if (self.result_written) return error.ResultAlreadyWritten;
         if (self.writer) |writer| {
@@ -181,6 +183,18 @@ pub fn comptime_service(comptime procedures: []const StaticProcedure) type {
     };
 }
 
+/// Returns `P` when it is a mutable single-item pointer, else fails compilation.
+fn mutable_context_pointer(comptime P: type) type {
+    const pointer = switch (@typeInfo(P)) {
+        .pointer => |info| info,
+        else => @compileError("typed RPC context must be passed by mutable pointer"),
+    };
+    if (pointer.size != .one or pointer.is_const) {
+        @compileError("typed RPC context must be passed by mutable single-item pointer");
+    }
+    return P;
+}
+
 /// Returns a JSON-RPC 2.0 service with explicit fixed capacities.
 pub fn configured_service(
     comptime max_procedures: usize,
@@ -253,6 +267,9 @@ pub fn configured_service(
         }
 
         /// Registers a typed context procedure with bounded parameter decoding.
+        ///
+        /// `context` accepts any mutable single-item pointer to caller-owned
+        /// state that outlives the service.
         pub fn register_typed_context(
             self: *Self,
             method: []const u8,
@@ -261,14 +278,7 @@ pub fn configured_service(
             comptime Result: type,
             comptime handler: *const fn (@TypeOf(context), Params) HandlerError!Result,
         ) RegistrationError!void {
-            const Pointer = @TypeOf(context);
-            const pointer = switch (@typeInfo(Pointer)) {
-                .pointer => |info| info,
-                else => @compileError("typed RPC context must be passed by mutable pointer"),
-            };
-            if (pointer.size != .one or pointer.is_const) {
-                @compileError("typed RPC context must be passed by mutable single-item pointer");
-            }
+            const Pointer = mutable_context_pointer(@TypeOf(context));
 
             const Adapter = struct {
                 fn invoke(raw_context: *anyopaque, call: *Call) HandlerError!void {
@@ -382,6 +392,7 @@ pub fn configured_service(
     };
 }
 
+/// Dispatches one document; `service` accepts any generated service type.
 fn dispatch_to_buffer(
     service: anytype,
     input: []const u8,
@@ -464,6 +475,7 @@ fn make_static_hashes(
     return hashes;
 }
 
+/// Classifies and dispatches one document; `service` accepts any generated service type.
 fn dispatch_document(
     service: anytype,
     input: []const u8,
@@ -501,6 +513,7 @@ fn dispatch_document(
     }
 }
 
+/// Dispatches a pre-validated batch; `service` accepts any generated service type.
 fn dispatch_batch(
     service: anytype,
     scanner: *std.json.Scanner,
@@ -551,6 +564,7 @@ fn dispatch_batch(
     try writer.writeByte(']');
 }
 
+/// Dispatches one request; `service` accepts any generated service type.
 fn dispatch_request(
     service: anytype,
     request: ParsedRequest,

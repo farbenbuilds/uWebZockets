@@ -8,13 +8,16 @@ const final_empty_block = [_]u8{ 0x01, 0x00, 0x00, 0xff, 0xff };
 /// Scratch bytes reserved after a compressed message for decode finalization.
 pub const decode_tail_len = sync_flush_tail.len + final_empty_block.len;
 
+/// Scratch sizing that would wrap a `usize`.
+pub const ScratchBoundError = error{SizeOverflow};
+
 /// Worst-case paired scratch needed for any negotiated window, without a context.
 ///
 /// Over-approximates libdeflate's `n + 5 * ceil(n / 5000)` bound and zlib's
 /// `n + (n >> 12) + (n >> 14) + (n >> 25) + 13` bound, plus the decode tail.
 /// The startup slab planner uses this to size per-connection scratch before any
 /// compression context exists.
-pub fn worst_case_scratch_bound(input_len: usize) error{SizeOverflow}!usize {
+pub fn worst_case_scratch_bound(input_len: usize) ScratchBoundError!usize {
     const eighth = input_len / 8 + @intFromBool(input_len % 8 != 0);
     const sixty_fourth = input_len / 64 + @intFromBool(input_len % 64 != 0);
 

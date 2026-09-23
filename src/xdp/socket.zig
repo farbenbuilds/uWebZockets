@@ -19,12 +19,14 @@ const xdp_pgoff_tx_ring: i64 = 0x80000000;
 const xdp_umem_pgoff_fill_ring: i64 = 0x100000000;
 const xdp_umem_pgoff_completion_ring: i64 = 0x180000000;
 
+/// One UMEM frame descriptor as laid out by the AF_XDP kernel ABI.
 pub const Descriptor = extern struct {
     address: u64,
     length: u32,
     options: u32,
 };
 
+/// One ring's producer, consumer, and descriptor offsets.
 pub const RingOffset = extern struct {
     producer: u64,
     consumer: u64,
@@ -32,6 +34,7 @@ pub const RingOffset = extern struct {
     flags: u64,
 };
 
+/// `XDP_MMAP_OFFSETS` result covering all four rings.
 pub const MmapOffsets = extern struct {
     receive: RingOffset,
     transmit: RingOffset,
@@ -39,6 +42,7 @@ pub const MmapOffsets = extern struct {
     completion: RingOffset,
 };
 
+/// `XDP_UMEM_REG` registration request for the UMEM region.
 pub const UmemRegistration = extern struct {
     address: u64,
     length: u64,
@@ -47,6 +51,7 @@ pub const UmemRegistration = extern struct {
     flags: u32,
 };
 
+/// `sockaddr_xdp` bind address for one interface queue.
 pub const SocketAddress = extern struct {
     family: u16 = af_xdp,
     flags: u16,
@@ -67,6 +72,7 @@ pub const Error = error{
     SyscallFailed,
 };
 
+/// Ring of kernel-laid frame descriptors with a local producer/consumer cache.
 pub const Ring = struct {
     mapping: []align(std.heap.page_size_min) u8,
     producer: *u32,
@@ -113,6 +119,7 @@ pub const Ring = struct {
     }
 };
 
+/// Address-only ring used by the UMEM fill and completion queues.
 pub const AddressRing = struct {
     mapping: []align(std.heap.page_size_min) u8,
     producer: *u32,
@@ -143,6 +150,7 @@ pub const AddressRing = struct {
     }
 };
 
+/// One AF_XDP socket with its UMEM reference and mmapped rings.
 pub const XskSocket = struct {
     fd: i32,
     umem: []u8,

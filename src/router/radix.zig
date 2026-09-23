@@ -24,18 +24,24 @@ pub const ContextAsyncHandler = *const fn (
     response: AsyncResponse,
 ) void;
 
+/// Synchronous route callback paired with its caller-owned context.
+pub const ContextualRoute = struct {
+    context: *anyopaque,
+    callback: ContextHandler,
+};
+
+/// Deferred route callback paired with its caller-owned context.
+pub const ContextualAsyncRoute = struct {
+    context: *anyopaque,
+    callback: ContextAsyncHandler,
+};
+
 /// One registered route callback without heap allocation or erased closures.
 pub const RouteHandler = union(enum) {
     synchronous: Handler,
-    contextual: struct {
-        context: *anyopaque,
-        callback: ContextHandler,
-    },
+    contextual: ContextualRoute,
     asynchronous: AsyncHandler,
-    contextual_async: struct {
-        context: *anyopaque,
-        callback: ContextAsyncHandler,
-    },
+    contextual_async: ContextualAsyncRoute,
 };
 
 /// Middleware control flow after one ordered callback.
@@ -63,18 +69,28 @@ pub const WsCompression = enum(u8) {
     permessage_deflate,
 };
 
+/// Optional authorization callback evaluated before the upgrade response.
+pub const WsUpgradeCallback = *const fn (req: *const Request) bool;
+
+/// Called after the protocol upgrade becomes active.
+pub const WsOpenCallback = *const fn (ws: *WebSocket) void;
+
+/// Called once for each complete text or binary message.
+pub const WsMessageCallback = *const fn (ws: *WebSocket, message: []const u8, opcode: zslay.Opcode) void;
+
+/// Called after write backpressure falls below the connection threshold.
+pub const WsDrainCallback = *const fn (ws: *WebSocket) void;
+
+/// Called at most once when the WebSocket closes.
+pub const WsCloseCallback = *const fn (ws: *WebSocket) void;
+
 /// Fixed callback set and limits for a WebSocket route.
 pub const WsBehavior = struct {
-    /// Optional authorization callback evaluated before the upgrade response.
-    upgrade: ?*const fn (req: *const Request) bool = null,
-    /// Called after the protocol upgrade becomes active.
-    open: ?*const fn (ws: *WebSocket) void = null,
-    /// Called once for each complete text or binary message.
-    message: ?*const fn (ws: *WebSocket, message: []const u8, opcode: zslay.Opcode) void = null,
-    /// Called after write backpressure falls below the connection threshold.
-    drain: ?*const fn (ws: *WebSocket) void = null,
-    /// Called at most once when the WebSocket closes.
-    close: ?*const fn (ws: *WebSocket) void = null,
+    upgrade: ?WsUpgradeCallback = null,
+    open: ?WsOpenCallback = null,
+    message: ?WsMessageCallback = null,
+    drain: ?WsDrainCallback = null,
+    close: ?WsCloseCallback = null,
     /// Negotiates no-context-takeover compression when enabled.
     compression: WsCompression = .disabled,
     /// Maximum encoded payload accepted in one frame.

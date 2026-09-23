@@ -3,6 +3,54 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.1.9] - 2026-09-23
+
+This release is a type-readability pass. Wire behavior, capacities, ownership
+semantics, exported names, and field layouts are unchanged.
+
+### Added
+
+- Named callback aliases on the public surface: `Http3EndFn`, `Http3BeginFn`,
+  `Http3WriteFn`, `Http3FinishFn`, `Http2EndFn`, `Http2BeginFn`,
+  `Http2WriteFn`, `Http2FinishFn`, `AsyncCompleteFn`, and `AsyncWakeFn` in
+  `Response`; `WsUpgradeCallback`, `WsOpenCallback`, `WsMessageCallback`,
+  `WsDrainCallback`, and `WsCloseCallback` in `WsBehavior`; `CloseCallback`
+  and `TickCallback` in the transport; `ReadableReadFn`, `ReadableCloseFn`,
+  `WritableWriteFn`, `WritableCloseFn`, and `WritableBackpressureFn` in
+  `streams`; `WriteFn`, `RequestFn`, `WsDataFn`, and `StreamClosedFn` in the
+  HTTP/2 server session.
+- Named HTTP/2 event payloads extracted from the `Event` union:
+  `DiscardedDataEvent`, `StreamResetEvent`, `GoAwayEvent`, and
+  `WindowUpdateEvent`.
+- Explicit `ServerConfig.Overrides` record for `ServerConfig.with`, replacing
+  the reflection-driven `anytype` parameter with 13 documented optional
+  fields.
+- Named route payloads (`ContextualRoute`, `ContextualAsyncRoute`), a named
+  `SocketFd` for the transport descriptor helpers, named C ABI trampoline
+  tables, and protocol-bound aliases such as `ControlFrameBuffer` and
+  `AcceptTokenBuffer`.
+
+### Changed
+
+- `ServerConfig.with` now accepts `ServerConfig.Overrides`. Anonymous struct
+  literals (`.with(.{ .max_body_size = 256 * 1024 })`) coerce unchanged;
+  passing a full `ServerConfig` value as the override argument is no longer
+  accepted.
+- `close_socket`, `request_quickack`, and `apply_listener_tuning` take the
+  named `SocketFd` instead of `anytype`, and the now-redundant runtime type
+  probe in `close_socket` is gone.
+- `register_typed_context` validates its context pointer through the named
+  `mutable_context_pointer` comptime helper.
+- Documentation records the mandatory type-readability contract in
+  `CODING_CONVENTION.md` section 8 and mirrors it in `README.md`, `AGENTS.md`,
+  `SKILL.md`, `CODEBASE.md`, and `CONTRIBUTE.md`; `docs/callback_lifecycle.md`
+  source references were re-synchronized with the tree.
+
+### Security
+
+- No security-relevant behavior changed. Recovery paths, validation bounds,
+  and C ABI layouts are identical to 1.1.7.
+
 ## [1.1.7] - 2026-09-23
 
 This release tracks the zslay 0.2.0 frame-parser surface. Wire behavior,

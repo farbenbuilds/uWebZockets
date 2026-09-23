@@ -2,6 +2,7 @@ const std = @import("std");
 const sanitizers = @import("sanitizers.zig");
 const vendor = @import("vendor.zig");
 
+/// One runnable example exposed as its own build step.
 const Example = struct {
     name: []const u8,
     source: []const u8,

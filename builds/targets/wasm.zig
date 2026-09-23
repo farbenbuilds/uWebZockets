@@ -1,5 +1,6 @@
 const std = @import("std");
 
+/// Handles for the `wasm-freestanding` and `wasm-wasi` steps.
 pub const Steps = struct {
     freestanding: *std.Build.Step,
     wasi: *std.Build.Step,

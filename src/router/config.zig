@@ -78,15 +78,54 @@ pub const ServerConfig = struct {
     /// Path of the observability endpoint; retained for the app lifetime.
     metrics_path: []const u8 = "/metrics",
 
-    /// Returns a copy with the named fields replaced.
-    pub fn with(self: ServerConfig, overrides: anytype) ServerConfig {
+    /// Optional per-field replacements accepted by `with`.
+    ///
+    /// A null field leaves the matching `ServerConfig` field unchanged.
+    pub const Overrides = struct {
+        /// Replaces `max_connections` when non-null.
+        max_connections: ?usize = null,
+        /// Replaces `max_ws_message_size` when non-null.
+        max_ws_message_size: ?usize = null,
+        /// Replaces `write_queue_size` when non-null.
+        write_queue_size: ?usize = null,
+        /// Replaces `max_body_size` when non-null.
+        max_body_size: ?usize = null,
+        /// Replaces `idle_timeout_ms` when non-null.
+        idle_timeout_ms: ?u64 = null,
+        /// Replaces `compression` when non-null.
+        compression: ?bool = null,
+        /// Replaces `transport` when non-null.
+        transport: ?TransportMode = null,
+        /// Replaces `max_datagram_size` when non-null.
+        max_datagram_size: ?usize = null,
+        /// Replaces `datagram_slots` when non-null.
+        datagram_slots: ?usize = null,
+        /// Replaces `xdp_frame_size` when non-null.
+        xdp_frame_size: ?usize = null,
+        /// Replaces `xdp_frame_count` when non-null.
+        xdp_frame_count: ?usize = null,
+        /// Replaces `observability` when non-null.
+        observability: ?bool = null,
+        /// Replaces `metrics_path` when non-null.
+        metrics_path: ?[]const u8 = null,
+    };
+
+    /// Returns a copy with every non-null override field replaced.
+    pub fn with(self: ServerConfig, overrides: Overrides) ServerConfig {
         var result = self;
-        inline for (@typeInfo(@TypeOf(overrides)).@"struct".fields) |field| {
-            if (!@hasField(ServerConfig, field.name)) {
-                @compileError("unknown ServerConfig field: " ++ field.name);
-            }
-            @field(result, field.name) = @field(overrides, field.name);
-        }
+        if (overrides.max_connections) |value| result.max_connections = value;
+        if (overrides.max_ws_message_size) |value| result.max_ws_message_size = value;
+        if (overrides.write_queue_size) |value| result.write_queue_size = value;
+        if (overrides.max_body_size) |value| result.max_body_size = value;
+        if (overrides.idle_timeout_ms) |value| result.idle_timeout_ms = value;
+        if (overrides.compression) |value| result.compression = value;
+        if (overrides.transport) |value| result.transport = value;
+        if (overrides.max_datagram_size) |value| result.max_datagram_size = value;
+        if (overrides.datagram_slots) |value| result.datagram_slots = value;
+        if (overrides.xdp_frame_size) |value| result.xdp_frame_size = value;
+        if (overrides.xdp_frame_count) |value| result.xdp_frame_count = value;
+        if (overrides.observability) |value| result.observability = value;
+        if (overrides.metrics_path) |value| result.metrics_path = value;
         return result;
     }
 

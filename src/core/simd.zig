@@ -5,6 +5,7 @@ const lane_count = switch (builtin.cpu.arch) {
     .x86, .x86_64 => 32,
     else => 16,
 };
+/// Byte vector of one full lane width: 32 lanes on x86/x86_64, 16 elsewhere.
 const ByteVector = @Vector(lane_count, u8);
 
 /// Returns the first matching byte using portable vector comparisons.

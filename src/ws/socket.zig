@@ -13,6 +13,9 @@ const mask = @import("mask.zig");
 const utf8 = @import("utf8.zig");
 const PubSubEngine = @import("pubsub.zig").PubSubEngine;
 
+/// Fixed buffer for one RFC 6455 control-frame payload.
+pub const ControlFrameBuffer = [125]u8;
+
 /// Event-loop-confined server WebSocket borrowing its TCP connection.
 pub const WebSocket = struct {
     conn: *TcpConnection,
@@ -37,7 +40,7 @@ pub const WebSocket = struct {
     initialized: bool = false,
     heartbeat_ping_ms: i64 = 0,
     heartbeat_pending: bool = false,
-    control_buffer: [125]u8 = undefined,
+    control_buffer: ControlFrameBuffer = undefined,
 
     /// Validates and performs an HTTP/1.1 upgrade using `behavior` callbacks.
     pub fn upgrade(self: *WebSocket, req: *const Request, res: *Response, behavior: WsBehavior) void {
@@ -86,7 +89,7 @@ pub const WebSocket = struct {
             return;
         };
 
-        var accept_buffer: [28]u8 = undefined;
+        var accept_buffer: handshake.AcceptTokenBuffer = undefined;
         const accept_token = handshake.compute_accept_token(client_key, &accept_buffer);
         if (accept_token.len == 0) {
             reject_upgrade(res, self.conn, "500 Internal Server Error", "Handshake failed", false);
@@ -150,7 +153,7 @@ pub const WebSocket = struct {
         if (self.close_sent) return;
         if (reason.len > 123) return error.ControlFrameTooLarge;
 
-        var payload: [125]u8 = undefined;
+        var payload: ControlFrameBuffer = undefined;
         std.mem.writeInt(u16, payload[0..2], code, .big);
         @memcpy(payload[2 .. 2 + reason.len], reason);
 

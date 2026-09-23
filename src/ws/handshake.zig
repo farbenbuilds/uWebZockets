@@ -72,8 +72,11 @@ pub fn valid_client_key(client_key: []const u8) bool {
     return true;
 }
 
+/// Fixed 28-byte buffer for the base64-encoded SHA-1 accept token.
+pub const AcceptTokenBuffer = [28]u8;
+
 /// Writes the Sec-WebSocket-Accept token and returns a slice into `out_buffer`.
-pub fn compute_accept_token(client_key: []const u8, out_buffer: *[28]u8) []const u8 {
+pub fn compute_accept_token(client_key: []const u8, out_buffer: *AcceptTokenBuffer) []const u8 {
     // concatenate client key and magic string in a fixed 64-byte stack buffer.
     var combined: [64]u8 = undefined;
     const total_len = client_key.len + websocket_magic.len;
