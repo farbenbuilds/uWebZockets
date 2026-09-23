@@ -144,12 +144,15 @@ When bumping BoringSSL, libdeflate, or zlib, update the source list or flags in
 the matching `builds/` module if upstream added or removed a translation unit.
 When bumping lsquic, regenerate `vendor/lsquic_overlay`:
 
-1. Check out the new revision in the `vendor/lsquic` submodule.
+1. Fetch the new revision, for example
+   `zig fetch git+https://github.com/litespeedtech/lsquic#<revision>`, and
+   extract the archive from the global cache.
 2. Regenerate `lsquic_versions_to_string.c` with
    `perl src/liblsquic/gen-verstrs.pl include/lsquic.h <overlay>` and update
    its provenance comment with the new revision.
-3. Apply `patches/lsquic_h3_message_error.patch`, copy the three patched
-   `src/liblsquic` files into the overlay, and restore the submodule.
+3. Apply `patches/lsquic_h3_message_error.patch` to a temporary copy of the
+   fetched tree and copy the three patched `src/liblsquic` files into the
+   overlay.
 4. Run `sh scripts/check_vendor_overlay.sh`; the lint workflow runs it too.
 
 ## Releasing

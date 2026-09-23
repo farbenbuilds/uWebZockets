@@ -9,7 +9,7 @@ the [README](../README.md) for the quick start and the other
 - Zig 0.16.0
 - A build target: Linux, macOS, FreeBSD, NetBSD, OpenBSD, DragonFlyBSD, or
   Windows
-- Recursive git submodules for the repository's h1spec development suite
+- The `vendor/h1spec` submodule for the h1spec development suite
 
 Zig fetches and compiles BoringSSL, lsquic, ls-qpack, ls-hpack, libdeflate, and
 zlib itself. No CMake, Ninja, Go, Perl, Python, `patch`, or system zlib
@@ -163,7 +163,7 @@ git add .gitmodules vendor/uWebZockets
 
 The package manifest fetches zslay, libxev, BoringSSL, lsquic, ls-qpack,
 ls-hpack, and libdeflate from immutable URLs or commits with Zig package
-hashes, so a downstream path dependency does not need the vendor submodules. The
+hashes, so a downstream path dependency does not need the h1spec submodule. The
 public module carries native link metadata, orders dependency builds, and
 supplies the C shim through its clean static-library edge. The
 `tests/package_consumer` fixture compiles this contract in CI against the

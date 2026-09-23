@@ -60,7 +60,6 @@ jobs:
           New-Item -ItemType Directory -Force -Path @(
             (Join-Path $archiveRoot "lib")
             (Join-Path $archiveRoot "include")
-            (Join-Path $archiveRoot "licenses\vendor")
           )
           Copy-Item "zig-out\lib\*" (Join-Path $archiveRoot "lib")
           Copy-Item "zig-out\include\uWebZockets.h" (Join-Path $archiveRoot "include")
@@ -71,23 +70,7 @@ jobs:
             "THIRD_PARTY_NOTICES.md"
             "build.zig.zon"
           ) -Destination $archiveRoot
-          Copy-Item "licenses\*" (Join-Path $archiveRoot "licenses")
-          Copy-Item "vendor\boringssl\LICENSE" `
-            (Join-Path $archiveRoot "licenses\vendor\boringssl_license.txt")
-          Copy-Item "vendor\boringssl\third_party\fiat\LICENSE" `
-            (Join-Path $archiveRoot "licenses\vendor\fiat_crypto_license.txt")
-          Copy-Item "vendor\boringssl\third_party\fiat\AUTHORS" `
-            (Join-Path $archiveRoot "licenses\vendor\fiat_crypto_authors.txt")
-          Copy-Item "vendor\libdeflate\COPYING" `
-            (Join-Path $archiveRoot "licenses\vendor\libdeflate_license.txt")
-          Copy-Item "vendor\lsquic\LICENSE" `
-            (Join-Path $archiveRoot "licenses\vendor\lsquic_license.txt")
-          Copy-Item "vendor\lsquic\LICENSE.chrome" `
-            (Join-Path $archiveRoot "licenses\vendor\lsquic_chrome_license.txt")
-          Copy-Item "vendor\lsquic\src\liblsquic\ls-qpack\LICENSE" `
-            (Join-Path $archiveRoot "licenses\vendor\ls_qpack_license.txt")
-          Copy-Item "vendor\lsquic\src\lshpack\LICENSE" `
-            (Join-Path $archiveRoot "licenses\vendor\ls_hpack_license.txt")
+          Copy-Item -Recurse "licenses" $archiveRoot
           tar.exe -C $env:RUNNER_TEMP -czf uWebZockets-x86_64-windows-gnu.tar.gz `
             uWebZockets-x86_64-windows-gnu
 

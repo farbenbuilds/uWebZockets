@@ -102,7 +102,7 @@ uWebZockets/
 │   ├── autobahn/             # RFC 6455 target, Deno runner, and config
 │   └── h1spec/               # HTTP/1.1 compliance target
 ├── examples/                 # HTTP, WebSocket, JSON-RPC, builder, and cluster examples
-└── vendor/                   # pinned C/C++ and compliance submodules
+└── vendor/                   # h1spec submodule and the lsquic source overlay
 ```
 
 ## Runtime data flow
@@ -330,8 +330,8 @@ The Nix flake pins Nixpkgs 26.05, seeds Zig package dependencies
 deterministically, and defines native and musl compile checks. `build.zig.zon`
 pins zslay, libxev, BoringSSL, lsquic, ls-qpack, ls-hpack, libdeflate, and zlib
 by immutable URL or commit plus Zig package hash. A downstream project can pin
-an exact checkout at a local path without inheriting the repository's vendor
-submodules. Release archives contain the µWebZockets, BoringSSL, lsquic,
+an exact checkout at a local path without fetching the repository's
+`vendor/h1spec` compliance submodule. Release archives contain the µWebZockets, BoringSSL, lsquic,
 libdeflate, and zlib static libraries, `uWebZockets.h`, and their license
 texts. `tests/package_consumer` imports the public module from a pinned local
 path in CI. That module carries native link metadata and a clean static-library

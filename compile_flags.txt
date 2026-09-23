@@ -1,3 +1,5 @@
--Ivendor/boringssl/include
--Ivendor/lsquic/include
--Ivendor/libdeflate
+# Include roots for the pinned C dependencies. Run any `zig build` step or
+# `zig fetch --save` first so the packages are extracted under zig-pkg/.
+-Izig-pkg/N-V-__8AAEhRag6gHL85MNqOxGFtJs5Lu9fK22BDYLMwOJs6/include
+-Izig-pkg/N-V-__8AAEX0ZgBgVniQX-qATrDP4ov_8tG_hi3LzhSAHPX-/include
+-Izig-pkg/N-V-__8AAEaRCwCsYb_rSsH72Pb6DNFQLSjdRzTFOVsJWcoB

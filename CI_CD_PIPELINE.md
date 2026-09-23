@@ -52,7 +52,7 @@ changelog, and versioned documentation synchronized.
 The test workflow fans the checks out into parallel jobs: Debug tests, ASan and
 UBSan, MemorySanitizer, ReleaseSafe compilation, the downstream package
 consumer, the bounded fuzz run, and ReleaseFast artifacts. Each job checks out
-all submodules and restores the shared build cache before entering the Nix
+the h1spec submodule and restores the shared build cache before entering the Nix
 development shell. A final `Checks & Tests` job aggregates the parallel results,
 so one status reflects the whole workflow. The jobs run:
 

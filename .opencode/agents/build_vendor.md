@@ -75,7 +75,8 @@ dependency migrations, and decisions.
    empty cache when validating an update.
 5. Vendor sources are never rewritten in place. Any fix is an auditable patch
    in `patches/`; its applied result is pre-generated under
-   `vendor/lsquic_overlay/` and verified by `scripts/check_vendor_overlay.sh`.
+   `vendor/lsquic_overlay/` and verified by `scripts/check_vendor_overlay.sh`,
+   which fetches the pinned lsquic package with `zig fetch`.
    Keep ls-qpack and ls-hpack revisions synchronized with the pinned lsquic.
 6. Sanitizer modes are mutually exclusive and native-Linux only. ASan/UBSan
    instrument BoringSSL, lsquic, libdeflate, zlib, and the local shim, enable

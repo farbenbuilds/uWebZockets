@@ -48,6 +48,11 @@ application logic are unchanged.
   sanitizer modes still enable their own reporting checks afterwards.
 - `build.zig.zon` adds the zlib dependency; `build.zig.zon.json`,
   `build.zig.zon.nix`, and `build.zig.zon.txt` were regenerated.
+- The `vendor/boringssl`, `vendor/lsquic`, and `vendor/libdeflate` audit
+  submodules were removed. Only the `vendor/h1spec` compliance submodule and
+  the `vendor/lsquic_overlay` build input remain; vendor license texts live in
+  `licenses/vendor/`, and `scripts/check_vendor_overlay.sh` fetches the pinned
+  lsquic package instead of reading a local checkout.
 - `flake.nix` provides Zig plus development tooling only. CI caches Zig's
   content-addressed package and local caches instead of the CMake/Ninja
   vendor trees, and the timestamp-refresh workaround is gone.
