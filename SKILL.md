@@ -22,7 +22,7 @@ fits the current step and never stack processes that do not apply.
 ## 2. Core Architecture (`zig-0.16`)
 - **Zero-Allocation Hot Paths**: The request/response cycle must not allocate memory dynamically. Allocate contiguous fixed-capacity connection, message, and output storage during application startup and reuse it for every callback.
 - **Event Loop & IO**: Utilize `mitchellh/libxev` for a robust, cross-platform, non-blocking event loop.
-- **Parsing**: Leverage the pinned `farbenbuilds/zslay` 0.1.9 frame state
+- **Parsing**: Leverage the pinned `farbenbuilds/zslay` 0.2.0 frame state
   machine and keep µWebZockets' handshake, message, and UTF-8 limits explicit.
 - **Zig 0.16 Primitives (`zig-0.16`)**: Strictly adhere to the latest `std.io` patterns and deprecations.
 
