@@ -62,6 +62,7 @@ fn send_file_linux(
     }
 }
 
+/// Darwin `sendfile(2)` entry point used by the kernel file-transfer path.
 const DarwinSendfile = *const fn (
     c_int,
     c_int,

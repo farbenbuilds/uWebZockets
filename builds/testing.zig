@@ -2,6 +2,7 @@ const std = @import("std");
 const sanitizers = @import("sanitizers.zig");
 const vendor = @import("vendor.zig");
 
+/// Handles for the `test` and `test-compile` steps.
 pub const Steps = struct {
     test_step: *std.Build.Step,
     test_compile: *std.Build.Step,

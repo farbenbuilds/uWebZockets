@@ -2,6 +2,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const sanitizers = @import("sanitizers.zig");
 
+/// Vendor dependency roots, build directories, and build steps for one target.
 pub const Artifacts = struct {
     b: *std.Build,
     target: std.Build.ResolvedTarget,

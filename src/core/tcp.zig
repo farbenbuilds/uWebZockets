@@ -47,10 +47,15 @@ const Http2Session = http2_server.server_session(
     http_parser.max_header_size,
     http_parser.default_max_body_size,
 );
+
+/// Per-stream context for one asynchronous HTTP/2 response.
 const Http2AsyncContext = struct {
     connection: *TcpConnection = undefined,
     stream_id: u32 = 0,
 };
+
+/// Returns a fully closed connection to its owning fixed-capacity pool.
+pub const CloseCallback = *const fn (pool_ptr: *anyopaque, conn: *TcpConnection) void;
 
 /// Plaintext protocol selected for one TCP connection.
 pub const ProtocolState = enum(u8) {
@@ -65,7 +70,7 @@ pub const TcpConnection = struct {
     router: *const Router = undefined,
     pubsub: ?*@import("../ws/pubsub.zig").PubSubEngine = null,
     pool_ptr: ?*anyopaque = null,
-    on_close_cb: ?*const fn (pool_ptr: *anyopaque, conn: *TcpConnection) void = null,
+    on_close_cb: ?CloseCallback = null,
     reject_policy: *const http_rejection.RejectionPolicy = &http_rejection.RejectionPolicy.default,
     loop: *xev.Loop = undefined,
     io: std.Io = undefined,
@@ -1517,14 +1522,23 @@ fn init_server_options(
     };
 }
 
+/// Winsock `setsockopt` signature; referenced only by the Windows branch.
+const WinsockSetsockoptFn = *const fn (
+    usize,
+    c_int,
+    c_int,
+    [*]const u8,
+    c_int,
+) callconv(.winapi) c_int;
+
 /// Enables address reuse on an IOCP socket handle.
 ///
 /// Zig's `std.posix` has no socket-option entry point for Windows, so the
 /// winsock symbol is bound here and only referenced by the Windows branch.
-const winsock_setsockopt = @extern(
-    *const fn (usize, c_int, c_int, [*]const u8, c_int) callconv(.winapi) c_int,
-    .{ .name = "setsockopt", .library_name = "ws2_32" },
-);
+const winsock_setsockopt = @extern(WinsockSetsockoptFn, .{
+    .name = "setsockopt",
+    .library_name = "ws2_32",
+});
 
 fn set_reuse_address_windows(fd: std.os.windows.HANDLE) !void {
     var value: c_int = 1;
@@ -1538,11 +1552,14 @@ fn set_reuse_address_windows(fd: std.os.windows.HANDLE) !void {
     if (result != 0) return error.SocketOptionFailed;
 }
 
+/// Descriptor type libxev exposes for TCP and UDP handles on this platform.
+pub const SocketFd = if (builtin.os.tag == .windows) std.os.windows.HANDLE else std.posix.fd_t;
+
 /// Defers accepts until the first application byte arrives.
 ///
 /// Linux-only; other kernels keep their default accept policy, so a handshake
 /// that stalls still occupies a kernel backlog entry instead of a worker slot.
-fn apply_listener_tuning(fd: anytype) void {
+fn apply_listener_tuning(fd: SocketFd) void {
     if (builtin.os.tag == .linux) {
         // Best effort: a kernel without TCP_DEFER_ACCEPT keeps the default policy.
         std.posix.setsockopt(
@@ -1560,7 +1577,7 @@ fn apply_listener_tuning(fd: anytype) void {
 /// read would add a syscall to the hot path and measurably reduce throughput,
 /// so the flag is requested at accept where it still removes the initial
 /// delayed-ACK stall. Other kernels keep their default ACK policy.
-pub fn request_quickack(fd: anytype) void {
+pub fn request_quickack(fd: SocketFd) void {
     if (builtin.os.tag == .linux) {
         // Best effort: a kernel without TCP_QUICKACK keeps delayed ACKs.
         std.posix.setsockopt(
@@ -1665,13 +1682,9 @@ fn on_server_close_complete(
     return .disarm;
 }
 
-pub fn close_socket(fd: anytype) void {
+pub fn close_socket(fd: SocketFd) void {
     if (builtin.os.tag == .windows) {
-        const s: c.SOCKET = if (@typeInfo(@TypeOf(fd)) == .pointer or @TypeOf(fd) == ?*anyopaque or @TypeOf(fd) == *anyopaque)
-            @intCast(@intFromPtr(fd))
-        else
-            @intCast(fd);
-        _ = c.closesocket(s);
+        _ = c.closesocket(@intCast(@intFromPtr(fd)));
     } else {
         _ = std.posix.system.close(fd);
     }

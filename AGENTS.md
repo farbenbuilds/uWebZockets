@@ -28,6 +28,10 @@ these rules to every edit, including incidental lines in files they touch:
 - No `anytype` in public APIs when the accepted types are known; define a named
   type instead. Keep `anytype` only for genuinely polymorphic entry points with
   a documented contract.
+- Types are named, explicit, and flat. Extract inline anonymous structs and
+  function pointers into documented aliases; no `@typeInfo`-driven type
+  construction where a named type states the contract. See
+  `CODING_CONVENTION.md` section 8.
 - No `std.debug.print` or direct stdout/stderr writes in `src/`. Use
   `std.log.scoped(<module>)` with the correct severity.
 - Delete dead code, unused imports, and commented-out blocks in the same change.

@@ -65,6 +65,8 @@ pub fn validate(comptime T: type, value: T, issue: *Issue) !void {
     }
 }
 
+/// Applies `rule` to one decoded field; `value` is genuinely polymorphic
+/// because the field type is only known at the comptime call site.
 fn validate_field(
     field_name: []const u8,
     value: anytype,

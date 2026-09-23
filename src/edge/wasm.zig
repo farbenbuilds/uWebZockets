@@ -6,6 +6,7 @@ comptime {
 
 const block_size = 64 * 1024;
 const block_count = 64;
+/// Fixed 64 KiB x 64 block region backing the bounded host bridge exports.
 const SharedRegion = shared.region(block_size, block_count);
 
 var shared_region: SharedRegion = .{};

@@ -10,6 +10,16 @@ pub const Loop = struct {
     }
 };
 
+/// Completion-cancellation callback accepted by `cancel`, bound to `Userdata`.
+pub fn cancel_callback(comptime Userdata: type) type {
+    return *const fn (
+        userdata: ?*Userdata,
+        loop: *xev.Loop,
+        completion: *xev.Completion,
+        result: xev.CancelError!void,
+    ) xev.CallbackAction;
+}
+
 /// Cancels a completion across libxev backends.
 pub fn cancel(
     loop: *xev.Loop,
@@ -17,12 +27,7 @@ pub fn cancel(
     cancel_completion: *xev.Completion,
     comptime Userdata: type,
     userdata: ?*Userdata,
-    comptime callback: *const fn (
-        userdata: ?*Userdata,
-        loop: *xev.Loop,
-        completion: *xev.Completion,
-        result: xev.CancelError!void,
-    ) xev.CallbackAction,
+    comptime callback: cancel_callback(Userdata),
 ) void {
     if (xev.backend != .kqueue and xev.backend != .iocp) {
         loop.cancel(

@@ -39,9 +39,10 @@ Ninja, patch, Go, Python, Perl, and zlib development files.
   borrows. Marshal cross-thread completion back to the owning loop and test
   stale-token, double-completion, disconnect, and pipelining paths.
 - Use early returns and short error paths. Never silently swallow an error.
-- Follow [CODING_CONVENTION.md](CODING_CONVENTION.md) section 7 in every edit:
-  no OOP or hidden state, pure transformations at the core, explicit named
-  types instead of `anytype` at module boundaries, no `std.debug.print` outside
+- Follow [CODING_CONVENTION.md](CODING_CONVENTION.md) sections 7 and 8 in every
+  edit: no OOP or hidden state, pure transformations at the core, explicit named
+  types instead of `anytype` at module boundaries, named callback and event
+  aliases instead of inline anonymous types, no `std.debug.print` outside
   tests, no dead code or TODO markers, and no forwarding wrappers.
 - Use `snake_case` for project files, functions, and variables. Preserve raw C
   identifiers only at the FFI boundary.

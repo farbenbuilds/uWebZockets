@@ -4,6 +4,7 @@ const http_parser = @import("../http/parser.zig");
 const Request = @import("../http/request.zig").Request;
 const http_response = @import("../http/response.zig");
 const Response = http_response.Response;
+const Http3Target = http_response.Http3Target;
 const Router = @import("../router/radix.zig").Router;
 const radix = @import("../router/radix.zig");
 const validation = @import("validation.zig");
@@ -18,7 +19,9 @@ pub const request_body_capacity = http_parser.max_body_size;
 pub const response_header_capacity: usize = 4096;
 const max_headers = 64;
 
+/// Returns a header set to the owner that lent it storage.
 const HeaderReleaseFn = *const fn (*anyopaque, *HeaderSet) void;
+/// Returns a stream to the owner that lent it storage.
 const StreamReleaseFn = *const fn (*anyopaque, *QuicStream) void;
 
 /// Bounded lsquic header decoder state for one HTTP/3 request.
@@ -576,7 +579,7 @@ pub const QuicStream = struct {
         response.end_with_headers(status, allow_header, body) catch self.close_now();
     }
 
-    fn response_target(self: *QuicStream) @import("../http/response.zig").Http3Target {
+    fn response_target(self: *QuicStream) Http3Target {
         return .{
             .context = self,
             .end_fn = end_response,

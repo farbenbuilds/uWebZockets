@@ -8,11 +8,13 @@ const socket = @import("socket.zig");
 /// the transport so no caller-owned descriptor region layout is assumed.
 pub const max_frames = 4096;
 
+/// Selected data path: AF_XDP kernel bypass or the standard socket path.
 pub const Mode = enum {
     standard,
     kernel_bypass,
 };
 
+/// Why kernel bypass is not active.
 pub const FallbackReason = enum {
     none,
     unsupported_platform,
@@ -21,11 +23,13 @@ pub const FallbackReason = enum {
     invalid_configuration,
 };
 
+/// Result of an AF_XDP availability probe.
 pub const Availability = struct {
     mode: Mode,
     reason: FallbackReason,
 };
 
+/// UMEM and ring sizing for one transport instance.
 pub const XdpConfig = struct {
     chunk_size: u32 = 2048,
     frame_count: u32 = 1024,

@@ -13,75 +13,75 @@ signatures, noted at each entry point. The completion a libxev callback
 receives is an inline field of the owning connection, server, timer, or
 transport. `.rearm` keeps an operation registered; `.disarm` leaves re-arming
 or cancellation to the handler. Every cancellation routes through
-`core_loop.cancel` (`src/core/loop.zig:14`), which synthesizes the completion
+`core_loop.cancel` (`src/core/loop.zig:24`), which synthesizes the completion
 on kqueue and IOCP instead of calling the backend directly.
 
 ## TCP accept path
 
-- `AcceptCallback` (`src/core/tcp.zig:1453`) is the listener connection
-  callback type. `init_server` (`src/core/tcp.zig:1468`) and
-  `init_reuse_port_server` (`src/core/tcp.zig:1473`) store the callback passed
-  by `App.listen` (`src/router/app.zig:883`) and `App.listen_reuse_port`
-  (`src/router/app.zig:1111`) as `on_new_connection`
-  (`src/router/app.zig:785`).
-- `on_accept_complete` (`src/core/tcp.zig:1625`) is registered by
-  `accept_start` (`src/core/tcp.zig:1574`) at `src/core/tcp.zig:1576`.
+- `AcceptCallback` (`src/core/tcp.zig:1460`) is the listener connection
+  callback type. `init_server` (`src/core/tcp.zig:1475`) and
+  `init_reuse_port_server` (`src/core/tcp.zig:1480`) store the callback passed
+  by `App.listen` (`src/router/app.zig:888`) and `App.listen_reuse_port`
+  (`src/router/app.zig:1117`) as `on_new_connection`
+  (`src/router/app.zig:790`).
+- `on_accept_complete` (`src/core/tcp.zig:1644`) is registered by
+  `accept_start` (`src/core/tcp.zig:1593`) at `src/core/tcp.zig:1595`.
   Signature: `xev.AcceptError!xev.TCP` result plus `xev.CallbackAction`.
   Driven by a completed accept. It calls `server.on_connection`
-  (`src/core/tcp.zig:1647`) and returns `.rearm`.
-- `on_new_connection` (`src/router/app.zig:785`) acquires a pool slot
-  (`src/router/app.zig:791`), resets protocol state
-  (`src/router/app.zig:799`), attaches TLS (`src/router/app.zig:870`), and
-  arms the first read (`src/router/app.zig:875`). Driven by the accept
+  (`src/core/tcp.zig:1666`) and returns `.rearm`.
+- `on_new_connection` (`src/router/app.zig:790`) acquires a pool slot
+  (`src/router/app.zig:796`), resets protocol state
+  (`src/router/app.zig:804`), attaches TLS (`src/router/app.zig:875`), and
+  arms the first read (`src/router/app.zig:880`). Driven by the accept
   callback above.
-- `on_accept_cancel_complete` (`src/core/tcp.zig:1613`) is registered by
-  `close_server` (`src/core/tcp.zig:1586`) through `core_loop.cancel`
-  (`src/core/tcp.zig:1590`). Driven by shutdown cancellation of accept.
-- `on_server_close_complete` (`src/core/tcp.zig:1651`) is registered at
-  `src/core/tcp.zig:1604` by `close_server`. It sets the flag
-  `App.verify_shutdown` (`src/router/app.zig:424`) waits on. Driven by the
+- `on_accept_cancel_complete` (`src/core/tcp.zig:1632`) is registered by
+  `close_server` (`src/core/tcp.zig:1605`) through `core_loop.cancel`
+  (`src/core/tcp.zig:1609`). Driven by shutdown cancellation of accept.
+- `on_server_close_complete` (`src/core/tcp.zig:1670`) is registered at
+  `src/core/tcp.zig:1623` by `close_server`. It sets the flag
+  `App.verify_shutdown` (`src/router/app.zig:425`) waits on. Driven by the
   listener close completion.
 
 ## TCP read, TLS, and dispatch
 
-- `on_read_complete` (`src/core/tcp.zig:1137`) is registered by `arm_read`
-  (`src/core/tcp.zig:831`) at `src/core/tcp.zig:834`. Signature:
+- `on_read_complete` (`src/core/tcp.zig:1144`) is registered by `arm_read`
+  (`src/core/tcp.zig:838`) at `src/core/tcp.zig:841`. Signature:
   `xev.ReadError!usize` plus the read buffer. Driven by a readable socket; it
-  returns `.rearm` (`src/core/tcp.zig:1189`) unless dispatch is suspended or
+  returns `.rearm` (`src/core/tcp.zig:1196`) unless dispatch is suspended or
   the connection is closing.
-- `read_start` (`src/core/tcp.zig:1132`) is the bootstrap called after pool
+- `read_start` (`src/core/tcp.zig:1139`) is the bootstrap called after pool
   acquire; it stores the loop and calls `arm_read`.
-- `on_read_complete` calls `process_tls_data` (`src/core/tcp.zig:1178`) when
+- `on_read_complete` calls `process_tls_data` (`src/core/tcp.zig:1185`) when
   TLS is attached, otherwise `route_decrypted_data`
-  (`src/core/tcp.zig:1180`).
-- `process_tls_data` (`src/core/tcp.zig:194`) drives the handshake
-  `drive_tls_handshake` (`src/core/tcp.zig:223`) and then
-  `drain_tls_plaintext` (`src/core/tcp.zig:253`); the drain loop feeds
-  `route_decrypted_data` at `src/core/tcp.zig:260`.
-- `route_decrypted_data` (`src/core/tcp.zig:279`) selects HTTP/1
-  `route_http_data` (`src/core/tcp.zig:578`), HTTP/2 `route_http2_data`
-  (`src/core/tcp.zig:313`), or `WebSocket.on_data` (`src/ws/socket.zig:239`).
+  (`src/core/tcp.zig:1187`).
+- `process_tls_data` (`src/core/tcp.zig:201`) drives the handshake
+  `drive_tls_handshake` (`src/core/tcp.zig:230`) and then
+  `drain_tls_plaintext` (`src/core/tcp.zig:260`); the drain loop feeds
+  `route_decrypted_data` at `src/core/tcp.zig:267`.
+- `route_decrypted_data` (`src/core/tcp.zig:286`) selects HTTP/1
+  `route_http_data` (`src/core/tcp.zig:585`), HTTP/2 `route_http2_data`
+  (`src/core/tcp.zig:320`), or `WebSocket.on_data` (`src/ws/socket.zig:246`).
 - HTTP/2 runs synchronously inside the read callback: `route_http2_data`
-  calls `h2.receive` (`src/core/tcp.zig:315`), whose entries come from
-  `http2_callbacks` (`src/core/tcp.zig:322`): `write_http2_parts`
-  (`src/core/tcp.zig:345`), `dispatch_http2_request`
-  (`src/core/tcp.zig:365`), `ws_http2_data` (`src/core/tcp.zig:350`), and
-  `close_http2_stream` (`src/core/tcp.zig:336`).
-- `resume_async_dispatch` (`src/core/tcp.zig:789`) re-enters `route_http_data`
-  and can call `drain_tls_plaintext` (`src/core/tcp.zig:821`) before re-arming
+  calls `h2.receive` (`src/core/tcp.zig:322`), whose entries come from
+  `http2_callbacks` (`src/core/tcp.zig:329`): `write_http2_parts`
+  (`src/core/tcp.zig:352`), `dispatch_http2_request`
+  (`src/core/tcp.zig:372`), `ws_http2_data` (`src/core/tcp.zig:357`), and
+  `close_http2_stream` (`src/core/tcp.zig:343`).
+- `resume_async_dispatch` (`src/core/tcp.zig:796`) re-enters `route_http_data`
+  and can call `drain_tls_plaintext` (`src/core/tcp.zig:828`) before re-arming
   the read.
 
 ## TCP write path and file body
 
-- `on_write_complete` (`src/core/tcp.zig:1192`) is registered by `start_write`
-  (`src/core/tcp.zig:1008`) at `src/core/tcp.zig:1014`. Signature:
+- `on_write_complete` (`src/core/tcp.zig:1199`) is registered by `start_write`
+  (`src/core/tcp.zig:1015`) at `src/core/tcp.zig:1021`. Signature:
   `xev.WriteError!usize`. Driven by a writable socket.
 - The handler advances the write ring and then calls `flush_tls_out`
-  (`src/core/tcp.zig:1239`), `drive_tls_handshake`
-  (`src/core/tcp.zig:1245`), `h2.flush_pending` (`src/core/tcp.zig:1252`),
-  `WebSocket.notify_drain` (`src/core/tcp.zig:1260`),
-  `tcp_file.pump_file_body` (`src/core/tcp.zig:1268`), and `start_write`
-  (`src/core/tcp.zig:1269`).
+  (`src/core/tcp.zig:1246`), `drive_tls_handshake`
+  (`src/core/tcp.zig:1252`), `h2.flush_pending` (`src/core/tcp.zig:1259`),
+  `WebSocket.notify_drain` (`src/core/tcp.zig:1267`),
+  `tcp_file.pump_file_body` (`src/core/tcp.zig:1275`), and `start_write`
+  (`src/core/tcp.zig:1276`).
 - `pump_file_body` (`src/core/tcp_file.zig:54`) streams the response file at
   the kernel boundary; `dribble_file_body` (`src/core/tcp_file.zig:107`) is
   the bounded copy fallback and `finish_file_body`
@@ -90,49 +90,49 @@ on kqueue and IOCP instead of calling the backend directly.
 
 ## TCP close and pool release
 
-- `close_connection` (`src/core/tcp.zig:1301`) is idempotent teardown. It
-  aborts the connection signal (`src/core/tcp.zig:1304`), cancels async
-  tokens (`src/core/tcp.zig:1310`), releases file and TLS state
-  (`src/core/tcp.zig:1314`, `src/core/tcp.zig:1315`), cancels read and write
-  through `core_loop.cancel` (`src/core/tcp.zig:1325`,
-  `src/core/tcp.zig:1336`), and submits `socket.close`
-  (`src/core/tcp.zig:1358`) with the inline close callback
-  (`src/core/tcp.zig:1364`). Windows closes synchronously and releases
-  immediately (`src/core/tcp.zig:1347`).
-- `on_read_cancel_complete` (`src/core/tcp.zig:1396`) and
-  `on_write_cancel_complete` (`src/core/tcp.zig:1411`) clear their cancel
+- `close_connection` (`src/core/tcp.zig:1308`) is idempotent teardown. It
+  aborts the connection signal (`src/core/tcp.zig:1311`), cancels async
+  tokens (`src/core/tcp.zig:1317`), releases file and TLS state
+  (`src/core/tcp.zig:1321`, `src/core/tcp.zig:1322`), cancels read and write
+  through `core_loop.cancel` (`src/core/tcp.zig:1332`,
+  `src/core/tcp.zig:1343`), and submits `socket.close`
+  (`src/core/tcp.zig:1365`) with the inline close callback
+  (`src/core/tcp.zig:1370`). Windows closes synchronously and releases
+  immediately (`src/core/tcp.zig:1355`).
+- `on_read_cancel_complete` (`src/core/tcp.zig:1403`) and
+  `on_write_cancel_complete` (`src/core/tcp.zig:1418`) clear their cancel
   flags and re-run the release gate. Driven by the cancellation completions.
-- `release_closed_connection` (`src/core/tcp.zig:1427`) is the only path back
+- `release_closed_connection` (`src/core/tcp.zig:1434`) is the only path back
   to the freelist. Once close, read, write, and cancel flags are clear it
-  invokes `on_close_cb` (`src/core/tcp.zig:1449`), the pool release closure
-  installed at `src/router/app.zig:862`.
-- `close_after_flush` (`src/core/tcp.zig:1286`) is the graceful variant: it
+  invokes `on_close_cb` (`src/core/tcp.zig:1456`), the pool release closure
+  installed at `src/router/app.zig:867`.
+- `close_after_flush` (`src/core/tcp.zig:1293`) is the graceful variant: it
   starts the TLS shutdown and closes only when queued bytes drain.
 
 ## Timers
 
-- `connection_sweeper` (`src/core/timer.zig:110`) is the periodic idle and
-  WebSocket heartbeat sweep. `start` (`src/core/timer.zig:142`) registers
-  `on_tick` (`src/core/timer.zig:174`) at `src/core/timer.zig:146`; the tick
-  advances `WebSocket.heartbeat_tick` (`src/core/timer.zig:197`), closes idle
-  connections through `tcp.close_connection` (`src/core/timer.zig:205`), and
-  re-arms a fresh relative timeout (`src/core/timer.zig:212`). `stop`
-  (`src/core/timer.zig:157`) cancels into `on_cancel`
-  (`src/core/timer.zig:217`). Started by `App.listen`
-  (`src/router/app.zig:897`) and `App.listen_reuse_port`
-  (`src/router/app.zig:1121`); stopped by `App.begin_shutdown`
-  (`src/router/app.zig:406`).
-- `TimerContext` (`src/core/timer.zig:7`) is the generic repeating timer; its
-  callback type is `*const fn () void` (`src/core/timer.zig:12`).
-  `start_timer` (`src/core/timer.zig:33`) registers `on_timer_tick`
-  (`src/core/timer.zig:64`) and `stop_timer` (`src/core/timer.zig:47`)
-  cancels into `on_timer_cancel` (`src/core/timer.zig:91`). No production path
+- `connection_sweeper` (`src/core/timer.zig:115`) is the periodic idle and
+  WebSocket heartbeat sweep. `start` (`src/core/timer.zig:147`) registers
+  `on_tick` (`src/core/timer.zig:179`) at `src/core/timer.zig:151`; the tick
+  advances `WebSocket.heartbeat_tick` (`src/core/timer.zig:202`), closes idle
+  connections through `tcp.close_connection` (`src/core/timer.zig:210`), and
+  re-arms a fresh relative timeout (`src/core/timer.zig:217`). `stop`
+  (`src/core/timer.zig:162`) cancels into `on_cancel`
+  (`src/core/timer.zig:222`). Started by `App.listen`
+  (`src/router/app.zig:902`) and `App.listen_reuse_port`
+  (`src/router/app.zig:1127`); stopped by `App.begin_shutdown`
+  (`src/router/app.zig:407`).
+- `TimerContext` (`src/core/timer.zig:12`) is the generic repeating timer; its
+  callback type is `TickCallback` (`src/core/timer.zig:9`).
+  `start_timer` (`src/core/timer.zig:38`) registers `on_timer_tick`
+  (`src/core/timer.zig:69`) and `stop_timer` (`src/core/timer.zig:52`)
+  cancels into `on_timer_cancel` (`src/core/timer.zig:96`). No production path
   uses it yet; tests exercise it from `src/tests/core_tests.zig`.
-- Cross-worker wakeup: `App.arm_cluster_wakeup` (`src/router/app.zig:1130`)
-  submits `xev.Async.wait` (`src/router/app.zig:1134`) with
-  `on_cluster_wakeup` (`src/router/app.zig:1153`), which drains the cluster
-  inbox and re-arms (`src/router/app.zig:1179`). Driven by `notify_cluster`
-  (`src/router/app.zig:1143`) from any worker.
+- Cross-worker wakeup: `App.arm_cluster_wakeup` (`src/router/app.zig:1136`)
+  submits `xev.Async.wait` (`src/router/app.zig:1140`) with
+  `on_cluster_wakeup` (`src/router/app.zig:1159`), which drains the cluster
+  inbox and re-arms (`src/router/app.zig:1185`). Driven by `notify_cluster`
+  (`src/router/app.zig:1149`) from any worker.
 - `abort_if_expired` (`src/http/abort.zig:101`) converts a monotonic deadline
   into a cooperative abort. It is a helper for callers that own a clock; no
   runtime timer currently drives it.
@@ -140,72 +140,72 @@ on kqueue and IOCP instead of calling the backend directly.
 
 ## Async response completion
 
-- `AsyncResponseState.arm` (`src/http/response.zig:69`) stores an
-  `AsyncTarget` (`src/http/response.zig:43`) whose `complete_fn` and `wake_fn`
-  pointer types are declared at `src/http/response.zig:45` and
-  `src/http/response.zig:46`.
-- HTTP/1: `invoke_handler` (`src/core/tcp.zig:727`) arms
-  `async_response_state` at `src/core/tcp.zig:738` and
-  `src/core/tcp.zig:743` with `async_target` (`src/core/tcp.zig:760`), pairing
-  `complete_async_response` (`src/core/tcp.zig:768`) with
-  `wake_async_dispatch` (`src/core/tcp.zig:783`).
-- HTTP/2: `arm_http2_async` (`src/core/tcp.zig:531`) arms one slot per stream
-  at `src/core/tcp.zig:541`, pairing `complete_http2_async_response`
-  (`src/core/tcp.zig:548`) with `wake_http2_async_response`
-  (`src/core/tcp.zig:574`); the wake is intentionally empty because HTTP/2
+- `AsyncResponseState.arm` (`src/http/response.zig:92`) stores an
+  `AsyncTarget` (`src/http/response.zig:66`) whose `complete_fn` and `wake_fn`
+  fields are typed by `AsyncCompleteFn` (`src/http/response.zig:27`) and
+  `AsyncWakeFn` (`src/http/response.zig:29`).
+- HTTP/1: `invoke_handler` (`src/core/tcp.zig:734`) arms
+  `async_response_state` at `src/core/tcp.zig:745` and
+  `src/core/tcp.zig:750` with `async_target` (`src/core/tcp.zig:767`), pairing
+  `complete_async_response` (`src/core/tcp.zig:775`) with
+  `wake_async_dispatch` (`src/core/tcp.zig:790`).
+- HTTP/2: `arm_http2_async` (`src/core/tcp.zig:538`) arms one slot per stream
+  at `src/core/tcp.zig:548`, pairing `complete_http2_async_response`
+  (`src/core/tcp.zig:555`) with `wake_http2_async_response`
+  (`src/core/tcp.zig:581`); the wake is intentionally empty because HTTP/2
   reads stay armed.
-- `AsyncResponse.complete_with_headers` (`src/http/response.zig:110`) checks
-  the generation, calls `complete_fn` (`src/http/response.zig:124`), then
-  `wake_fn` (`src/http/response.zig:132`). Driven by application code on the
+- `AsyncResponse.complete_with_headers` (`src/http/response.zig:133`) checks
+  the generation, calls `complete_fn` (`src/http/response.zig:147`), then
+  `wake_fn` (`src/http/response.zig:155`). Driven by application code on the
   owning event loop; cross-thread completion must be marshalled first.
 - `wake_async_dispatch` calls `resume_async_dispatch`
-  (`src/core/tcp.zig:789`), which restores dispatch and re-arms the read.
+  (`src/core/tcp.zig:796`), which restores dispatch and re-arms the read.
   Cancellation is generation-based: `close_connection`
-  (`src/core/tcp.zig:1310`) cancels the HTTP/1 slot and all HTTP/2 slots,
-  `reset_protocol` (`src/core/tcp.zig:135`) resets the HTTP/2 slots, and pool
-  acquire cancels the HTTP/1 slot (`src/router/app.zig:828`).
+  (`src/core/tcp.zig:1317`) cancels the HTTP/1 slot and all HTTP/2 slots,
+  `reset_protocol` (`src/core/tcp.zig:148`) resets the HTTP/2 slots, and pool
+  acquire cancels the HTTP/1 slot (`src/router/app.zig:833`).
 
 ## UDP and QUIC
 
-- `quic_transport.start` (`src/core/udp.zig:100`) arms the receive completion
-  `on_read` (`src/core/udp.zig:166`) at `src/core/udp.zig:113` and the engine
-  timer at `src/core/udp.zig:122`. Driven by a readable UDP socket.
-- `on_read` feeds `engine.process_datagram` (`src/core/udp.zig:187`); a
+- `quic_transport.start` (`src/core/udp.zig:102`) arms the receive completion
+  `on_read` (`src/core/udp.zig:168`) at `src/core/udp.zig:115` and the engine
+  timer at `src/core/udp.zig:124`. Driven by a readable UDP socket.
+- `on_read` feeds `engine.process_datagram` (`src/core/udp.zig:189`); a
   handler that starts shutdown mid-datagram leaves the completion disarmed.
-- `quic_transport.close_socket` (`src/core/udp.zig:195`) cancels receive
-  (`src/core/udp.zig:204` into `on_read_cancel`, `src/core/udp.zig:231`) and
-  closes the socket (`src/core/udp.zig:222` into `on_close`,
-  `src/core/udp.zig:245`). Windows closes synchronously
-  (`src/core/udp.zig:214`).
-- Engine timer: `start_timer` (`src/core/udp.zig:263`) registers `on_timer`
-  (`src/core/udp.zig:291`) at `src/core/udp.zig:267`; the tick calls
-  `engine.process` (`src/core/udp.zig:306`) and re-arms with
-  `engine.next_timeout_ms` (`src/core/udp.zig:310`). `stop_timer`
-  (`src/core/udp.zig:277`) cancels into `on_timer_cancel`
-  (`src/core/udp.zig:321`). Driven by the lsquic earliest-advance tick
-  (`src/quic/engine.zig:308`).
+- `quic_transport.close_socket` (`src/core/udp.zig:197`) cancels receive
+  (`src/core/udp.zig:206` into `on_read_cancel`, `src/core/udp.zig:233`) and
+  closes the socket (`src/core/udp.zig:224` into `on_close`,
+  `src/core/udp.zig:247`). Windows closes synchronously
+  (`src/core/udp.zig:217`).
+- Engine timer: `start_timer` (`src/core/udp.zig:265`) registers `on_timer`
+  (`src/core/udp.zig:293`) at `src/core/udp.zig:269`; the tick calls
+  `engine.process` (`src/core/udp.zig:308`) and re-arms with
+  `engine.next_timeout_ms` (`src/core/udp.zig:315`). `stop_timer`
+  (`src/core/udp.zig:279`) cancels into `on_timer_cancel`
+  (`src/core/udp.zig:323`). Driven by the lsquic earliest-advance tick
+  (`src/quic/engine.zig:310`).
 - lsquic interfaces are registered once by `engine.start`
-  (`src/quic/engine.zig:154`): stream callbacks at
-  `src/quic/engine.zig:185`, header-set callbacks at
-  `src/quic/engine.zig:194`, packet-memory callbacks at
-  `src/quic/engine.zig:200`, and the engine API at
-  `src/quic/engine.zig:204`. lsquic invokes all of them synchronously from
-  `process_datagram` (`src/quic/engine.zig:244`) and `process`
-  (`src/quic/engine.zig:265`), never from a completion.
-- Stream entry points: `on_new_connection` (`src/quic/engine.zig:358`),
-  `on_connection_closed` (`src/quic/engine.zig:369`), `on_new_stream`
-  (`src/quic/engine.zig:377`), `on_stream_read` (`src/quic/engine.zig:388`),
-  `on_stream_write` (`src/quic/engine.zig:393`), `on_stream_close`
-  (`src/quic/engine.zig:398`), and `on_header_set_available`
-  (`src/quic/engine.zig:403`). All use `callconv(.c)` and forward to
+  (`src/quic/engine.zig:156`): stream callbacks at
+  `src/quic/engine.zig:187`, header-set callbacks at
+  `src/quic/engine.zig:196`, packet-memory callbacks at
+  `src/quic/engine.zig:202`, and the engine API at
+  `src/quic/engine.zig:206`. lsquic invokes all of them synchronously from
+  `process_datagram` (`src/quic/engine.zig:246`) and `process`
+  (`src/quic/engine.zig:267`), never from a completion.
+- Stream entry points: `on_new_connection` (`src/quic/engine.zig:360`),
+  `on_connection_closed` (`src/quic/engine.zig:371`), `on_new_stream`
+  (`src/quic/engine.zig:379`), `on_stream_read` (`src/quic/engine.zig:390`),
+  `on_stream_write` (`src/quic/engine.zig:395`), `on_stream_close`
+  (`src/quic/engine.zig:400`), and `on_header_set_available`
+  (`src/quic/engine.zig:405`). All use `callconv(.c)` and forward to
   `QuicStream` methods.
-- Header and packet hooks: `create_header_set` (`src/quic/engine.zig:417`),
-  `prepare_header_decode` (`src/quic/engine.zig:432`), `process_header`
-  (`src/quic/engine.zig:441`), `discard_header_set`
-  (`src/quic/engine.zig:446`), `allocate_packet` (`src/quic/engine.zig:468`),
-  and `release_packet` (`src/quic/engine.zig:481`).
-- Transmit boundary: `packets_out` (`src/quic/engine.zig:451`) calls
-  `api.send_packets` (`src/quic/engine.zig:457`), implemented at
+- Header and packet hooks: `create_header_set` (`src/quic/engine.zig:419`),
+  `prepare_header_decode` (`src/quic/engine.zig:434`), `process_header`
+  (`src/quic/engine.zig:443`), `discard_header_set`
+  (`src/quic/engine.zig:448`), `allocate_packet` (`src/quic/engine.zig:470`),
+  and `release_packet` (`src/quic/engine.zig:483`).
+- Transmit boundary: `packets_out` (`src/quic/engine.zig:453`) calls
+  `api.send_packets` (`src/quic/engine.zig:459`), implemented at
   `src/quic/lsquic_api.zig:94` as a synchronous non-blocking send on the
   engine UDP socket; it queues no completion. `src/quic/lsquic_shim.c` only
   pins C struct layout ABI.
@@ -213,48 +213,48 @@ on kqueue and IOCP instead of calling the backend directly.
 ## Server lifecycle
 
 - Startup: `App.init` creates the loop with `core_loop.init`
-  (`src/router/app.zig:216`). `App.listen` and `App.listen_reuse_port` bind
-  and call `accept_start` (`src/router/app.zig:895`,
-  `src/router/app.zig:1120`); `App.listen_udp` starts the QUIC transport
-  (`src/router/app.zig:920`).
-- Run: `App.run` (`src/router/app.zig:930`) arms the cluster wakeup
-  (`src/router/app.zig:936`) and enters `core_loop.run`
-  (`src/router/app.zig:937`), which drives libxev `.until_done`
-  (`src/core/loop.zig:78`).
-- Shutdown request: `App.begin_shutdown` (`src/router/app.zig:399`) stops the
-  sweeper (`src/router/app.zig:406`), closes the listener
-  (`src/router/app.zig:407`), shuts the QUIC transport down
-  (`src/router/app.zig:408`), and calls `close_connection` for every active
-  pool slot (`src/router/app.zig:412`).
-- Drain: `App.drive_shutdown` (`src/router/app.zig:416`) runs the loop until
+  (`src/router/app.zig:217`). `App.listen` and `App.listen_reuse_port` bind
+  and call `accept_start` (`src/router/app.zig:900`,
+  `src/router/app.zig:1126`); `App.listen_udp` starts the QUIC transport
+  (`src/router/app.zig:924`).
+- Run: `App.run` (`src/router/app.zig:933`) arms the cluster wakeup
+  (`src/router/app.zig:939`) and enters `core_loop.run`
+  (`src/router/app.zig:940`), which drives libxev `.until_done`
+  (`src/core/loop.zig:83`).
+- Shutdown request: `App.begin_shutdown` (`src/router/app.zig:400`) stops the
+  sweeper (`src/router/app.zig:407`), closes the listener
+  (`src/router/app.zig:408`), shuts the QUIC transport down
+  (`src/router/app.zig:409`), and calls `close_connection` for every active
+  pool slot (`src/router/app.zig:413`).
+- Drain: `App.drive_shutdown` (`src/router/app.zig:417`) runs the loop until
   every cancellation and close completion disarms, then
-  `App.verify_shutdown` (`src/router/app.zig:424`) requires an empty pool, a
+  `App.verify_shutdown` (`src/router/app.zig:425`) requires an empty pool, a
   completed listener close, and a drained QUIC transport. `App.deinit`
-  (`src/router/app.zig:327`) panics if called from inside the loop
-  (`src/router/app.zig:330`) and frees through the original allocator.
-- Cluster: `Cluster.run` (`src/router/app.zig:1063`) runs one `App` per worker
+  (`src/router/app.zig:328`) panics if called from inside the loop
+  (`src/router/app.zig:331`) and frees through the original allocator.
+- Cluster: `Cluster.run` (`src/router/app.zig:1069`) runs one `App` per worker
   thread and joins them; `request_cluster_shutdown`
-  (`src/router/app.zig:1148`) notifies every worker through the async wakeup.
+  (`src/router/app.zig:1154`) notifies every worker through the async wakeup.
 
 ## TCP connection life cycle
 
 ```text
-                 accept_start (tcp.zig:1574)
+                 accept_start (tcp.zig:1593)
                         |
                         v
-  listener.accept ---> on_accept_complete (tcp.zig:1625)
+  listener.accept ---> on_accept_complete (tcp.zig:1644)
                         |
                         | server.on_connection
                         v
-               on_new_connection (app.zig:785) ---> read_start (tcp.zig:1132)
+               on_new_connection (app.zig:790) ---> read_start (tcp.zig:1139)
                         |
                         v
-  socket readable ---> on_read_complete (tcp.zig:1137)
+  socket readable ---> on_read_complete (tcp.zig:1144)
                         |
           +-------------+-------------+
           | TLS                       | plaintext
           v                           v
-  process_tls_data (tcp.zig:194)   route_decrypted_data (tcp.zig:279)
+  process_tls_data (tcp.zig:201)   route_decrypted_data (tcp.zig:286)
           |                           |
           +-------------+-------------+
                         v
@@ -262,18 +262,18 @@ on kqueue and IOCP instead of calling the backend directly.
          HTTP/2 receive -> dispatch
          WebSocket on_data
                         |
-                        | start_write (tcp.zig:1008)
+                        | start_write (tcp.zig:1015)
                         v
-  socket writable --> on_write_complete (tcp.zig:1192)
+  socket writable --> on_write_complete (tcp.zig:1199)
                         |
                         | flush / pump_file_body / start_write
                         v
-  close_after_flush (tcp.zig:1286) or close_connection (tcp.zig:1301)
+  close_after_flush (tcp.zig:1293) or close_connection (tcp.zig:1308)
                         |
                         | cancel read/write -> socket.close -> cancel and
                         | close callbacks
                         v
-  release_closed_connection (tcp.zig:1427) -> on_close_cb -> pool.release
+  release_closed_connection (tcp.zig:1434) -> on_close_cb -> pool.release
 ```
 
 ## Outside the native loop
@@ -281,4 +281,4 @@ on kqueue and IOCP instead of calling the backend directly.
 `src/core/transport.zig` exposes `protocol_core` and `driver` for the WASM edge
 builds: the host loop calls `driver.read` and `driver.write` directly, so those
 builds register no libxev completions. The C ABI drives the same protocol core
-through an `App` (`src/c_api/app.zig:259`).
+through an `App` (`src/c_api/app.zig:266`).

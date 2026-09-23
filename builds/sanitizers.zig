@@ -1,5 +1,9 @@
 const std = @import("std");
 
+/// C compiler flags applied to instrumented dependency sources.
+pub const CFlags = []const []const u8;
+
+/// Runtime loader wiring for one sanitizer-instrumented executable.
 pub const SanitizerRunConfig = struct {
     enabled: bool,
     dynamic_linker: ?[]const u8,
@@ -7,6 +11,7 @@ pub const SanitizerRunConfig = struct {
     shared_object: []const u8,
 };
 
+/// Resolved sanitizer options shared by the whole build graph.
 pub const Config = struct {
     b: *std.Build,
     sanitize: bool,
@@ -52,7 +57,7 @@ pub const Config = struct {
         });
     }
 
-    pub fn c_flags(self: Config) []const []const u8 {
+    pub fn c_flags(self: Config) CFlags {
         if (self.sanitize) return &.{
             "-std=c11",
             "-fsanitize=address",

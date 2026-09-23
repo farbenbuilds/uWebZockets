@@ -235,7 +235,8 @@ have fixed capacities; there is no dynamic overflow fallback.
 
 ## Release metadata
 
-The release version is single-sourced across `build.zig.zon`, `build.zig`,
-`flake.nix`, `include/uWebZockets.h`, `src/c_api.zig`, and the changelog.
+The release version is single-sourced in `src/version.zig`, which `build.zig`
+derives from. `build.zig.zon`, `flake.nix`, `include/uWebZockets.h`, and the
+changelog repeat it because their consumers do not execute Zig code.
 `scripts/check_release_version.sh` verifies every copy, the C++ header
 assertions, the C smoke test, and the documentation headers together.

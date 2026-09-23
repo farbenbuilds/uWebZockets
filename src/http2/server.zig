@@ -17,6 +17,15 @@ pub const ErrorCode = enum(u32) {
     enhance_your_calm = 0xb,
 };
 
+/// Writes frame parts; must consume or copy every part before returning.
+pub const WriteFn = *const fn (*anyopaque, []const []const u8) anyerror!void;
+/// Delivers a session-owned request for one stream.
+pub const RequestFn = *const fn (*anyopaque, *Request, u32) anyerror!void;
+/// Handles one inbound WebSocket payload; returns whether it was consumed.
+pub const WsDataFn = *const fn (*anyopaque, u32, []u8, bool) bool;
+/// Reports that one stream slot closed with its HTTP/2 error code.
+pub const StreamClosedFn = *const fn (*anyopaque, u32, u16) void;
+
 /// Synchronous transport and request callbacks used by a server session.
 ///
 /// `write_fn` must consume or copy every part before returning because frame
@@ -29,10 +38,10 @@ pub const ErrorCode = enum(u32) {
 /// corresponding stream slot is released.
 pub const Callbacks = struct {
     context: *anyopaque,
-    write_fn: *const fn (*anyopaque, []const []const u8) anyerror!void,
-    request_fn: *const fn (*anyopaque, *Request, u32) anyerror!void,
-    ws_data_fn: ?*const fn (*anyopaque, u32, []u8, bool) bool = null,
-    stream_closed_fn: ?*const fn (*anyopaque, u32, u16) void = null,
+    write_fn: WriteFn,
+    request_fn: RequestFn,
+    ws_data_fn: ?WsDataFn = null,
+    stream_closed_fn: ?StreamClosedFn = null,
     /// Largest nonempty frame payload that can fit an otherwise empty transport.
     max_frame_payload: usize = connection_module.maximum_frame_size,
 };

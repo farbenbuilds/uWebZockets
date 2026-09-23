@@ -31,6 +31,13 @@ const CMiddleware = types.CMiddleware;
 const CWebSocketBehavior = types.CWebSocketBehavior;
 const CreateMode = types.CreateMode;
 const CSlice = types.CSlice;
+const WsUpgradeSlot = types.WsUpgradeSlot;
+const WsEventSlot = types.WsEventSlot;
+const WsMessageSlot = types.WsMessageSlot;
+const HttpHandlerTable = types.HttpHandlerTable;
+const WsUpgradeTable = types.WsUpgradeTable;
+const WsEventTable = types.WsEventTable;
+const WsMessageTable = types.WsMessageTable;
 
 const max_c_routes = types.max_c_routes;
 const max_c_middleware = types.max_c_middleware;
@@ -398,12 +405,12 @@ fn http_handler(comptime index: usize) radix.Handler {
 }
 
 const http_handlers = handlers: {
-    var values: [max_c_routes]radix.Handler = undefined;
+    var values: HttpHandlerTable = undefined;
     for (0..max_c_routes) |index| values[index] = http_handler(index);
     break :handlers values;
 };
 
-fn ws_upgrade_handler(comptime index: usize) *const fn (*const Request) bool {
+fn ws_upgrade_handler(comptime index: usize) WsUpgradeSlot {
     return struct {
         fn call(request: *const Request) bool {
             const connection: *TcpConnection = @fieldParentPtr("req", @constCast(request));
@@ -415,7 +422,7 @@ fn ws_upgrade_handler(comptime index: usize) *const fn (*const Request) bool {
     }.call;
 }
 
-fn ws_open_handler(comptime index: usize) *const fn (*WebSocket) void {
+fn ws_open_handler(comptime index: usize) WsEventSlot {
     return struct {
         fn call(socket: *WebSocket) void {
             const owner = owner_from_router(socket.conn.router);
@@ -426,9 +433,7 @@ fn ws_open_handler(comptime index: usize) *const fn (*WebSocket) void {
     }.call;
 }
 
-fn ws_message_handler(
-    comptime index: usize,
-) *const fn (*WebSocket, []const u8, zslay.Opcode) void {
+fn ws_message_handler(comptime index: usize) WsMessageSlot {
     return struct {
         fn call(socket: *WebSocket, message: []const u8, opcode: zslay.Opcode) void {
             const owner = owner_from_router(socket.conn.router);
@@ -439,7 +444,7 @@ fn ws_message_handler(
     }.call;
 }
 
-fn ws_drain_handler(comptime index: usize) *const fn (*WebSocket) void {
+fn ws_drain_handler(comptime index: usize) WsEventSlot {
     return struct {
         fn call(socket: *WebSocket) void {
             const owner = owner_from_router(socket.conn.router);
@@ -450,7 +455,7 @@ fn ws_drain_handler(comptime index: usize) *const fn (*WebSocket) void {
     }.call;
 }
 
-fn ws_close_handler(comptime index: usize) *const fn (*WebSocket) void {
+fn ws_close_handler(comptime index: usize) WsEventSlot {
     return struct {
         fn call(socket: *WebSocket) void {
             const owner = owner_from_router(socket.conn.router);
@@ -462,31 +467,31 @@ fn ws_close_handler(comptime index: usize) *const fn (*WebSocket) void {
 }
 
 const ws_upgrade_handlers = handlers: {
-    var values: [max_c_routes]*const fn (*const Request) bool = undefined;
+    var values: WsUpgradeTable = undefined;
     for (0..max_c_routes) |index| values[index] = ws_upgrade_handler(index);
     break :handlers values;
 };
 
 const ws_open_handlers = handlers: {
-    var values: [max_c_routes]*const fn (*WebSocket) void = undefined;
+    var values: WsEventTable = undefined;
     for (0..max_c_routes) |index| values[index] = ws_open_handler(index);
     break :handlers values;
 };
 
 const ws_message_handlers = handlers: {
-    var values: [max_c_routes]*const fn (*WebSocket, []const u8, zslay.Opcode) void = undefined;
+    var values: WsMessageTable = undefined;
     for (0..max_c_routes) |index| values[index] = ws_message_handler(index);
     break :handlers values;
 };
 
 const ws_drain_handlers = handlers: {
-    var values: [max_c_routes]*const fn (*WebSocket) void = undefined;
+    var values: WsEventTable = undefined;
     for (0..max_c_routes) |index| values[index] = ws_drain_handler(index);
     break :handlers values;
 };
 
 const ws_close_handlers = handlers: {
-    var values: [max_c_routes]*const fn (*WebSocket) void = undefined;
+    var values: WsEventTable = undefined;
     for (0..max_c_routes) |index| values[index] = ws_close_handler(index);
     break :handlers values;
 };

@@ -2,7 +2,7 @@
 
 ## Scope
 
-µWebZockets 1.1.7 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
+µWebZockets 1.1.9 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
 server library with bounded HPACK protocol storage. It combines an
 event-driven cross-platform transport (POSIX and Windows IOCP), fixed-capacity
 protocol state, a data-oriented router, and C libraries for TLS, compression, and QUIC.
@@ -36,6 +36,20 @@ startup and accept; no mutex or spinlock remains on the steady-state I/O path.
    CMake and Ninja build the vendored C and C++ libraries with Zig compiler wrappers.
 5. WebSocket masking operates on native SIMD vectors before handling the scalar
    tail.
+
+## Type readability
+
+Type surfaces are named, explicit, and flat. Union payloads, callback fields,
+and partial-configuration records are declared once with a one-line doc comment
+instead of appearing inline: the HTTP/2 `Event` union uses `HeadersEvent`,
+`DataEvent`, `GoAwayEvent`, `StreamResetEvent`, `WindowUpdateEvent`, and
+`DiscardedDataEvent`; `Response` fields use `Http2EndFn`, `Http3WriteFn`, and
+`AsyncCompleteFn`; `WsBehavior` uses the named `Ws*Callback` aliases;
+`ServerConfig.with` takes the explicit `ServerConfig.Overrides` record instead
+of reflection over `anytype`; transport callback fields use `CloseCallback` and
+`TickCallback`. Aliases are zero-cost and additive: exported names, field
+order, defaults, wire behavior, and capacities are unchanged. Comptime
+factories remain for capacity and platform specialization only.
 
 ## Layout
 

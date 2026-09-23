@@ -14,6 +14,8 @@ thread each, and reused without locking.
   pinned physical core, coordinated only through lock-free rings.
 - **Data-oriented:** struct-of-arrays pools, parallel router arrays, and
   compile-time capacities that make exhaustion explicit.
+- **Readable types:** named callback, event, and override types instead of
+  inline anonymous structs, reflection-driven shapes, or type gymnastics.
 - **Cross-platform:** Tier 1 Linux and macOS, with a `x86_64-windows-gnu`
   fallback for reuse-port and affinity behavior.
 

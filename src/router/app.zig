@@ -501,6 +501,10 @@ pub fn configured_app_with_timeout(
         }
 
         /// Mounts a fixed-capacity JSON-RPC 2.0 service on one POST route.
+        ///
+        /// `service` accepts any mutable single-item pointer to a
+        /// `configured_service` or `comptime_service` value that outlives the
+        /// App and belongs to exactly one event loop.
         pub fn rpc(self: *Self, path: []const u8, service: anytype) !*Self {
             const Pointer = @TypeOf(service);
             const pointer = switch (@typeInfo(Pointer)) {
@@ -1016,6 +1020,9 @@ pub fn configured_app_with_timeout(
                 }
 
                 /// Applies the same route configuration callback to every worker.
+                ///
+                /// `callback` accepts any comptime function callable as
+                /// `fn (*Worker, usize) !void`.
                 pub fn configure(self: *Cluster, comptime callback: anytype) !void {
                     for (self.workers, 0..) |*app_worker, index| try callback(app_worker, index);
                 }

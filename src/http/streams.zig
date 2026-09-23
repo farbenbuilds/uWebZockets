@@ -10,13 +10,25 @@ pub const StreamState = enum(u8) {
     errored,
 };
 
+/// Reads up to `dest.len` bytes into caller storage and returns the count.
+pub const ReadableReadFn = *const fn (context: *anyopaque, dest: []u8) anyerror!usize;
+/// Releases the reader context; non-failing, best-effort teardown.
+pub const ReadableCloseFn = *const fn (context: *anyopaque) void;
+
+/// Writes one chunk without retaining it.
+pub const WritableWriteFn = *const fn (context: *anyopaque, chunk: []const u8) anyerror!void;
+/// Finalizes the writable stream context.
+pub const WritableCloseFn = *const fn (context: *anyopaque) anyerror!void;
+/// Reports whether the transport currently asserts write backpressure.
+pub const WritableBackpressureFn = *const fn (context: *anyopaque) bool;
+
 /// Zero-allocation readable byte stream with BYOB ("Bring Your Own Buffer") reader.
 ///
 /// Implements a pull-based byte-oriented reader pattern.
 pub const ReadableByteStream = struct {
     context: *anyopaque,
-    read_fn: *const fn (context: *anyopaque, dest: []u8) anyerror!usize,
-    close_fn: ?*const fn (context: *anyopaque) void = null,
+    read_fn: ReadableReadFn,
+    close_fn: ?ReadableCloseFn = null,
     state: StreamState = .readable,
 
     /// Reads up to `dest.len` bytes into the caller-owned buffer (BYOB reading).
@@ -110,9 +122,9 @@ pub const SliceReaderContext = struct {
 /// Provides bounded chunk writes, end-of-stream signaling, and backpressure awareness.
 pub const WritableByteStream = struct {
     context: *anyopaque,
-    write_fn: *const fn (context: *anyopaque, chunk: []const u8) anyerror!void,
-    close_fn: *const fn (context: *anyopaque) anyerror!void,
-    is_backpressured_fn: ?*const fn (context: *anyopaque) bool = null,
+    write_fn: WritableWriteFn,
+    close_fn: WritableCloseFn,
+    is_backpressured_fn: ?WritableBackpressureFn = null,
     state: StreamState = .readable,
 
     /// Writes one chunk to the destination transport.

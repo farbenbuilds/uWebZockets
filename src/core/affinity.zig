@@ -199,12 +199,25 @@ fn sibling_list_has_lower(list: []const u8, cpu: usize, allowed: *const CpuBitma
     return false;
 }
 
-const get_process_affinity_mask = @extern(
-    *const fn (windows.HANDLE, *usize, *usize) callconv(.winapi) windows.BOOL,
-    .{ .name = "GetProcessAffinityMask", .library_name = "kernel32" },
-);
+/// kernel32 `GetProcessAffinityMask` signature.
+const GetProcessAffinityMaskFn = *const fn (
+    windows.HANDLE,
+    *usize,
+    *usize,
+) callconv(.winapi) windows.BOOL;
 
-const set_thread_affinity_mask = @extern(
-    *const fn (windows.HANDLE, usize) callconv(.winapi) usize,
-    .{ .name = "SetThreadAffinityMask", .library_name = "kernel32" },
-);
+/// kernel32 `SetThreadAffinityMask` signature.
+const SetThreadAffinityMaskFn = *const fn (
+    windows.HANDLE,
+    usize,
+) callconv(.winapi) usize;
+
+const get_process_affinity_mask = @extern(GetProcessAffinityMaskFn, .{
+    .name = "GetProcessAffinityMask",
+    .library_name = "kernel32",
+});
+
+const set_thread_affinity_mask = @extern(SetThreadAffinityMaskFn, .{
+    .name = "SetThreadAffinityMask",
+    .library_name = "kernel32",
+});
