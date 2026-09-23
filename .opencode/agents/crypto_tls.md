@@ -43,7 +43,7 @@ checking, and proof.
   40 bytes) and key-material handling; the ULP and splice syscalls are owned by
   `transport_io`.
 - Vendor: pinned BoringSSL revision `7c1efd8d`, compiled through
-  `builds/boringssl.zig` from the package's generated source lists. Do not
+  `builds/vendor/boringssl.zig` from the package's generated source lists. Do not
   change the pin without the release-metadata procedure in `CONTRIBUTE.md`.
 - Tests: `src/tests/bleeding_edge_tests.zig` (crypto, kTLS size), C ABI TLS
   cases in `src/tests/c_api_tests.zig`.

@@ -32,8 +32,9 @@ dependency migrations, and decisions.
   (`scripts/update_zon_files.sh` bridges to zon2nix).
 - `builds/orchestrator.zig`: target routing (native POSIX/Windows, wasm32,
   `all-targets`), `UWEBZOCKETS_DEFAULT_TARGET`, unsupported-target panic.
-- `builds/vendor.zig` plus `builds/boringssl.zig`, `builds/lsquic.zig`,
-  `builds/libdeflate.zig`, and `builds/zlib.zig`: native source lists and
+- `builds/vendor/root.zig` plus `builds/vendor/boringssl.zig`,
+  `builds/vendor/lsquic.zig`, `builds/vendor/libdeflate.zig`, and
+  `builds/vendor/zlib.zig`: native source lists and
   static-library artifacts, BoringSSL `gen/sources.json` parsing and platform
   defines, lsquic tree assembly with `vendor/lsquic_overlay/`, ls-qpack/ls-hpack
   synchronization with the pinned lsquic, and the translated C module.

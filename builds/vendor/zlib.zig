@@ -1,5 +1,5 @@
 const std = @import("std");
-const sanitizers = @import("sanitizers.zig");
+const sanitizers = @import("../sanitizers.zig");
 
 /// zlib 1.3.2 sources for the DEFLATE windows that libdeflate cannot encode.
 ///

@@ -1,6 +1,6 @@
 const std = @import("std");
 const boringssl = @import("boringssl.zig");
-const sanitizers = @import("sanitizers.zig");
+const sanitizers = @import("../sanitizers.zig");
 const zlib = @import("zlib.zig");
 
 /// Handles for the assembled lsquic source tree and its static library.
@@ -14,6 +14,12 @@ pub const Artifacts = struct {
 ///
 /// This mirrors the pinned `src/liblsquic/CMakeLists.txt`; the generated
 /// `lsquic_versions_to_string.c` comes from the pre-generated overlay.
+///
+/// ls-qpack and ls-hpack are pinned Zig package dependencies compiled as one
+/// translation unit each. Neither repository has a generation step, system
+/// tool requirement, or architecture-specific source; `XXH_HEADER_NAME` points
+/// both at lsquic's bundled xxHash, and the only target-specific input is the
+/// musl `sys/queue.h` overlay below.
 const sources = [_][]const u8{
     "src/liblsquic/ls-qpack/lsqpack.c",
     "src/liblsquic/lsquic_adaptive_cc.c",

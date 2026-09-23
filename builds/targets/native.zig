@@ -3,7 +3,7 @@ const examples = @import("../examples.zig");
 const fuzzing = @import("../fuzzing.zig");
 const sanitizers = @import("../sanitizers.zig");
 const testing = @import("../testing.zig");
-const vendor = @import("../vendor.zig");
+const vendor = @import("../vendor/root.zig");
 
 /// Step handles produced by the native testing graph.
 pub const Steps = testing.Steps;

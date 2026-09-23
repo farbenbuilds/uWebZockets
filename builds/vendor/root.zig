@@ -2,7 +2,7 @@ const std = @import("std");
 const boringssl = @import("boringssl.zig");
 const libdeflate = @import("libdeflate.zig");
 const lsquic = @import("lsquic.zig");
-const sanitizers = @import("sanitizers.zig");
+const sanitizers = @import("../sanitizers.zig");
 const zlib = @import("zlib.zig");
 
 /// Native vendor artifacts, include roots, and the translated C module.

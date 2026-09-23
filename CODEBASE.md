@@ -59,11 +59,12 @@ uWebZockets/
 ├── build.zig.zon             # Zig 0.16 package manifest
 ├── builds/
 │   ├── orchestrator.zig        # target selection and aggregate steps
-│   ├── vendor.zig              # native C and C++ dependency graph
-│   ├── boringssl.zig           # BoringSSL source lists, defines, and C++ flags
-│   ├── lsquic.zig              # assembled lsquic tree, overlay, and sources
-│   ├── libdeflate.zig          # libdeflate sources
-│   ├── zlib.zig                # bundled zlib sources
+│   ├── vendor/
+│   │   ├── root.zig            # artifact wiring and the translated C module
+│   │   ├── boringssl.zig       # BoringSSL source lists, defines, and C++ flags
+│   │   ├── lsquic.zig          # assembled lsquic tree, overlay, and sources
+│   │   ├── libdeflate.zig      # libdeflate sources
+│   │   └── zlib.zig            # bundled zlib sources
 │   ├── sanitizers.zig          # ASan/MSan runtime configuration
 │   ├── testing.zig             # unit, C ABI, h1spec, and Autobahn steps
 │   ├── fuzzing.zig             # deterministic and OSS-Fuzz targets
@@ -310,8 +311,9 @@ the root `build.zig` derives its `std.SemanticVersion` from it and delegates
 directly to `builds/orchestrator.zig`. `scripts/bump_version.sh` rewrites the
 package manifest, the C ABI macros, the C/C++ tests, the documentation
 headers, and the changelog skeleton, and `scripts/check_release_version.sh`
-fails the lint workflow if any copy drifts. `builds/boringssl.zig`,
-`builds/lsquic.zig`, `builds/libdeflate.zig`, and `builds/zlib.zig` compile the
+fails the lint workflow if any copy drifts. `builds/vendor/boringssl.zig`,
+`builds/vendor/lsquic.zig`, `builds/vendor/libdeflate.zig`, and
+`builds/vendor/zlib.zig` compile the
 pinned C and C++ sources with Zig's own toolchain: BoringSSL reads the
 generated source lists in `gen/sources.json`, lsquic assembles its fetched tree
 with the pre-generated overlay in `vendor/lsquic_overlay/`, and libdeflate and

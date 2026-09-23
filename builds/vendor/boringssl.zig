@@ -1,5 +1,5 @@
 const std = @import("std");
-const sanitizers = @import("sanitizers.zig");
+const sanitizers = @import("../sanitizers.zig");
 
 /// Handles for the BoringSSL static libraries.
 pub const Artifacts = struct {

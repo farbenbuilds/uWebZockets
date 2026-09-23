@@ -12,10 +12,12 @@ application logic are unchanged.
 
 ### Added
 
-- Native dependency builders in `builds/`: `boringssl.zig`, `lsquic.zig`,
-  `libdeflate.zig`, and `zlib.zig` compile the static vendor libraries with
+- Native dependency builders in `builds/vendor/`: `boringssl.zig`,
+  `lsquic.zig`, `libdeflate.zig`, and `zlib.zig` compile the static vendor
+  libraries with
   `zig cc` and `zig c++` instead of CMake, Ninja, Go, Perl, `patch`, or a
-  system zlib. `builds/vendor.zig` links the resulting artifacts transitively.
+  system zlib. `builds/vendor/root.zig` links the resulting artifacts
+  transitively.
 - `vendor/lsquic_overlay/` holds the pre-generated
   `lsquic_versions_to_string.c` and the pre-patched `lsquic_qdec_hdl.{c,h}`
   and `lsquic_stream.c`, so the build no longer runs `gen-verstrs.pl` or
@@ -32,6 +34,9 @@ application logic are unchanged.
   lists, with the committed `gen/crypto/err_data.cc` and perlasm sources used
   as shipped upstream. Windows and MemorySanitizer builds disable assembly
   exactly as upstream does.
+- ls-qpack and ls-hpack remain pinned package dependencies compiled as one
+  translation unit each; neither has a generation step, architecture-specific
+  source, or system tool requirement.
 - libdeflate keeps its runtime dispatch: the AVX-512 and VPCLMULQDQ paths are
   disabled because the bundled Clang requires the explicit `evex512` target
   feature, and dispatch falls back to AVX2 and SSSE3.

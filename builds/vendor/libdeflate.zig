@@ -1,5 +1,5 @@
 const std = @import("std");
-const sanitizers = @import("sanitizers.zig");
+const sanitizers = @import("../sanitizers.zig");
 
 /// libdeflate 1.26 sources. Architecture selection happens inside each
 /// translation unit, so one list covers x86, ARM, and RISC-V targets.
