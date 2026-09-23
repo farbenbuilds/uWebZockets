@@ -8,15 +8,16 @@
 #define close_socket(s) closesocket(s)
 #define get_pid() ((unsigned int)_getpid())
 #else
-#include <arpa/inet.h>
 #include <errno.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <unistd.h>
 #define close_socket(s) close(s)
 #define get_pid() ((unsigned int)getpid())
 #endif
 
+#include <stdint.h>
 #include <string.h>
 
 struct lifecycle_context {
