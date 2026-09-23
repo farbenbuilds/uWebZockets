@@ -1,13 +1,13 @@
 .{
     .name = .uWebZockets,
-    .version = "1.1.5",
+    .version = "1.1.7",
     .fingerprint = 0xbbf152173cd23d48,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         // farbenbuilds/zslay
         .zslay = .{
-            .url = "https://github.com/farbenbuilds/zslay/archive/refs/tags/v0.1.9.tar.gz",
-            .hash = "zslay-0.1.9-OB-IfMEpAQA5ZHz3hczXhFn_CvHTU9EZFJot2bkdlArv",
+            .url = "https://github.com/farbenbuilds/zslay/archive/refs/tags/v0.2.0.tar.gz",
+            .hash = "zslay-0.2.0-OB-IfBl0AQBrzPknHiL6g7qSDbTmUPeYsMn0DwXsLtEE",
         },
 
         // mitchellh/libxev

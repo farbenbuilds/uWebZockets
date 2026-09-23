@@ -520,6 +520,19 @@ test "websocket validates outgoing application frames" {
         error.InvalidUtf8,
         ws_socket.validate_outgoing_payload(&.{ 0x03, 0xe8, 0xc0, 0x80 }, .close),
     );
+    // 1005 is reserved and must never appear on the wire.
+    try std.testing.expectError(
+        error.InvalidCloseFrame,
+        ws_socket.validate_outgoing_payload(&.{ 0x03, 0xed }, .close),
+    );
+    // 1012 service_restart is IANA-registered and accepted.
+    try ws_socket.validate_outgoing_payload(&.{ 0x03, 0xf4 }, .close);
+    // Close control frames stay bounded even though zslay has no length limit.
+    // Use valid code 1012 and ASCII reason so only the bound can reject it.
+    try std.testing.expectError(
+        error.InvalidCloseFrame,
+        ws_socket.validate_outgoing_payload(&([_]u8{ 0x03, 0xf4 } ++ ([_]u8{'a'} ** 124)), .close),
+    );
     try std.testing.expectError(
         error.ControlFrameTooLarge,
         ws_socket.validate_outgoing_payload(&([_]u8{0} ** 126), .ping),

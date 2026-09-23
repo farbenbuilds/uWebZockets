@@ -29,9 +29,9 @@
     "url": "git+https://github.com/litespeedtech/lsquic#19547405c24f60c4537478d38f4214e990be1f95",
     "hash": "sha256-vOlglXcMRTsnnSvYuwzqUVBSfsykzJ+I4UkRRa1bz5w="
   },
-  "zslay-0.1.9-OB-IfMEpAQA5ZHz3hczXhFn_CvHTU9EZFJot2bkdlArv": {
+  "zslay-0.2.0-OB-IfBl0AQBrzPknHiL6g7qSDbTmUPeYsMn0DwXsLtEE": {
     "name": "zslay",
-    "url": "https://github.com/farbenbuilds/zslay/archive/refs/tags/v0.1.9.tar.gz",
-    "hash": "sha256-Am5s5aQSdAgmM5CQIY/gnjEhrh2VR2Lro8hMgR6seqE="
+    "url": "https://github.com/farbenbuilds/zslay/archive/refs/tags/v0.2.0.tar.gz",
+    "hash": "sha256-cpjCxHTkPNJRPd3f7YgyxFK1UlY86CZljOdr8gCevXQ="
   }
 }

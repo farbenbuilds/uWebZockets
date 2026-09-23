@@ -3,6 +3,41 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.1.7] - 2026-09-23
+
+This release tracks the zslay 0.2.0 frame-parser surface. Wire behavior,
+capacities, and ownership semantics are unchanged.
+
+### Added
+
+- Adopted the zslay 0.2.0 pure close-payload validator
+  (`zslay.validate_close_payload`) in `src/ws/socket.zig`, so close codes and
+  UTF-8 reasons share one validation source with the frame parser instead of a
+  local duplicate scanner.
+
+### Changed
+
+- Dependency: zslay 0.1.9 to 0.2.0 (`farbenbuilds/zslay`). The release adds the
+  pure `validate_close_payload` helper and the `1012`, `1013`, and `1014` close
+  status codes, fixes `Conn.get_tx_header_buffer` to return a slice into the
+  queued node instead of a local copy (removing a use-after-return) with an
+  empty TX queue now yielding an empty slice, and adds the additive
+  `zslay_conn_reset` C export. No existing zslay call site changes shape.
+- `build.zig.zon.json`, `build.zig.zon.nix`, and `build.zig.zon.txt` were
+  updated for the v0.2.0 package hash and URL.
+- Version metadata was bumped to 1.1.7 across `build.zig.zon`,
+  `src/version.zig`, `flake.nix`, `include/uWebZockets.h`, the C and C++
+  version tests, and the documentation headers.
+- Documentation references to zslay were refreshed in `README.md`, `SKILL.md`,
+  `CODEBASE.md`, `THIRD_PARTY_NOTICES.md`, and the WebSocket agent guide.
+
+### Security
+
+- Close-frame validation delegates to zslay 0.2.0: one-byte payloads and
+  reserved close codes return `error.ProtocolError`, invalid UTF-8 reasons
+  return `error.InvalidUtf8`, and µWebZockets keeps its 125-byte control-frame
+  bound on top of the pure validator.
+
 ## [1.1.5] - 2026-09-22
 
 This release tracks the zslay 0.1.9 frame-parser surface and confirms libxev is

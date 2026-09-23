@@ -148,13 +148,17 @@ pub const WebSocket = struct {
     /// Sends one validated close frame and schedules connection shutdown.
     pub fn send_close(self: *WebSocket, code: u16, reason: []const u8) !void {
         if (self.close_sent) return;
-        if (!valid_close_code(code)) return error.InvalidCloseCode;
         if (reason.len > 123) return error.ControlFrameTooLarge;
-        if (!std.unicode.utf8ValidateSlice(reason)) return error.InvalidUtf8;
 
         var payload: [125]u8 = undefined;
         std.mem.writeInt(u16, payload[0..2], code, .big);
         @memcpy(payload[2 .. 2 + reason.len], reason);
+
+        switch (close_payload_status(payload[0 .. 2 + reason.len])) {
+            .valid => {},
+            .protocol_error => return error.InvalidCloseCode,
+            .invalid_utf8 => return error.InvalidUtf8,
+        }
         try self.send(payload[0 .. 2 + reason.len], .close);
     }
 
@@ -726,18 +730,12 @@ const ClosePayloadStatus = enum {
 };
 
 fn close_payload_status(payload: []const u8) ClosePayloadStatus {
-    if (payload.len == 0) return .valid;
-    if (payload.len == 1 or payload.len > 125) return .protocol_error;
-
-    const code = std.mem.readInt(u16, payload[0..2], .big);
-    if (!valid_close_code(code)) return .protocol_error;
-    if (!std.unicode.utf8ValidateSlice(payload[2..])) return .invalid_utf8;
-    return .valid;
-}
-
-fn valid_close_code(code: u16) bool {
-    return switch (code) {
-        1000...1003, 1007...1014, 3000...4999 => true,
-        else => false,
+    // Close control frames carry at most 125 bytes; zslay validates the code
+    // and reason without a length bound.
+    if (payload.len > 125) return .protocol_error;
+    zslay.validate_close_payload(payload) catch |err| switch (err) {
+        error.InvalidUtf8 => return .invalid_utf8,
+        else => return .protocol_error,
     };
+    return .valid;
 }

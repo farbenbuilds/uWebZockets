@@ -2,7 +2,7 @@
 
 ## Scope
 
-µWebZockets 1.1.5 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
+µWebZockets 1.1.7 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
 server library with bounded HPACK protocol storage. It combines an
 event-driven cross-platform transport (POSIX and Windows IOCP), fixed-capacity
 protocol state, a data-oriented router, and C libraries for TLS, compression, and QUIC.
@@ -193,10 +193,11 @@ workers keep independent response buffers.
 
 ## WebSocket
 
-zslay 0.1.9 validates frame structure and size limits. µWebZockets adds strict
-server-side handshake validation, fragmented-message assembly, streaming UTF-8
-validation, close-code handling, SIMD unmasking, and bounded writes. Control
-frames use a 125-byte inline buffer. Message storage is provided by the owning
+zslay 0.2.0 validates frame structure and size limits and provides the pure
+close-payload validator. µWebZockets adds strict server-side handshake
+validation, fragmented-message assembly, streaming UTF-8 validation, close-code
+handling, SIMD unmasking, and bounded writes. Control frames use a 125-byte
+inline buffer. Message storage is provided by the owning
 application and reused for the connection lifetime. Application message slices
 are callback-scoped and outgoing text, control, and close frames are validated
 before entering the transport queue.
