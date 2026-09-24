@@ -146,8 +146,8 @@ pub fn display_host(address: []const u8) []const u8 {
 
 /// One startup summary rendered after the wordmark.
 pub const ReadyInfo = struct {
-    /// Milliseconds between application construction and listener startup.
-    elapsed_ms: u64,
+    /// Nanoseconds between application construction and listener startup.
+    elapsed_ns: u64,
     /// URL scheme of the bound listener, `http` or `https`.
     scheme: []const u8,
     /// Host shown in the local URL, already mapped by `display_host`.
@@ -324,8 +324,31 @@ pub fn render_ready(buffer: []u8, info: ReadyInfo) error{NoSpaceLeft}![]const u8
     return writer.buffered();
 }
 
+/// Writes `elapsed_ns` with the coarsest unit that keeps it readable.
+fn write_elapsed(writer: *std.Io.Writer, elapsed_ns: u64) std.Io.Writer.Error!void {
+    if (elapsed_ns < std.time.ns_per_us) {
+        try writer.print("{d} ns", .{elapsed_ns});
+        return;
+    }
+    if (elapsed_ns < std.time.ns_per_ms) {
+        try writer.print("{d} µs", .{elapsed_ns / std.time.ns_per_us});
+        return;
+    }
+    if (elapsed_ns < std.time.ns_per_s) {
+        try writer.print("{d}.{d} ms", .{
+            elapsed_ns / std.time.ns_per_ms,
+            (elapsed_ns % std.time.ns_per_ms) / (std.time.ns_per_ms / 10),
+        });
+        return;
+    }
+    try writer.print("{d}.{d} s", .{
+        elapsed_ns / std.time.ns_per_s,
+        (elapsed_ns % std.time.ns_per_s) / (std.time.ns_per_s / 10),
+    });
+}
+
 fn write_ready(writer: *std.Io.Writer, info: ReadyInfo) std.Io.Writer.Error!void {
-    try writer.print("  {s}{s}µWebZockets{s} {s}v{d}.{d}.{d}{s}  {s}ready in{s} {s}{d} ms{s}\n\n", .{
+    try writer.print("  {s}{s}µWebZockets{s} {s}v{d}.{d}.{d}{s}  {s}ready in{s} {s}", .{
         Ansi.bold,
         Ansi.bright_yellow,
         Ansi.reset,
@@ -337,9 +360,9 @@ fn write_ready(writer: *std.Io.Writer, info: ReadyInfo) std.Io.Writer.Error!void
         Ansi.dim,
         Ansi.reset,
         Ansi.green,
-        info.elapsed_ms,
-        Ansi.reset,
     });
+    try write_elapsed(writer, info.elapsed_ns);
+    try writer.print("{s}\n\n", .{Ansi.reset});
 
     const open_bracket = if (info.host_is_ipv6) "[" else "";
     const close_bracket = if (info.host_is_ipv6) "]" else "";

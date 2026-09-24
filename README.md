@@ -122,7 +122,8 @@ The full capacity table, slab layout, and backpressure model are in
 
 `with_dev_log(true)` prints the `µWEBZOCKETS` wordmark and a Vite-style ready
 summary before the first accepting listener: `µWebZockets v1.3.0  ready in
-N ms` followed by `→ Local:` and `→ Logs:` lines. The wordmark
+0.6 ms` followed by `→ Local:` and `→ Logs:` lines; the elapsed time scales
+through nanoseconds, microseconds, milliseconds, and seconds. The wordmark
 collapses to a one-line `µWebZockets` mark when the terminal is narrower than
 the block art. Requests then log Vite-style as `HH:MM:SS | [METHOD] /path :
 STATUS`, plus colored connection, WebSocket, and metric lines. Everything

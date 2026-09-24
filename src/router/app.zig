@@ -1029,7 +1029,7 @@ pub fn configured_app_with_timeout(
             self.write_startup_banner();
             const host = dev_log_module.display_host(address);
             dev_log_module.thread_sink().record_ready(.{
-                .elapsed_ms = self.ready_elapsed_ms(),
+                .elapsed_ns = self.ready_elapsed_ns(),
                 .scheme = scheme,
                 .host = host,
                 .host_is_ipv6 = std.mem.indexOfScalar(u8, host, ':') != null,
@@ -1038,12 +1038,12 @@ pub fn configured_app_with_timeout(
             });
         }
 
-        /// Milliseconds between application construction and listener startup.
-        fn ready_elapsed_ms(self: *const Self) u64 {
+        /// Nanoseconds between application construction and listener startup.
+        fn ready_elapsed_ns(self: *const Self) u64 {
             const now_ns = std.Io.Clock.now(.awake, self.io).nanoseconds;
             if (now_ns <= 0) return 0;
             const now: u64 = @intCast(now_ns);
-            return (now -| self.ready_started_ns) / std.time.ns_per_ms;
+            return now -| self.ready_started_ns;
         }
 
         /// Overrides the development-log output file; defaults to stderr.

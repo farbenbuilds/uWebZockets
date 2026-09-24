@@ -341,7 +341,7 @@ test "display_host maps wildcard and bracket forms to a loopback host" {
 test "render_ready writes the Vite-style startup summary" {
     var buffer: [512]u8 = undefined;
     const line = try dev_log.render_ready(&buffer, .{
-        .elapsed_ms = 4,
+        .elapsed_ns = 4_200_000,
         .scheme = "http",
         .host = "127.0.0.1",
         .host_is_ipv6 = false,
@@ -350,7 +350,7 @@ test "render_ready writes the Vite-style startup summary" {
     });
     try testing.expectEqualStrings(
         "  \x1b[1m\x1b[93mµWebZockets\x1b[0m \x1b[2mv1.3.0\x1b[0m  " ++
-            "\x1b[2mready in\x1b[0m \x1b[32m4 ms\x1b[0m\n\n" ++
+            "\x1b[2mready in\x1b[0m \x1b[32m4.2 ms\x1b[0m\n\n" ++
             "  \x1b[32m→\x1b[0m \x1b[1m\x1b[36mLocal:  \x1b[0m " ++
             "\x1b[36mhttp://127.0.0.1:3000/\x1b[0m\n" ++
             "  \x1b[32m→\x1b[0m \x1b[1m\x1b[36mLogs:   \x1b[0m stderr\n\n",
@@ -358,10 +358,34 @@ test "render_ready writes the Vite-style startup summary" {
     );
 }
 
+test "render_ready scales the elapsed time unit" {
+    var buffer: [512]u8 = undefined;
+    const info = dev_log.ReadyInfo{
+        .elapsed_ns = 0,
+        .scheme = "http",
+        .host = "127.0.0.1",
+        .host_is_ipv6 = false,
+        .port = 3000,
+        .log_target = "stderr",
+    };
+    const cases = [_]struct { elapsed_ns: u64, text: []const u8 }{
+        .{ .elapsed_ns = 850, .text = "\x1b[32m850 ns\x1b[0m" },
+        .{ .elapsed_ns = 640_000, .text = "\x1b[32m640 µs\x1b[0m" },
+        .{ .elapsed_ns = 4_200_000, .text = "\x1b[32m4.2 ms\x1b[0m" },
+        .{ .elapsed_ns = 1_500_000_000, .text = "\x1b[32m1.5 s\x1b[0m" },
+    };
+    for (cases) |case| {
+        var probe = info;
+        probe.elapsed_ns = case.elapsed_ns;
+        const line = try dev_log.render_ready(&buffer, probe);
+        try testing.expect(std.mem.find(u8, line, case.text) != null);
+    }
+}
+
 test "render_ready brackets an IPv6 host and has no metrics line" {
     var buffer: [512]u8 = undefined;
     const line = try dev_log.render_ready(&buffer, .{
-        .elapsed_ms = 12,
+        .elapsed_ns = 12_000_000,
         .scheme = "https",
         .host = "::1",
         .host_is_ipv6 = true,
@@ -378,7 +402,7 @@ test "record_ready writes the summary immediately" {
     defer tmp.cleanup();
 
     const info = dev_log.ReadyInfo{
-        .elapsed_ms = 1,
+        .elapsed_ns = 1_000_000,
         .scheme = "http",
         .host = "127.0.0.1",
         .host_is_ipv6 = false,
