@@ -306,7 +306,7 @@ this path, while runtime interoperability remains Tier 2.
 
 ## Development log
 
-`src/observability/dev_log.zig` renders opt-in terminal diagnostics without
+`src/observability/dev_log.zig` renders terminal diagnostics without
 allocating. A `Sink` owns a fixed 4096-byte buffer and one bound output file;
 `render` is pure and writes one `Record` through `std.Io.Writer.fixed` using
 comptime format strings and ANSI colors. HTTP requests render Vite-style as
@@ -324,16 +324,17 @@ with a counter; `Sink.record_metrics` writes the whole snapshot as one batch.
 `Sink.flush` issues at most one bounded `writeStreaming` per pending batch and
 never retries a short write. `Sink.record_banner` writes the startup wordmark
 once, followed by a blank padding line, and `Sink.record_ready` renders the
-Vite-style summary: version, elapsed startup time, local URL, and log target.
+Vite-style summary: version, elapsed startup time, and local URL.
 `src/observability/terminal.zig`
 probes the terminal width so narrow outputs get a one-line `µWebZockets` mark
-and redirected outputs keep the full block art. When `ServerConfig.enable_dev_log`
-is set, the app enables the worker sink and, in `listen`/`listen_udp`, writes
+and redirected outputs keep the full block art. `ServerConfig.enable_dev_log`
+defaults on; the app enables the worker sink unless the default stderr sink is
+not a terminal, and in `listen`/`listen_udp` it writes
 the summary in place of the `server listening` std.log line (`run` covers apps
 that never listen); any pending bytes are drained when the loop exits.
-`App.set_dev_log_file` rebinds the default stderr output and `App.log_metrics`
-records the Prometheus registry in slot order. With the toggle false, the
-development log emits nothing at all.
+`App.set_dev_log_file` binds an output that always records and
+`App.log_metrics` records the Prometheus registry in slot order. With the
+toggle false, the development log emits nothing at all.
 
 `src/observability/file_watch.zig` streams `file_changed` records. Linux uses
 inotify: the descriptor is read through the event loop and decoded against a

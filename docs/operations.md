@@ -129,24 +129,23 @@ dependencies (on Windows: `ws2_32`, `mswsock`, `crypt32`, and `advapi32`).
 
 ## Development log
 
-The terminal development log is opt-in and allocation-free. Enable it through
-the builder, then run the example:
+The terminal development log is on by default and allocation-free. Run any
+example in a terminal:
 
 ```sh
-zig build dev_log_server -Doptimize=ReleaseSafe
+zig build chat_server -Doptimize=ReleaseSafe
 ```
 
 ```zig
 var server = try uz.Server.builder(init.io)
     .with_observability(true)
-    .with_dev_log(true)
     .build(std.heap.page_allocator);
 defer server.deinit();
 ```
 
 The exact `µWEBZOCKETS` wordmark and a Vite-style ready summary are written
 once at startup, before the first accepting listener: the version with the
-elapsed startup time, then `→ Local:` and `→ Logs:` lines. A
+elapsed startup time, then the `→ Local:` line. A
 terminal narrower than the block art gets a one-line `µWebZockets` mark
 instead, and builds without the development log keep the plain
 `server listening` std.log line. HTTP/1.1 requests log Vite-style as
@@ -170,12 +169,13 @@ size. Both backends are bounded and never allocate per event, and both skip
 build and VCS directories.
 
 Records carry an explicit direction (`data_in` or `data_out`) and a named event
-payload; there is no ambient logger state. `ServerConfig.enable_dev_log` is the
-opt-in toggle: leaving it false silences the wordmark, request lines, metric
-snapshots, and every other development-log write. `App.set_dev_log_file`
-redirects the default stderr output, `App.flush_dev_log` writes any pending
-bytes, and `App.log_metrics` records every counter of the bounded Prometheus
-registry. The `uwz_connections_accepted`, `uwz_connections_closed`,
+payload; there is no ambient logger state. `ServerConfig.enable_dev_log`
+defaults on, but the default stderr sink stays quiet when stderr is not a
+terminal so redirected runs are not slowed; `false` silences the wordmark,
+request lines, metric snapshots, and every other development-log write, while
+an explicit `App.set_dev_log_file` always records. `App.flush_dev_log` writes
+any pending bytes, and `App.log_metrics` records every counter of the bounded
+Prometheus registry. The `uwz_connections_accepted`, `uwz_connections_closed`,
 `uwz_http_requests`, and `uwz_ws_messages` counters advance when observability
 is enabled. HTTP/2 dispatch and QUIC callbacks do not emit records in this
 release.

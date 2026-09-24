@@ -155,8 +155,6 @@ pub const ReadyInfo = struct {
     /// True when `host` is an IPv6 literal that needs URL brackets.
     host_is_ipv6: bool,
     port: u16,
-    /// Where development records are written, for example `stderr`.
-    log_target: []const u8,
 };
 
 /// Result of one best-effort terminal write.
@@ -366,7 +364,7 @@ fn write_ready(writer: *std.Io.Writer, info: ReadyInfo) std.Io.Writer.Error!void
 
     const open_bracket = if (info.host_is_ipv6) "[" else "";
     const close_bracket = if (info.host_is_ipv6) "]" else "";
-    try writer.print("  {s}→{s} {s}{s}{s:<8}{s} {s}{s}://{s}{s}{s}:{d}/{s}\n", .{
+    try writer.print("  {s}→{s} {s}{s}{s:<8}{s} {s}{s}://{s}{s}{s}:{d}/{s}\n\n", .{
         Ansi.green,
         Ansi.reset,
         Ansi.bold,
@@ -380,15 +378,6 @@ fn write_ready(writer: *std.Io.Writer, info: ReadyInfo) std.Io.Writer.Error!void
         close_bracket,
         info.port,
         Ansi.reset,
-    });
-    try writer.print("  {s}→{s} {s}{s}{s:<8}{s} {s}\n\n", .{
-        Ansi.green,
-        Ansi.reset,
-        Ansi.bold,
-        Ansi.cyan,
-        "Logs:",
-        Ansi.reset,
-        info.log_target,
     });
 }
 

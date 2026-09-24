@@ -122,7 +122,7 @@ The full capacity table, slab layout, and backpressure model are in
 
 `with_dev_log(true)` prints the `µWEBZOCKETS` wordmark and a Vite-style ready
 summary before the first accepting listener: `µWebZockets v1.3.0  ready in
-0.6 ms` followed by `→ Local:` and `→ Logs:` lines; the elapsed time scales
+0.6 ms` followed by the `→ Local:` line; the elapsed time scales
 through nanoseconds, microseconds, milliseconds, and seconds. The wordmark
 collapses to a one-line `µWebZockets` mark when the terminal is narrower than
 the block art. Requests then log Vite-style as `HH:MM:SS | [METHOD] /path :
@@ -152,10 +152,11 @@ try server.run();
 ```
 
 Every record carries an explicit direction (`data_in` or `data_out`) and a
-named event payload. `ServerConfig.enable_dev_log` is the toggle: false keeps
-every development-log write silent. `App.log_metrics` adds a snapshot of the
+named event payload. `ServerConfig.enable_dev_log` defaults on; the default
+stderr sink stays quiet when stderr is not a terminal, and `false` silences
+every development-log write. `App.log_metrics` adds a snapshot of the
 bounded Prometheus registry, and `App.set_dev_log_file` redirects output from
-stderr. `zig build dev_log_server` runs the complete example.
+stderr. Every example shows the log when run in a terminal.
 
 ## Examples
 
@@ -168,7 +169,6 @@ stderr. `zig build dev_log_server` runs the complete example.
 | `zig build chat_server` | WebSocket pub/sub with bounded topics |
 | `zig build rpc_server` | Typed JSON-RPC procedures |
 | `zig build http3_server` | HTTP/3 over QUIC with TLS |
-| `zig build dev_log_server` | Colored terminal development log |
 
 Every step appends `-Doptimize=ReleaseSafe` for production builds. Sources live
 in [`examples/`](examples/), with walkthroughs in

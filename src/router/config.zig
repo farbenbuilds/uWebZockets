@@ -82,8 +82,10 @@ pub const ServerConfig = struct {
     metrics_path: []const u8 = "/metrics",
     /// Writes the startup wordmark, ready summary, and colored event lines.
     ///
-    /// Opt-in; leaving it false keeps every development-log write silent.
-    enable_dev_log: bool = false,
+    /// Defaults on. The default stderr sink stays quiet when stderr is not a
+    /// terminal, so redirected runs are not slowed; `App.set_dev_log_file`
+    /// binds an output that always records.
+    enable_dev_log: bool = true,
     /// Directories watched recursively for the development log; empty is off.
     ///
     /// Nonempty paths require `enable_dev_log`. Linux watches them through

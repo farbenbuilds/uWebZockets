@@ -948,13 +948,11 @@ pub fn configured_app_with_timeout(
                 sw.start(&self.loop);
             }
 
-            if (self.dev_log_enabled) {
-                self.write_ready_summary(
-                    if (self.tls_ctx != null) "https" else "http",
-                    address,
-                    port,
-                );
-            } else {
+            if (!self.write_ready_summary(
+                if (self.tls_ctx != null) "https" else "http",
+                address,
+                port,
+            )) {
                 log.info("server listening on {s}:{d}", .{ address, port });
             }
         }
@@ -980,9 +978,7 @@ pub fn configured_app_with_timeout(
             try self.install_observability();
             self.routes_locked = true;
 
-            if (self.dev_log_enabled) {
-                self.write_ready_summary("https", address, port);
-            } else {
+            if (!self.write_ready_summary("https", address, port)) {
                 log.info("http/3 server listening on {s}:{d}", .{ address, port });
             }
         }
@@ -1016,26 +1012,50 @@ pub fn configured_app_with_timeout(
         /// Writes this worker's startup wordmark once, before the first
         /// listening line and sized to the output terminal.
         fn write_startup_banner(self: *Self) void {
-            if (!self.dev_log_enabled) return;
+            if (!self.enable_dev_log_sink()) return;
             const sink = dev_log_module.thread_sink();
-            sink.enable(self.io, self.dev_log_file orelse std.Io.File.stderr());
             sink.record_banner(terminal_module.columns(sink.file));
         }
 
+        /// Enables this worker's dev-log sink, unless the default stderr sink
+        /// is not a terminal; returns false while the sink stays silent.
+        ///
+        /// Keeping redirected runs quiet means piping, log capture, and the
+        /// throughput benchmark are not slowed by per-record writes. An
+        /// explicit `set_dev_log_file` always records.
+        fn enable_dev_log_sink(self: *Self) bool {
+            if (!self.dev_log_enabled) return false;
+            const file = self.dev_log_file orelse std.Io.File.stderr();
+            if (self.dev_log_file == null) {
+                const interactive = file.isTty(self.io) catch false;
+                if (!interactive) return false;
+            }
+            dev_log_module.thread_sink().enable(self.io, file);
+            return true;
+        }
+
         /// Writes the wordmark and the Vite-style ready summary for one bound
-        /// listener.
-        fn write_ready_summary(self: *Self, scheme: []const u8, address: []const u8, port: u16) void {
-            if (!self.dev_log_enabled) return;
+        /// listener; returns false when the log is disabled or its default
+        /// sink is not a terminal.
+        fn write_ready_summary(
+            self: *Self,
+            scheme: []const u8,
+            address: []const u8,
+            port: u16,
+        ) bool {
+            if (!self.dev_log_enabled) return false;
             self.write_startup_banner();
+            const sink = dev_log_module.thread_sink();
+            if (!sink.enabled) return false;
             const host = dev_log_module.display_host(address);
-            dev_log_module.thread_sink().record_ready(.{
+            sink.record_ready(.{
                 .elapsed_ns = self.ready_elapsed_ns(),
                 .scheme = scheme,
                 .host = host,
                 .host_is_ipv6 = std.mem.indexOfScalar(u8, host, ':') != null,
                 .port = port,
-                .log_target = if (self.dev_log_file == null) "stderr" else "bound file",
             });
+            return true;
         }
 
         /// Nanoseconds between application construction and listener startup.
@@ -1049,6 +1069,8 @@ pub fn configured_app_with_timeout(
         /// Overrides the development-log output file; defaults to stderr.
         ///
         /// Call it before `listen` or `run` so the startup wordmark uses it.
+        /// An explicitly bound file always records, even when stderr is not a
+        /// terminal.
         pub fn set_dev_log_file(self: *Self, file: std.Io.File) void {
             self.dev_log_file = file;
         }

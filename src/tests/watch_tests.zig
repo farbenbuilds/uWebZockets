@@ -81,7 +81,10 @@ test "event masks map to reported change kinds" {
 }
 
 test "watch paths require the development log" {
-    const without_log = config.ServerConfig{ .watch_paths = &.{"src"} };
+    const without_log = config.ServerConfig{
+        .enable_dev_log = false,
+        .watch_paths = &.{"src"},
+    };
     try testing.expectError(error.WatchRequiresDevLog, without_log.validate());
 }
 

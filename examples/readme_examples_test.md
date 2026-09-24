@@ -7,7 +7,7 @@ zig build -Doptimize=ReleaseSafe
 ```
 
 The default install contains `hello_world`, `chat_server`, `rpc_server`,
-`http3_server`, `basic_microservice`, `custom_builder`, `dev_log_server`,
+`http3_server`, `basic_microservice`, `custom_builder`,
 `shared_nothing_cluster`, `h1spec`, and `autobahn_server` under `zig-out/bin`.
 
 These examples target the live `App` transports. The bounded HTTP/2/HPACK
@@ -90,33 +90,30 @@ zig build rpc_server -Doptimize=ReleaseSafe
 
 ## Terminal development log
 
-Start the dev-log server:
+Every example shows the development log by default when run in a terminal.
+Start the hello-world server:
 
 ```sh
-zig build dev_log_server -Doptimize=ReleaseSafe
+zig build hello_world -Doptimize=ReleaseSafe
 ```
 
 ```sh
 curl -i http://127.0.0.1:3000/
-curl -i http://127.0.0.1:3000/snapshot
-curl -i http://127.0.0.1:3000/metrics
-npx wscat -c ws://127.0.0.1:3000/echo
 ```
 
 The server prints the `µWEBZOCKETS` wordmark and a Vite-style ready summary
-(`µWebZockets v1.3.0  ready in 0.6 ms`, then `→ Local:` and `→ Logs:` lines,
-with the elapsed time scaled from nanoseconds up) before the first accepting
-listener; a one-line
-`µWebZockets` mark fits narrow terminals. Each request then logs Vite-style as
-`HH:MM:SS | [METHOD] /path : STATUS` with a dim clock, cyan method, and
-status-class color, alongside colored connection, WebSocket, and metric lines.
-`/snapshot` records every Prometheus counter into the same log and `/metrics`
-serves the registry. Each worker thread renders and writes records through its
-own `dev_log.Sink` as soon as they are recorded, so the event loop never
-allocates; the example also watches `src` and `examples` and prints a `watch`
-line for each saved file (inotify on Linux, a 500 ms scan elsewhere).
-`App.set_dev_log_file` redirects the output
-and `ServerConfig.enable_dev_log` silences it.
+(`µWebZockets v1.3.0  ready in 0.6 ms`, then the `→ Local:` line, with the
+elapsed time scaled from nanoseconds up) before the first accepting listener;
+a one-line `µWebZockets` mark fits narrow terminals. Each request then logs
+Vite-style as `HH:MM:SS | [METHOD] /path : STATUS` with a dim clock, cyan
+method, and status-class color, alongside colored connection, WebSocket, and
+metric lines. WebSocket examples add `ws` lines, and `App.log_metrics`
+snapshots the Prometheus registry. Each worker thread renders and writes
+records through its own `dev_log.Sink` as soon as they are recorded, so the
+event loop never allocates. The default stderr sink stays quiet when stderr is
+not a terminal, which keeps redirected runs and benchmarks fast;
+`App.set_dev_log_file` binds an output that always records, and
+`ServerConfig.enable_dev_log = false` silences the log.
 
 ## Capacity presets and custom builder
 

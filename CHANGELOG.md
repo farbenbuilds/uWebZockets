@@ -5,7 +5,7 @@ uses Semantic Versioning.
 
 ## [1.3.0] - 2026-09-24
 
-This release adds an opt-in terminal development log. It renders connection,
+This release adds a terminal development log. It renders connection,
 HTTP, and WebSocket events plus the bounded Prometheus counters as colored
 lines from fixed stack buffers and writes every record through a thread-local
 sink as soon as it is recorded, so the terminal stays real time without
@@ -24,7 +24,7 @@ unchanged.
   dim clock, cyan method, and green, cyan, yellow, or red status by class. The
   exact `µWEBZOCKETS` wordmark from a Zig multiline string is written once at
   startup, followed by a Vite-style ready summary with the version, elapsed
-  startup time, local URL, and log target; a terminal
+  startup time, and local URL; a terminal
   narrower than the block art gets a one-line `µWebZockets` mark instead, and
   redirected output keeps the full wordmark.
 - `src/observability/terminal.zig` probes the output width with a best-effort
@@ -41,13 +41,15 @@ unchanged.
   `Direction` (`data_in` or `data_out`) beside a named event payload
   (`connection_opened`, `connection_closed`, `http_request`, `ws_message`,
   `metric`), so no ambient logger state exists.
-- `ServerConfig.enable_dev_log` and `Server.builder().with_dev_log(true)` opt
-  in. Records go to stderr by default; `App.set_dev_log_file` binds another
-  output. `App.flush_dev_log` and `App.log_metrics` expose any pending bytes and
-  the counter snapshot. Leaving the toggle false silences every
+- `ServerConfig.enable_dev_log` defaults on, so every example shows the log
+  when run in a terminal. The default stderr sink stays quiet when stderr is
+  not a terminal, which keeps redirected runs and the throughput benchmark
+  free of per-record writes; `App.set_dev_log_file` binds an output that always
+  records. `App.flush_dev_log` and `App.log_metrics` expose any pending bytes
+  and the counter snapshot, and setting the toggle false silences every
   development-log write.
-- `examples/dev_log_server.zig` and the `zig build dev_log_server` step show
-  the colored log with HTTP routes, a WebSocket echo, and a metric snapshot.
+- Every `zig build <example>` run in a terminal shows the wordmark, ready
+  summary, request lines, and (with `with_watch_paths`) file changes.
 - Unit coverage in `src/tests/dev_log_tests.zig` pins the rendered byte
   sequences, immediate write behavior, oversize drops, comptime metric names,
   and the thread-local sink identity.
