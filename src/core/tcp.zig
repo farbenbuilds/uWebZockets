@@ -673,14 +673,6 @@ pub const TcpConnection = struct {
         self.suppress_response_body = method == .head;
 
         if (self.metrics) |registry| registry.add(.http_requests, 1);
-        if (self.dev_log) |sink| {
-            sink.record(.{
-                .timestamp_ms = dev_log.now_ms(self.io),
-                .level = .info,
-                .direction = .data_in,
-                .event = .{ .http_request = .{ .method = self.req.method, .path = self.req.path } },
-            });
-        }
 
         if (self.early_data_forbids(method)) {
             // RFC 8470: tell the client to retry once the handshake confirms.

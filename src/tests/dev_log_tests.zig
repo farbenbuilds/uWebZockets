@@ -7,32 +7,32 @@ const metrics = support.metrics;
 
 const testing = std.testing;
 
-test "render writes a colored data-in request line" {
+test "render writes a Vite-style colored request line" {
     var buffer: [dev_log.max_line_bytes]u8 = undefined;
     const line = try dev_log.render(&buffer, .{
         .timestamp_ms = 0,
         .level = .info,
-        .direction = .data_in,
-        .event = .{ .http_request = .{ .method = "GET", .path = "/hello" } },
+        .direction = .data_out,
+        .event = .{ .http_request = .{ .method = "GET", .path = "/hello", .status = 200 } },
     });
     try testing.expectEqualStrings(
-        "\x1b[2m00:00:00.000\x1b[0m \x1b[1m\x1b[32mIN \x1b[0m " ++
-            "\x1b[36mhttp  \x1b[0m \x1b[1mGET\x1b[0m /hello\x1b[0m\n",
+        "\x1b[2m00:00:00\x1b[0m | \x1b[36m[GET]\x1b[0m /hello : " ++
+            "\x1b[32m200\x1b[0m\x1b[0m\n",
         line,
     );
 }
 
-test "render writes a colored data-out response line" {
+test "render colors a rejected request by status class" {
     var buffer: [dev_log.max_line_bytes]u8 = undefined;
     const line = try dev_log.render(&buffer, .{
         .timestamp_ms = 3_661_000,
         .level = .info,
         .direction = .data_out,
-        .event = .{ .http_response = .{ .status = 204, .bytes = 12 } },
+        .event = .{ .http_request = .{ .method = "POST", .path = "/missing", .status = 404 } },
     });
     try testing.expectEqualStrings(
-        "\x1b[2m01:01:01.000\x1b[0m \x1b[1m\x1b[34mOUT\x1b[0m " ++
-            "\x1b[36mhttp  \x1b[0m \x1b[32m204\x1b[0m \x1b[2m12B\x1b[0m\x1b[0m\n",
+        "\x1b[2m01:01:01\x1b[0m | \x1b[36m[POST]\x1b[0m /missing : " ++
+            "\x1b[33m404\x1b[0m\x1b[0m\n",
         line,
     );
 }
@@ -118,7 +118,7 @@ test "oversized records are dropped instead of corrupting the batch" {
         .timestamp_ms = 0,
         .level = .info,
         .direction = .data_in,
-        .event = .{ .http_request = .{ .method = "GET", .path = oversized } },
+        .event = .{ .http_request = .{ .method = "GET", .path = oversized, .status = 200 } },
     });
     try testing.expectEqual(@as(u64, 1), sink.dropped);
     try testing.expectEqual(@as(usize, 0), sink.len);
@@ -139,7 +139,7 @@ test "a full batch flushes without dropping any record" {
             .timestamp_ms = @intCast(index),
             .level = .info,
             .direction = .data_in,
-            .event = .{ .http_request = .{ .method = "GET", .path = path } },
+            .event = .{ .http_request = .{ .method = "GET", .path = path, .status = 200 } },
         });
     }
     const outcome = sink.flush();
@@ -198,4 +198,47 @@ test "thread_sink returns one stable sink per thread" {
 
 test "now_ms converts the wall clock into milliseconds" {
     try testing.expect(dev_log.now_ms(testing.io) > 0);
+}
+
+test "banner matches the startup wordmark exactly" {
+    const expected =
+        \\██╗  ██╗ ██╗    ██╗███████╗██████╗ ███████╗ ██████╗  ██████╗██╗  ██╗███████╗████████╗███████╗
+        \\██║  ██║ ██║    ██║██╔════╝██╔══██╗╚══███╔╝██╔═══██╗██╔════╝██║ ██╔╝██╔════╝╚══██╔══╝██╔════╝
+        \\██║  ██║ ██║ █╗ ██║█████╗  ██████╔╝  ███╔╝ ██║   ██║██║     █████╔╝ █████╗     ██║   ███████╗
+        \\██║  ██║ ██║███╗██║██╔══╝  ██╔══██╗ ███╔╝  ██║   ██║██║     ██╔═██╗ ██╔══╝     ██║   ╚════██║
+        \\╚██████╔╝ ╚███╔███╔╝███████╗██████╔╝███████╗╚██████╔╝╚██████╗██║  ██╗███████╗   ██║   ███████║
+        \\██╔════╝   ╚══╝╚══╝ ╚══════╝╚═════╝ ╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝╚══════╝   ╚═╝   ╚══════╝
+        \\██║                                                                                       
+        \\╚═╝
+    ;
+    try testing.expectEqualStrings(expected, dev_log.banner);
+}
+
+test "record_banner appends the wordmark on its own line" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const file = try tmp.dir.createFile(testing.io, "dev_log.txt", .{});
+    var sink = dev_log.Sink{};
+    sink.enable(testing.io, file);
+    sink.record_banner();
+    const outcome = sink.flush();
+    try testing.expect(!outcome.failed);
+    file.close(testing.io);
+
+    const contents = try tmp.dir.readFileAlloc(
+        testing.io,
+        "dev_log.txt",
+        testing.allocator,
+        .limited(dev_log.capacity),
+    );
+    defer testing.allocator.free(contents);
+    try testing.expectEqualStrings(dev_log.banner ++ "\n", contents);
+}
+
+test "disabled sink writes no banner" {
+    var sink = dev_log.Sink{};
+    sink.record_banner();
+    try testing.expectEqual(@as(usize, 0), sink.len);
+    try testing.expectEqual(@as(u64, 0), sink.dropped);
 }

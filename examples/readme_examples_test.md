@@ -103,11 +103,14 @@ curl -i http://127.0.0.1:3000/metrics
 npx wscat -c ws://127.0.0.1:3000/echo
 ```
 
-The server writes colored connection, HTTP, and WebSocket lines to stderr from
-fixed stack buffers. `/snapshot` records every Prometheus counter into the same
-log and `/metrics` serves the registry. Each worker thread batches records in
-its own `dev_log.Sink`, so the event loop never allocates and a stalled
-terminal cannot block it; `App.set_dev_log_file` redirects the output.
+The server prints the `UWEBSOCKETS` wordmark at startup and logs each request
+Vite-style as `HH:MM:SS | [METHOD] /path : STATUS` with a dim clock, cyan
+method, and status-class color, alongside colored connection, WebSocket, and
+metric lines. `/snapshot` records every Prometheus counter into the same log
+and `/metrics` serves the registry. Each worker thread batches records in its
+own `dev_log.Sink`, so the event loop never allocates and a stalled terminal
+cannot block it; `App.set_dev_log_file` redirects the output and
+`ServerConfig.enable_dev_log` silences it.
 
 ## Capacity presets and custom builder
 

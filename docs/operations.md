@@ -144,21 +144,26 @@ var server = try uz.Server.builder(init.io)
 defer server.deinit();
 ```
 
-Connection, HTTP/1.1, and WebSocket events are rendered as colored lines from
-fixed stack buffers. Every worker thread owns one `dev_log.Sink`; records batch
-in its 4096-byte buffer and flush through a single bounded write, so the event
-loop never allocates and a stalled terminal cannot block it. A one-second
-recurring timer drains low-traffic logs, and a full batch flushes before the
-next line. Lines that cannot fit and failed or short writes are dropped and
-counted in `Sink.dropped` rather than retried.
+The exact `UWEBSOCKETS` wordmark is written and flushed once at startup, and
+HTTP/1.1 requests log Vite-style as `HH:MM:SS | [METHOD] /path : STATUS` with a
+dim clock, cyan method, and status-class color. Connection, WebSocket, and
+metric events follow with a colored direction badge. Every worker thread owns
+one `dev_log.Sink`; records batch in its 4096-byte buffer and flush through a
+single bounded write, so the event loop never allocates and a stalled terminal
+cannot block it. A one-second recurring timer drains low-traffic logs, and a
+full batch flushes before the next line. Lines that cannot fit and failed or
+short writes are dropped and counted in `Sink.dropped` rather than retried.
 
 Records carry an explicit direction (`data_in` or `data_out`) and a named event
-payload; there is no ambient logger state. `App.set_dev_log_file` redirects the
-default stderr output, `App.flush_dev_log` drains the current batch, and
-`App.log_metrics` records every counter of the bounded Prometheus registry.
-The `uwz_connections_accepted`, `uwz_connections_closed`, `uwz_http_requests`,
-and `uwz_ws_messages` counters advance when observability is enabled. HTTP/2
-dispatch and QUIC callbacks do not emit records in this release.
+payload; there is no ambient logger state. `ServerConfig.enable_dev_log` is the
+opt-in toggle: leaving it false silences the wordmark, request lines, metric
+snapshots, and every other development-log write. `App.set_dev_log_file`
+redirects the default stderr output, `App.flush_dev_log` drains the current
+batch, and `App.log_metrics` records every counter of the bounded Prometheus
+registry. The `uwz_connections_accepted`, `uwz_connections_closed`,
+`uwz_http_requests`, and `uwz_ws_messages` counters advance when observability
+is enabled. HTTP/2 dispatch and QUIC callbacks do not emit records in this
+release.
 
 ## Use as a Zig dependency
 

@@ -309,9 +309,11 @@ this path, while runtime interoperability remains Tier 2.
 `src/observability/dev_log.zig` renders opt-in terminal diagnostics without
 allocating. A `Sink` owns a fixed 4096-byte buffer and one bound output file;
 `render` is pure and writes one `Record` through `std.Io.Writer.fixed` using
-comptime format strings and ANSI colors. Each record carries the wall clock,
-severity, and an explicit `Direction` (`data_in` or `data_out`) beside a named
-event payload for connection, HTTP, WebSocket, and metric events. No ambient
+comptime format strings and ANSI colors. HTTP requests render Vite-style as
+`HH:MM:SS | [METHOD] /path : STATUS` with a dim clock, cyan method, and
+status-class color; connection, WebSocket, and metric events carry a colored
+direction badge. Each record names the wall clock, severity, and an explicit
+`Direction` (`data_in` or `data_out`) beside a named event payload. No ambient
 logger state exists.
 
 `thread_sink` returns the sink owned by the calling thread. Every worker owns
@@ -320,11 +322,13 @@ transport reaches its batch without threading a logger pointer through every
 callback. `Sink.record` flushes the batch when a line cannot fit and drops
 oversized or failed lines with a counter. `Sink.flush` issues at most one
 bounded `writeStreaming` per batch and never retries a short write, so a
-stalled terminal cannot block or spin the event loop. When `ServerConfig.dev_log`
-is set, the app enables the worker sink in `run`, arms a one-second recurring
-timer to drain low-traffic logs, and flushes the remainder when the loop exits;
-`App.set_dev_log_file` rebinds the default stderr output and `App.log_metrics`
-records the Prometheus registry in slot order.
+stalled terminal cannot block or spin the event loop. `Sink.record_banner`
+writes the exact startup wordmark. When `ServerConfig.enable_dev_log` is set,
+the app enables the worker sink in `run`, writes and flushes the wordmark, arms
+a one-second recurring timer to drain low-traffic logs, and flushes the
+remainder when the loop exits; `App.set_dev_log_file` rebinds the default
+stderr output and `App.log_metrics` records the Prometheus registry in slot
+order. With the toggle false, the development log emits nothing at all.
 
 ## Build graph
 

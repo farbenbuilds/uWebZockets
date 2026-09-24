@@ -4,8 +4,10 @@
 //! strings, then flushes whole batches with one bounded file operation. The
 //! transport reaches the owning thread's sink through `thread_sink`, so
 //! event-loop callbacks never allocate and never issue more than one write per
-//! full batch. Recording is opt-in: a sink is silent until `enable` binds an
-//! output file, which keeps library defaults quiet.
+//! full batch. HTTP requests render Vite-style as
+//! `HH:MM:SS | [METHOD] /path : STATUS` with a dim clock, cyan method, and
+//! status-class color. Recording is opt-in: a sink is silent until `enable`
+//! binds an output file, which keeps library defaults quiet.
 
 const std = @import("std");
 const metrics = @import("metrics.zig");
@@ -34,16 +36,11 @@ pub const ConnectionEvent = struct {
     index: usize,
 };
 
-/// One parsed HTTP request head.
+/// One completed HTTP request/response cycle.
 pub const RequestEvent = struct {
     method: []const u8,
     path: []const u8,
-};
-
-/// One completed HTTP response.
-pub const ResponseEvent = struct {
     status: u16,
-    bytes: usize,
 };
 
 /// One complete WebSocket application message.
@@ -63,7 +60,6 @@ pub const Event = union(enum) {
     connection_opened: ConnectionEvent,
     connection_closed: ConnectionEvent,
     http_request: RequestEvent,
-    http_response: ResponseEvent,
     ws_message: MessageEvent,
     metric: MetricEvent,
 };
@@ -80,6 +76,18 @@ pub const Record = struct {
 pub const capacity = 4096;
 /// Flush watermark: a non-empty batch drains below this free space.
 pub const max_line_bytes = 256;
+
+/// Exact startup wordmark written once when the development log is enabled.
+pub const banner =
+    \\██╗  ██╗ ██╗    ██╗███████╗██████╗ ███████╗ ██████╗  ██████╗██╗  ██╗███████╗████████╗███████╗
+    \\██║  ██║ ██║    ██║██╔════╝██╔══██╗╚══███╔╝██╔═══██╗██╔════╝██║ ██╔╝██╔════╝╚══██╔══╝██╔════╝
+    \\██║  ██║ ██║ █╗ ██║█████╗  ██████╔╝  ███╔╝ ██║   ██║██║     █████╔╝ █████╗     ██║   ███████╗
+    \\██║  ██║ ██║███╗██║██╔══╝  ██╔══██╗ ███╔╝  ██║   ██║██║     ██╔═██╗ ██╔══╝     ██║   ╚════██║
+    \\╚██████╔╝ ╚███╔███╔╝███████╗██████╔╝███████╗╚██████╔╝╚██████╗██║  ██╗███████╗   ██║   ███████║
+    \\██╔════╝   ╚══╝╚══╝ ╚══════╝╚═════╝ ╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝╚══════╝   ╚═╝   ╚══════╝
+    \\██║                                                                                       
+    \\╚═╝
+;
 
 /// Result of one best-effort terminal write.
 pub const FlushOutcome = struct {
@@ -104,6 +112,20 @@ pub const Sink = struct {
         self.io = io;
         self.file = file;
         self.enabled = true;
+    }
+
+    /// Appends the startup wordmark exactly, on its own line.
+    pub fn record_banner(self: *Sink) void {
+        if (!self.enabled) return;
+        if (self.buffer.len - self.len < banner.len + 1) _ = self.flush();
+        if (self.buffer.len - self.len < banner.len + 1) {
+            self.dropped +|= 1;
+            return;
+        }
+        @memcpy(self.buffer[self.len..][0..banner.len], banner);
+        self.len += banner.len;
+        self.buffer[self.len] = '\n';
+        self.len += 1;
     }
 
     /// Appends one entry, flushing the batch first when the line cannot fit.
@@ -190,57 +212,103 @@ pub fn render(buffer: []u8, record: Record) error{NoSpaceLeft}![]const u8 {
 }
 
 fn write_record(writer: *std.Io.Writer, record: Record) std.Io.Writer.Error!void {
-    try write_clock(writer, record.timestamp_ms, record.level);
-    try writer.writeByte(' ');
-    try writer.writeAll(direction_badge(record.direction));
-    try writer.writeByte(' ');
     switch (record.event) {
-        .connection_opened => |event| try writer.print(
-            "{s}{s:<6}{s} #{d} accepted",
-            .{ Ansi.magenta, "conn", Ansi.reset, event.index },
-        ),
-        .connection_closed => |event| try writer.print(
-            "{s}{s:<6}{s} #{d} closed",
-            .{ Ansi.magenta, "conn", Ansi.reset, event.index },
-        ),
-        .http_request => |event| try writer.print(
-            "{s}{s:<6}{s} {s}{s}{s} {s}",
-            .{ Ansi.cyan, "http", Ansi.reset, Ansi.bold, event.method, Ansi.reset, event.path },
-        ),
-        .http_response => |event| try writer.print(
-            "{s}{s:<6}{s} {s}{d}{s} {s}{d}B{s}",
-            .{
-                Ansi.cyan,                  "http",       Ansi.reset,
-                status_color(event.status), event.status, Ansi.reset,
-                Ansi.dim,                   event.bytes,  Ansi.reset,
-            },
-        ),
-        .ws_message => |event| try writer.print(
-            "{s}{s:<6}{s} {s}{s} {s}{d}B{s}",
-            .{
-                Ansi.yellow,                             "ws",       Ansi.reset,
-                if (event.is_text) "text" else "binary", Ansi.reset, Ansi.dim,
-                event.payload_len,                       Ansi.reset,
-            },
-        ),
-        .metric => |event| try write_metric(writer, record.direction, event),
+        .http_request => |event| try write_http_line(writer, record.timestamp_ms, event),
+        .connection_opened => |event| {
+            try write_prefix(writer, record);
+            try writer.print("{s}{s:<6}{s} #{d} accepted", .{
+                Ansi.magenta, "conn", Ansi.reset, event.index,
+            });
+        },
+        .connection_closed => |event| {
+            try write_prefix(writer, record);
+            try writer.print("{s}{s:<6}{s} #{d} closed", .{
+                Ansi.magenta, "conn", Ansi.reset, event.index,
+            });
+        },
+        .ws_message => |event| {
+            try write_prefix(writer, record);
+            try writer.print("{s}{s:<6}{s} {s}{s} {s}{d}B", .{
+                Ansi.yellow,
+                "ws",
+                Ansi.reset,
+                if (event.is_text) "text" else "binary",
+                Ansi.reset,
+                Ansi.dim,
+                event.payload_len,
+            });
+        },
+        .metric => |event| {
+            try write_prefix(writer, record);
+            try write_metric(writer, record.direction, event);
+        },
     }
     try writer.writeAll(Ansi.reset);
     try writer.writeByte('\n');
 }
 
-fn write_clock(writer: *std.Io.Writer, timestamp_ms: i64, level: Level) std.Io.Writer.Error!void {
+fn write_prefix(writer: *std.Io.Writer, record: Record) std.Io.Writer.Error!void {
+    try write_clock(writer, record.timestamp_ms, record.level);
+    try writer.writeByte(' ');
+    try writer.writeAll(direction_badge(record.direction));
+    try writer.writeByte(' ');
+}
+
+/// Writes one Vite-style request line: `HH:MM:SS | [METHOD] /path : STATUS`.
+fn write_http_line(
+    writer: *std.Io.Writer,
+    timestamp_ms: i64,
+    event: RequestEvent,
+) std.Io.Writer.Error!void {
+    try write_clock_short(writer, timestamp_ms);
+    try writer.print(" | {s}[{s}]{s} {s} : {s}{d}{s}", .{
+        Ansi.cyan,
+        event.method,
+        Ansi.reset,
+        event.path,
+        status_color(event.status),
+        event.status,
+        Ansi.reset,
+    });
+}
+
+/// Wall-clock fields derived from an epoch-millisecond timestamp.
+const ClockParts = struct {
+    hours: u64,
+    minutes: u64,
+    seconds: u64,
+    millis: u64,
+};
+
+fn clock_parts(timestamp_ms: i64) ClockParts {
     const day_ms = @mod(timestamp_ms, std.time.ms_per_day);
-    const hours: u64 = @intCast(@divTrunc(day_ms, std.time.ms_per_hour));
-    const minutes: u64 = @intCast(@divTrunc(@mod(day_ms, std.time.ms_per_hour), std.time.ms_per_min));
-    const seconds: u64 = @intCast(@divTrunc(@mod(day_ms, std.time.ms_per_min), std.time.ms_per_s));
-    const millis: u64 = @intCast(@mod(day_ms, std.time.ms_per_s));
+    return .{
+        .hours = @intCast(@divTrunc(day_ms, std.time.ms_per_hour)),
+        .minutes = @intCast(@divTrunc(@mod(day_ms, std.time.ms_per_hour), std.time.ms_per_min)),
+        .seconds = @intCast(@divTrunc(@mod(day_ms, std.time.ms_per_min), std.time.ms_per_s)),
+        .millis = @intCast(@mod(day_ms, std.time.ms_per_s)),
+    };
+}
+
+fn write_clock(writer: *std.Io.Writer, timestamp_ms: i64, level: Level) std.Io.Writer.Error!void {
+    const parts = clock_parts(timestamp_ms);
     try writer.print("{s}{d:0>2}:{d:0>2}:{d:0>2}.{d:0>3}{s}", .{
         level_color(level),
-        hours,
-        minutes,
-        seconds,
-        millis,
+        parts.hours,
+        parts.minutes,
+        parts.seconds,
+        parts.millis,
+        Ansi.reset,
+    });
+}
+
+fn write_clock_short(writer: *std.Io.Writer, timestamp_ms: i64) std.Io.Writer.Error!void {
+    const parts = clock_parts(timestamp_ms);
+    try writer.print("{s}{d:0>2}:{d:0>2}:{d:0>2}{s}", .{
+        Ansi.dim,
+        parts.hours,
+        parts.minutes,
+        parts.seconds,
         Ansi.reset,
     });
 }

@@ -120,10 +120,11 @@ The full capacity table, slab layout, and backpressure model are in
 
 ## Terminal development log
 
-`with_dev_log(true)` renders connection, HTTP, and WebSocket events as colored
-lines from fixed stack buffers. Each worker thread batches records in a
-thread-local sink, so the event loop never allocates and a stalled terminal
-cannot block it.
+`with_dev_log(true)` prints the `UWEBSOCKETS` wordmark at startup and logs
+requests Vite-style as `HH:MM:SS | [METHOD] /path : STATUS`, plus colored
+connection, WebSocket, and metric lines. Everything renders from fixed stack
+buffers, and each worker thread batches records in a thread-local sink, so the
+event loop never allocates and a stalled terminal cannot block it.
 
 ```zig
 var server = try uz.Server.builder(init.io)
@@ -138,9 +139,10 @@ try server.run();
 ```
 
 Every record carries an explicit direction (`data_in` or `data_out`) and a
-named event payload. `App.log_metrics` adds a snapshot of the bounded
-Prometheus registry, and `App.set_dev_log_file` redirects output from stderr.
-`zig build dev_log_server` runs the complete example.
+named event payload. `ServerConfig.enable_dev_log` is the toggle: false keeps
+every development-log write silent. `App.log_metrics` adds a snapshot of the
+bounded Prometheus registry, and `App.set_dev_log_file` redirects output from
+stderr. `zig build dev_log_server` runs the complete example.
 
 ## Examples
 

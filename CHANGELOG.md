@@ -19,14 +19,19 @@ stalled terminal. Wire behavior, capacities, and the C ABI are unchanged.
   and counts dropped lines. `thread_sink()` returns the sink owned by the
   calling thread, so recording needs no lock or atomic and the transport can
   reach a batch without threading a logger pointer through every callback.
+- HTTP requests log Vite-style as `HH:MM:SS | [METHOD] /path : STATUS` with a
+  dim clock, cyan method, and green, cyan, yellow, or red status by class. The
+  exact `UWEBSOCKETS` wordmark from a Zig multiline string is written and
+  flushed once at startup.
 - `dev_log.Record` carries the wall clock, severity, and an explicit
   `Direction` (`data_in` or `data_out`) beside a named event payload
-  (`connection_opened`, `connection_closed`, `http_request`, `http_response`,
-  `ws_message`, `metric`), so no ambient logger state exists.
-- `ServerConfig.dev_log` and `Server.builder().with_dev_log(true)` enable the
-  log. Records go to stderr by default; `App.set_dev_log_file` binds another
+  (`connection_opened`, `connection_closed`, `http_request`, `ws_message`,
+  `metric`), so no ambient logger state exists.
+- `ServerConfig.enable_dev_log` and `Server.builder().with_dev_log(true)` opt
+  in. Records go to stderr by default; `App.set_dev_log_file` binds another
   output. `App.flush_dev_log` and `App.log_metrics` expose the batch and the
   counter snapshot, and a 1-second recurring timer drains low-traffic logs.
+  Leaving the toggle false silences every development-log write.
 - `examples/dev_log_server.zig` and the `zig build dev_log_server` step show
   the colored log with HTTP routes, a WebSocket echo, and a metric snapshot.
 - Unit coverage in `src/tests/dev_log_tests.zig` pins the rendered byte

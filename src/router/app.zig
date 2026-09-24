@@ -252,7 +252,7 @@ pub fn configured_app_with_timeout(
                 .metrics_registry = layout.metrics_registry,
                 .metrics_enabled = config.observability,
                 .metrics_path = if (config.observability) config.metrics_path else "/metrics",
-                .dev_log_enabled = config.dev_log,
+                .dev_log_enabled = config.enable_dev_log,
                 .pubsub = .{},
             };
 
@@ -974,10 +974,11 @@ pub fn configured_app_with_timeout(
             self.running = true;
             defer self.running = false;
             if (self.dev_log_enabled) {
-                dev_log_module.thread_sink().enable(
-                    self.io,
-                    self.dev_log_file orelse std.Io.File.stderr(),
-                );
+                const sink = dev_log_module.thread_sink();
+                sink.enable(self.io, self.dev_log_file orelse std.Io.File.stderr());
+                // The wordmark belongs to startup, so it bypasses the batch.
+                sink.record_banner();
+                _ = sink.flush();
                 if (self.dev_log_timer == null) {
                     // A periodic drain keeps low-traffic logs visible; a failed
                     // arm still leaves capacity-triggered flushes working.

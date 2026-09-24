@@ -171,11 +171,11 @@ pub fn configured_builder(comptime config: ServerConfig) type {
             return .{ .io = self.io };
         }
 
-        /// Writes colored development-log records to the terminal when enabled.
+        /// Writes the startup wordmark and colored request lines when enabled.
         pub fn with_dev_log(
             self: Self,
             comptime enabled: bool,
-        ) configured_builder(config.with(.{ .dev_log = enabled })) {
+        ) configured_builder(config.with(.{ .enable_dev_log = enabled })) {
             return .{ .io = self.io };
         }
 

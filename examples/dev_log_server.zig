@@ -7,9 +7,10 @@
 //!   curl -i http://127.0.0.1:3000/metrics
 //!   npx wscat -c ws://127.0.0.1:3000/echo
 //!
-//! Connection, HTTP, and WebSocket events are written to stderr by the worker
-//! thread that owns the event loop. `GET /snapshot` records every Prometheus
-//! counter into the same log, and `GET /metrics` serves the registry.
+//! The startup wordmark and Vite-style request lines are written to stderr by
+//! the worker thread that owns the event loop. `GET /snapshot` records every
+//! Prometheus counter into the same log, and `GET /metrics` serves the
+//! registry. Set `ServerConfig.enable_dev_log` to false to silence it all.
 
 const std = @import("std");
 const uz = @import("uWebZockets");
