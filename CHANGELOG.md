@@ -51,11 +51,26 @@ Fixed and Security. The C ABI version moves to 1.4.0 with no structural change.
   options. It fuzzes query slicing, percent/form decoding, and `Accept`
   negotiation, and asserts that every borrowed slice stays inside the parsed
   input. The Smith harness in `zig build test` runs the same code paths.
+- `Response.begin_json` returns a `JsonStream` that coalesces JSON into a
+  fixed stack buffer and writes chunked response parts, so arbitrarily large
+  JSON costs no allocation. Use `stream.stringify()` with `std.json.Stringify`,
+  `stream.write`/`write_chunk` for raw bytes with transport errors intact, and
+  `stream.end()` to finish. Body size is bounded by the configured
+  `with_write_queue_size` ring, not by a rendering buffer.
+- Query capacity is no longer fixed at 32: `query.QueryParamsOf(capacity)`,
+  `Request.query_params_of(capacity)`, and `form.parse_of(capacity, ...)`
+  specialize the fixed pair table at compile time; the existing default names
+  and overflow behavior are unchanged.
 
 ### Changed
 
 - `Response.json_buf` and `Response.json` document their polymorphic contract
   (`std.json.Stringify`-compatible values); their behavior is unchanged.
+- HTTP/1.1 response heads (status line, pending fields, explicit fields,
+  terminator, body) are written as scatter parts instead of concatenating into
+  a fixed buffer. Header size is now bounded by the per-connection write ring
+  rather than roughly 4 KiB; HTTP/2 and HTTP/3 keep their own bounded metadata
+  storage and limits.
 
 ### Fixed
 

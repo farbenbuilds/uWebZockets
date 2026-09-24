@@ -21,7 +21,9 @@ allocating public request APIs. Everything else returns `error.WouldBlock` or a
 specific bounded error instead of growing memory. Query and form parsing
 (`Request.query_params`, `Request.form`), percent decoding, error documents,
 `Accept` scoring, ETag matching, and the cookie helpers all slice or format into
-caller-owned storage and never allocate.
+caller-owned storage and never allocate. `Response.begin_json` streams JSON
+through a fixed stack buffer into chunked response parts, so body size is
+bounded by the configured write queue rather than by a rendering buffer.
 
 ## The startup slab
 
@@ -115,7 +117,7 @@ The defaults are deliberately finite:
 | --- | ---: |
 | Request line | 8 KiB |
 | HTTP headers | 16 KiB total, 64 fields |
-| Query and form pairs | 32 per request |
+| Query and form pairs | 32 default; compile-time `query.QueryParamsOf` capacity |
 | HTTP request body | 16 KiB default; `ServerConfig.max_body_size` |
 | Routes | 256 radix nodes |
 | Parameterized routes | 64 patterns, 16 captures per request |
@@ -152,7 +154,9 @@ creating a delayed-ACK wrap split. Producers observe `error.WouldBlock`
 instead of causing unbounded memory growth; WebSocket routes use the `drain`
 callback and `buffered_amount` to resume producers. Chunk headers, bodies, and
 terminators are copied into the same ring as parts, so chunked responses need no
-per-connection scratch.
+per-connection scratch. HTTP/1.1 heads are scatter-written the same way, so a
+response with thousands of header fields is bounded by the ring, not by a fixed
+header-formatting buffer; `with_write_queue_size` sizes that ring per server.
 
 ## DX rejection documents
 

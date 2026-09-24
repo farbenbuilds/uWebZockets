@@ -123,15 +123,19 @@ The full capacity table, slab layout, and backpressure model are in
 `Request` and `Response` carry allocation-free helpers for the common API
 surface. `Request.query_params()` and `Request.form()` slice query and form
 pairs out of the bounded buffer with SIMD byte scans into a fixed
-struct-of-arrays view; `percent_decode` and `form_decode` decode escapes into
-caller-owned scratch. `Request.accepts()` scores the `Accept` field,
-`Response.json_value` writes dynamic `std.json.Value` payloads,
-`errors.Problem` renders typed JSON error documents, `status.line` maps codes
-to canonical status lines, `cache.etag` and `cache.is_not_modified` implement
-conditional GET, `schema` validates decoded JSON against comptime rules, and
-`cookie` adds a zero-copy header iterator plus versioned signing for key
-rotation. Every helper reuses the existing bounded buffers and stays off the
-heap on the request path.
+struct-of-arrays view; `query.QueryParamsOf(capacity)` and
+`Request.query_params_of(capacity)` raise that capacity at compile time.
+`percent_decode` and `form_decode` decode escapes into caller-owned scratch.
+`Request.accepts()` scores the `Accept` field, `Response.json_value` writes
+dynamic `std.json.Value` payloads, `Response.begin_json()` returns a streaming
+chunk writer for arbitrarily large JSON without allocation, `errors.Problem`
+renders typed JSON error documents, `status.line` maps codes to canonical
+status lines, `cache.etag` and `cache.is_not_modified` implement conditional
+GET, `schema` validates decoded JSON against comptime rules, and `cookie` adds
+a zero-copy header iterator plus versioned signing for key rotation. HTTP/1.1
+response heads are written as scatter parts, so header size is bounded by the
+configured write queue instead of a fixed formatting buffer. Every helper reuses
+the existing bounded buffers and stays off the heap on the request path.
 
 ## Terminal development log
 
