@@ -3,6 +3,69 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.3.5] - 2026-09-24
+
+This release refreshes every pinned dependency. zslay moves to 0.2.1, lsquic
+to 4.10.0, and BoringSSL and ls-hpack advance to their latest upstream
+revisions; the lsquic overlay is regenerated against the new source. libxev,
+ls-qpack, libdeflate, and zlib were already at their latest upstream refs.
+The C ABI is unchanged; the Zig capability constant rename below is the only
+source-level break.
+
+### Added
+
+- lsquic 4.10.0 exposes `lsquic_conn_get_full_peer_cert_chain()` and adds the
+  `es_max_crypto_stash` engine setting that bounds how many out-of-order
+  CRYPTO frames a connection stashes. `lsquic_engine_init_settings` now
+  applies the upstream default of 20, so the bound is active without a source
+  change.
+
+### Changed
+
+- Dependency: zslay 0.2.0 to 0.2.1 (`farbenbuilds/zslay`). The release changes
+  only packaging and Nix metadata, so no call site moved.
+- Dependency: BoringSSL `7c1efd8d6ffb36a57feba44e8c73cf674801f3cb` to
+  `5fbad2285b096858fc9afa3e4c949fde39452070` (123 upstream commits). The build
+  still reads `gen/sources.json`, so upstream added or removed translation
+  units compile without a local source-list edit; no public symbol used by
+  µWebZockets changed.
+- Dependency: lsquic 4.9.3 (`19547405c24f60c4537478d38f4214e990be1f95`) to
+  4.10.0 (`d5929af7cec6fd74f1cfea2cb1c07c27ce9102b1`).
+  `patches/lsquic_h3_message_error.patch` applies unchanged to the new
+  revision, `vendor/lsquic_overlay` was regenerated from the patched sources,
+  and `lsquic_versions_to_string.c` names 4.10.0 with an unchanged version
+  enum. `scripts/check_vendor_overlay.sh` passes.
+- Dependency: ls-hpack `cf0f70dd10b352194c97448eb5d00b4aa484f531` to
+  `38ceca78054d4175ba3f6411b1b83ac5c485e542`. Upstream treats over-long EOS
+  padding as malformed and fixes a 32-bit fall-through warning; no call site
+  moved.
+- `http3_extensions.lsquic_4_9_3_capabilities` is renamed to
+  `lsquic_4_10_0_capabilities` to track the pinned backend. Migration: replace
+  the constant name; the value is unchanged (`.quic_datagrams = true`).
+- libxev remains pinned to upstream `main`
+  `9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf`, ls-qpack remains at
+  `91567706c41c0d97ab8dc576873ecd472d7869fa`, libdeflate remains at
+  `92e6a0db9fa848d742f9eb286c92afc60f2c3dda` (past the v1.26 tag), and zlib
+  remains at 1.3.2. Upstream publishes no newer ref for any of them.
+- `build.zig.zon.json`, `build.zig.zon.nix`, and `build.zig.zon.txt` were
+  regenerated with zon2nix for the zslay 0.2.1 package hash, the BoringSSL and
+  lsquic revisions, and the ls-hpack revision.
+- Version metadata was bumped to 1.3.5 across `build.zig.zon`,
+  `src/version.zig`, `flake.nix`, `include/uWebZockets.h`, the C and C++
+  version tests, and the documentation headers.
+- Documentation references were refreshed in `README.md`, `SKILL.md`,
+  `CODEBASE.md`, `THIRD_PARTY_NOTICES.md`, and the WebSocket and TLS agent
+  guides.
+
+### Security
+
+- ls-hpack rejects over-long EOS padding as malformed instead of accepting it
+  as valid input.
+- lsquic 4.10.0 bounds stashed out-of-order CRYPTO frames at 20 by default,
+  limiting the memory a peer can force before the connection aborts.
+- BoringSSL advances 123 commits, including the PKI `CertStatus` length check
+  and the `X509_verify_cert` issuer-decoding fix.
+
 ## [1.3.0] - 2026-09-24
 
 This release adds a terminal development log. It renders connection,

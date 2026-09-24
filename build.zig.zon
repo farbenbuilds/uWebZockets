@@ -1,13 +1,13 @@
 .{
     .name = .uWebZockets,
-    .version = "1.3.0",
+    .version = "1.3.5",
     .fingerprint = 0xbbf152173cd23d48,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         // farbenbuilds/zslay
         .zslay = .{
-            .url = "https://github.com/farbenbuilds/zslay/archive/refs/tags/v0.2.0.tar.gz",
-            .hash = "zslay-0.2.0-OB-IfBl0AQBrzPknHiL6g7qSDbTmUPeYsMn0DwXsLtEE",
+            .url = "https://github.com/farbenbuilds/zslay/archive/refs/tags/v0.2.1.tar.gz",
+            .hash = "zslay-0.2.1-OB-IfBl0AQCHCIVUH0AbAjErcCG_LNkaLp8Gz1BUXnoy",
         },
 
         // mitchellh/libxev
@@ -18,14 +18,14 @@
 
         // google/boringssl — Google LLC
         .boringssl = .{
-            .url = "git+https://github.com/google/boringssl#7c1efd8d6ffb36a57feba44e8c73cf674801f3cb",
-            .hash = "N-V-__8AAEhRag6gHL85MNqOxGFtJs5Lu9fK22BDYLMwOJs6",
+            .url = "git+https://github.com/google/boringssl#5fbad2285b096858fc9afa3e4c949fde39452070",
+            .hash = "N-V-__8AAOwHdQ5FYM2zAEn_gDBFEdKKYEl0JirYRSR7y_Sk",
         },
 
         // litespeedtech/lsquic — LiteSpeed Technologies Inc.
         .lsquic = .{
-            .url = "git+https://github.com/litespeedtech/lsquic#19547405c24f60c4537478d38f4214e990be1f95",
-            .hash = "N-V-__8AAEX0ZgBgVniQX-qATrDP4ov_8tG_hi3LzhSAHPX-",
+            .url = "git+https://github.com/litespeedtech/lsquic#d5929af7cec6fd74f1cfea2cb1c07c27ce9102b1",
+            .hash = "N-V-__8AABlSZwC2bZHS0kM4Fi6Cz3MPxNN3TFeim4QI6R9A",
         },
 
         // litespeedtech/ls-qpack — LiteSpeed Technologies Inc.
@@ -36,8 +36,8 @@
 
         // litespeedtech/ls-hpack — LiteSpeed Technologies Inc.
         .lshpack = .{
-            .url = "git+https://github.com/litespeedtech/ls-hpack#cf0f70dd10b352194c97448eb5d00b4aa484f531",
-            .hash = "N-V-__8AADNAVQBZXGMh1JSQZTQy_atNLBkNpWHtvEykxldT",
+            .url = "git+https://github.com/litespeedtech/ls-hpack#38ceca78054d4175ba3f6411b1b83ac5c485e542",
+            .hash = "N-V-__8AABFJVQBMmGjr7hbydaG9qS3FWrGChwmOj7c-A6Xy",
         },
 
         // ebiggers/libdeflate — Eric Biggers

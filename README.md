@@ -121,7 +121,7 @@ The full capacity table, slab layout, and backpressure model are in
 ## Terminal development log
 
 `with_dev_log(true)` prints the `µWEBZOCKETS` wordmark and a Vite-style ready
-summary before the first accepting listener: `µWebZockets v1.3.0  ready in
+summary before the first accepting listener: `µWebZockets v1.3.5  ready in
 0.6 ms` followed by the `→ Local:` line; the elapsed time scales
 through nanoseconds, microseconds, milliseconds, and seconds. The wordmark
 collapses to a one-line `µWebZockets` mark when the terminal is narrower than
@@ -211,7 +211,7 @@ snapshots, and the current source tree may include unreleased changes.
 [![h1spec Compliance](https://github.com/farbenbuilds/uWebZockets/actions/workflows/h1spec_compliance.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/h1spec_compliance.yml)
 [![Benchmark](https://github.com/farbenbuilds/uWebZockets/actions/workflows/benchmark.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/benchmark.yml)
 
-BoringSSL provides TLS, libxev drives non-blocking I/O, zslay 0.2.0 provides the
+BoringSSL provides TLS, libxev drives non-blocking I/O, zslay 0.2.1 provides the
 WebSocket frame state machine, and lsquic provides QUIC. Zig compiles BoringSSL,
 lsquic (with ls-qpack and ls-hpack), libdeflate, and zlib from pinned packages,
 so the build needs only Zig. Use a released tag or pin an exact source commit.

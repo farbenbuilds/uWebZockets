@@ -1475,11 +1475,13 @@ verify_cl_on_fin (struct lsquic_stream *stream)
 {
     struct lsquic_conn *lconn;
 
-    /* The rules in RFC7230, Section 3.3.2 are a bit too intricate.  We take
-     * a simple approach and verify content-length only when there was any
-     * payload at all.
+    /* HTTP/3 permits some responses that never have content to carry a
+     * non-zero Content-Length.  This stream layer does not track those
+     * response semantics, so tighten the zero-payload check only for
+     * server-side request streams.
      */
-    if (stream->sm_data_in != 0 && stream->sm_cont_len != stream->sm_data_in)
+    if ((stream->sm_data_in != 0 || (stream->sm_bflags & SMBF_SERVER))
+                                    && stream->sm_cont_len != stream->sm_data_in)
     {
         lconn = stream->conn_pub->lconn;
         lconn->cn_if->ci_abort_error(lconn, 1, HEC_MESSAGE_ERROR,
@@ -4098,12 +4100,15 @@ static int
 send_headers_ietf (struct lsquic_stream *stream,
                             const struct lsquic_http_headers *headers, int eos)
 {
+    struct stream_hq_frame *sfh = NULL;
     enum qwh_status qwh;
     const size_t max_prefix_size =
                     lsquic_qeh_max_prefix_size(stream->conn_pub->u.ietf.qeh);
     const size_t max_push_size = 1 /* Stream type */ + 8 /* Push ID */;
     size_t prefix_sz, headers_sz, hblock_sz, push_sz;
-    ssize_t nw;
+    ssize_t nw = 0;
+    const uint64_t tosend_off = stream->tosend_off;
+    const unsigned short n_buffered = stream->sm_n_buffered;
     unsigned char *header_block;
     enum lsqpack_enc_header_flags hflags;
     int rv;
@@ -4149,9 +4154,10 @@ send_headers_ietf (struct lsquic_stream *stream,
     /* Construct contiguous header block buffer including HQ framing */
     header_block = buf + max_push_size + max_prefix_size - prefix_sz - push_sz;
     hblock_sz = push_sz + prefix_sz + headers_sz;
-    if (!stream_activate_hq_frame(stream,
+    sfh = stream_activate_hq_frame(stream,
                 stream->sm_payload + stream->sm_n_buffered + push_sz,
-                HQFT_HEADERS, SHF_FIXED_SIZE, hblock_sz - push_sz))
+                HQFT_HEADERS, SHF_FIXED_SIZE, hblock_sz - push_sz);
+    if (!sfh)
         goto err;
 
     if (qwh == QWH_FULL)
@@ -4212,6 +4218,21 @@ send_headers_ietf (struct lsquic_stream *stream,
     return rv;
 
   err:
+    if (tosend_off == stream->tosend_off && n_buffered == stream->sm_n_buffered)
+    {
+        /* No bytes have been written: user can retry */
+        stream->sm_send_headers_state = SSHS_BEGIN;
+        if (sfh)
+            stream_hq_frame_put(stream, sfh);
+    }
+    else if (!(stream->sm_qflags & SMQF_ABORT_CONN))
+    {
+        /* The header block has been partially written.  It cannot be retried
+         * without corrupting the HTTP/3 stream, so reset the stream.
+         */
+        stream->sm_send_headers_state = SSHS_BEGIN;
+        stream_reset(stream, HEC_INTERNAL_ERROR, 1);
+    }
     rv = -1;
     goto clean;
 }
@@ -4373,25 +4394,25 @@ lsquic_stream_conn (const lsquic_stream_t *stream)
 #if LSQUIC_WEBTRANSPORT_SERVER_SUPPORT
 void
 lsquic_stream_set_webtransport_session(lsquic_stream_t *s) {
-    s->stream_flags |= SMBF_WEBTRANSPORT_SESSION_STREAM;
+    s->sm_bflags |= SMBF_WEBTRANSPORT_SESSION_STREAM;
 }
 
 
 int
 lsquic_stream_is_webtransport_session(const lsquic_stream_t *s) {
-    return (s->stream_flags & SMBF_WEBTRANSPORT_SESSION_STREAM);
+    return (s->sm_bflags & SMBF_WEBTRANSPORT_SESSION_STREAM);
 }
 
 
 int
 lsquic_stream_is_webtransport_client_bidi_stream(const lsquic_stream_t *s) {
-    return (s->stream_flags & SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM);
+    return (s->sm_bflags & SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM);
 }
 
 
 int
 lsquic_stream_get_webtransport_session_stream_id(const lsquic_stream_t *s) {
-    if(s->stream_flags & SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM)
+    if(s->sm_bflags & SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM)
     {
         return s->webtransport_session_stream_id;
     }
@@ -4948,7 +4969,7 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                     // check webtransport_session_stream_id availability as well SMBF_WEBTRANSPORT_SESSION_STREAM
                     // flag for webtransport_session_stream_id stream in app code
                     stream->webtransport_session_stream_id = filter->hqfi_webtransport_session_id;
-                    stream->stream_flags |= SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM;
+                    stream->sm_bflags |= SMBF_WEBTRANSPORT_CLIENT_BIDI_STREAM;
                     // disable header processing as we will not have any headers for this stream anymore
                     stream->sm_bflags &= ~SMBF_USE_HEADERS;
                     filter->hqfi_type = HQFT_DATA;

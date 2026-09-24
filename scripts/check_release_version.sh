@@ -78,5 +78,11 @@ grep -Fq "µWebZockets $expected_version is" CODEBASE.md ||
     fail "CODEBASE.md version is stale"
 grep -Fq "# µWebZockets $expected_version Examples" \
     examples/readme_examples_test.md || fail "example documentation version is stale"
+grep -Fq "µWebZockets v$expected_version" README.md ||
+    fail "README.md ready-summary version is stale"
+grep -Fq "µWebZockets v$expected_version" examples/readme_examples_test.md ||
+    fail "example ready-summary version is stale"
+grep -Fq "\x1b[2mv$expected_version\x1b[0m" src/tests/dev_log_tests.zig ||
+    fail "terminal dev-log test version is stale"
 
 printf '%s\n' "release metadata matches $expected_version"

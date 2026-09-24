@@ -103,11 +103,11 @@ let
 in
 linkFarm name [
   {
-    name = "N-V-__8AAEhRag6gHL85MNqOxGFtJs5Lu9fK22BDYLMwOJs6";
+    name = "N-V-__8AAOwHdQ5FYM2zAEn_gDBFEdKKYEl0JirYRSR7y_Sk";
     path = fetchZigArtifact {
       name = "boringssl";
-      url = "git+https://github.com/google/boringssl#7c1efd8d6ffb36a57feba44e8c73cf674801f3cb";
-      hash = "sha256-AWR4kyG7NTmp8ZVbF1St3RzoVsfpwBXjWHcCai3qx1Q=";
+      url = "git+https://github.com/google/boringssl#5fbad2285b096858fc9afa3e4c949fde39452070";
+      hash = "sha256-4vt/yjZwgtEVpgZ9CUGjJqKz0HcbOvuozPtmBeKcjlM=";
       unpack = true;
     };
   }
@@ -130,11 +130,11 @@ linkFarm name [
     };
   }
   {
-    name = "N-V-__8AADNAVQBZXGMh1JSQZTQy_atNLBkNpWHtvEykxldT";
+    name = "N-V-__8AABFJVQBMmGjr7hbydaG9qS3FWrGChwmOj7c-A6Xy";
     path = fetchZigArtifact {
       name = "lshpack";
-      url = "git+https://github.com/litespeedtech/ls-hpack#cf0f70dd10b352194c97448eb5d00b4aa484f531";
-      hash = "sha256-ffNVUXDK76tBx+4j5otg3zji1s1VF5t0YsGpgK7xzis=";
+      url = "git+https://github.com/litespeedtech/ls-hpack#38ceca78054d4175ba3f6411b1b83ac5c485e542";
+      hash = "sha256-JeXjNds4Gc+dkieA0TQmbhoPvozAx/23FO8HgjQu5wE=";
       unpack = true;
     };
   }
@@ -148,11 +148,11 @@ linkFarm name [
     };
   }
   {
-    name = "N-V-__8AAEX0ZgBgVniQX-qATrDP4ov_8tG_hi3LzhSAHPX-";
+    name = "N-V-__8AABlSZwC2bZHS0kM4Fi6Cz3MPxNN3TFeim4QI6R9A";
     path = fetchZigArtifact {
       name = "lsquic";
-      url = "git+https://github.com/litespeedtech/lsquic#19547405c24f60c4537478d38f4214e990be1f95";
-      hash = "sha256-vOlglXcMRTsnnSvYuwzqUVBSfsykzJ+I4UkRRa1bz5w=";
+      url = "git+https://github.com/litespeedtech/lsquic#d5929af7cec6fd74f1cfea2cb1c07c27ce9102b1";
+      hash = "sha256-kb47Ibl3S9sBsNuhyaYhh1ix9Jb60FOMkCGVD6FIizU=";
       unpack = true;
     };
   }
@@ -166,11 +166,11 @@ linkFarm name [
     };
   }
   {
-    name = "zslay-0.2.0-OB-IfBl0AQBrzPknHiL6g7qSDbTmUPeYsMn0DwXsLtEE";
+    name = "zslay-0.2.1-OB-IfBl0AQCHCIVUH0AbAjErcCG_LNkaLp8Gz1BUXnoy";
     path = fetchZigArtifact {
       name = "zslay";
-      url = "https://github.com/farbenbuilds/zslay/archive/refs/tags/v0.2.0.tar.gz";
-      hash = "sha256-cpjCxHTkPNJRPd3f7YgyxFK1UlY86CZljOdr8gCevXQ=";
+      url = "https://github.com/farbenbuilds/zslay/archive/refs/tags/v0.2.1.tar.gz";
+      hash = "sha256-ogoYdgzWM0nD/Q8rUE37UzH1tXCPEWHs7Fm60nqbU54=";
       unpack = true;
     };
   }
