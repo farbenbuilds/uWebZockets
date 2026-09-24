@@ -84,6 +84,18 @@ rewrite examples/readme_examples_test.md \
     '^# µWebZockets [0-9][0-9.]* Examples$' \
     "# µWebZockets $new_version Examples"
 
+rewrite README.md \
+    'µWebZockets v[0-9][0-9.]*' \
+    "µWebZockets v$new_version"
+
+rewrite examples/readme_examples_test.md \
+    'µWebZockets v[0-9][0-9.]*' \
+    "µWebZockets v$new_version"
+
+rewrite src/tests/dev_log_tests.zig \
+    '\[2mv[0-9][0-9.]*' \
+    "[2mv$new_version"
+
 if grep -Fq "## [$new_version] -" CHANGELOG.md; then
     printf '%s\n' "CHANGELOG.md already has a $new_version section"
 else

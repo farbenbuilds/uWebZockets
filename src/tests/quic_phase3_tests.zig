@@ -116,7 +116,7 @@ test "phase3: early data policy defers and rejects replay-unsafe forwarding" {
 test "phase3: pinned lsquic capabilities fail closed" {
     try std.testing.expectEqualDeep(
         extensions.BackendCapabilities{ .quic_datagrams = true },
-        extensions.lsquic_4_9_3_capabilities,
+        extensions.lsquic_4_10_0_capabilities,
     );
 }
 
@@ -126,7 +126,7 @@ test "phase3: push bookkeeping refuses the unsupported lsquic backend" {
     try pushes.apply_max_push_id(1);
     try std.testing.expectError(
         error.BackendUnsupported,
-        pushes.reserve(extensions.lsquic_4_9_3_capabilities),
+        pushes.reserve(extensions.lsquic_4_10_0_capabilities),
     );
 
     const capable = extensions.BackendCapabilities{ .server_push = true };
@@ -165,7 +165,7 @@ test "phase3: current WebTransport constants and settings round trip" {
     }));
     try std.testing.expectError(
         error.BackendUnsupported,
-        webtransport.require_backend(extensions.lsquic_4_9_3_capabilities),
+        webtransport.require_backend(extensions.lsquic_4_10_0_capabilities),
     );
 }
 
