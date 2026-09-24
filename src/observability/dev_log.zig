@@ -1,13 +1,13 @@
 //! Allocation-free terminal development log with ANSI colors.
 //!
 //! A `Sink` renders records into a fixed stack buffer using comptime format
-//! strings, then flushes whole batches with one bounded file operation. The
-//! transport reaches the owning thread's sink through `thread_sink`, so
-//! event-loop callbacks never allocate and never issue more than one write per
-//! full batch. HTTP requests render Vite-style as
-//! `HH:MM:SS | [METHOD] /path : STATUS` with a dim clock, cyan method, and
-//! status-class color. Recording is opt-in: a sink is silent until `enable`
-//! binds an output file, which keeps library defaults quiet.
+//! strings and writes them with one bounded file operation as soon as they are
+//! recorded, so every event is visible on the terminal without waiting for a
+//! timer or a full buffer. The transport reaches the owning thread's sink
+//! through `thread_sink`, so event-loop callbacks never allocate. HTTP requests
+//! render Vite-style as `HH:MM:SS | [METHOD] /path : STATUS` with a dim clock,
+//! cyan method, and status-class color. Recording is opt-in: a sink is silent
+//! until `enable` binds an output file, which keeps library defaults quiet.
 
 const std = @import("std");
 const metrics = @import("metrics.zig");
@@ -72,9 +72,9 @@ pub const Record = struct {
     event: Event,
 };
 
-/// Fixed batch capacity; a full buffer flushes before the next line.
+/// Fixed line-buffer capacity; oversized records are dropped.
 pub const capacity = 4096;
-/// Flush watermark: a non-empty batch drains below this free space.
+/// Buffer tail kept free so a pending batch can always take another line.
 pub const max_line_bytes = 256;
 
 /// Exact startup wordmark written once when the development log is enabled.
@@ -97,7 +97,7 @@ pub const FlushOutcome = struct {
 
 const slot_fields = @typeInfo(metrics.Slot).@"enum".fields;
 
-/// Thread-confined batched terminal sink.
+/// Thread-confined terminal sink.
 pub const Sink = struct {
     buffer: [capacity]u8 = undefined,
     len: usize = 0,
@@ -114,7 +114,7 @@ pub const Sink = struct {
         self.enabled = true;
     }
 
-    /// Appends the startup wordmark exactly, on its own line.
+    /// Appends the startup wordmark on its own line and writes it immediately.
     pub fn record_banner(self: *Sink) void {
         if (!self.enabled) return;
         if (self.buffer.len - self.len < banner.len + 1) _ = self.flush();
@@ -126,21 +126,20 @@ pub const Sink = struct {
         self.len += banner.len;
         self.buffer[self.len] = '\n';
         self.len += 1;
+        _ = self.flush();
     }
 
-    /// Appends one entry, flushing the batch first when the line cannot fit.
+    /// Appends one entry and writes it to the terminal immediately.
     pub fn record(self: *Sink, entry: Record) void {
         if (!self.enabled) return;
-        if (self.append(entry)) return;
+        self.append_entry(entry);
         _ = self.flush();
-        if (self.append(entry)) return;
-        self.dropped +|= 1;
     }
 
-    /// Writes the whole batch with one bounded file operation.
+    /// Writes every pending byte with one bounded file operation.
     ///
-    /// A short or failed write drops the pending bytes instead of retrying, so
-    /// a stalled terminal can never block or spin the event loop.
+    /// A short or failed write drops the pending bytes instead of retrying;
+    /// recording never allocates and never spins on a stalled terminal.
     pub fn flush(self: *Sink) FlushOutcome {
         if (!self.enabled or self.len == 0) return .{};
         const pending = self.buffer[0..self.len];
@@ -159,22 +158,33 @@ pub const Sink = struct {
         return .{ .written = written };
     }
 
-    /// Renders every registry counter in declaration order.
+    /// Renders every registry counter in declaration order as one write.
     pub fn record_metrics(
         self: *Sink,
         timestamp_ms: i64,
         direction: Direction,
         registry: *const metrics.Registry,
     ) void {
+        if (!self.enabled) return;
         inline for (slot_fields) |field| {
             const slot: metrics.Slot = @enumFromInt(field.value);
-            self.record(.{
+            self.append_entry(.{
                 .timestamp_ms = timestamp_ms,
                 .level = .info,
                 .direction = direction,
                 .event = .{ .metric = .{ .slot = slot, .value = registry.get(slot) } },
             });
         }
+        _ = self.flush();
+    }
+
+    /// Appends one entry, flushing pending bytes first when the buffer lacks
+    /// room, and counts the entry as dropped when it cannot fit at all.
+    fn append_entry(self: *Sink, entry: Record) void {
+        if (self.append(entry)) return;
+        _ = self.flush();
+        if (self.append(entry)) return;
+        self.dropped +|= 1;
     }
 
     fn append(self: *Sink, entry: Record) bool {

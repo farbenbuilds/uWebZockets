@@ -123,8 +123,10 @@ The full capacity table, slab layout, and backpressure model are in
 `with_dev_log(true)` prints the `µWEBZOCKETS` wordmark at startup and logs
 requests Vite-style as `HH:MM:SS | [METHOD] /path : STATUS`, plus colored
 connection, WebSocket, and metric lines. Everything renders from fixed stack
-buffers, and each worker thread batches records in a thread-local sink, so the
-event loop never allocates and a stalled terminal cannot block it.
+buffers, and each worker thread writes every record through its own
+thread-local sink as soon as it is recorded, so the terminal reflects the
+server in real time without allocating on the event loop. Failed or short
+writes drop the record instead of retrying.
 
 ```zig
 var server = try uz.Server.builder(init.io)

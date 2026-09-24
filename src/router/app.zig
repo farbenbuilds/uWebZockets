@@ -33,8 +33,6 @@ pub const default_max_ws_message_size = 16 * 1024;
 pub const default_write_queue_size = core_tcp.default_write_queue_capacity;
 /// Default inactivity timeout before an idle connection is closed.
 pub const default_idle_timeout_ms: u64 = 120_000;
-/// Interval between periodic development-log drains in milliseconds.
-pub const dev_log_flush_interval_ms: u64 = 1000;
 /// Reports whether the compiled lsquic transport is available.
 pub const http3_available = quic.available;
 
@@ -142,7 +140,6 @@ pub fn configured_app_with_timeout(
         metrics_path: []const u8 = "/metrics",
         dev_log_enabled: bool = false,
         dev_log_file: ?std.Io.File = null,
-        dev_log_timer: ?core_timer.TimerContext = null,
         ebpf_map_fd: i32 = -1,
         static_handlers: [max_static_routes]?*StaticFiles = .{null} ** max_static_routes,
         static_handler_count: u8 = 0,
@@ -347,8 +344,6 @@ pub fn configured_app_with_timeout(
                 sw.deinit();
             }
             self.sweeper = null;
-            if (self.dev_log_timer) |*timer| core_timer.deinit_timer(timer);
-            self.dev_log_timer = null;
             self.server = null;
 
             if (self.quic_transport) |*transport| transport.deinit();
@@ -414,7 +409,6 @@ pub fn configured_app_with_timeout(
             // Shutdown continues even if the cross-thread wakeup is already closed.
             if (self.cluster_wakeup) |*wakeup| wakeup.notify() catch {};
             if (self.sweeper) |*sw| sw.stop(&self.loop);
-            if (self.dev_log_timer) |*timer| core_timer.stop_timer(timer, &self.loop);
             if (self.server) |*server| core_tcp.close_server(server, &self.loop);
             if (self.quic_transport) |*transport| transport.shutdown();
 
@@ -976,18 +970,9 @@ pub fn configured_app_with_timeout(
             if (self.dev_log_enabled) {
                 const sink = dev_log_module.thread_sink();
                 sink.enable(self.io, self.dev_log_file orelse std.Io.File.stderr());
-                // The wordmark belongs to startup, so it bypasses the batch.
+                // The wordmark belongs to startup; it is written before the
+                // loop begins accepting work.
                 sink.record_banner();
-                _ = sink.flush();
-                if (self.dev_log_timer == null) {
-                    // A periodic drain keeps low-traffic logs visible; a failed
-                    // arm still leaves capacity-triggered flushes working.
-                    self.dev_log_timer = core_timer.init_timer(
-                        dev_log_flush_interval_ms,
-                        flush_dev_log_tick,
-                    ) catch null;
-                }
-                if (self.dev_log_timer) |*timer| core_timer.start_timer(timer, &self.loop);
             }
             self.arm_cluster_wakeup();
             try core_loop.run(&self.loop);
@@ -1000,13 +985,9 @@ pub fn configured_app_with_timeout(
             self.dev_log_file = file;
         }
 
-        /// Flushes this worker's pending development-log batch.
+        /// Writes any pending development-log bytes for this worker.
         pub fn flush_dev_log(self: *Self) void {
             if (!self.dev_log_enabled) return;
-            _ = dev_log_module.thread_sink().flush();
-        }
-
-        fn flush_dev_log_tick() void {
             _ = dev_log_module.thread_sink().flush();
         }
 

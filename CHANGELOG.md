@@ -7,18 +7,19 @@ uses Semantic Versioning.
 
 This release adds an opt-in terminal development log. It renders connection,
 HTTP, and WebSocket events plus the bounded Prometheus counters as colored
-lines from fixed stack buffers, and batches terminal writes through a
-thread-local sink so the event loop never allocates and never blocks on a
-stalled terminal. Wire behavior, capacities, and the C ABI are unchanged.
+lines from fixed stack buffers and writes every record through a thread-local
+sink as soon as it is recorded, so the terminal stays real time without
+allocating on the event loop. Wire behavior, capacities, and the C ABI are
+unchanged.
 
 ### Added
 
 - `src/observability/dev_log.zig` implements the allocation-free terminal log.
   `Sink` renders one record into a fixed 4096-byte buffer with comptime format
-  strings and ANSI colors, flushes whole batches with a single bounded write,
-  and counts dropped lines. `thread_sink()` returns the sink owned by the
-  calling thread, so recording needs no lock or atomic and the transport can
-  reach a batch without threading a logger pointer through every callback.
+  strings and ANSI colors, writes it with a single bounded write as soon as it
+  is recorded, and counts dropped lines. `thread_sink()` returns the sink owned
+  by the calling thread, so recording needs no lock or atomic and the transport
+  can reach it without threading a logger pointer through every callback.
 - HTTP requests log Vite-style as `HH:MM:SS | [METHOD] /path : STATUS` with a
   dim clock, cyan method, and green, cyan, yellow, or red status by class. The
   exact `µWEBZOCKETS` wordmark from a Zig multiline string is written and
@@ -29,13 +30,13 @@ stalled terminal. Wire behavior, capacities, and the C ABI are unchanged.
   `metric`), so no ambient logger state exists.
 - `ServerConfig.enable_dev_log` and `Server.builder().with_dev_log(true)` opt
   in. Records go to stderr by default; `App.set_dev_log_file` binds another
-  output. `App.flush_dev_log` and `App.log_metrics` expose the batch and the
-  counter snapshot, and a 1-second recurring timer drains low-traffic logs.
-  Leaving the toggle false silences every development-log write.
+  output. `App.flush_dev_log` and `App.log_metrics` expose any pending bytes and
+  the counter snapshot. Leaving the toggle false silences every
+  development-log write.
 - `examples/dev_log_server.zig` and the `zig build dev_log_server` step show
   the colored log with HTTP routes, a WebSocket echo, and a metric snapshot.
 - Unit coverage in `src/tests/dev_log_tests.zig` pins the rendered byte
-  sequences, batch and flush behavior, oversize drops, comptime metric names,
+  sequences, immediate write behavior, oversize drops, comptime metric names,
   and the thread-local sink identity.
 
 ### Changed

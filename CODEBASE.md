@@ -317,16 +317,15 @@ direction badge. Each record names the wall clock, severity, and an explicit
 logger state exists.
 
 `thread_sink` returns the sink owned by the calling thread. Every worker owns
-exactly one, so recording and flushing need no lock or atomic, and the
-transport reaches its batch without threading a logger pointer through every
-callback. `Sink.record` flushes the batch when a line cannot fit and drops
-oversized or failed lines with a counter. `Sink.flush` issues at most one
-bounded `writeStreaming` per batch and never retries a short write, so a
-stalled terminal cannot block or spin the event loop. `Sink.record_banner`
-writes the exact startup wordmark. When `ServerConfig.enable_dev_log` is set,
-the app enables the worker sink in `run`, writes and flushes the wordmark, arms
-a one-second recurring timer to drain low-traffic logs, and flushes the
-remainder when the loop exits; `App.set_dev_log_file` rebinds the default
+exactly one, so recording and writing need no lock or atomic, and the transport
+reaches its sink without threading a logger pointer through every callback.
+`Sink.record` writes the record immediately and drops oversized or failed lines
+with a counter; `Sink.record_metrics` writes the whole snapshot as one batch.
+`Sink.flush` issues at most one bounded `writeStreaming` per pending batch and
+never retries a short write. `Sink.record_banner` writes the exact startup
+wordmark. When `ServerConfig.enable_dev_log` is set, the app enables the worker
+sink in `run` and writes the wordmark before the loop starts; any pending bytes
+are drained when the loop exits. `App.set_dev_log_file` rebinds the default
 stderr output and `App.log_metrics` records the Prometheus registry in slot
 order. With the toggle false, the development log emits nothing at all.
 

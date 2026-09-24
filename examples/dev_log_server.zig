@@ -1,4 +1,4 @@
-//! Terminal development log: colored, allocation-free, batched terminal output.
+//! Terminal development log: colored, allocation-free, real-time terminal output.
 //!
 //! Build and run:
 //!   zig build dev_log_server -Doptimize=ReleaseSafe

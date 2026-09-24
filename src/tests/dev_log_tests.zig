@@ -65,7 +65,7 @@ test "disabled sink records nothing and flushes nothing" {
     try testing.expectEqual(@as(usize, 0), sink.flush().written);
 }
 
-test "sink batches records and flushes them to the bound file" {
+test "sink writes every record to the bound file immediately" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -79,32 +79,40 @@ test "sink batches records and flushes them to the bound file" {
         .direction = .data_in,
         .event = .{ .connection_opened = .{ .index = 3 } },
     });
+    try testing.expectEqual(@as(usize, 0), sink.len);
+
+    const first = try tmp.dir.readFileAlloc(
+        testing.io,
+        "dev_log.txt",
+        testing.allocator,
+        .limited(dev_log.capacity),
+    );
+    defer testing.allocator.free(first);
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, first, "\n"));
+    try testing.expect(std.mem.find(u8, first, "#3 accepted") != null);
+
     sink.record(.{
         .timestamp_ms = 1,
         .level = .info,
         .direction = .data_in,
         .event = .{ .ws_message = .{ .payload_len = 5, .is_text = true } },
     });
-
-    const outcome = sink.flush();
-    try testing.expect(!outcome.failed);
-    try testing.expect(outcome.written > 0);
     try testing.expectEqual(@as(usize, 0), sink.len);
-    file.close(testing.io);
 
-    const contents = try tmp.dir.readFileAlloc(
+    const second = try tmp.dir.readFileAlloc(
         testing.io,
         "dev_log.txt",
         testing.allocator,
         .limited(dev_log.capacity),
     );
-    defer testing.allocator.free(contents);
-    try testing.expectEqual(@as(usize, 2), std.mem.count(u8, contents, "\n"));
-    try testing.expect(std.mem.find(u8, contents, "#3 accepted") != null);
-    try testing.expect(std.mem.find(u8, contents, "text\x1b[0m \x1b[2m5B") != null);
+    defer testing.allocator.free(second);
+    try testing.expectEqual(@as(usize, 2), std.mem.count(u8, second, "\n"));
+    try testing.expect(std.mem.find(u8, second, "#3 accepted") != null);
+    try testing.expect(std.mem.find(u8, second, "text\x1b[0m \x1b[2m5B") != null);
+    file.close(testing.io);
 }
 
-test "oversized records are dropped instead of corrupting the batch" {
+test "oversized records are dropped instead of corrupting the log" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -124,7 +132,7 @@ test "oversized records are dropped instead of corrupting the batch" {
     try testing.expectEqual(@as(usize, 0), sink.len);
 }
 
-test "a full batch flushes without dropping any record" {
+test "a burst of records is written without dropping any record" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -142,8 +150,7 @@ test "a full batch flushes without dropping any record" {
             .event = .{ .http_request = .{ .method = "GET", .path = path, .status = 200 } },
         });
     }
-    const outcome = sink.flush();
-    try testing.expect(!outcome.failed);
+    try testing.expectEqual(@as(usize, 0), sink.len);
     try testing.expectEqual(@as(u64, 0), sink.dropped);
     try testing.expect(sink.written > 0);
     file.close(testing.io);
@@ -170,8 +177,6 @@ test "record_metrics renders every registry slot exactly once" {
     registry.add(.http_requests, 3);
     registry.add(.ws_messages, 9);
     sink.record_metrics(0, .data_out, &registry);
-    const outcome = sink.flush();
-    try testing.expect(!outcome.failed);
     file.close(testing.io);
 
     const contents = try tmp.dir.readFileAlloc(
@@ -222,8 +227,6 @@ test "record_banner appends the wordmark on its own line" {
     var sink = dev_log.Sink{};
     sink.enable(testing.io, file);
     sink.record_banner();
-    const outcome = sink.flush();
-    try testing.expect(!outcome.failed);
     file.close(testing.io);
 
     const contents = try tmp.dir.readFileAlloc(
