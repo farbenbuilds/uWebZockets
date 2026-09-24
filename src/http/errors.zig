@@ -26,24 +26,102 @@ const fallback_document = "{\"error\":{\"code\":\"internal\"}}";
 /// Content type shared by every error document.
 const content_type = "Content-Type: application/json; charset=utf-8\r\n";
 
-/// Wire shape of one error document.
-const ErrorDocument = struct {
-    @"error": ErrorBody,
-};
-
-/// Payload nested under the document's "error" member.
-const ErrorBody = struct {
-    code: []const u8,
-    message: []const u8,
-};
+/// UTF-8 encoding of U+FFFD, substituted for each malformed input byte.
+const replacement_character = "\xef\xbf\xbd";
 
 /// Renders `{"error":{"code":...,"message":...}}` into `buffer` and returns it.
 ///
-/// Message and code bytes are JSON-escaped in place; an undersized buffer
-/// yields the constant minimal document instead of a partial one.
+/// `code` and `message` may hold attacker-influenced bytes: every malformed
+/// UTF-8 byte is replaced with U+FFFD so the document is always valid UTF-8
+/// JSON. An undersized buffer yields the constant minimal document instead of
+/// a partial one.
 pub fn render(code: []const u8, message: []const u8, buffer: []u8) []const u8 {
-    const document: ErrorDocument = .{ .@"error" = .{ .code = code, .message = message } };
-    return std.fmt.bufPrint(buffer, "{f}", .{std.json.fmt(document, .{})}) catch fallback_document;
+    var writer: std.Io.Writer = .fixed(buffer);
+    write_document(&writer, code, message) catch return fallback_document;
+    return writer.buffered();
+}
+
+/// Writes the canonical error document into `writer`.
+fn write_document(writer: *std.Io.Writer, code: []const u8, message: []const u8) std.Io.Writer.Error!void {
+    try writer.writeAll("{\"error\":{\"code\":");
+    try write_json_string(writer, code);
+    try writer.writeAll(",\"message\":");
+    try write_json_string(writer, message);
+    try writer.writeAll("}}");
+}
+
+/// Writes one JSON string, replacing malformed UTF-8 bytes with U+FFFD.
+///
+/// JSON strings must be valid UTF-8, and `std.json` emits invalid byte slices
+/// as number arrays, so this writer owns the escaping and substitutes per
+/// malformed byte instead. A failed sequence advances exactly one byte, which
+/// keeps every replacement aligned with the byte that caused it and never
+/// consumes the valid bytes that follow.
+fn write_json_string(writer: *std.Io.Writer, value: []const u8) std.Io.Writer.Error!void {
+    try writer.writeByte('"');
+    var index: usize = 0;
+    while (index < value.len) {
+        const byte = value[index];
+        switch (byte) {
+            '"' => {
+                try writer.writeAll("\\\"");
+                index += 1;
+            },
+            '\\' => {
+                try writer.writeAll("\\\\");
+                index += 1;
+            },
+            '\x08' => {
+                try writer.writeAll("\\b");
+                index += 1;
+            },
+            '\x0c' => {
+                try writer.writeAll("\\f");
+                index += 1;
+            },
+            '\n' => {
+                try writer.writeAll("\\n");
+                index += 1;
+            },
+            '\r' => {
+                try writer.writeAll("\\r");
+                index += 1;
+            },
+            '\t' => {
+                try writer.writeAll("\\t");
+                index += 1;
+            },
+            0x00...0x07, 0x0b, 0x0e...0x1f => {
+                try writer.print("\\u{x:0>4}", .{byte});
+                index += 1;
+            },
+            0x20...0x21, 0x23...0x5b, 0x5d...0x7f => {
+                try writer.writeByte(byte);
+                index += 1;
+            },
+            else => index += try write_utf8_sequence(writer, value[index..]),
+        }
+    }
+    try writer.writeByte('"');
+}
+
+/// Emits one valid UTF-8 sequence from the head of `rest`, or U+FFFD for its
+/// first byte; returns the number of input bytes consumed.
+fn write_utf8_sequence(writer: *std.Io.Writer, rest: []const u8) std.Io.Writer.Error!usize {
+    const sequence_length = std.unicode.utf8ByteSequenceLength(rest[0]) catch {
+        try writer.writeAll(replacement_character);
+        return 1;
+    };
+    if (rest.len < sequence_length) {
+        try writer.writeAll(replacement_character);
+        return 1;
+    }
+    _ = std.unicode.utf8Decode(rest[0..sequence_length]) catch {
+        try writer.writeAll(replacement_character);
+        return 1;
+    };
+    try writer.writeAll(rest[0..sequence_length]);
+    return sequence_length;
 }
 
 /// Sends a Problem as application/json using an internal bounded buffer.

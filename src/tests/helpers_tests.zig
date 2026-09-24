@@ -90,6 +90,27 @@ fn set_single_header(request: *Request, name: []const u8, value: []const u8) voi
     request.header_count = 1;
 }
 
+/// Requires `document` to be exactly one complete JSON value with no trailing bytes.
+fn expect_complete_json(document: []const u8) !void {
+    var scanner = std.json.Scanner.initCompleteInput(std.testing.allocator, document);
+    defer scanner.deinit();
+    try scanner.skipValue();
+    switch (try scanner.next()) {
+        .end_of_document => {},
+        else => return error.TrailingJson,
+    }
+}
+
+/// Requires the parsed `message` member to be a string equal to `expected`.
+fn expect_error_message(document: []const u8, expected: []const u8) !void {
+    const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, document, .{});
+    defer parsed.deinit();
+    const body = parsed.value.object.get("error").?.object;
+    const message = body.get("message").?;
+    try std.testing.expect(message == .string);
+    try std.testing.expectEqualStrings(expected, message.string);
+}
+
 test "helpers: status line covers every declared code with canonical numbers" {
     const codes = std.enums.values(status.StatusCode);
     try std.testing.expect(codes.len >= 29);
@@ -162,6 +183,89 @@ test "helpers: error render falls back to a valid document" {
     defer parsed.deinit();
     const body = parsed.value.object.get("error").?.object;
     try std.testing.expect(body.get("code") != null);
+}
+
+test "helpers: error render replaces an invalid UTF-8 byte with U+FFFD" {
+    var buffer: [errors.max_document_bytes]u8 = undefined;
+    const document = errors.render("bad_request", "bad \xff byte", &buffer);
+    try expect_complete_json(document);
+    try std.testing.expect(std.mem.indexOfScalar(u8, document, 0xff) == null);
+    try expect_error_message(document, "bad \u{fffd} byte");
+}
+
+test "helpers: error render replaces each malformed UTF-8 byte with one U+FFFD" {
+    const cases = [_]struct { input: []const u8, expected: []const u8, forbidden: []const u8 }{
+        .{ .input = "lone \x80 continuation", .expected = "lone \u{fffd} continuation", .forbidden = "\x80" },
+        .{ .input = "truncated \xc3", .expected = "truncated \u{fffd}", .forbidden = "\xc3" },
+        .{ .input = "overlong \xc0\xaf pair", .expected = "overlong \u{fffd}\u{fffd} pair", .forbidden = "\xc0\xaf" },
+        .{ .input = "broken \xc3\x28 sequence", .expected = "broken \u{fffd}( sequence", .forbidden = "\xc3" },
+        .{ .input = "surrogate \xed\xa0\x80 half", .expected = "surrogate \u{fffd}\u{fffd}\u{fffd} half", .forbidden = "\xed\xa0\x80" },
+        .{ .input = "too large \xf4\x90\x80\x80 point", .expected = "too large \u{fffd}\u{fffd}\u{fffd}\u{fffd} point", .forbidden = "\xf4\x90\x80" },
+        .{ .input = "mixed \xc3\xa9\xff\xc3\xa9 bytes", .expected = "mixed \u{e9}\u{fffd}\u{e9} bytes", .forbidden = "\xff" },
+    };
+    var buffer: [errors.max_document_bytes]u8 = undefined;
+    for (cases) |case| {
+        const document = errors.render("bad_request", case.input, &buffer);
+        try expect_complete_json(document);
+        for (case.forbidden) |byte| {
+            try std.testing.expect(std.mem.indexOfScalar(u8, document, byte) == null);
+        }
+        try expect_error_message(document, case.expected);
+    }
+}
+
+test "helpers: error render emits valid JSON for every single byte" {
+    var buffer: [errors.max_document_bytes]u8 = undefined;
+    for (0..256) |value| {
+        const input = [_]u8{@intCast(value)};
+        const document = errors.render("bad_request", &input, &buffer);
+        try expect_complete_json(document);
+        if (value < 0x80) {
+            try expect_error_message(document, &input);
+        } else {
+            try expect_error_message(document, "\u{fffd}");
+        }
+    }
+}
+
+test "helpers: error render preserves valid four-byte UTF-8 byte for byte" {
+    var buffer: [errors.max_document_bytes]u8 = undefined;
+    const message = "emoji \xf0\x9f\x98\x80 max \xf4\x8f\xbf\xbf two \xc3\xa9";
+    const document = errors.render("teapot", message, &buffer);
+    try std.testing.expectEqualStrings(
+        "{\"error\":{\"code\":\"teapot\",\"message\":\"emoji \u{1f600} max \u{10ffff} two \u{e9}\"}}",
+        document,
+    );
+    try expect_complete_json(document);
+}
+
+test "helpers: error render sanitizes invalid UTF-8 in the code" {
+    var buffer: [errors.max_document_bytes]u8 = undefined;
+    const document = errors.render("bad\x80code", "ok", &buffer);
+    try expect_complete_json(document);
+    try std.testing.expectEqualStrings(
+        "{\"error\":{\"code\":\"bad\u{fffd}code\",\"message\":\"ok\"}}",
+        document,
+    );
+}
+
+test "helpers: error render escapes remaining control bytes and keeps DEL raw" {
+    var buffer: [errors.max_document_bytes]u8 = undefined;
+    const message = [_]u8{ 0x01, 0x08, 0x0c, 0x7f };
+    const document = errors.render("bad_request", &message, &buffer);
+    try std.testing.expectEqualStrings(
+        "{\"error\":{\"code\":\"bad_request\",\"message\":\"\\u0001\\b\\f\x7f\"}}",
+        document,
+    );
+    try expect_complete_json(document);
+    try expect_error_message(document, &message);
+}
+
+test "helpers: error render falls back to the constant document for invalid UTF-8" {
+    var buffer: [8]u8 = undefined;
+    const document = errors.render("bad\xff", "bad \x80 message", &buffer);
+    try std.testing.expectEqualStrings("{\"error\":{\"code\":\"internal\"}}", document);
+    try expect_complete_json(document);
 }
 
 test "helpers: send emits a JSON error through the response target" {
