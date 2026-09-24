@@ -40,6 +40,21 @@ test "query: parse handles empty segments, flags, and embedded equals" {
     try std.testing.expectEqualStrings("x=y", params.at(2).?.value);
 }
 
+test "query: flag values keep their slice inside the parsed buffer" {
+    const target = "/search?flag&name=zig";
+    const params = try query.QueryParams.parse_link(target);
+
+    const start = @intFromPtr(target.ptr);
+    const end = start + target.len;
+    for (0..params.count) |index| {
+        const pair = params.at(index).?;
+        try std.testing.expect(@intFromPtr(pair.key.ptr) >= start);
+        try std.testing.expect(@intFromPtr(pair.key.ptr) + pair.key.len <= end);
+        try std.testing.expect(@intFromPtr(pair.value.ptr) >= start);
+        try std.testing.expect(@intFromPtr(pair.value.ptr) + pair.value.len <= end);
+    }
+}
+
 test "query: empty keys are skipped" {
     const params = try query.QueryParams.parse("=1&a=2");
     try std.testing.expectEqual(@as(usize, 1), params.count);

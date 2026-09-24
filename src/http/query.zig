@@ -66,7 +66,9 @@ pub const QueryParams = struct {
             const equals = simd.index_of_byte(segment, '=');
             const key = if (equals) |index| segment[0..index] else segment;
             if (key.len == 0) continue;
-            const value = if (equals) |index| segment[index + 1 ..] else "";
+            // A flagged component ends at the segment end, so even the empty
+            // value keeps its pointer inside the caller's buffer.
+            const value = if (equals) |index| segment[index + 1 ..] else segment[segment.len..];
             if (result.count == max_params) return error.TooManyQueryParameters;
             try result.push(key, value);
         }
