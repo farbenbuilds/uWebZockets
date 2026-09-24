@@ -24,6 +24,7 @@ pub const Ansi = struct {
     pub const red = "\x1b[31m";
     pub const green = "\x1b[32m";
     pub const yellow = "\x1b[33m";
+    pub const bright_yellow = "\x1b[93m";
     pub const blue = "\x1b[34m";
     pub const magenta = "\x1b[35m";
     pub const cyan = "\x1b[36m";
@@ -326,7 +327,7 @@ pub fn render_ready(buffer: []u8, info: ReadyInfo) error{NoSpaceLeft}![]const u8
 fn write_ready(writer: *std.Io.Writer, info: ReadyInfo) std.Io.Writer.Error!void {
     try writer.print("  {s}{s}µWebZockets{s} {s}v{d}.{d}.{d}{s}  {s}ready in{s} {s}{d} ms{s}\n\n", .{
         Ansi.bold,
-        Ansi.magenta,
+        Ansi.bright_yellow,
         Ansi.reset,
         Ansi.dim,
         version.semantic.major,
