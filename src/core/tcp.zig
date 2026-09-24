@@ -1047,10 +1047,13 @@ pub const TcpConnection = struct {
     /// owns the stream, when the peer only expects headers, or on a platform
     /// whose completion port the transport cannot observe. On success the
     /// connection owns `file` and closes it when the body drains. The caller
-    /// must not retain or close `file` after a successful call.
+    /// must not retain or close `file` after a successful call. `pending` and
+    /// `headers` are queued-scratch and caller fields; they are copied into the
+    /// write ring as scatter parts.
     pub fn begin_file_response(
         self: *TcpConnection,
         status: []const u8,
+        pending: []const u8,
         headers: []const u8,
         file: std.Io.File,
         offset: u64,
@@ -1061,13 +1064,13 @@ pub const TcpConnection = struct {
         if (self.ssl != null) return error.ZeroCopyUnavailable;
         if (self.file_body != null) return error.FileBodyAlreadyActive;
 
-        var header_buffer: [4096]u8 = undefined;
-        const formatted = std.fmt.bufPrint(
-            &header_buffer,
-            "HTTP/1.1 {s}\r\nContent-Length: {d}\r\n{s}\r\n",
-            .{ status, length, headers },
+        var framing_buffer: [128]u8 = undefined;
+        const framing = std.fmt.bufPrint(
+            &framing_buffer,
+            "HTTP/1.1 {s}\r\nContent-Length: {d}\r\n",
+            .{ status, length },
         ) catch return error.BufferOverflow;
-        try self.write_data(formatted);
+        try tcp_file.write_data_parts(self, &.{ framing, pending, headers, "\r\n" });
 
         // HEAD keeps the transfer length but never streams body bytes.
         if (length == 0 or self.suppress_response_body) {

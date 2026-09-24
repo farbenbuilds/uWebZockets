@@ -426,3 +426,75 @@ test "web standards: Response.json_value serializes a dynamic JSON value" {
     try res.json_value(parsed.value, std.testing.allocator);
     try std.testing.expect(std.mem.indexOf(u8, sink.body[0..sink.body_len], "\"count\":2") != null);
 }
+
+test "web standards: Response.begin_json streams JSON larger than its buffer" {
+    const StreamCapture = struct {
+        headers: [256]u8 = undefined,
+        headers_len: usize = 0,
+        body: [8192]u8 = undefined,
+        body_len: usize = 0,
+        chunks: usize = 0,
+        begun: bool = false,
+        finished: bool = false,
+
+        fn end_fn(_: *anyopaque, _: []const u8, _: []const u8, _: []const u8) anyerror!void {
+            return error.UnexpectedDispatch;
+        }
+
+        fn begin_fn(context: *anyopaque, _: []const u8, headers: []const u8) anyerror!void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            @memcpy(self.headers[0..headers.len], headers);
+            self.headers_len = headers.len;
+            self.begun = true;
+        }
+
+        fn write_fn(context: *anyopaque, chunk: []const u8) anyerror!void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            @memcpy(self.body[self.body_len .. self.body_len + chunk.len], chunk);
+            self.body_len += chunk.len;
+            self.chunks += 1;
+        }
+
+        fn finish_fn(context: *anyopaque) anyerror!void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            self.finished = true;
+        }
+    };
+
+    var capture = StreamCapture{};
+    var res = Response{
+        .target = .{
+            .http3 = .{
+                .context = &capture,
+                .end_fn = StreamCapture.end_fn,
+                .begin_fn = StreamCapture.begin_fn,
+                .write_fn = StreamCapture.write_fn,
+                .finish_fn = StreamCapture.finish_fn,
+            },
+        },
+    };
+
+    var stream = try res.begin_json();
+    var json = stream.stringify();
+    try json.beginObject();
+    try json.objectField("message");
+    var large: [6000]u8 = undefined;
+    @memset(&large, 'x');
+    try json.write(large[0..]);
+    try json.endObject();
+    try stream.end();
+
+    try std.testing.expect(capture.begun);
+    try std.testing.expect(capture.finished);
+    try std.testing.expectEqualStrings("Content-Type: application/json; charset=utf-8\r\n", capture.headers[0..capture.headers_len]);
+    try std.testing.expect(capture.body_len > 4096);
+    try std.testing.expect(capture.chunks > 1);
+
+    var scanner = std.json.Scanner.initCompleteInput(std.testing.allocator, capture.body[0..capture.body_len]);
+    defer scanner.deinit();
+    try scanner.skipValue();
+    switch (try scanner.next()) {
+        .end_of_document => {},
+        else => return error.TrailingJson,
+    }
+}

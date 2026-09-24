@@ -434,3 +434,76 @@ test "http: send_file declines framed transports without taking ownership" {
     );
     try std.testing.expect(!http3.is_started());
 }
+
+/// HTTP/1.1 connection whose write ring accepts bytes without a live socket.
+fn test_connection(ring: []u8) support.tcp.TcpConnection {
+    return .{
+        .socket = undefined,
+        .write_queue = ring,
+        .is_writing = true,
+    };
+}
+
+fn fill_test_headers(buffer: []u8) ![]const u8 {
+    var length: usize = 0;
+    for (0..64) |index| {
+        const line = try std.fmt.bufPrint(
+            buffer[length..],
+            "X-Fill-{d:0>3}: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\r\n",
+            .{index},
+        );
+        length += line.len;
+    }
+    return buffer[0..length];
+}
+
+test "http: end_with_headers scatters fields beyond the old fixed buffer" {
+    var ring: [16 * 1024]u8 = undefined;
+    var conn = test_connection(&ring);
+    var res = response.Response{ .target = .{ .tcp = &conn } };
+
+    try res.append_header("X-Pending", "yes");
+    var header_buffer: [5 * 1024]u8 = undefined;
+    const headers = try fill_test_headers(&header_buffer);
+    try res.end_with_headers("200 OK", headers, "payload");
+
+    const written = ring[0..conn.write_len];
+    const prefix = "HTTP/1.1 200 OK\r\nContent-Length: 7\r\nX-Pending: yes\r\n";
+    try std.testing.expect(std.mem.startsWith(u8, written, prefix));
+    try std.testing.expect(std.mem.endsWith(u8, written, "\r\npayload"));
+    try std.testing.expectEqual(prefix.len + headers.len + 2 + "payload".len, written.len);
+    try std.testing.expect(std.mem.indexOf(u8, written, "X-Fill-063:") != null);
+}
+
+test "http: begin_chunked scatters headers and frames chunks" {
+    var ring: [16 * 1024]u8 = undefined;
+    var conn = test_connection(&ring);
+    var res = response.Response{ .target = .{ .tcp = &conn } };
+
+    var header_buffer: [5 * 1024]u8 = undefined;
+    const headers = try fill_test_headers(&header_buffer);
+    try res.begin_chunked("200 OK", headers);
+    try res.write_chunk("hello");
+    try res.end_chunks();
+
+    const written = ring[0..conn.write_len];
+    const framing = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n";
+    try std.testing.expect(std.mem.startsWith(u8, written, framing));
+    try std.testing.expect(std.mem.indexOf(u8, written, "5\r\nhello\r\n") != null);
+    try std.testing.expect(std.mem.endsWith(u8, written, "0\r\n\r\n"));
+}
+
+test "http: body-forbidden statuses scatter headers without Content-Length" {
+    var ring: [16 * 1024]u8 = undefined;
+    var conn = test_connection(&ring);
+    var res = response.Response{ .target = .{ .tcp = &conn } };
+
+    var header_buffer: [5 * 1024]u8 = undefined;
+    const headers = try fill_test_headers(&header_buffer);
+    try res.end_with_headers("204 No Content", headers, "");
+
+    const written = ring[0..conn.write_len];
+    try std.testing.expect(std.mem.startsWith(u8, written, "HTTP/1.1 204 No Content\r\n"));
+    try std.testing.expect(std.mem.indexOf(u8, written, "Content-Length") == null);
+    try std.testing.expect(std.mem.endsWith(u8, written, "\r\n\r\n"));
+}
