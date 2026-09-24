@@ -3,7 +3,7 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
-## [1.3.0] - 2026-09-25
+## [1.3.0] - 2026-09-24
 
 This release adds an opt-in terminal development log. It renders connection,
 HTTP, and WebSocket events plus the bounded Prometheus counters as colored
