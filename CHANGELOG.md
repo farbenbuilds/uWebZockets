@@ -3,6 +3,68 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.4.0] - 2026-09-24
+
+This release hardens the application helper layer. Every addition is additive,
+so 1.3.x applications recompile unchanged apart from the header-splitting fix
+described under Security. The C ABI version moves to 1.4.0 with no structural
+change.
+
+### Added
+
+- Zero-allocation query parsing: `query.QueryParams` slices `?key=value`
+  components out of the request target with SIMD byte scans into a fixed
+  struct-of-arrays view (32 pairs) and never copies. `Request.query_params()`
+  exposes it directly. `percent_decode` and `form_decode` materialize decoded
+  values into caller-owned scratch buffers, so escapes stay borrowed until the
+  application asks for them. More than 32 pairs fails closed with
+  `error.TooManyQueryParameters`.
+- `form` and `Request.form()` validate `application/x-www-form-urlencoded`
+  media types and parse the bounded request body with the same slicer.
+- `status.StatusCode` and `status.line` provide canonical, typo-proof status
+  lines. `errors.send`/`errors.send_buf` render typed JSON error documents
+  (`{"error":{"code":...,"message":...}}`) with JSON escaping and no
+  allocation, `errors.method_not_allowed` emits a validated `Allow` field, and
+  `errors.internal` never echoes internal detail.
+- `negotiate` parses `Accept` into a fixed 16-entry table with qvalue scoring
+  (`score`, `accepts`, `best`); `Request.accepts(media_type)` is the request
+  side entry point.
+- `cache` provides deterministic strong ETags (`cache.etag`), If-None-Match
+  matching over weak and list validators (`cache.is_not_modified`), and a 304
+  sender (`cache.not_modified`).
+- JSON schema validation now covers floats (`min_float`/`max_float`), arrays
+  and non-u8 slices (`min_items`/`max_items`), whole-string and enum
+  membership (`allowed`), and bounded nested validation (`max_nested_depth`).
+  `IssueKind` gains typed JSON parse-failure kinds (syntax, unexpected
+  end/token, invalid number, overflow, missing/duplicate/unknown field,
+  invalid enum tag, length mismatch, item counts) instead of a blanket
+  `malformed_json`.
+- `cookie` gains a zero-copy `Iterator` over a `Cookie` field, versioned HMAC
+  signing (`Key`, `sign_versioned`, `verify_versioned`) for key rotation, and
+  opt-in `__Host-`/`__Secure-` prefix enforcement through
+  `Options.enforce_prefixes`.
+- `Response.json_value` and `json_value_buf` provide named-type alternatives
+  to the polymorphic `json`/`json_buf` for dynamic `std.json.Value` payloads.
+
+### Changed
+
+- `Response.json_buf` and `Response.json` document their polymorphic contract
+  (`std.json.Stringify`-compatible values); their behavior is unchanged.
+
+### Security
+
+- `Response.append_header` now rejects CR/LF inside a single value. The
+  previous validation accepted an embedded `\r\n` as an additional
+  well-formed field, so any singular-value helper forwarding untrusted data
+  could split the response. Regression coverage lives in
+  `src/tests/http_tests.zig`.
+- JSON schema parse failures now report a typed `IssueKind` while still
+  returning `error.MalformedJson`, so applications can distinguish a syntax
+  error from a type mismatch without new allocation.
+- Cookie `__Host-`/`__Secure-` prefix enforcement is available but off by
+  default, so existing formatters keep their exact bytes until an application
+  opts in.
+
 ## [1.3.5] - 2026-09-24
 
 This release refreshes every pinned dependency. zslay moves to 0.2.1, lsquic

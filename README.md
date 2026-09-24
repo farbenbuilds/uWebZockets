@@ -118,10 +118,25 @@ Oversized input gets a structured rejection instead of a dropped connection:
 The full capacity table, slab layout, and backpressure model are in
 [docs/memory_model.md](docs/memory_model.md).
 
+## Request helpers
+
+`Request` and `Response` carry allocation-free helpers for the common API
+surface. `Request.query_params()` and `Request.form()` slice query and form
+pairs out of the bounded buffer with SIMD byte scans into a fixed
+struct-of-arrays view; `percent_decode` and `form_decode` decode escapes into
+caller-owned scratch. `Request.accepts()` scores the `Accept` field,
+`Response.json_value` writes dynamic `std.json.Value` payloads,
+`errors.Problem` renders typed JSON error documents, `status.line` maps codes
+to canonical status lines, `cache.etag` and `cache.is_not_modified` implement
+conditional GET, `schema` validates decoded JSON against comptime rules, and
+`cookie` adds a zero-copy header iterator plus versioned signing for key
+rotation. Every helper reuses the existing bounded buffers and stays off the
+heap on the request path.
+
 ## Terminal development log
 
 `with_dev_log(true)` prints the `µWEBZOCKETS` wordmark and a Vite-style ready
-summary before the first accepting listener: `µWebZockets v1.3.5  ready in
+summary before the first accepting listener: `µWebZockets v1.4.0  ready in
 0.6 ms` followed by the `→ Local:` line; the elapsed time scales
 through nanoseconds, microseconds, milliseconds, and seconds. The wordmark
 collapses to a one-line `µWebZockets` mark when the terminal is narrower than
