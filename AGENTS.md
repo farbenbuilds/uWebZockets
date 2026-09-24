@@ -75,14 +75,14 @@ apply.
   `documentation-and-adrs`, `deprecation-and-migration`,
   `git-workflow-and-versioning`, `ci-cd-and-automation`, and
   `shipping-and-launch`.
-- **Domain**: Zig and systems (`zig-*`, `cmake`, `ninja`, `gcc`,
-  `c-systems-programming`, `nix-best-practices`) and design (`dod`, `ponytail`,
-  `caveman`, `functional-programming-fundamentals`).
+- **Domain**: Zig and systems (`zig-*`, `gcc`, `c-systems-programming`,
+  `nix-best-practices`) and design (`dod`, `ponytail`, `caveman`,
+  `functional-programming-fundamentals`).
 
 ## Integrations
 - Seamlessly interact with C/C++ and Go projects via Zig FFI.
-- Target libraries: BoringSSL, lsquic, libdeflate.
-- **Compilation Strategy**: Actively utilize the `cmake`, `ninja`, `gcc`, and `c-systems-programming` skills to configure robust compilation steps in `build.zig` for all C/C++ git submodules.
+- Target libraries: BoringSSL, lsquic, libdeflate, and zlib.
+- **Compilation Strategy**: Compile every C/C++ dependency with Zig's own `zig cc` and `zig c++` toolchain from native source lists under `builds/`. Keep generated inputs pre-generated under `vendor/`; never reintroduce CMake, Ninja, Go, Perl, Python, `patch`, or system zlib as build requirements.
 
 ## graphify
 

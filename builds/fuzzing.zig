@@ -1,6 +1,6 @@
 const std = @import("std");
 const sanitizers = @import("sanitizers.zig");
-const vendor = @import("vendor.zig");
+const vendor = @import("vendor/root.zig");
 
 pub fn inject(
     b: *std.Build,

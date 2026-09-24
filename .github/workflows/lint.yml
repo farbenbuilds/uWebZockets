@@ -22,6 +22,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          submodules: recursive
           persist-credentials: false
 
       - name: Install Zig
@@ -42,6 +43,9 @@ jobs:
 
       - name: Check repository conventions
         run: sh scripts/check_conventions.sh
+
+      - name: Check vendored lsquic overlay
+        run: sh scripts/check_vendor_overlay.sh
 
       - name: Check release metadata
         run: sh scripts/check_release_version.sh

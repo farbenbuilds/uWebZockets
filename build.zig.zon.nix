@@ -157,6 +157,15 @@ linkFarm name [
     };
   }
   {
+    name = "N-V-__8AAJ2cNgAgfBtAw33Bxfu1IWISDeKKSr3DAqoAysIJ";
+    path = fetchZigArtifact {
+      name = "zlib";
+      url = "https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.gz";
+      hash = "sha256-uzKaCizQJ00FUZ1hxmfAYuBpkNcuEl7i36jeZPARnRY=";
+      unpack = false;
+    };
+  }
+  {
     name = "zslay-0.2.0-OB-IfBl0AQBrzPknHiL6g7qSDbTmUPeYsMn0DwXsLtEE";
     path = fetchZigArtifact {
       name = "zslay";

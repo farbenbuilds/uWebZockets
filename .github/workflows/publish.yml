@@ -51,10 +51,10 @@ jobs:
         with:
           path: |
             ~/.cache/zig
-            .zig-cache/vendor-build-v4
-          key: ${{ runner.os }}-publish-zig-v6-${{ hashFiles('build.zig', 'builds/**/*.zig', 'build.zig.zon', 'flake.nix', 'flake.lock', 'vendor/**/CMakeLists.txt') }}
+            .zig-cache
+          key: ${{ runner.os }}-publish-zig-v7-${{ hashFiles('build.zig', 'builds/**/*.zig', 'build.zig.zon', 'flake.nix', 'flake.lock', 'patches/**', 'vendor/lsquic_overlay/**') }}
           restore-keys: |
-            ${{ runner.os }}-publish-zig-v6-
+            ${{ runner.os }}-publish-zig-v7-
 
       - name: Check formatting and conventions
         run: |
@@ -151,15 +151,6 @@ jobs:
           cp "result-${{ matrix.target }}"/include/uWebZockets.h "$archive_root/include/"
           cp CHANGELOG.md LICENSE README.md THIRD_PARTY_NOTICES.md build.zig.zon "$archive_root/"
           cp -R licenses "$archive_root/"
-          mkdir -p "$archive_root/licenses/vendor"
-          cp vendor/boringssl/LICENSE "$archive_root/licenses/vendor/boringssl_license.txt"
-          cp vendor/boringssl/third_party/fiat/LICENSE "$archive_root/licenses/vendor/fiat_crypto_license.txt"
-          cp vendor/boringssl/third_party/fiat/AUTHORS "$archive_root/licenses/vendor/fiat_crypto_authors.txt"
-          cp vendor/libdeflate/COPYING "$archive_root/licenses/vendor/libdeflate_license.txt"
-          cp vendor/lsquic/LICENSE "$archive_root/licenses/vendor/lsquic_license.txt"
-          cp vendor/lsquic/LICENSE.chrome "$archive_root/licenses/vendor/lsquic_chrome_license.txt"
-          cp vendor/lsquic/src/liblsquic/ls-qpack/LICENSE "$archive_root/licenses/vendor/ls_qpack_license.txt"
-          cp vendor/lsquic/src/lshpack/LICENSE "$archive_root/licenses/vendor/ls_hpack_license.txt"
           tar -C "$RUNNER_TEMP" -czf "uWebZockets-${{ matrix.target }}.tar.gz" \
             "uWebZockets-${{ matrix.target }}"
 

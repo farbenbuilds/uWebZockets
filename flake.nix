@@ -26,9 +26,9 @@
         system,
         ...
       }: let
-        lib = pkgs.lib;
+        inherit (pkgs) lib;
         isLinux = pkgs.stdenv.hostPlatform.isLinux;
-        releaseVersion = "1.1.9";
+        releaseVersion = "1.2.0";
         pkgsMusl =
           if isLinux
           then pkgs.pkgsMusl
@@ -63,16 +63,9 @@
             ];
         };
 
-        nativeBuildInputs = [
-          zig
-          pkgs.cmake
-          pkgs.ninja
-          pkgs.pkg-config
-          pkgs.go
-          pkgs.perl
-          pkgs.patch
-          pkgs.python3
-        ];
+        # Zig's C/C++ toolchain builds BoringSSL, lsquic, libdeflate, and zlib
+        # directly, so the shell only provides Zig itself.
+        nativeBuildInputs = [zig];
 
         seedZigCache = ''
           export ZIG_GLOBAL_CACHE_DIR="$TMPDIR/zig-cache"
@@ -95,68 +88,40 @@
           chmod -R u+w "$ZIG_GLOBAL_CACHE_DIR"
         '';
 
-        mkPackage = packagePkgs: targetTriple: let
-          zlibPrefix = packagePkgs.symlinkJoin {
-            name = "uwebzockets-zlib";
-            paths = [
-              packagePkgs.zlib.dev
-              packagePkgs.zlib.static
-            ];
-          };
-        in
+        mkPackage = packagePkgs: targetTriple:
           packagePkgs.stdenv.mkDerivation {
             pname = "uwebzockets";
             version = releaseVersion;
             src = source;
             strictDeps = true;
             inherit nativeBuildInputs;
-            buildInputs = [
-              packagePkgs.zlib.dev
-              packagePkgs.zlib.static
-            ];
             dontConfigure = true;
             buildPhase = ''
               runHook preBuild
               ${seedZigCache}
-              patchShebangs zig-cc zig-c++
               zig build lib \
                 -Doptimize=ReleaseFast \
                 -Dtarget=${targetTriple} \
-                -Dzlib-prefix=${zlibPrefix} \
                 --prefix "$out"
               runHook postBuild
             '';
             dontInstall = true;
           };
 
-        mkCompileCheck = packagePkgs: targetTriple: let
-          zlibPrefix = packagePkgs.symlinkJoin {
-            name = "uwebzockets-zlib-check";
-            paths = [
-              packagePkgs.zlib.dev
-              packagePkgs.zlib.static
-            ];
-          };
-        in
+        mkCompileCheck = packagePkgs: targetTriple:
           packagePkgs.stdenv.mkDerivation {
             pname = "uwebzockets-compile-tests";
             version = releaseVersion;
             src = source;
             strictDeps = true;
             inherit nativeBuildInputs;
-            buildInputs = [
-              packagePkgs.zlib.dev
-              packagePkgs.zlib.static
-            ];
             dontConfigure = true;
             buildPhase = ''
               runHook preBuild
               ${seedZigCache}
-              patchShebangs zig-cc zig-c++
               zig build test-compile \
                 -Doptimize=ReleaseSafe \
                 -Dtarget=${targetTriple} \
-                -Dzlib-prefix=${zlibPrefix} \
                 --prefix "$out"
               runHook postBuild
             '';
@@ -167,13 +132,6 @@
 
         mkDevShell = packagePkgs: targetTriple: let
           llvmCompilerRt = packagePkgs.llvmPackages_21.compiler-rt;
-          zlibPrefix = packagePkgs.symlinkJoin {
-            name = "uwebzockets-zlib-dev";
-            paths = [
-              packagePkgs.zlib.dev
-              packagePkgs.zlib.static
-            ];
-          };
           supportsSanitizers =
             isLinux && packagePkgs.stdenv.hostPlatform.isGnu;
         in
@@ -182,24 +140,14 @@
               packages =
                 [
                   zig
-                  # Shell tools run on the host; only zlib follows the target libc.
                   pkgs.zls
-                  pkgs.cmake
-                  pkgs.ninja
-                  pkgs.pkg-config
-                  pkgs.go
-                  pkgs.perl
-                  pkgs.python3
                   pkgs.ripgrep
-                  pkgs.patch
-                  packagePkgs.zlib
                   pkgs.wrk
                 ]
                 ++ lib.optional
                 (zon2nixPackage != null && isLinux && packagePkgs.stdenv.hostPlatform.isGnu)
                 zon2nixPackage
                 ++ lib.optional supportsSanitizers llvmCompilerRt;
-              UWEBZOCKETS_ZLIB_PREFIX = zlibPrefix;
               UWEBZOCKETS_DEFAULT_TARGET = targetTriple;
             }
             // lib.optionalAttrs isLinux {

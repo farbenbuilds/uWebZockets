@@ -43,10 +43,10 @@ jobs:
         with:
           path: |
             ~/.cache/zig
-            .zig-cache/vendor-build-v4
-          key: ${{ runner.os }}-http3-v2-${{ hashFiles('build.zig', 'builds/**/*.zig', 'build.zig.zon', 'flake.lock', 'scripts/http3_compliance/flake.lock') }}
+            .zig-cache
+          key: ${{ runner.os }}-http3-v3-${{ hashFiles('build.zig', 'builds/**/*.zig', 'build.zig.zon', 'flake.lock', 'patches/**', 'vendor/lsquic_overlay/**', 'scripts/http3_compliance/flake.lock') }}
           restore-keys: |
-            ${{ runner.os }}-http3-v2-
+            ${{ runner.os }}-http3-v3-
 
       - name: Build HTTP/3 server in Nix
         run: nix develop "path:." -c zig build -Doptimize=ReleaseSafe

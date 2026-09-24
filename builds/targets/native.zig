@@ -3,7 +3,7 @@ const examples = @import("../examples.zig");
 const fuzzing = @import("../fuzzing.zig");
 const sanitizers = @import("../sanitizers.zig");
 const testing = @import("../testing.zig");
-const vendor = @import("../vendor.zig");
+const vendor = @import("../vendor/root.zig");
 
 /// Step handles produced by the native testing graph.
 pub const Steps = testing.Steps;
@@ -51,7 +51,7 @@ pub fn inject(
         .root_module = archive_module,
         .version = version,
     });
-    const dependencies = vendor.configure(b, target, optimize, target_is_native, sanitizer);
+    const dependencies = vendor.configure(b, target, optimize, sanitizer);
     dependencies.add_includes(module);
     dependencies.add_includes(archive_module);
     module.addImport("c", dependencies.c_module);
@@ -61,7 +61,6 @@ pub fn inject(
         .flags = sanitizer.c_flags(),
     });
     vendor.add_platform_libraries(archive_module, target);
-    dependencies.add_build_dependencies(library);
     module.linkLibrary(library);
     dependencies.link(module);
     sanitizer.attach(module);
@@ -79,7 +78,7 @@ pub fn inject(
     library_step.dependOn(&install_header.step);
     install_vendor_libraries(b, dependencies, library_step);
 
-    examples.inject(b, target, optimize, module, dependencies, sanitizer);
+    examples.inject(b, target, optimize, module, sanitizer);
     const test_steps = testing.inject(
         b,
         target,
@@ -101,37 +100,16 @@ fn install_vendor_libraries(
     dependencies: vendor.Artifacts,
     library_step: *std.Build.Step,
 ) void {
-    const ssl = b.addInstallLibFile(
-        .{ .cwd_relative = b.pathJoin(&.{ dependencies.bssl_build_dir, "libssl.a" }) },
-        "libssl.a",
-    );
-    ssl.step.dependOn(&dependencies.bssl_step.step);
-    const crypto = b.addInstallLibFile(
-        .{ .cwd_relative = b.pathJoin(&.{ dependencies.bssl_build_dir, "libcrypto.a" }) },
-        "libcrypto.a",
-    );
-    crypto.step.dependOn(&dependencies.bssl_step.step);
-    const lsquic = b.addInstallLibFile(
-        .{ .cwd_relative = b.pathJoin(&.{
-            dependencies.lsquic_build_dir,
-            "src",
-            "liblsquic",
-            "liblsquic.a",
-        }) },
-        "liblsquic.a",
-    );
-    lsquic.step.dependOn(&dependencies.lsquic_step.step);
-    const deflate = b.addInstallLibFile(
-        .{ .cwd_relative = b.pathJoin(&.{ dependencies.deflate_build_dir, "libdeflate.a" }) },
-        "libdeflate.a",
-    );
-    deflate.step.dependOn(&dependencies.deflate_step.step);
-    b.getInstallStep().dependOn(&ssl.step);
-    b.getInstallStep().dependOn(&crypto.step);
-    b.getInstallStep().dependOn(&lsquic.step);
-    b.getInstallStep().dependOn(&deflate.step);
-    library_step.dependOn(&ssl.step);
-    library_step.dependOn(&crypto.step);
-    library_step.dependOn(&lsquic.step);
-    library_step.dependOn(&deflate.step);
+    const libraries = [_]*std.Build.Step.Compile{
+        dependencies.bssl.ssl,
+        dependencies.bssl.crypto,
+        dependencies.lsquic.library,
+        dependencies.deflate.library,
+        dependencies.z.library,
+    };
+    for (libraries) |artifact| {
+        const install = b.addInstallArtifact(artifact, .{});
+        b.getInstallStep().dependOn(&install.step);
+        library_step.dependOn(&install.step);
+    }
 }

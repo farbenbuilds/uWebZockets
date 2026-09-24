@@ -58,39 +58,51 @@ pub const Config = struct {
     }
 
     pub fn c_flags(self: Config) CFlags {
+        return instrumented_flags(self.b, &.{"-std=c11"}, self);
+    }
+
+    /// Instrumentation flags alone, for sources that set their own language standard.
+    pub fn instrument_flags(self: Config) CFlags {
         if (self.sanitize) return &.{
-            "-std=c11",
             "-fsanitize=address",
             "-fsanitize=undefined",
             "-fno-sanitize-recover=undefined",
             "-fno-omit-frame-pointer",
         };
         if (self.memory_sanitize) return &.{
-            "-std=c11",
             "-fsanitize=memory",
             "-fsanitize-memory-track-origins",
             "-fno-omit-frame-pointer",
         };
-        return &.{"-std=c11"};
-    }
-
-    pub fn cmake_link_flags(self: Config) []const u8 {
-        if (self.memory_sanitize) {
-            return "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=memory -fsanitize-memory-track-origins -fno-omit-frame-pointer";
-        }
-        if (!self.sanitize) return "";
-        if (self.libc_dir) |libc_dir| {
-            return self.b.fmt(
-                "-DCMAKE_EXE_LINKER_FLAGS=-L{s} -Wl,-rpath,{s} -Wl,-rpath,{s} -Wl,--no-as-needed -l{s}",
-                .{ self.library_dir.?, self.library_dir.?, libc_dir, self.runtime_name },
-            );
-        }
-        return self.b.fmt(
-            "-DCMAKE_EXE_LINKER_FLAGS=-L{s} -Wl,-rpath,{s} -Wl,--no-as-needed -l{s}",
-            .{ self.library_dir.?, self.library_dir.?, self.runtime_name },
-        );
+        return &.{};
     }
 };
+
+/// Appends the active sanitizer instrumentation and the upstream-compatible
+/// hardening profile to a base flag list.
+///
+/// Zig's release modes inject undefined-behavior traps, `_FORTIFY_SOURCE`, and
+/// stack protectors into C and C++ sources. Upstream never builds these
+/// libraries with that instrumentation, and lsquic's packet-header path trips
+/// an injected `ud1` trap on CI. The fortified wrappers also hide zeroed
+/// buffers from MemorySanitizer, so all three are disabled here and sanitizer
+/// mode enables its own reporting checks after this point.
+pub fn instrumented_flags(
+    b: *std.Build,
+    base: []const []const u8,
+    sanitizer: Config,
+) CFlags {
+    var flags: std.ArrayList([]const u8) = .empty;
+    flags.appendSlice(b.allocator, base) catch @panic("out of memory");
+    flags.appendSlice(b.allocator, &.{
+        "-D_FORTIFY_SOURCE=0",
+        "-fno-sanitize=undefined",
+        "-fno-stack-protector",
+    }) catch @panic("out of memory");
+    flags.appendSlice(b.allocator, sanitizer.instrument_flags()) catch @panic("out of memory");
+    flags.append(b.allocator, "-fno-sanitize-trap=undefined") catch @panic("out of memory");
+    return flags.items;
+}
 
 pub fn configure(
     b: *std.Build,

@@ -1,29 +1,28 @@
-#include <stddef.h>
 #include <stdint.h>
-#include <sys/types.h>
+#include <sys/types.h> // IWYU pragma: export
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
-#include <winsock2.h>
-#include <ws2tcpip.h>
+#include <winsock2.h> // IWYU pragma: export
+#include <ws2tcpip.h> // IWYU pragma: export
 #else
-#include <sys/socket.h>
-#include <netinet/in.h>
+#include <sys/socket.h> // IWYU pragma: export
+#include <netinet/in.h> // IWYU pragma: export
 #endif
 #include <openssl/base.h>
 #undef OPENSSL_GNUC_CLANG_PRAGMA
 #define OPENSSL_GNUC_CLANG_PRAGMA(arg)
 
-#include <openssl/ssl.h>
-#include <openssl/crypto.h>
-#include <openssl/aead.h>
-#include <openssl/digest.h>
-#include <openssl/hmac.h>
-#include <openssl/mem.h>
-#include <openssl/sha2.h>
-#include <lsxpack_header.h>
-#include <lsquic.h>
-#include <libdeflate.h>
-#include <zlib.h>
+#include <openssl/ssl.h> // IWYU pragma: export
+#include <openssl/crypto.h> // IWYU pragma: export
+#include <openssl/aead.h> // IWYU pragma: export
+#include <openssl/digest.h> // IWYU pragma: export
+#include <openssl/hmac.h> // IWYU pragma: export
+#include <openssl/mem.h> // IWYU pragma: export
+#include <openssl/sha2.h> // IWYU pragma: export
+#include <lsxpack_header.h> // IWYU pragma: export
+#include <lsquic.h> // IWYU pragma: export
+#include <libdeflate.h> // IWYU pragma: export
+#include <zlib.h> // IWYU pragma: export
 
 /* translate-c cannot represent lsxpack_header's 8-bit enum bitfield. */
 struct uz_lsxpack_header {

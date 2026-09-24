@@ -1,5 +1,7 @@
 #include "../c.h"
 
+#include <stddef.h>
+
 _Static_assert(sizeof(struct uz_lsxpack_header) == sizeof(struct lsxpack_header),
                "lsxpack header ABI size mismatch");
 _Static_assert(_Alignof(struct uz_lsxpack_header) == _Alignof(struct lsxpack_header),

@@ -19,8 +19,13 @@ cd uWebZockets
 nix develop
 ```
 
-The flake pins Nixpkgs 26.05. The non-Nix toolchain requires Zig 0.16.0, CMake,
-Ninja, patch, Go, Python, Perl, and zlib development files.
+The flake pins Nixpkgs 26.05 and provides Zig 0.16.0 plus development tooling.
+Every C and C++ dependency is fetched and compiled by Zig, so no CMake, Ninja,
+Go, Perl, Python, `patch`, or zlib installation is required.
+
+clangd users run `zig build clangd` after the first fetch. It writes a
+gitignored `compile_flags.txt` at the repository root with the resolved include
+roots for `src/c.h`, the lsquic shim, and the C ABI tests.
 
 ## Engineering requirements
 
@@ -85,10 +90,9 @@ pass `-Dsanitizer-lib-dir=/path/to/compiler/runtime/lib`. When that runtime
 uses a different glibc than the host, also pass matching
 `-Dsanitizer-libc-dir` and `-Dsanitizer-dynamic-linker` paths.
 
-On Windows, install `zlib:x64-mingw-static` with vcpkg and compile the
-ReleaseSafe test graph plus the ReleaseFast library build with
-`-Dtarget=x86_64-windows-gnu` and the installed prefix passed through
-`-Dzlib-prefix`.
+On Windows, compile the ReleaseSafe test graph plus the ReleaseFast library
+build with `-Dtarget=x86_64-windows-gnu`; the bundled zlib package supplies the
+MinGW static library.
 
 Changes to WebSocket parsing or I/O must also run the Autobahn target. Changes
 to HTTP parsing, dispatch, or response framing must run h1spec. Changes to
@@ -134,12 +138,26 @@ hash, license, and any API migration. Rebuild from an empty Zig/vendor cache so
 a stale artifact cannot hide a dependency problem.
 
 For C/C++ package sources, retain immutable commits and Zig package hashes,
-CMake target-based builds, Ninja execution, the Zig compiler wrappers,
-target-specific cache directories, and static-library outputs. Keep lsquic's
-ls-qpack and ls-hpack revisions synchronized with the pinned lsquic source. The
+native source lists, and static-library outputs. Keep lsquic's ls-qpack and
+ls-hpack revisions synchronized with the pinned lsquic source. The
 `vendor/h1spec` submodule remains a compliance input rather than a packaged
 library dependency. Do not add global compiler or linker flags when
 target-local settings work.
+
+When bumping BoringSSL, libdeflate, or zlib, update the source list or flags in
+the matching `builds/` module if upstream added or removed a translation unit.
+When bumping lsquic, regenerate `vendor/lsquic_overlay`:
+
+1. Fetch the new revision, for example
+   `zig fetch git+https://github.com/litespeedtech/lsquic#<revision>`, and
+   extract the archive from the global cache.
+2. Regenerate `lsquic_versions_to_string.c` with
+   `perl src/liblsquic/gen-verstrs.pl include/lsquic.h <overlay>` and update
+   its provenance comment with the new revision.
+3. Apply `patches/lsquic_h3_message_error.patch` to a temporary copy of the
+   fetched tree and copy the three patched `src/liblsquic` files into the
+   overlay.
+4. Run `sh scripts/check_vendor_overlay.sh`; the lint workflow runs it too.
 
 ## Releasing
 

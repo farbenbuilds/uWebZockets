@@ -1,6 +1,5 @@
 const std = @import("std");
 const sanitizers = @import("sanitizers.zig");
-const vendor = @import("vendor.zig");
 
 /// One runnable example exposed as its own build step.
 const Example = struct {
@@ -24,7 +23,6 @@ pub fn inject(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     module: *std.Build.Module,
-    dependencies: vendor.Artifacts,
     sanitizer: sanitizers.Config,
 ) void {
     for (examples) |example| {
@@ -37,7 +35,6 @@ pub fn inject(
             }),
         });
         executable.root_module.addImport("uWebZockets", module);
-        dependencies.add_build_dependencies(executable);
         b.installArtifact(executable);
 
         const run = sanitizers.add_run_artifact(b, executable, sanitizer.run);
