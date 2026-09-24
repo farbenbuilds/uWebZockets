@@ -127,6 +127,39 @@ that link these archives directly must also link libc, the C++ runtime, the
 installed `libz.a`, and the platform networking libraries required by those
 dependencies (on Windows: `ws2_32`, `mswsock`, `crypt32`, and `advapi32`).
 
+## Development log
+
+The terminal development log is opt-in and allocation-free. Enable it through
+the builder, then run the example:
+
+```sh
+zig build dev_log_server -Doptimize=ReleaseSafe
+```
+
+```zig
+var server = try uz.Server.builder(init.io)
+    .with_observability(true)
+    .with_dev_log(true)
+    .build(std.heap.page_allocator);
+defer server.deinit();
+```
+
+Connection, HTTP/1.1, and WebSocket events are rendered as colored lines from
+fixed stack buffers. Every worker thread owns one `dev_log.Sink`; records batch
+in its 4096-byte buffer and flush through a single bounded write, so the event
+loop never allocates and a stalled terminal cannot block it. A one-second
+recurring timer drains low-traffic logs, and a full batch flushes before the
+next line. Lines that cannot fit and failed or short writes are dropped and
+counted in `Sink.dropped` rather than retried.
+
+Records carry an explicit direction (`data_in` or `data_out`) and a named event
+payload; there is no ambient logger state. `App.set_dev_log_file` redirects the
+default stderr output, `App.flush_dev_log` drains the current batch, and
+`App.log_metrics` records every counter of the bounded Prometheus registry.
+The `uwz_connections_accepted`, `uwz_connections_closed`, `uwz_http_requests`,
+and `uwz_ws_messages` counters advance when observability is enabled. HTTP/2
+dispatch and QUIC callbacks do not emit records in this release.
+
 ## Use as a Zig dependency
 
 ### Zig package manager

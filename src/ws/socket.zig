@@ -7,6 +7,7 @@ const Response = @import("../http/response.zig").Response;
 const radix = @import("../router/radix.zig");
 const WsBehavior = radix.WsBehavior;
 const zslay = @import("zslay");
+const dev_log = @import("../observability/dev_log.zig");
 const handshake = @import("handshake.zig");
 const deflate = @import("deflate.zig");
 const mask = @import("mask.zig");
@@ -390,6 +391,7 @@ pub const WebSocket = struct {
             self.conn.ws_message_buffer[0..self.message_len];
         if (!self.validate_complete_text(message_opcode, message)) return false;
 
+        self.log_message(message.len, message_opcode);
         if (self.behavior.message) |callback| {
             if (!self.failed and !self.close_received) callback(self, message, message_opcode);
         }
@@ -423,6 +425,7 @@ pub const WebSocket = struct {
             else
                 self.conn.ws_message_buffer[0..self.message_len];
             if (!self.validate_complete_text(message_opcode, message)) return false;
+            self.log_message(message.len, message_opcode);
             if (self.behavior.message) |callback| {
                 if (!self.failed and !self.close_received) callback(self, message, message_opcode);
             }
@@ -431,6 +434,21 @@ pub const WebSocket = struct {
 
         self.complete_frame();
         return !self.conn.closing and !self.conn.close_when_drained;
+    }
+
+    /// Counts one complete message and records it in the connection's dev log.
+    fn log_message(self: *WebSocket, payload_len: usize, opcode: zslay.Opcode) void {
+        if (self.conn.metrics) |registry| registry.add(.ws_messages, 1);
+        const sink = self.conn.dev_log orelse return;
+        sink.record(.{
+            .timestamp_ms = dev_log.now_ms(self.conn.io),
+            .level = .info,
+            .direction = .data_in,
+            .event = .{ .ws_message = .{
+                .payload_len = payload_len,
+                .is_text = opcode == .text,
+            } },
+        });
     }
 
     fn append_message(self: *WebSocket, chunk: []const u8) bool {

@@ -77,6 +77,8 @@ pub const ServerConfig = struct {
     observability: bool = false,
     /// Path of the observability endpoint; retained for the app lifetime.
     metrics_path: []const u8 = "/metrics",
+    /// Writes colored development-log records to the app's terminal sink.
+    dev_log: bool = false,
 
     /// Optional per-field replacements accepted by `with`.
     ///
@@ -108,6 +110,8 @@ pub const ServerConfig = struct {
         observability: ?bool = null,
         /// Replaces `metrics_path` when non-null.
         metrics_path: ?[]const u8 = null,
+        /// Replaces `dev_log` when non-null.
+        dev_log: ?bool = null,
     };
 
     /// Returns a copy with every non-null override field replaced.
@@ -126,6 +130,7 @@ pub const ServerConfig = struct {
         if (overrides.xdp_frame_count) |value| result.xdp_frame_count = value;
         if (overrides.observability) |value| result.observability = value;
         if (overrides.metrics_path) |value| result.metrics_path = value;
+        if (overrides.dev_log) |value| result.dev_log = value;
         return result;
     }
 

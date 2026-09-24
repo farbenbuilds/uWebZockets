@@ -1,4 +1,4 @@
-# µWebZockets 1.2.0 Examples
+# µWebZockets 1.3.0 Examples
 
 Build the supported examples with Zig 0.16.0:
 
@@ -7,7 +7,7 @@ zig build -Doptimize=ReleaseSafe
 ```
 
 The default install contains `hello_world`, `chat_server`, `rpc_server`,
-`http3_server`, `basic_microservice`, `custom_builder`,
+`http3_server`, `basic_microservice`, `custom_builder`, `dev_log_server`,
 `shared_nothing_cluster`, `h1spec`, and `autobahn_server` under `zig-out/bin`.
 
 These examples target the live `App` transports. The bounded HTTP/2/HPACK
@@ -87,6 +87,27 @@ build-and-run step is:
 ```sh
 zig build rpc_server -Doptimize=ReleaseSafe
 ```
+
+## Terminal development log
+
+Start the dev-log server:
+
+```sh
+zig build dev_log_server -Doptimize=ReleaseSafe
+```
+
+```sh
+curl -i http://127.0.0.1:3000/
+curl -i http://127.0.0.1:3000/snapshot
+curl -i http://127.0.0.1:3000/metrics
+npx wscat -c ws://127.0.0.1:3000/echo
+```
+
+The server writes colored connection, HTTP, and WebSocket lines to stderr from
+fixed stack buffers. `/snapshot` records every Prometheus counter into the same
+log and `/metrics` serves the registry. Each worker thread batches records in
+its own `dev_log.Sink`, so the event loop never allocates and a stalled
+terminal cannot block it; `App.set_dev_log_file` redirects the output.
 
 ## Capacity presets and custom builder
 

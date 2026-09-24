@@ -2,7 +2,7 @@
 
 ## Scope
 
-µWebZockets 1.2.0 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
+µWebZockets 1.3.0 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
 server library with bounded HPACK protocol storage. It combines an
 event-driven cross-platform transport (POSIX and Windows IOCP), fixed-capacity
 protocol state, a data-oriented router, and C libraries for TLS, compression, and QUIC.
@@ -92,7 +92,7 @@ uWebZockets/
 │   ├── router/               # fixed-capacity radix router, App API, config, builder
 │   ├── rpc/                  # bounded JSON-RPC registry and dispatcher
 │   ├── ws/                   # streams, pure backpressure, framing, pub/sub
-│   ├── observability/        # Prometheus registry and pinned eBPF histogram reader
+│   ├── observability/        # Prometheus registry, terminal dev log, and eBPF reader
 │   ├── xdp/                  # AF_XDP UMEM rings, TX path, and bypass policy
 │   ├── quic/                 # lsquic HTTP/3, WebTransport, and datagram ring
 │   └── tests/                # centralized ordinary Zig unit tests
@@ -304,6 +304,28 @@ Windows QUIC datagrams are received through libxev IOCP UDP completions and
 sent with the Winsock `WSASendTo` adapter. The native Windows workflow compiles
 this path, while runtime interoperability remains Tier 2.
 
+## Development log
+
+`src/observability/dev_log.zig` renders opt-in terminal diagnostics without
+allocating. A `Sink` owns a fixed 4096-byte buffer and one bound output file;
+`render` is pure and writes one `Record` through `std.Io.Writer.fixed` using
+comptime format strings and ANSI colors. Each record carries the wall clock,
+severity, and an explicit `Direction` (`data_in` or `data_out`) beside a named
+event payload for connection, HTTP, WebSocket, and metric events. No ambient
+logger state exists.
+
+`thread_sink` returns the sink owned by the calling thread. Every worker owns
+exactly one, so recording and flushing need no lock or atomic, and the
+transport reaches its batch without threading a logger pointer through every
+callback. `Sink.record` flushes the batch when a line cannot fit and drops
+oversized or failed lines with a counter. `Sink.flush` issues at most one
+bounded `writeStreaming` per batch and never retries a short write, so a
+stalled terminal cannot block or spin the event loop. When `ServerConfig.dev_log`
+is set, the app enables the worker sink in `run`, arms a one-second recurring
+timer to drain low-traffic logs, and flushes the remainder when the loop exits;
+`App.set_dev_log_file` rebinds the default stderr output and `App.log_metrics`
+records the Prometheus registry in slot order.
+
 ## Build graph
 
 `src/version.zig` is the single Zig source of truth for the release version;
@@ -360,7 +382,8 @@ surface also includes `WsCompression`, fixed-capacity `json_rpc`,
 completion-driven `udp`, bounded
 `http2`, `http2_hpack`, `http3_extensions`, `webtransport`, `http3_available`,
 `WebSocketStream`, BYOB and compression streams, abort controllers, Web Crypto,
-shared memory, kTLS, AF_XDP, and the transport-independent protocol core.
+shared memory, kTLS, AF_XDP, the allocation-free terminal `dev_log` sink, and
+the transport-independent protocol core.
 It also exposes `init_http3` and `listen_udp` through the application type. Live lsquic
 engine, stream, packet, and QPACK callbacks remain internal.
 

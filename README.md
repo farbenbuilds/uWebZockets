@@ -118,6 +118,30 @@ Oversized input gets a structured rejection instead of a dropped connection:
 The full capacity table, slab layout, and backpressure model are in
 [docs/memory_model.md](docs/memory_model.md).
 
+## Terminal development log
+
+`with_dev_log(true)` renders connection, HTTP, and WebSocket events as colored
+lines from fixed stack buffers. Each worker thread batches records in a
+thread-local sink, so the event loop never allocates and a stalled terminal
+cannot block it.
+
+```zig
+var server = try uz.Server.builder(init.io)
+    .with_observability(true)
+    .with_dev_log(true)
+    .build(std.heap.page_allocator);
+defer server.deinit();
+
+_ = try server.get("/", hello);
+try server.listen("0.0.0.0", 3000);
+try server.run();
+```
+
+Every record carries an explicit direction (`data_in` or `data_out`) and a
+named event payload. `App.log_metrics` adds a snapshot of the bounded
+Prometheus registry, and `App.set_dev_log_file` redirects output from stderr.
+`zig build dev_log_server` runs the complete example.
+
 ## Examples
 
 | Step | Shows |
@@ -129,6 +153,7 @@ The full capacity table, slab layout, and backpressure model are in
 | `zig build chat_server` | WebSocket pub/sub with bounded topics |
 | `zig build rpc_server` | Typed JSON-RPC procedures |
 | `zig build http3_server` | HTTP/3 over QUIC with TLS |
+| `zig build dev_log_server` | Colored terminal development log |
 
 Every step appends `-Doptimize=ReleaseSafe` for production builds. Sources live
 in [`examples/`](examples/), with walkthroughs in

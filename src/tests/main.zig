@@ -4,6 +4,7 @@ comptime {
     _ = @import("c_tests.zig");
     _ = @import("config_tests.zig");
     _ = @import("datagram_ring_tests.zig");
+    _ = @import("dev_log_tests.zig");
     _ = @import("core_tests.zig");
     _ = @import("fuzz_main.zig");
     _ = @import("framework_tests.zig");

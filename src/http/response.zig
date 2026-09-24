@@ -3,6 +3,7 @@ const tcp = @import("../core/tcp.zig");
 const tcp_file = @import("../core/tcp_file.zig");
 const streams = @import("streams.zig");
 const cookie_module = @import("cookie.zig");
+const dev_log = @import("../observability/dev_log.zig");
 const TcpConnection = tcp.TcpConnection;
 
 /// HTTP/3 end callback: status, response fields, and body bytes.
@@ -211,6 +212,14 @@ pub const Response = struct {
                     try conn.write_data(formatted_headers);
                 } else {
                     try tcp_file.write_data_parts(conn, &.{ formatted_headers, body });
+                }
+                if (conn.dev_log) |sink| {
+                    sink.record(.{
+                        .timestamp_ms = dev_log.now_ms(conn.io),
+                        .level = .info,
+                        .direction = .data_out,
+                        .event = .{ .http_response = .{ .status = code, .bytes = body.len } },
+                    });
                 }
                 if (close_requested) tcp.close_after_flush(conn);
             },

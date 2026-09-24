@@ -171,6 +171,14 @@ pub fn configured_builder(comptime config: ServerConfig) type {
             return .{ .io = self.io };
         }
 
+        /// Writes colored development-log records to the terminal when enabled.
+        pub fn with_dev_log(
+            self: Self,
+            comptime enabled: bool,
+        ) configured_builder(config.with(.{ .dev_log = enabled })) {
+            return .{ .io = self.io };
+        }
+
         /// Replaces the whole configuration with a named preset or literal.
         pub fn preset(self: Self, comptime value: ServerConfig) configured_builder(value) {
             return .{ .io = self.io };

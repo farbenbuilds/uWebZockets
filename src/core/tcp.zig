@@ -20,6 +20,8 @@ const http2_server = @import("../http2/server.zig");
 const http_rejection = @import("../http/rejection.zig");
 const zero_copy = @import("zero_copy.zig");
 const tcp_file = @import("tcp_file.zig");
+const dev_log = @import("../observability/dev_log.zig");
+const metrics = @import("../observability/metrics.zig");
 const zslay = @import("zslay");
 
 const log = std.log.scoped(.tcp);
@@ -71,6 +73,10 @@ pub const TcpConnection = struct {
     pubsub: ?*@import("../ws/pubsub.zig").PubSubEngine = null,
     pool_ptr: ?*anyopaque = null,
     on_close_cb: ?CloseCallback = null,
+    // Thread-owned development-log batch, or null when the feature is off.
+    dev_log: ?*dev_log.Sink = null,
+    // Hidden counter registry, or null when observability is off.
+    metrics: ?*metrics.Registry = null,
     reject_policy: *const http_rejection.RejectionPolicy = &http_rejection.RejectionPolicy.default,
     loop: *xev.Loop = undefined,
     io: std.Io = undefined,
@@ -665,6 +671,16 @@ pub const TcpConnection = struct {
         var response = Response{ .target = .{ .tcp = self } };
         const method = radix.HttpMethod.parse(self.req.method);
         self.suppress_response_body = method == .head;
+
+        if (self.metrics) |registry| registry.add(.http_requests, 1);
+        if (self.dev_log) |sink| {
+            sink.record(.{
+                .timestamp_ms = dev_log.now_ms(self.io),
+                .level = .info,
+                .direction = .data_in,
+                .event = .{ .http_request = .{ .method = self.req.method, .path = self.req.path } },
+            });
+        }
 
         if (self.early_data_forbids(method)) {
             // RFC 8470: tell the client to retry once the handshake confirms.

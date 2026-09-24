@@ -1,0 +1,52 @@
+//! Terminal development log: colored, allocation-free, batched terminal output.
+//!
+//! Build and run:
+//!   zig build dev_log_server -Doptimize=ReleaseSafe
+//!   curl -i http://127.0.0.1:3000/
+//!   curl -i http://127.0.0.1:3000/snapshot
+//!   curl -i http://127.0.0.1:3000/metrics
+//!   npx wscat -c ws://127.0.0.1:3000/echo
+//!
+//! Connection, HTTP, and WebSocket events are written to stderr by the worker
+//! thread that owns the event loop. `GET /snapshot` records every Prometheus
+//! counter into the same log, and `GET /metrics` serves the registry.
+
+const std = @import("std");
+const uz = @import("uWebZockets");
+
+/// Same generated application type as the builder chain below.
+const App = uz.App(256);
+
+fn hello(_: *uz.Request, res: *uz.Response) void {
+    res.text("hello from the dev log server\n") catch {};
+}
+
+fn snapshot(context: *anyopaque, _: *uz.Request, res: *uz.Response) void {
+    const app: *App = @ptrCast(@alignCast(context));
+    app.log_metrics();
+    res.text("metric snapshot written to the dev log\n") catch {};
+}
+
+fn echo(ws: *uz.WebSocket, message: []const u8, opcode: uz.Opcode) void {
+    ws.send(message, opcode) catch {};
+}
+
+pub fn main(init: std.process.Init) !void {
+    var server = try uz.Server.builder(init.io)
+        .with_max_clients(256)
+        .with_observability(true)
+        .with_dev_log(true)
+        .build(std.heap.page_allocator);
+    defer server.deinit();
+
+    _ = try server.get("/", hello);
+    _ = try server.get_context("/snapshot", &server, snapshot);
+    _ = try server.ws("/echo", .{ .message = echo });
+
+    try server.listen("0.0.0.0", 3000);
+    std.debug.print(
+        "dev log server is running on port 3000; logs go to stderr\n",
+        .{},
+    );
+    try server.run();
+}

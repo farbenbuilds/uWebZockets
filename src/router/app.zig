@@ -20,6 +20,7 @@ const config_module = @import("config.zig");
 const datagram_module = @import("datagram.zig");
 const datagram_ring_module = @import("../quic/datagram_ring.zig");
 const metrics_module = @import("../observability/metrics.zig");
+const dev_log_module = @import("../observability/dev_log.zig");
 const ebpf_module = @import("../observability/ebpf.zig");
 const xdp_transport_module = @import("../xdp/transport.zig");
 const http_rejection = @import("../http/rejection.zig");
@@ -32,6 +33,8 @@ pub const default_max_ws_message_size = 16 * 1024;
 pub const default_write_queue_size = core_tcp.default_write_queue_capacity;
 /// Default inactivity timeout before an idle connection is closed.
 pub const default_idle_timeout_ms: u64 = 120_000;
+/// Interval between periodic development-log drains in milliseconds.
+pub const dev_log_flush_interval_ms: u64 = 1000;
 /// Reports whether the compiled lsquic transport is available.
 pub const http3_available = quic.available;
 
@@ -137,6 +140,9 @@ pub fn configured_app_with_timeout(
         metrics_enabled: bool = false,
         metrics_installed: bool = false,
         metrics_path: []const u8 = "/metrics",
+        dev_log_enabled: bool = false,
+        dev_log_file: ?std.Io.File = null,
+        dev_log_timer: ?core_timer.TimerContext = null,
         ebpf_map_fd: i32 = -1,
         static_handlers: [max_static_routes]?*StaticFiles = .{null} ** max_static_routes,
         static_handler_count: u8 = 0,
@@ -246,6 +252,7 @@ pub fn configured_app_with_timeout(
                 .metrics_registry = layout.metrics_registry,
                 .metrics_enabled = config.observability,
                 .metrics_path = if (config.observability) config.metrics_path else "/metrics",
+                .dev_log_enabled = config.dev_log,
                 .pubsub = .{},
             };
 
@@ -340,6 +347,8 @@ pub fn configured_app_with_timeout(
                 sw.deinit();
             }
             self.sweeper = null;
+            if (self.dev_log_timer) |*timer| core_timer.deinit_timer(timer);
+            self.dev_log_timer = null;
             self.server = null;
 
             if (self.quic_transport) |*transport| transport.deinit();
@@ -405,6 +414,7 @@ pub fn configured_app_with_timeout(
             // Shutdown continues even if the cross-thread wakeup is already closed.
             if (self.cluster_wakeup) |*wakeup| wakeup.notify() catch {};
             if (self.sweeper) |*sw| sw.stop(&self.loop);
+            if (self.dev_log_timer) |*timer| core_timer.stop_timer(timer, &self.loop);
             if (self.server) |*server| core_tcp.close_server(server, &self.loop);
             if (self.quic_transport) |*transport| transport.shutdown();
 
@@ -864,9 +874,36 @@ pub fn configured_app_with_timeout(
             conn.pubsub = &self.pubsub;
             conn.pool_ptr = &self.pool;
             conn.io = self.io;
+            conn.metrics = self.metrics_registry;
+            if (self.metrics_registry) |registry| registry.add(.connections_accepted, 1);
+            if (self.dev_log_enabled) {
+                const sink = dev_log_module.thread_sink();
+                conn.dev_log = sink;
+                sink.record(.{
+                    .timestamp_ms = dev_log_module.now_ms(self.io),
+                    .level = .info,
+                    .direction = .data_in,
+                    .event = .{ .connection_opened = .{ .index = connection_index } },
+                });
+            } else {
+                conn.dev_log = null;
+            }
             conn.on_close_cb = (struct {
                 fn cb(pool_ptr: *anyopaque, c: *core_tcp.TcpConnection) void {
                     const pool: *Pool = @ptrCast(@alignCast(pool_ptr));
+                    if (c.metrics) |registry| registry.add(.connections_closed, 1);
+                    if (c.dev_log) |sink| {
+                        sink.record(.{
+                            .timestamp_ms = dev_log_module.now_ms(c.io),
+                            .level = .info,
+                            .direction = .data_out,
+                            .event = .{
+                                .connection_closed = .{
+                                    .index = pool.index_of(c) orelse 0,
+                                },
+                            },
+                        });
+                    }
                     _ = pool.release(c);
                 }
             }).cb;
@@ -936,9 +973,48 @@ pub fn configured_app_with_timeout(
 
             self.running = true;
             defer self.running = false;
+            if (self.dev_log_enabled) {
+                dev_log_module.thread_sink().enable(
+                    self.io,
+                    self.dev_log_file orelse std.Io.File.stderr(),
+                );
+                if (self.dev_log_timer == null) {
+                    // A periodic drain keeps low-traffic logs visible; a failed
+                    // arm still leaves capacity-triggered flushes working.
+                    self.dev_log_timer = core_timer.init_timer(
+                        dev_log_flush_interval_ms,
+                        flush_dev_log_tick,
+                    ) catch null;
+                }
+                if (self.dev_log_timer) |*timer| core_timer.start_timer(timer, &self.loop);
+            }
             self.arm_cluster_wakeup();
             try core_loop.run(&self.loop);
+            self.flush_dev_log();
             if (self.shutting_down) try self.verify_shutdown();
+        }
+
+        /// Overrides the development-log output file; defaults to stderr.
+        pub fn set_dev_log_file(self: *Self, file: std.Io.File) void {
+            self.dev_log_file = file;
+        }
+
+        /// Flushes this worker's pending development-log batch.
+        pub fn flush_dev_log(self: *Self) void {
+            if (!self.dev_log_enabled) return;
+            _ = dev_log_module.thread_sink().flush();
+        }
+
+        fn flush_dev_log_tick() void {
+            _ = dev_log_module.thread_sink().flush();
+        }
+
+        /// Records every counter of the hidden registry in this worker's log.
+        pub fn log_metrics(self: *Self) void {
+            if (!self.dev_log_enabled) return;
+            const registry = self.metrics_registry orelse return;
+            const sink = dev_log_module.thread_sink();
+            sink.record_metrics(dev_log_module.now_ms(self.io), .data_out, registry);
         }
 
         /// Publishes one message to every matching bounded subscription.

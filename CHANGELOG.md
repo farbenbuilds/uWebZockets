@@ -3,6 +3,54 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.3.0] - 2026-09-25
+
+This release adds an opt-in terminal development log. It renders connection,
+HTTP, and WebSocket events plus the bounded Prometheus counters as colored
+lines from fixed stack buffers, and batches terminal writes through a
+thread-local sink so the event loop never allocates and never blocks on a
+stalled terminal. Wire behavior, capacities, and the C ABI are unchanged.
+
+### Added
+
+- `src/observability/dev_log.zig` implements the allocation-free terminal log.
+  `Sink` renders one record into a fixed 4096-byte buffer with comptime format
+  strings and ANSI colors, flushes whole batches with a single bounded write,
+  and counts dropped lines. `thread_sink()` returns the sink owned by the
+  calling thread, so recording needs no lock or atomic and the transport can
+  reach a batch without threading a logger pointer through every callback.
+- `dev_log.Record` carries the wall clock, severity, and an explicit
+  `Direction` (`data_in` or `data_out`) beside a named event payload
+  (`connection_opened`, `connection_closed`, `http_request`, `http_response`,
+  `ws_message`, `metric`), so no ambient logger state exists.
+- `ServerConfig.dev_log` and `Server.builder().with_dev_log(true)` enable the
+  log. Records go to stderr by default; `App.set_dev_log_file` binds another
+  output. `App.flush_dev_log` and `App.log_metrics` expose the batch and the
+  counter snapshot, and a 1-second recurring timer drains low-traffic logs.
+- `examples/dev_log_server.zig` and the `zig build dev_log_server` step show
+  the colored log with HTTP routes, a WebSocket echo, and a metric snapshot.
+- Unit coverage in `src/tests/dev_log_tests.zig` pins the rendered byte
+  sequences, batch and flush behavior, oversize drops, comptime metric names,
+  and the thread-local sink identity.
+
+### Changed
+
+- `TcpConnection` now carries the thread-local dev-log sink and the optional
+  counter registry, so the HTTP/1.1 and WebSocket paths emit records and
+  advance counters without allocating. HTTP/2 dispatch and QUIC callbacks
+  remain silent in this release.
+- The `uwz_connections_accepted`, `uwz_connections_closed`,
+  `uwz_http_requests`, and `uwz_ws_messages` counters now advance at their
+  accept, close, dispatch, and complete-message sites when observability is
+  enabled; they were previously defined but never incremented.
+- `src/root.zig` exports `dev_log` for downstream consumers.
+
+### Security
+
+- No security-relevant behavior changed. The development log is opt-in,
+  silent by default, writes only to the caller-bound file, and performs no
+  dynamic allocation; parsing, validation, and wire behavior are unchanged.
+
 ## [1.2.0] - 2026-09-24
 
 This release makes the repository a self-contained Zig package. Every C and

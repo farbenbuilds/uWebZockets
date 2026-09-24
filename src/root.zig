@@ -105,6 +105,8 @@ pub const xdp = @import("xdp/socket.zig");
 pub const xdp_transport = @import("xdp/transport.zig");
 /// Fixed-capacity zero-allocation Prometheus metrics registry.
 pub const metrics = @import("observability/metrics.zig");
+/// Colored, allocation-free terminal development log with batched writes.
+pub const dev_log = @import("observability/dev_log.zig");
 /// Pinned eBPF per-CPU histogram reader.
 pub const ebpf = @import("observability/ebpf.zig");
 /// Generation-checked shared memory and Cap'n Proto envelopes.
