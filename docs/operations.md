@@ -146,7 +146,7 @@ defer server.deinit();
 
 The exact `µWEBZOCKETS` wordmark and a Vite-style ready summary are written
 once at startup, before the first accepting listener: the version with the
-elapsed startup time, then `→ Local:`, `→ Logs:`, and `→ Metrics:` lines. A
+elapsed startup time, then `→ Local:` and `→ Logs:` lines. A
 terminal narrower than the block art gets a one-line `µWebZockets` mark
 instead, and builds without the development log keep the plain
 `server listening` std.log line. HTTP/1.1 requests log Vite-style as

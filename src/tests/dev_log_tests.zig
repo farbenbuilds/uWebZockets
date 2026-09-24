@@ -331,19 +331,19 @@ test "render_ready writes the Vite-style startup summary" {
         .host = "127.0.0.1",
         .host_is_ipv6 = false,
         .port = 3000,
-        .metrics_path = "/metrics",
         .log_target = "stderr",
     });
     try testing.expectEqualStrings(
-        "\x1b[1mµWebZockets\x1b[0m \x1b[2mv1.3.0\x1b[0m  \x1b[2mready in 4 ms\x1b[0m\n\n" ++
-            "\x1b[32m→\x1b[0m \x1b[1mLocal:  \x1b[0m \x1b[36mhttp://127.0.0.1:3000/\x1b[0m\n" ++
-            "\x1b[32m→\x1b[0m \x1b[1mLogs:   \x1b[0m stderr\n" ++
-            "\x1b[32m→\x1b[0m \x1b[1mMetrics:\x1b[0m \x1b[36mhttp://127.0.0.1:3000/metrics\x1b[0m\n",
+        "  \x1b[1m\x1b[35mµWebZockets\x1b[0m \x1b[2mv1.3.0\x1b[0m  " ++
+            "\x1b[2mready in\x1b[0m \x1b[32m4 ms\x1b[0m\n\n" ++
+            "  \x1b[32m→\x1b[0m \x1b[1m\x1b[36mLocal:  \x1b[0m " ++
+            "\x1b[36mhttp://127.0.0.1:3000/\x1b[0m\n" ++
+            "  \x1b[32m→\x1b[0m \x1b[1m\x1b[36mLogs:   \x1b[0m stderr\n\n",
         line,
     );
 }
 
-test "render_ready brackets an IPv6 host and omits metrics when unset" {
+test "render_ready brackets an IPv6 host and has no metrics line" {
     var buffer: [512]u8 = undefined;
     const line = try dev_log.render_ready(&buffer, .{
         .elapsed_ms = 12,
@@ -351,7 +351,6 @@ test "render_ready brackets an IPv6 host and omits metrics when unset" {
         .host = "::1",
         .host_is_ipv6 = true,
         .port = 8443,
-        .metrics_path = null,
         .log_target = "bound file",
     });
     try testing.expect(std.mem.find(u8, line, "https://[::1]:8443/") != null);
@@ -369,7 +368,6 @@ test "record_ready writes the summary immediately" {
         .host = "127.0.0.1",
         .host_is_ipv6 = false,
         .port = 3000,
-        .metrics_path = "/metrics",
         .log_target = "stderr",
     };
     var expected_buffer: [512]u8 = undefined;

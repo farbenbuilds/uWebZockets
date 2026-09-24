@@ -1013,7 +1013,6 @@ pub fn configured_app_with_timeout(
                 .host = host,
                 .host_is_ipv6 = std.mem.indexOfScalar(u8, host, ':') != null,
                 .port = port,
-                .metrics_path = if (self.metrics_registry != null) self.metrics_path else null,
                 .log_target = if (self.dev_log_file == null) "stderr" else "bound file",
             });
         }

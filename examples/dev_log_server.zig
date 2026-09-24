@@ -9,7 +9,7 @@
 //!
 //! The startup wordmark, the Vite-style ready summary, and the request lines
 //! are written to stderr by the worker thread that owns the event loop. The
-//! summary lists the local URL, the log target, and the metrics endpoint, and
+//! summary lists the local URL and log target, and
 //! the wordmark collapses to a one-line mark on narrow terminals.
 //! `GET /snapshot` records every Prometheus counter into the same log, and
 //! `GET /metrics` serves the registry. Set `ServerConfig.enable_dev_log` to

@@ -5,7 +5,7 @@
 //! recorded, so every event is visible on the terminal without waiting for a
 //! timer or a full buffer. Startup writes the wordmark (`record_banner`)
 //! followed by a Vite-style ready summary (`record_ready`) naming the local
-//! URL, log target, and metrics endpoint. The transport reaches the owning
+//! URL and log target. The transport reaches the owning
 //! thread's sink through `thread_sink`, so event-loop callbacks never allocate.
 //! HTTP requests render Vite-style as `HH:MM:SS | [METHOD] /path : STATUS` with
 //! a dim clock, cyan method, and status-class color. Recording is opt-in: a
@@ -144,8 +144,6 @@ pub const ReadyInfo = struct {
     /// True when `host` is an IPv6 literal that needs URL brackets.
     host_is_ipv6: bool,
     port: u16,
-    /// Metrics endpoint path, or null when observability is disabled.
-    metrics_path: ?[]const u8,
     /// Where development records are written, for example `stderr`.
     log_target: []const u8,
 };
@@ -316,8 +314,9 @@ pub fn render_ready(buffer: []u8, info: ReadyInfo) error{NoSpaceLeft}![]const u8
 }
 
 fn write_ready(writer: *std.Io.Writer, info: ReadyInfo) std.Io.Writer.Error!void {
-    try writer.print("{s}µWebZockets{s} {s}v{d}.{d}.{d}{s}  {s}ready in {d} ms{s}\n\n", .{
+    try writer.print("  {s}{s}µWebZockets{s} {s}v{d}.{d}.{d}{s}  {s}ready in{s} {s}{d} ms{s}\n\n", .{
         Ansi.bold,
+        Ansi.magenta,
         Ansi.reset,
         Ansi.dim,
         version.semantic.major,
@@ -325,16 +324,19 @@ fn write_ready(writer: *std.Io.Writer, info: ReadyInfo) std.Io.Writer.Error!void
         version.semantic.patch,
         Ansi.reset,
         Ansi.dim,
+        Ansi.reset,
+        Ansi.green,
         info.elapsed_ms,
         Ansi.reset,
     });
 
     const open_bracket = if (info.host_is_ipv6) "[" else "";
     const close_bracket = if (info.host_is_ipv6) "]" else "";
-    try writer.print("{s}→{s} {s}{s:<8}{s} {s}{s}://{s}{s}{s}:{d}/{s}\n", .{
+    try writer.print("  {s}→{s} {s}{s}{s:<8}{s} {s}{s}://{s}{s}{s}:{d}/{s}\n", .{
         Ansi.green,
         Ansi.reset,
         Ansi.bold,
+        Ansi.cyan,
         "Local:",
         Ansi.reset,
         Ansi.cyan,
@@ -345,31 +347,15 @@ fn write_ready(writer: *std.Io.Writer, info: ReadyInfo) std.Io.Writer.Error!void
         info.port,
         Ansi.reset,
     });
-    try writer.print("{s}→{s} {s}{s:<8}{s} {s}\n", .{
+    try writer.print("  {s}→{s} {s}{s}{s:<8}{s} {s}\n\n", .{
         Ansi.green,
         Ansi.reset,
         Ansi.bold,
+        Ansi.cyan,
         "Logs:",
         Ansi.reset,
         info.log_target,
     });
-    if (info.metrics_path) |path| {
-        try writer.print("{s}→{s} {s}{s:<8}{s} {s}{s}://{s}{s}{s}:{d}{s}{s}\n", .{
-            Ansi.green,
-            Ansi.reset,
-            Ansi.bold,
-            "Metrics:",
-            Ansi.reset,
-            Ansi.cyan,
-            info.scheme,
-            open_bracket,
-            info.host,
-            close_bracket,
-            info.port,
-            path,
-            Ansi.reset,
-        });
-    }
 }
 
 fn write_record(writer: *std.Io.Writer, record: Record) std.Io.Writer.Error!void {

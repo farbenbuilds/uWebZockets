@@ -324,8 +324,8 @@ with a counter; `Sink.record_metrics` writes the whole snapshot as one batch.
 `Sink.flush` issues at most one bounded `writeStreaming` per pending batch and
 never retries a short write. `Sink.record_banner` writes the startup wordmark
 once, followed by a blank padding line, and `Sink.record_ready` renders the
-Vite-style summary: version, elapsed startup time, local URL, log target, and
-the metrics endpoint when observability is on. `src/observability/terminal.zig`
+Vite-style summary: version, elapsed startup time, local URL, and log target.
+`src/observability/terminal.zig`
 probes the terminal width so narrow outputs get a one-line `µWebZockets` mark
 and redirected outputs keep the full block art. When `ServerConfig.enable_dev_log`
 is set, the app enables the worker sink and, in `listen`/`listen_udp`, writes
