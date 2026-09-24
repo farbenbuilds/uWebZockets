@@ -118,6 +118,46 @@ Oversized input gets a structured rejection instead of a dropped connection:
 The full capacity table, slab layout, and backpressure model are in
 [docs/memory_model.md](docs/memory_model.md).
 
+## Terminal development log
+
+`with_dev_log(true)` prints the `µWEBZOCKETS` wordmark and a Vite-style ready
+summary before the first accepting listener: `µWebZockets v1.3.0  ready in
+0.6 ms` followed by the `→ Local:` line; the elapsed time scales
+through nanoseconds, microseconds, milliseconds, and seconds. The wordmark
+collapses to a one-line `µWebZockets` mark when the terminal is narrower than
+the block art. Requests then log Vite-style as `HH:MM:SS | [METHOD] /path :
+STATUS`, plus colored connection, WebSocket, and metric lines. Everything
+renders from fixed stack buffers, and each worker thread writes every record
+through its own thread-local sink as soon as it is recorded, so the terminal
+reflects the server in real time without allocating on the event loop. Failed
+or short writes drop the record instead of retrying.
+
+`with_watch_paths(&.{ "src", "examples" })` watches those directories
+recursively and prints a `watch` line for every save, create, and delete, so
+edits show up as they happen. Watch paths require `with_dev_log(true)`. Linux
+reports changes in real time from inotify; every other target scans the roots
+on a 500 ms loop timer. `.git`, `.zig-cache`, `zig-out`, `zig-pkg`,
+`node_modules`, and `.cache` are skipped.
+
+```zig
+var server = try uz.Server.builder(init.io)
+    .with_observability(true)
+    .with_dev_log(true)
+    .build(std.heap.page_allocator);
+defer server.deinit();
+
+_ = try server.get("/", hello);
+try server.listen("0.0.0.0", 3000);
+try server.run();
+```
+
+Every record carries an explicit direction (`data_in` or `data_out`) and a
+named event payload. `ServerConfig.enable_dev_log` defaults on; the default
+stderr sink stays quiet when stderr is not a terminal, and `false` silences
+every development-log write. `App.log_metrics` adds a snapshot of the
+bounded Prometheus registry, and `App.set_dev_log_file` redirects output from
+stderr. Every example shows the log when run in a terminal.
+
 ## Examples
 
 | Step | Shows |

@@ -1,0 +1,558 @@
+//! Allocation-free terminal development log with ANSI colors.
+//!
+//! A `Sink` renders records into a fixed stack buffer using comptime format
+//! strings and writes them with one bounded file operation as soon as they are
+//! recorded, so every event is visible on the terminal without waiting for a
+//! timer or a full buffer. Startup writes the wordmark (`record_banner`)
+//! followed by a Vite-style ready summary (`record_ready`) naming the local
+//! URL and log target. The transport reaches the owning
+//! thread's sink through `thread_sink`, so event-loop callbacks never allocate.
+//! HTTP requests render Vite-style as `HH:MM:SS | [METHOD] /path : STATUS` with
+//! a dim clock, cyan method, and status-class color. Recording is opt-in: a
+//! sink is silent until `enable` binds an output file, which keeps library
+//! defaults quiet.
+
+const std = @import("std");
+const metrics = @import("metrics.zig");
+const version = @import("../version.zig");
+
+/// ANSI SGR sequences used by the renderer.
+pub const Ansi = struct {
+    pub const reset = "\x1b[0m";
+    pub const bold = "\x1b[1m";
+    pub const dim = "\x1b[2m";
+    pub const red = "\x1b[31m";
+    pub const green = "\x1b[32m";
+    pub const yellow = "\x1b[33m";
+    pub const bright_yellow = "\x1b[93m";
+    pub const blue = "\x1b[34m";
+    pub const magenta = "\x1b[35m";
+    pub const cyan = "\x1b[36m";
+};
+
+/// Severity of one development-log line.
+pub const Level = enum { debug, info, warn, err };
+
+/// Explicit traffic direction carried by every record.
+pub const Direction = enum { data_in, data_out };
+
+/// One accepted or released connection.
+pub const ConnectionEvent = struct {
+    index: usize,
+};
+
+/// One completed HTTP request/response cycle.
+pub const RequestEvent = struct {
+    method: []const u8,
+    path: []const u8,
+    status: u16,
+};
+
+/// One complete WebSocket application message.
+pub const MessageEvent = struct {
+    payload_len: usize,
+    is_text: bool,
+};
+
+/// One registry counter rendered with its comptime metric name.
+pub const MetricEvent = struct {
+    slot: metrics.Slot,
+    value: u64,
+};
+
+/// Kind of filesystem change carried by `FileChangedEvent`.
+pub const FileChangeKind = enum { created, modified, deleted };
+
+/// One observed file change.
+pub const FileChangedEvent = struct {
+    path: []const u8,
+    kind: FileChangeKind,
+};
+
+/// Named payload for one development-log record.
+pub const Event = union(enum) {
+    connection_opened: ConnectionEvent,
+    connection_closed: ConnectionEvent,
+    http_request: RequestEvent,
+    ws_message: MessageEvent,
+    metric: MetricEvent,
+    file_changed: FileChangedEvent,
+};
+
+/// One development-log line: wall clock, severity, direction, and payload.
+pub const Record = struct {
+    timestamp_ms: i64,
+    level: Level,
+    direction: Direction,
+    event: Event,
+};
+
+/// Fixed line-buffer capacity; oversized records are dropped.
+pub const capacity = 4096;
+/// Buffer tail kept free so a pending batch can always take another line.
+pub const max_line_bytes = 256;
+
+/// Exact startup wordmark written once when the development log is enabled.
+pub const banner =
+    \\██╗   ██╗██╗    ██╗███████╗██████╗ ███████╗ ██████╗  ██████╗██╗  ██╗███████╗████████╗███████╗
+    \\██║   ██║██║    ██║██╔════╝██╔══██╗╚══███╔╝██╔═══██╗██╔════╝██║ ██╔╝██╔════╝╚══██╔══╝██╔════╝
+    \\██║   ██║██║ █╗ ██║█████╗  ██████╔╝  ███╔╝ ██║   ██║██║     █████╔╝ █████╗     ██║   ███████╗
+    \\██║   ██║██║███╗██║██╔══╝  ██╔══██╗ ███╔╝  ██║   ██║██║     ██╔═██╗ ██╔══╝     ██║   ╚════██║
+    \\╚██████╔╝╚███╔███╔╝███████╗██████╔╝███████╗╚██████╔╝╚██████╗██║  ██╗███████╗   ██║   ███████║
+    \\██╔════╝  ╚══╝╚══╝ ╚══════╝╚═════╝ ╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝╚══════╝   ╚═╝   ╚══════╝
+    \\██║                                                                                          
+    \\╚═╝                                                                                          
+;
+
+/// Columns occupied by every `banner` line; all glyphs are single width and
+/// the multiline literal is valid UTF-8 by construction.
+pub const banner_columns = blk: {
+    const first_line_end = std.mem.indexOfScalar(u8, banner, '\n') orelse banner.len;
+    break :blk std.unicode.utf8CountCodepoints(banner[0..first_line_end]) catch unreachable;
+};
+
+/// One-line wordmark used when the terminal is narrower than `banner`.
+pub const wordmark = "µWebZockets";
+
+/// Columns occupied by `wordmark`; the literal is valid UTF-8 by construction.
+pub const wordmark_columns = std.unicode.utf8CountCodepoints(wordmark) catch unreachable;
+
+/// Returns the widest wordmark that fits `columns`.
+///
+/// A null width means the output is not a terminal or the probe failed, so
+/// captured logs keep the full block wordmark. A terminal too narrow for the
+/// one-line mark gets nothing rather than a wrapped line.
+pub fn banner_for_columns(columns: ?usize) []const u8 {
+    const width = columns orelse return banner;
+    if (width < wordmark_columns) return "";
+    if (width < banner_columns) return wordmark;
+    return banner;
+}
+
+/// Maps wildcard bind addresses to a client-reachable loopback host and strips
+/// IPv6 brackets; every other address is returned unchanged.
+pub fn display_host(address: []const u8) []const u8 {
+    if (std.mem.eql(u8, address, "0.0.0.0") or
+        std.mem.eql(u8, address, "::") or
+        std.mem.eql(u8, address, "[::]"))
+    {
+        return "127.0.0.1";
+    }
+    if (address.len >= 2 and address[0] == '[' and address[address.len - 1] == ']') {
+        return address[1 .. address.len - 1];
+    }
+    return address;
+}
+
+/// One startup summary rendered after the wordmark.
+pub const ReadyInfo = struct {
+    /// Nanoseconds between application construction and listener startup.
+    elapsed_ns: u64,
+    /// URL scheme of the bound listener, `http` or `https`.
+    scheme: []const u8,
+    /// Host shown in the local URL, already mapped by `display_host`.
+    host: []const u8,
+    /// True when `host` is an IPv6 literal that needs URL brackets.
+    host_is_ipv6: bool,
+    port: u16,
+};
+
+/// Result of one best-effort terminal write.
+pub const FlushOutcome = struct {
+    written: usize = 0,
+    failed: bool = false,
+};
+
+const slot_fields = @typeInfo(metrics.Slot).@"enum".fields;
+
+/// Thread-confined terminal sink.
+pub const Sink = struct {
+    buffer: [capacity]u8 = undefined,
+    len: usize = 0,
+    io: std.Io = undefined,
+    file: std.Io.File = undefined,
+    enabled: bool = false,
+    banner_written: bool = false,
+    dropped: u64 = 0,
+    written: u64 = 0,
+
+    /// Binds the sink to an output file and starts accepting records.
+    pub fn enable(self: *Sink, io: std.Io, file: std.Io.File) void {
+        self.io = io;
+        self.file = file;
+        self.enabled = true;
+    }
+
+    /// Writes the startup wordmark once, sized to the output terminal, on its
+    /// own line followed by a blank padding line.
+    pub fn record_banner(self: *Sink, columns: ?usize) void {
+        if (!self.enabled or self.banner_written) return;
+        self.banner_written = true;
+        const art = banner_for_columns(columns);
+        if (art.len == 0) return;
+        const bytes = art.len + 2;
+        if (self.buffer.len - self.len < bytes) _ = self.flush();
+        if (self.buffer.len - self.len < bytes) {
+            self.dropped +|= 1;
+            return;
+        }
+        @memcpy(self.buffer[self.len..][0..art.len], art);
+        self.len += art.len;
+        self.buffer[self.len] = '\n';
+        self.buffer[self.len + 1] = '\n';
+        self.len += 2;
+        _ = self.flush();
+    }
+
+    /// Appends one entry and writes it to the terminal immediately.
+    pub fn record(self: *Sink, entry: Record) void {
+        if (!self.enabled) return;
+        self.append_entry(entry);
+        _ = self.flush();
+    }
+
+    /// Renders and writes the startup summary immediately.
+    pub fn record_ready(self: *Sink, info: ReadyInfo) void {
+        if (!self.enabled) return;
+        if (!self.append_ready(info)) {
+            _ = self.flush();
+            if (!self.append_ready(info)) {
+                self.dropped +|= 1;
+                return;
+            }
+        }
+        _ = self.flush();
+    }
+
+    /// Writes every pending byte with one bounded file operation.
+    ///
+    /// A short or failed write drops the pending bytes instead of retrying;
+    /// recording never allocates and never spins on a stalled terminal.
+    pub fn flush(self: *Sink) FlushOutcome {
+        if (!self.enabled or self.len == 0) return .{};
+        const pending = self.buffer[0..self.len];
+        self.len = 0;
+        const written = self.file.writeStreaming(self.io, &.{}, &.{pending}, 1) catch {
+            // Development diagnostics are best effort; the server keeps
+            // running when the terminal disappears.
+            self.dropped +|= 1;
+            return .{ .failed = true };
+        };
+        self.written +|= written;
+        if (written < pending.len) {
+            self.dropped +|= 1;
+            return .{ .written = written, .failed = true };
+        }
+        return .{ .written = written };
+    }
+
+    /// Renders every registry counter in declaration order as one write.
+    pub fn record_metrics(
+        self: *Sink,
+        timestamp_ms: i64,
+        direction: Direction,
+        registry: *const metrics.Registry,
+    ) void {
+        if (!self.enabled) return;
+        inline for (slot_fields) |field| {
+            const slot: metrics.Slot = @enumFromInt(field.value);
+            self.append_entry(.{
+                .timestamp_ms = timestamp_ms,
+                .level = .info,
+                .direction = direction,
+                .event = .{ .metric = .{ .slot = slot, .value = registry.get(slot) } },
+            });
+        }
+        _ = self.flush();
+    }
+
+    /// Appends one entry, flushing pending bytes first when the buffer lacks
+    /// room, and counts the entry as dropped when it cannot fit at all.
+    fn append_entry(self: *Sink, entry: Record) void {
+        if (self.append(entry)) return;
+        _ = self.flush();
+        if (self.append(entry)) return;
+        self.dropped +|= 1;
+    }
+
+    fn append_ready(self: *Sink, info: ReadyInfo) bool {
+        const line = render_ready(self.buffer[self.len..], info) catch return false;
+        self.len += line.len;
+        return true;
+    }
+
+    fn append(self: *Sink, entry: Record) bool {
+        if (self.buffer.len - self.len < max_line_bytes and self.len != 0) return false;
+        const line = render(self.buffer[self.len..], entry) catch return false;
+        self.len += line.len;
+        return true;
+    }
+};
+
+/// Thread-owned sink shared by the transport callbacks of one event loop.
+///
+/// Every worker thread owns exactly one instance, so recording and flushing
+/// need no lock or atomic: the buffer is never shared across threads. This is
+/// the module's only file-scope variable, and it exists so transport
+/// callbacks can reach a batch without threading a logger pointer through
+/// every call.
+threadlocal var thread_sink_storage: Sink = .{};
+
+/// Returns this thread's sink; silent until `Sink.enable` binds an output.
+pub fn thread_sink() *Sink {
+    return &thread_sink_storage;
+}
+
+/// Reads the wall clock in milliseconds; rendering itself stays pure.
+pub fn now_ms(io: std.Io) i64 {
+    return @intCast(@divTrunc(std.Io.Clock.now(.real, io).nanoseconds, std.time.ns_per_ms));
+}
+
+/// Renders one record into `buffer` without I/O or allocation.
+pub fn render(buffer: []u8, record: Record) error{NoSpaceLeft}![]const u8 {
+    var writer: std.Io.Writer = .fixed(buffer);
+    write_record(&writer, record) catch return error.NoSpaceLeft;
+    return writer.buffered();
+}
+
+/// Renders the startup summary into `buffer` without I/O or allocation.
+pub fn render_ready(buffer: []u8, info: ReadyInfo) error{NoSpaceLeft}![]const u8 {
+    var writer: std.Io.Writer = .fixed(buffer);
+    write_ready(&writer, info) catch return error.NoSpaceLeft;
+    return writer.buffered();
+}
+
+/// Writes `elapsed_ns` with the coarsest unit that keeps it readable.
+fn write_elapsed(writer: *std.Io.Writer, elapsed_ns: u64) std.Io.Writer.Error!void {
+    if (elapsed_ns < std.time.ns_per_us) {
+        try writer.print("{d} ns", .{elapsed_ns});
+        return;
+    }
+    if (elapsed_ns < std.time.ns_per_ms) {
+        try writer.print("{d} µs", .{elapsed_ns / std.time.ns_per_us});
+        return;
+    }
+    if (elapsed_ns < std.time.ns_per_s) {
+        try writer.print("{d}.{d} ms", .{
+            elapsed_ns / std.time.ns_per_ms,
+            (elapsed_ns % std.time.ns_per_ms) / (std.time.ns_per_ms / 10),
+        });
+        return;
+    }
+    try writer.print("{d}.{d} s", .{
+        elapsed_ns / std.time.ns_per_s,
+        (elapsed_ns % std.time.ns_per_s) / (std.time.ns_per_s / 10),
+    });
+}
+
+fn write_ready(writer: *std.Io.Writer, info: ReadyInfo) std.Io.Writer.Error!void {
+    try writer.print("  {s}{s}µWebZockets{s} {s}v{d}.{d}.{d}{s}  {s}ready in{s} {s}", .{
+        Ansi.bold,
+        Ansi.bright_yellow,
+        Ansi.reset,
+        Ansi.dim,
+        version.semantic.major,
+        version.semantic.minor,
+        version.semantic.patch,
+        Ansi.reset,
+        Ansi.dim,
+        Ansi.reset,
+        Ansi.green,
+    });
+    try write_elapsed(writer, info.elapsed_ns);
+    try writer.print("{s}\n\n", .{Ansi.reset});
+
+    const open_bracket = if (info.host_is_ipv6) "[" else "";
+    const close_bracket = if (info.host_is_ipv6) "]" else "";
+    try writer.print("  {s}→{s} {s}{s}{s:<8}{s} {s}{s}://{s}{s}{s}:{d}/{s}\n\n", .{
+        Ansi.green,
+        Ansi.reset,
+        Ansi.bold,
+        Ansi.cyan,
+        "Local:",
+        Ansi.reset,
+        Ansi.cyan,
+        info.scheme,
+        open_bracket,
+        info.host,
+        close_bracket,
+        info.port,
+        Ansi.reset,
+    });
+}
+
+fn write_record(writer: *std.Io.Writer, record: Record) std.Io.Writer.Error!void {
+    switch (record.event) {
+        .http_request => |event| try write_http_line(writer, record.timestamp_ms, event),
+        .connection_opened => |event| {
+            try write_prefix(writer, record);
+            try writer.print("{s}{s:<6}{s} #{d} accepted", .{
+                Ansi.magenta, "conn", Ansi.reset, event.index,
+            });
+        },
+        .connection_closed => |event| {
+            try write_prefix(writer, record);
+            try writer.print("{s}{s:<6}{s} #{d} closed", .{
+                Ansi.magenta, "conn", Ansi.reset, event.index,
+            });
+        },
+        .ws_message => |event| {
+            try write_prefix(writer, record);
+            try writer.print("{s}{s:<6}{s} {s}{s} {s}{d}B", .{
+                Ansi.yellow,
+                "ws",
+                Ansi.reset,
+                if (event.is_text) "text" else "binary",
+                Ansi.reset,
+                Ansi.dim,
+                event.payload_len,
+            });
+        },
+        .metric => |event| {
+            try write_prefix(writer, record);
+            try write_metric(writer, record.direction, event);
+        },
+        .file_changed => |event| {
+            try write_prefix(writer, record);
+            try writer.print("{s}{s:<6}{s} {s}{s:<8}{s} {s}", .{
+                Ansi.cyan,
+                "watch",
+                Ansi.reset,
+                change_color(event.kind),
+                @tagName(event.kind),
+                Ansi.reset,
+                event.path,
+            });
+        },
+    }
+    try writer.writeAll(Ansi.reset);
+    try writer.writeByte('\n');
+}
+
+fn write_prefix(writer: *std.Io.Writer, record: Record) std.Io.Writer.Error!void {
+    try write_clock(writer, record.timestamp_ms, record.level);
+    try writer.writeByte(' ');
+    try writer.writeAll(direction_badge(record.direction));
+    try writer.writeByte(' ');
+}
+
+/// Writes one Vite-style request line: `HH:MM:SS | [METHOD] /path : STATUS`.
+fn write_http_line(
+    writer: *std.Io.Writer,
+    timestamp_ms: i64,
+    event: RequestEvent,
+) std.Io.Writer.Error!void {
+    try write_clock_short(writer, timestamp_ms);
+    try writer.print(" | {s}[{s}]{s} {s} : {s}{d}{s}", .{
+        Ansi.cyan,
+        event.method,
+        Ansi.reset,
+        event.path,
+        status_color(event.status),
+        event.status,
+        Ansi.reset,
+    });
+}
+
+/// Wall-clock fields derived from an epoch-millisecond timestamp.
+const ClockParts = struct {
+    hours: u64,
+    minutes: u64,
+    seconds: u64,
+    millis: u64,
+};
+
+fn clock_parts(timestamp_ms: i64) ClockParts {
+    const day_ms = @mod(timestamp_ms, std.time.ms_per_day);
+    return .{
+        .hours = @intCast(@divTrunc(day_ms, std.time.ms_per_hour)),
+        .minutes = @intCast(@divTrunc(@mod(day_ms, std.time.ms_per_hour), std.time.ms_per_min)),
+        .seconds = @intCast(@divTrunc(@mod(day_ms, std.time.ms_per_min), std.time.ms_per_s)),
+        .millis = @intCast(@mod(day_ms, std.time.ms_per_s)),
+    };
+}
+
+fn write_clock(writer: *std.Io.Writer, timestamp_ms: i64, level: Level) std.Io.Writer.Error!void {
+    const parts = clock_parts(timestamp_ms);
+    try writer.print("{s}{d:0>2}:{d:0>2}:{d:0>2}.{d:0>3}{s}", .{
+        level_color(level),
+        parts.hours,
+        parts.minutes,
+        parts.seconds,
+        parts.millis,
+        Ansi.reset,
+    });
+}
+
+fn write_clock_short(writer: *std.Io.Writer, timestamp_ms: i64) std.Io.Writer.Error!void {
+    const parts = clock_parts(timestamp_ms);
+    try writer.print("{s}{d:0>2}:{d:0>2}:{d:0>2}{s}", .{
+        Ansi.dim,
+        parts.hours,
+        parts.minutes,
+        parts.seconds,
+        Ansi.reset,
+    });
+}
+
+fn write_metric(
+    writer: *std.Io.Writer,
+    direction: Direction,
+    event: MetricEvent,
+) std.Io.Writer.Error!void {
+    const value_color = switch (direction) {
+        .data_in => Ansi.green,
+        .data_out => Ansi.blue,
+    };
+    inline for (slot_fields) |field| {
+        const slot: metrics.Slot = @enumFromInt(field.value);
+        if (event.slot == slot) {
+            try writer.print("{s}{s:<6}{s} {s}{s}{s} {d}", .{
+                Ansi.magenta,
+                "metric",
+                Ansi.reset,
+                value_color,
+                metrics.metric_name(slot),
+                Ansi.reset,
+                event.value,
+            });
+        }
+    }
+}
+
+fn direction_badge(direction: Direction) []const u8 {
+    return switch (direction) {
+        .data_in => std.fmt.comptimePrint("{s}{s}{s:<3}{s}", .{
+            Ansi.bold, Ansi.green, "IN", Ansi.reset,
+        }),
+        .data_out => std.fmt.comptimePrint("{s}{s}{s:<3}{s}", .{
+            Ansi.bold, Ansi.blue, "OUT", Ansi.reset,
+        }),
+    };
+}
+
+fn level_color(level: Level) []const u8 {
+    return switch (level) {
+        .debug, .info => Ansi.dim,
+        .warn => Ansi.yellow,
+        .err => Ansi.red,
+    };
+}
+
+fn status_color(status: u16) []const u8 {
+    return switch (status / 100) {
+        2 => Ansi.green,
+        3 => Ansi.cyan,
+        4 => Ansi.yellow,
+        5 => Ansi.red,
+        else => Ansi.reset,
+    };
+}
+
+fn change_color(kind: FileChangeKind) []const u8 {
+    return switch (kind) {
+        .created => Ansi.green,
+        .modified => Ansi.yellow,
+        .deleted => Ansi.red,
+    };
+}

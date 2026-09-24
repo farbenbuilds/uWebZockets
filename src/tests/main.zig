@@ -4,6 +4,7 @@ comptime {
     _ = @import("c_tests.zig");
     _ = @import("config_tests.zig");
     _ = @import("datagram_ring_tests.zig");
+    _ = @import("dev_log_tests.zig");
     _ = @import("core_tests.zig");
     _ = @import("fuzz_main.zig");
     _ = @import("framework_tests.zig");
@@ -19,6 +20,7 @@ comptime {
     _ = @import("router_tests.zig");
     _ = @import("shared_nothing_tests.zig");
     _ = @import("udp_tests.zig");
+    _ = @import("watch_tests.zig");
     _ = @import("ws_tests.zig");
     _ = @import("web_standards_tests.zig");
 }

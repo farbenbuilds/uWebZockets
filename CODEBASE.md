@@ -2,7 +2,7 @@
 
 ## Scope
 
-µWebZockets 1.2.0 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
+µWebZockets 1.3.0 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
 server library with bounded HPACK protocol storage. It combines an
 event-driven cross-platform transport (POSIX and Windows IOCP), fixed-capacity
 protocol state, a data-oriented router, and C libraries for TLS, compression, and QUIC.
@@ -92,7 +92,7 @@ uWebZockets/
 │   ├── router/               # fixed-capacity radix router, App API, config, builder
 │   ├── rpc/                  # bounded JSON-RPC registry and dispatcher
 │   ├── ws/                   # streams, pure backpressure, framing, pub/sub
-│   ├── observability/        # Prometheus registry and pinned eBPF histogram reader
+│   ├── observability/        # Prometheus registry, terminal dev log, and eBPF reader
 │   ├── xdp/                  # AF_XDP UMEM rings, TX path, and bypass policy
 │   ├── quic/                 # lsquic HTTP/3, WebTransport, and datagram ring
 │   └── tests/                # centralized ordinary Zig unit tests
@@ -304,6 +304,47 @@ Windows QUIC datagrams are received through libxev IOCP UDP completions and
 sent with the Winsock `WSASendTo` adapter. The native Windows workflow compiles
 this path, while runtime interoperability remains Tier 2.
 
+## Development log
+
+`src/observability/dev_log.zig` renders terminal diagnostics without
+allocating. A `Sink` owns a fixed 4096-byte buffer and one bound output file;
+`render` is pure and writes one `Record` through `std.Io.Writer.fixed` using
+comptime format strings and ANSI colors. HTTP requests render Vite-style as
+`HH:MM:SS | [METHOD] /path : STATUS` with a dim clock, cyan method, and
+status-class color; connection, WebSocket, and metric events carry a colored
+direction badge. Each record names the wall clock, severity, and an explicit
+`Direction` (`data_in` or `data_out`) beside a named event payload. No ambient
+logger state exists.
+
+`thread_sink` returns the sink owned by the calling thread. Every worker owns
+exactly one, so recording and writing need no lock or atomic, and the transport
+reaches its sink without threading a logger pointer through every callback.
+`Sink.record` writes the record immediately and drops oversized or failed lines
+with a counter; `Sink.record_metrics` writes the whole snapshot as one batch.
+`Sink.flush` issues at most one bounded `writeStreaming` per pending batch and
+never retries a short write. `Sink.record_banner` writes the startup wordmark
+once, followed by a blank padding line, and `Sink.record_ready` renders the
+Vite-style summary: version, elapsed startup time, and local URL.
+`src/observability/terminal.zig`
+probes the terminal width so narrow outputs get a one-line `µWebZockets` mark
+and redirected outputs keep the full block art. `ServerConfig.enable_dev_log`
+defaults on; the app enables the worker sink unless the default stderr sink is
+not a terminal, and in `listen`/`listen_udp` it writes
+the summary in place of the `server listening` std.log line (`run` covers apps
+that never listen); any pending bytes are drained when the loop exits.
+`App.set_dev_log_file` binds an output that always records and
+`App.log_metrics` records the Prometheus registry in slot order. With the
+toggle false, the development log emits nothing at all.
+
+`src/observability/file_watch.zig` streams `file_changed` records. Linux uses
+inotify: the descriptor is read through the event loop and decoded against a
+bounded directory table (64 watches, 4 KiB of paths). Other targets use a
+portable scan backend driven by a 500 ms loop timer that diffs modification
+time and size over a bounded file table (256 files, 16 KiB of paths) and
+compacts its arena. Both skip `.git`, `.zig-cache`, `zig-out`, `zig-pkg`,
+`node_modules`, and `.cache`; `ServerConfig.watch_paths` with
+`builder.with_watch_paths` enables them and requires `enable_dev_log`.
+
 ## Build graph
 
 `src/version.zig` is the single Zig source of truth for the release version;
@@ -360,7 +401,8 @@ surface also includes `WsCompression`, fixed-capacity `json_rpc`,
 completion-driven `udp`, bounded
 `http2`, `http2_hpack`, `http3_extensions`, `webtransport`, `http3_available`,
 `WebSocketStream`, BYOB and compression streams, abort controllers, Web Crypto,
-shared memory, kTLS, AF_XDP, and the transport-independent protocol core.
+shared memory, kTLS, AF_XDP, the allocation-free terminal `dev_log` sink, and
+the transport-independent protocol core.
 It also exposes `init_http3` and `listen_udp` through the application type. Live lsquic
 engine, stream, packet, and QPACK callbacks remain internal.
 

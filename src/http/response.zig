@@ -3,6 +3,7 @@ const tcp = @import("../core/tcp.zig");
 const tcp_file = @import("../core/tcp_file.zig");
 const streams = @import("streams.zig");
 const cookie_module = @import("cookie.zig");
+const dev_log = @import("../observability/dev_log.zig");
 const TcpConnection = tcp.TcpConnection;
 
 /// HTTP/3 end callback: status, response fields, and body bytes.
@@ -161,6 +162,21 @@ pub const AsyncResponse = struct {
     }
 };
 
+/// Records one completed HTTP request/response cycle in the connection log.
+fn log_http_request(conn: *TcpConnection, status: u16) void {
+    const sink = conn.dev_log orelse return;
+    sink.record(.{
+        .timestamp_ms = dev_log.now_ms(conn.io),
+        .level = .info,
+        .direction = .data_out,
+        .event = .{ .http_request = .{
+            .method = conn.req.method,
+            .path = conn.req.path,
+            .status = status,
+        } },
+    });
+}
+
 /// Transport-neutral synchronous response writer.
 pub const Response = struct {
     const pending_header_capacity = 2048;
@@ -212,6 +228,7 @@ pub const Response = struct {
                 } else {
                     try tcp_file.write_data_parts(conn, &.{ formatted_headers, body });
                 }
+                log_http_request(conn, code);
                 if (close_requested) tcp.close_after_flush(conn);
             },
             .http3 => |target| {
@@ -256,6 +273,7 @@ pub const Response = struct {
                     length,
                     close_requested,
                 );
+                log_http_request(conn, code);
             },
             .http2, .http3 => return error.ZeroCopyUnavailable,
         }
@@ -287,6 +305,7 @@ pub const Response = struct {
                     .{ status, complete_headers },
                 ) catch return error.BufferOverflow;
                 try conn.write_data(formatted_headers);
+                log_http_request(conn, code);
             },
             .http3 => |target| {
                 try target.begin_fn(target.context, status, complete_headers);

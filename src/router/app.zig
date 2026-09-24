@@ -20,6 +20,9 @@ const config_module = @import("config.zig");
 const datagram_module = @import("datagram.zig");
 const datagram_ring_module = @import("../quic/datagram_ring.zig");
 const metrics_module = @import("../observability/metrics.zig");
+const dev_log_module = @import("../observability/dev_log.zig");
+const terminal_module = @import("../observability/terminal.zig");
+const file_watch_module = @import("../observability/file_watch.zig");
 const ebpf_module = @import("../observability/ebpf.zig");
 const xdp_transport_module = @import("../xdp/transport.zig");
 const http_rejection = @import("../http/rejection.zig");
@@ -137,6 +140,10 @@ pub fn configured_app_with_timeout(
         metrics_enabled: bool = false,
         metrics_installed: bool = false,
         metrics_path: []const u8 = "/metrics",
+        dev_log_enabled: bool = false,
+        dev_log_file: ?std.Io.File = null,
+        watch_paths: []const []const u8 = &.{},
+        ready_started_ns: u64 = 0,
         ebpf_map_fd: i32 = -1,
         static_handlers: [max_static_routes]?*StaticFiles = .{null} ** max_static_routes,
         static_handler_count: u8 = 0,
@@ -147,6 +154,7 @@ pub fn configured_app_with_timeout(
         cluster_wakeup_active: bool = false,
         server: ?core_tcp.TcpServer = null,
         sweeper: ?core_timer.connection_sweeper(Pool, idle_timeout_ms) = null,
+        watcher: ?file_watch_module.Watcher = null,
         tls_ctx: ?TlsContext = null,
         quic_tls_ctx: ?TlsContext = null,
         quic_transport: ?QuicTransport = null,
@@ -246,10 +254,15 @@ pub fn configured_app_with_timeout(
                 .metrics_registry = layout.metrics_registry,
                 .metrics_enabled = config.observability,
                 .metrics_path = if (config.observability) config.metrics_path else "/metrics",
+                .dev_log_enabled = config.enable_dev_log,
+                .watch_paths = config.watch_paths,
                 .pubsub = .{},
             };
 
             if (instance.metrics_registry) |registry| registry.* = .{};
+            // Monotonic start mark for the ready summary; the clock is
+            // non-negative on every supported target.
+            instance.ready_started_ns = @intCast(@max(std.Io.Clock.now(.awake, io).nanoseconds, 0));
 
             if (layout.datagram_rings.len != 0) {
                 const slots = config.datagram_slots;
@@ -340,6 +353,8 @@ pub fn configured_app_with_timeout(
                 sw.deinit();
             }
             self.sweeper = null;
+            if (self.watcher) |*watch| watch.deinit();
+            self.watcher = null;
             self.server = null;
 
             if (self.quic_transport) |*transport| transport.deinit();
@@ -405,6 +420,7 @@ pub fn configured_app_with_timeout(
             // Shutdown continues even if the cross-thread wakeup is already closed.
             if (self.cluster_wakeup) |*wakeup| wakeup.notify() catch {};
             if (self.sweeper) |*sw| sw.stop(&self.loop);
+            if (self.watcher) |*watch| watch.stop(self.loop.get_xev_loop());
             if (self.server) |*server| core_tcp.close_server(server, &self.loop);
             if (self.quic_transport) |*transport| transport.shutdown();
 
@@ -424,6 +440,9 @@ pub fn configured_app_with_timeout(
 
         fn verify_shutdown(self: *const Self) !void {
             if (self.pool.count_active() != 0) return error.ShutdownIncomplete;
+            if (self.watcher) |*watch| {
+                if (!watch.is_drained()) return error.ShutdownIncomplete;
+            }
             if (self.server) |server| {
                 if (!server.close_complete) return error.ShutdownIncomplete;
             }
@@ -864,9 +883,36 @@ pub fn configured_app_with_timeout(
             conn.pubsub = &self.pubsub;
             conn.pool_ptr = &self.pool;
             conn.io = self.io;
+            conn.metrics = self.metrics_registry;
+            if (self.metrics_registry) |registry| registry.add(.connections_accepted, 1);
+            if (self.dev_log_enabled) {
+                const sink = dev_log_module.thread_sink();
+                conn.dev_log = sink;
+                sink.record(.{
+                    .timestamp_ms = dev_log_module.now_ms(self.io),
+                    .level = .info,
+                    .direction = .data_in,
+                    .event = .{ .connection_opened = .{ .index = connection_index } },
+                });
+            } else {
+                conn.dev_log = null;
+            }
             conn.on_close_cb = (struct {
                 fn cb(pool_ptr: *anyopaque, c: *core_tcp.TcpConnection) void {
                     const pool: *Pool = @ptrCast(@alignCast(pool_ptr));
+                    if (c.metrics) |registry| registry.add(.connections_closed, 1);
+                    if (c.dev_log) |sink| {
+                        sink.record(.{
+                            .timestamp_ms = dev_log_module.now_ms(c.io),
+                            .level = .info,
+                            .direction = .data_out,
+                            .event = .{
+                                .connection_closed = .{
+                                    .index = pool.index_of(c) orelse 0,
+                                },
+                            },
+                        });
+                    }
                     _ = pool.release(c);
                 }
             }).cb;
@@ -902,7 +948,13 @@ pub fn configured_app_with_timeout(
                 sw.start(&self.loop);
             }
 
-            log.info("server listening on {s}:{d}", .{ address, port });
+            if (!self.write_ready_summary(
+                if (self.tls_ctx != null) "https" else "http",
+                address,
+                port,
+            )) {
+                log.info("server listening on {s}:{d}", .{ address, port });
+            }
         }
 
         /// Binds and starts the UDP/QUIC listener, locking route mutation.
@@ -926,7 +978,9 @@ pub fn configured_app_with_timeout(
             try self.install_observability();
             self.routes_locked = true;
 
-            log.info("http/3 server listening on {s}:{d}", .{ address, port });
+            if (!self.write_ready_summary("https", address, port)) {
+                log.info("http/3 server listening on {s}:{d}", .{ address, port });
+            }
         }
 
         /// Runs the event loop until shutdown completes or no work remains.
@@ -936,9 +990,103 @@ pub fn configured_app_with_timeout(
 
             self.running = true;
             defer self.running = false;
+            // Apps that never call a listen function still get the wordmark.
+            self.write_startup_banner();
+            try self.start_file_watch();
             self.arm_cluster_wakeup();
             try core_loop.run(&self.loop);
+            self.flush_dev_log();
             if (self.shutting_down) try self.verify_shutdown();
+        }
+
+        /// Arms the recursive file watcher configured for the dev log.
+        fn start_file_watch(self: *Self) !void {
+            if (self.watch_paths.len == 0) return;
+            self.watcher = .{};
+            self.watcher.?.start(self.io, self.loop.get_xev_loop(), self.watch_paths) catch |err| {
+                self.watcher = null;
+                return err;
+            };
+        }
+
+        /// Writes this worker's startup wordmark once, before the first
+        /// listening line and sized to the output terminal.
+        fn write_startup_banner(self: *Self) void {
+            if (!self.enable_dev_log_sink()) return;
+            const sink = dev_log_module.thread_sink();
+            sink.record_banner(terminal_module.columns(sink.file));
+        }
+
+        /// Enables this worker's dev-log sink, unless the default stderr sink
+        /// is not a terminal; returns false while the sink stays silent.
+        ///
+        /// Keeping redirected runs quiet means piping, log capture, and the
+        /// throughput benchmark are not slowed by per-record writes. An
+        /// explicit `set_dev_log_file` always records.
+        fn enable_dev_log_sink(self: *Self) bool {
+            if (!self.dev_log_enabled) return false;
+            const file = self.dev_log_file orelse std.Io.File.stderr();
+            if (self.dev_log_file == null) {
+                const interactive = file.isTty(self.io) catch false;
+                if (!interactive) return false;
+            }
+            dev_log_module.thread_sink().enable(self.io, file);
+            return true;
+        }
+
+        /// Writes the wordmark and the Vite-style ready summary for one bound
+        /// listener; returns false when the log is disabled or its default
+        /// sink is not a terminal.
+        fn write_ready_summary(
+            self: *Self,
+            scheme: []const u8,
+            address: []const u8,
+            port: u16,
+        ) bool {
+            if (!self.dev_log_enabled) return false;
+            self.write_startup_banner();
+            const sink = dev_log_module.thread_sink();
+            if (!sink.enabled) return false;
+            const host = dev_log_module.display_host(address);
+            sink.record_ready(.{
+                .elapsed_ns = self.ready_elapsed_ns(),
+                .scheme = scheme,
+                .host = host,
+                .host_is_ipv6 = std.mem.indexOfScalar(u8, host, ':') != null,
+                .port = port,
+            });
+            return true;
+        }
+
+        /// Nanoseconds between application construction and listener startup.
+        fn ready_elapsed_ns(self: *const Self) u64 {
+            const now_ns = std.Io.Clock.now(.awake, self.io).nanoseconds;
+            if (now_ns <= 0) return 0;
+            const now: u64 = @intCast(now_ns);
+            return now -| self.ready_started_ns;
+        }
+
+        /// Overrides the development-log output file; defaults to stderr.
+        ///
+        /// Call it before `listen` or `run` so the startup wordmark uses it.
+        /// An explicitly bound file always records, even when stderr is not a
+        /// terminal.
+        pub fn set_dev_log_file(self: *Self, file: std.Io.File) void {
+            self.dev_log_file = file;
+        }
+
+        /// Writes any pending development-log bytes for this worker.
+        pub fn flush_dev_log(self: *Self) void {
+            if (!self.dev_log_enabled) return;
+            _ = dev_log_module.thread_sink().flush();
+        }
+
+        /// Records every counter of the hidden registry in this worker's log.
+        pub fn log_metrics(self: *Self) void {
+            if (!self.dev_log_enabled) return;
+            const registry = self.metrics_registry orelse return;
+            const sink = dev_log_module.thread_sink();
+            sink.record_metrics(dev_log_module.now_ms(self.io), .data_out, registry);
         }
 
         /// Publishes one message to every matching bounded subscription.

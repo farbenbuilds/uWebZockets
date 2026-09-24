@@ -13,6 +13,7 @@ const rejection = @import("../http/rejection.zig");
 const xdp_transport = @import("../xdp/transport.zig");
 const datagram_ring = @import("../quic/datagram_ring.zig");
 const metrics_module = @import("../observability/metrics.zig");
+const file_watch = @import("../observability/file_watch.zig");
 
 /// Request buffer stride alignment; keeps every body start SIMD-friendly.
 pub const request_buffer_alignment = 16;
@@ -40,6 +41,8 @@ pub const Error = error{
     InvalidDatagramCapacity,
     InvalidTransportConfiguration,
     InvalidMetricsPath,
+    InvalidWatchConfiguration,
+    WatchRequiresDevLog,
     MisalignedSlab,
     SlabSizeOverflow,
     SlabTooSmall,
@@ -77,6 +80,18 @@ pub const ServerConfig = struct {
     observability: bool = false,
     /// Path of the observability endpoint; retained for the app lifetime.
     metrics_path: []const u8 = "/metrics",
+    /// Writes the startup wordmark, ready summary, and colored event lines.
+    ///
+    /// Defaults on. The default stderr sink stays quiet when stderr is not a
+    /// terminal, so redirected runs are not slowed; `App.set_dev_log_file`
+    /// binds an output that always records.
+    enable_dev_log: bool = true,
+    /// Directories watched recursively for the development log; empty is off.
+    ///
+    /// Nonempty paths require `enable_dev_log`. Linux watches them through
+    /// inotify; every other target scans them on a loop timer. Paths are
+    /// borrowed for the application lifetime, like `metrics_path`.
+    watch_paths: []const []const u8 = &.{},
 
     /// Optional per-field replacements accepted by `with`.
     ///
@@ -108,6 +123,10 @@ pub const ServerConfig = struct {
         observability: ?bool = null,
         /// Replaces `metrics_path` when non-null.
         metrics_path: ?[]const u8 = null,
+        /// Replaces `enable_dev_log` when non-null.
+        enable_dev_log: ?bool = null,
+        /// Replaces `watch_paths` when non-null.
+        watch_paths: ?[]const []const u8 = null,
     };
 
     /// Returns a copy with every non-null override field replaced.
@@ -126,6 +145,8 @@ pub const ServerConfig = struct {
         if (overrides.xdp_frame_count) |value| result.xdp_frame_count = value;
         if (overrides.observability) |value| result.observability = value;
         if (overrides.metrics_path) |value| result.metrics_path = value;
+        if (overrides.enable_dev_log) |value| result.enable_dev_log = value;
+        if (overrides.watch_paths) |value| result.watch_paths = value;
         return result;
     }
 
@@ -138,6 +159,7 @@ pub const ServerConfig = struct {
         if (self.idle_timeout_ms > std.math.maxInt(i64)) return error.InvalidIdleTimeout;
         try self.validate_datagrams();
         try self.validate_transport();
+        try self.validate_watch();
     }
 
     fn validate_datagrams(self: ServerConfig) Error!void {
@@ -169,6 +191,19 @@ pub const ServerConfig = struct {
         if (self.observability) {
             if (self.metrics_path.len == 0 or self.metrics_path[0] != '/') {
                 return error.InvalidMetricsPath;
+            }
+        }
+    }
+
+    fn validate_watch(self: ServerConfig) Error!void {
+        if (self.watch_paths.len == 0) return;
+        if (!self.enable_dev_log) return error.WatchRequiresDevLog;
+        if (self.watch_paths.len > file_watch.max_roots) {
+            return error.InvalidWatchConfiguration;
+        }
+        for (self.watch_paths) |path| {
+            if (path.len == 0 or path.len + 1 > file_watch.max_path_bytes) {
+                return error.InvalidWatchConfiguration;
             }
         }
     }

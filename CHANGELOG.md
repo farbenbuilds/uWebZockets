@@ -3,6 +3,75 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.3.0] - 2026-09-24
+
+This release adds a terminal development log. It renders connection,
+HTTP, and WebSocket events plus the bounded Prometheus counters as colored
+lines from fixed stack buffers and writes every record through a thread-local
+sink as soon as it is recorded, so the terminal stays real time without
+allocating on the event loop. Wire behavior, capacities, and the C ABI are
+unchanged.
+
+### Added
+
+- `src/observability/dev_log.zig` implements the allocation-free terminal log.
+  `Sink` renders one record into a fixed 4096-byte buffer with comptime format
+  strings and ANSI colors, writes it with a single bounded write as soon as it
+  is recorded, and counts dropped lines. `thread_sink()` returns the sink owned
+  by the calling thread, so recording needs no lock or atomic and the transport
+  can reach it without threading a logger pointer through every callback.
+- HTTP requests log Vite-style as `HH:MM:SS | [METHOD] /path : STATUS` with a
+  dim clock, cyan method, and green, cyan, yellow, or red status by class. The
+  exact `µWEBZOCKETS` wordmark from a Zig multiline string is written once at
+  startup, followed by a Vite-style ready summary with the version, elapsed
+  startup time, and local URL; a terminal
+  narrower than the block art gets a one-line `µWebZockets` mark instead, and
+  redirected output keeps the full wordmark.
+- `src/observability/terminal.zig` probes the output width with a best-effort
+  `ioctl(TIOCGWINSZ)` or Windows console query, so the wordmark adapts without
+  allocating and without branching on the host OS in portable code.
+- `src/observability/file_watch.zig` adds a file watcher:
+  `with_watch_paths(&.{"src"})` streams `watch` lines for created, modified,
+  and deleted files, so saves appear in the terminal as they happen. Linux
+  reads inotify through the event loop for real-time changes; every other
+  target scans the roots on a 500 ms loop timer. The watch set is bounded,
+  skips build and VCS directories, requires `enable_dev_log`, and never
+  allocates per event.
+- `dev_log.Record` carries the wall clock, severity, and an explicit
+  `Direction` (`data_in` or `data_out`) beside a named event payload
+  (`connection_opened`, `connection_closed`, `http_request`, `ws_message`,
+  `metric`), so no ambient logger state exists.
+- `ServerConfig.enable_dev_log` defaults on, so every example shows the log
+  when run in a terminal. The default stderr sink stays quiet when stderr is
+  not a terminal, which keeps redirected runs and the throughput benchmark
+  free of per-record writes; `App.set_dev_log_file` binds an output that always
+  records. `App.flush_dev_log` and `App.log_metrics` expose any pending bytes
+  and the counter snapshot, and setting the toggle false silences every
+  development-log write.
+- Every `zig build <example>` run in a terminal shows the wordmark, ready
+  summary, request lines, and (with `with_watch_paths`) file changes.
+- Unit coverage in `src/tests/dev_log_tests.zig` pins the rendered byte
+  sequences, immediate write behavior, oversize drops, comptime metric names,
+  and the thread-local sink identity.
+
+### Changed
+
+- `TcpConnection` now carries the thread-local dev-log sink and the optional
+  counter registry, so the HTTP/1.1 and WebSocket paths emit records and
+  advance counters without allocating. HTTP/2 dispatch and QUIC callbacks
+  remain silent in this release.
+- The `uwz_connections_accepted`, `uwz_connections_closed`,
+  `uwz_http_requests`, and `uwz_ws_messages` counters now advance at their
+  accept, close, dispatch, and complete-message sites when observability is
+  enabled; they were previously defined but never incremented.
+- `src/root.zig` exports `dev_log` for downstream consumers.
+
+### Security
+
+- No security-relevant behavior changed. The development log is opt-in,
+  silent by default, writes only to the caller-bound file, and performs no
+  dynamic allocation; parsing, validation, and wire behavior are unchanged.
+
 ## [1.2.0] - 2026-09-24
 
 This release makes the repository a self-contained Zig package. Every C and

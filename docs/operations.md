@@ -127,6 +127,59 @@ that link these archives directly must also link libc, the C++ runtime, the
 installed `libz.a`, and the platform networking libraries required by those
 dependencies (on Windows: `ws2_32`, `mswsock`, `crypt32`, and `advapi32`).
 
+## Development log
+
+The terminal development log is on by default and allocation-free. Run any
+example in a terminal:
+
+```sh
+zig build chat_server -Doptimize=ReleaseSafe
+```
+
+```zig
+var server = try uz.Server.builder(init.io)
+    .with_observability(true)
+    .build(std.heap.page_allocator);
+defer server.deinit();
+```
+
+The exact `µWEBZOCKETS` wordmark and a Vite-style ready summary are written
+once at startup, before the first accepting listener: the version with the
+elapsed startup time, then the `→ Local:` line. A
+terminal narrower than the block art gets a one-line `µWebZockets` mark
+instead, and builds without the development log keep the plain
+`server listening` std.log line. HTTP/1.1 requests log Vite-style as
+`HH:MM:SS | [METHOD] /path : STATUS` with a dim clock, cyan method, and
+status-class color. Connection, WebSocket, and metric events follow with a
+colored direction badge. Every worker thread owns one `dev_log.Sink`; each
+record is rendered into its fixed 4096-byte buffer and written immediately, so
+the terminal reflects events in real time and the event loop never allocates.
+A metric snapshot goes out as one batch. The width probe in
+`src/observability/terminal.zig` is best effort: redirected output keeps the
+full wordmark. Lines that cannot fit and failed or short writes are dropped and
+counted in `Sink.dropped` rather than retried.
+
+With `watch_paths` configured, the app arms a watcher before the loop starts:
+`with_dev_log(true)` plus `with_watch_paths(&.{"src"})` logs
+`watch modified src/router/app.zig` for every save, plus created and deleted
+lines for renames and removals. Linux reads an inotify descriptor through the
+event loop, so changes are real time and the idle loop stays blocked; other
+targets walk the roots on a 500 ms loop timer and diff modification time and
+size. Both backends are bounded and never allocate per event, and both skip
+build and VCS directories.
+
+Records carry an explicit direction (`data_in` or `data_out`) and a named event
+payload; there is no ambient logger state. `ServerConfig.enable_dev_log`
+defaults on, but the default stderr sink stays quiet when stderr is not a
+terminal so redirected runs are not slowed; `false` silences the wordmark,
+request lines, metric snapshots, and every other development-log write, while
+an explicit `App.set_dev_log_file` always records. `App.flush_dev_log` writes
+any pending bytes, and `App.log_metrics` records every counter of the bounded
+Prometheus registry. The `uwz_connections_accepted`, `uwz_connections_closed`,
+`uwz_http_requests`, and `uwz_ws_messages` counters advance when observability
+is enabled. HTTP/2 dispatch and QUIC callbacks do not emit records in this
+release.
+
 ## Use as a Zig dependency
 
 ### Zig package manager

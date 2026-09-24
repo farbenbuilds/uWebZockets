@@ -1,4 +1,4 @@
-# µWebZockets 1.2.0 Examples
+# µWebZockets 1.3.0 Examples
 
 Build the supported examples with Zig 0.16.0:
 
@@ -87,6 +87,33 @@ build-and-run step is:
 ```sh
 zig build rpc_server -Doptimize=ReleaseSafe
 ```
+
+## Terminal development log
+
+Every example shows the development log by default when run in a terminal.
+Start the hello-world server:
+
+```sh
+zig build hello_world -Doptimize=ReleaseSafe
+```
+
+```sh
+curl -i http://127.0.0.1:3000/
+```
+
+The server prints the `µWEBZOCKETS` wordmark and a Vite-style ready summary
+(`µWebZockets v1.3.0  ready in 0.6 ms`, then the `→ Local:` line, with the
+elapsed time scaled from nanoseconds up) before the first accepting listener;
+a one-line `µWebZockets` mark fits narrow terminals. Each request then logs
+Vite-style as `HH:MM:SS | [METHOD] /path : STATUS` with a dim clock, cyan
+method, and status-class color, alongside colored connection, WebSocket, and
+metric lines. WebSocket examples add `ws` lines, and `App.log_metrics`
+snapshots the Prometheus registry. Each worker thread renders and writes
+records through its own `dev_log.Sink` as soon as they are recorded, so the
+event loop never allocates. The default stderr sink stays quiet when stderr is
+not a terminal, which keeps redirected runs and benchmarks fast;
+`App.set_dev_log_file` binds an output that always records, and
+`ServerConfig.enable_dev_log = false` silences the log.
 
 ## Capacity presets and custom builder
 
