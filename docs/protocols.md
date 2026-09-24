@@ -62,8 +62,11 @@ emitted with OpenAPI braces.
 
 `Request.clone(allocator)` creates an owned snapshot for deferred worker work;
 call `deinit` on the returned `OwnedRequest`. Framework modules also expose
-zero-allocation multipart iteration, HMAC-SHA256 signed cookies, comptime JSON
-field constraints, CORS and security-header middleware, and SSE.
+zero-allocation query/form parsing with SIMD slicing, multipart iteration,
+HMAC-SHA256 signed cookies with rotating keys and HTTP-date `Expires`, comptime
+JSON field constraints with typed parse issues, canonical status lines, typed
+JSON error documents, `Accept` negotiation, ETag and conditional-GET helpers,
+CORS and security-header middleware, and SSE.
 
 ## JSON-RPC
 

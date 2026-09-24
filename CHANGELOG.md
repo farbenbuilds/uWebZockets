@@ -3,12 +3,11 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
-## [1.4.0] - 2026-09-24
+## [1.4.0] - 2026-09-25
 
 This release hardens the application helper layer. Every addition is additive,
-so 1.3.x applications recompile unchanged apart from the header-splitting fix
-described under Security. The C ABI version moves to 1.4.0 with no structural
-change.
+so 1.3.x applications recompile unchanged apart from the fixes described under
+Fixed and Security. The C ABI version moves to 1.4.0 with no structural change.
 
 ### Added
 
@@ -40,16 +39,39 @@ change.
   invalid enum tag, length mismatch, item counts) instead of a blanket
   `malformed_json`.
 - `cookie` gains a zero-copy `Iterator` over a `Cookie` field, versioned HMAC
-  signing (`Key`, `sign_versioned`, `verify_versioned`) for key rotation, and
+  signing (`Key`, `sign_versioned`, `verify_versioned`) for key rotation,
   opt-in `__Host-`/`__Secure-` prefix enforcement through
-  `Options.enforce_prefixes`.
+  `Options.enforce_prefixes`, and pure RFC 9110 date formatting
+  (`format_http_date`, `HttpDateBuffer`) with an `Options.expires_unix` field
+  that emits `Expires` next to `Max-Age`.
 - `Response.json_value` and `json_value_buf` provide named-type alternatives
   to the polymorphic `json`/`json_buf` for dynamic `std.json.Value` payloads.
+- The OSS-Fuzz integration adds a fourth target, `query_parse`, with a
+  deterministic `query_parse_smoke` executable, seed corpus, and runtime
+  options. It fuzzes query slicing, percent/form decoding, and `Accept`
+  negotiation, and asserts that every borrowed slice stays inside the parsed
+  input. The Smith harness in `zig build test` runs the same code paths.
 
 ### Changed
 
 - `Response.json_buf` and `Response.json` document their polymorphic contract
   (`std.json.Stringify`-compatible values); their behavior is unchanged.
+
+### Fixed
+
+- `errors.render` now writes `code` and `message` with a fixed-buffer JSON
+  string encoder. Invalid UTF-8 previously reached `std.json`, which encoded a
+  non-UTF-8 slice as a JSON number array, so the document no longer matched the
+  documented `"code": "..."` shape. Invalid sequences now become U+FFFD and the
+  document is always valid JSON for arbitrary bytes.
+- Query components without `=` (`?flag`) now point at the segment end instead
+  of a global empty literal, so every borrowed key and value slice lies inside
+  the caller's buffer. The fuzz bounds assertions enforce this for empty values
+  too.
+- The Smith HTTP/query harness no longer reports empty flag values as an
+  out-of-bounds failure; the stale `.zig-cache` crash artifact from that false
+  positive was removed and the case is covered by
+  `src/tests/query_tests.zig`.
 
 ### Security
 

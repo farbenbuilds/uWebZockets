@@ -93,14 +93,15 @@ zig build oss-fuzz-objects -Doptimize=ReleaseSafe
 zig build oss-fuzz-smoke -Doptimize=ReleaseSafe
 ```
 
-The Smith harness retains HTTP, zslay, extension-negotiation, and HTTP/3
-validation coverage. The OSS-Fuzz objects export `LLVMFuzzerTestOneInput` for
-HTTP framing, WebSocket masking, and QUIC/WebTransport packet boundaries;
-`oss-fuzz-smoke` runs deterministic seeds without libFuzzer. A reusable
-ClusterFuzzLite workflow links and executes all three targets with the
-OSS-Fuzz ASan/libFuzzer environment on the exact revision under test. This is an
-OSS-Fuzz compatibility gate, not a claim of enrollment in the hosted service;
-`oss-fuzz/README.md` documents the Zig sanitizer boundary.
+The Smith harness retains HTTP, query/Accept, zslay, extension-negotiation, and
+HTTP/3 validation coverage. The OSS-Fuzz objects export
+`LLVMFuzzerTestOneInput` for HTTP framing, WebSocket masking, query parsing,
+and QUIC/WebTransport packet boundaries; `oss-fuzz-smoke` runs deterministic
+seeds without libFuzzer. A reusable ClusterFuzzLite workflow links and executes
+all four targets with the OSS-Fuzz ASan/libFuzzer environment on the exact
+revision under test. This is an OSS-Fuzz compatibility gate, not a claim of
+enrollment in the hosted service; `oss-fuzz/README.md` documents the Zig
+sanitizer boundary.
 
 ### Cross targets
 

@@ -18,7 +18,10 @@ describes the layout, the startup slab, and the capacity contract.
 
 `Request.clone(allocator)` and `req.json(T, allocator)` are the only explicitly
 allocating public request APIs. Everything else returns `error.WouldBlock` or a
-specific bounded error instead of growing memory.
+specific bounded error instead of growing memory. Query and form parsing
+(`Request.query_params`, `Request.form`), percent decoding, error documents,
+`Accept` scoring, ETag matching, and the cookie helpers all slice or format into
+caller-owned storage and never allocate.
 
 ## The startup slab
 
@@ -99,6 +102,10 @@ fields they need:
 - **JSON-RPC registry** (`src/rpc/json_rpc.zig`): procedure metadata in
   parallel arrays with an open-addressed index and contiguous copied method
   bytes.
+- **Query and form pairs** (`src/http/query.zig`): key and value pointers plus
+  their lengths live in four parallel fixed arrays (32 entries), so every slice
+  stays borrowed from the request target and `Request.query_params()` performs
+  no copy and no allocation.
 
 ## Capacity and protocol limits
 
@@ -108,6 +115,7 @@ The defaults are deliberately finite:
 | --- | ---: |
 | Request line | 8 KiB |
 | HTTP headers | 16 KiB total, 64 fields |
+| Query and form pairs | 32 per request |
 | HTTP request body | 16 KiB default; `ServerConfig.max_body_size` |
 | Routes | 256 radix nodes |
 | Parameterized routes | 64 patterns, 16 captures per request |
