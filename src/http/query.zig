@@ -8,9 +8,6 @@
 const std = @import("std");
 const simd = @import("../core/simd.zig");
 
-/// Maximum number of key/value pairs retained by one `QueryParams` view.
-pub const max_params = 32;
-
 /// Failures raised while slicing a query string.
 pub const ParseError = error{
     TooManyQueryParameters,
@@ -29,122 +26,146 @@ pub const Pair = struct {
     value: []const u8,
 };
 
-/// Fixed-capacity struct-of-arrays view over borrowed query components.
-///
-/// Slices point into the original URL or body buffer and remain valid exactly
-/// as long as that buffer does. A component without `=` parses as an empty
-/// value; empty segments and empty keys are skipped. More than `max_params`
-/// pairs fail closed with `error.TooManyQueryParameters` rather than silently
-/// dropping data.
-pub const QueryParams = struct {
-    key_ptrs: [max_params][*]const u8 = undefined,
-    key_lens: [max_params]u32 = undefined,
-    value_ptrs: [max_params][*]const u8 = undefined,
-    value_lens: [max_params]u32 = undefined,
-    count: usize = 0,
+/// Builds the query view behind `QueryParamsOf`, named to satisfy the
+/// project-wide snake_case function rule; see that alias for the contract.
+fn query_params_of(comptime capacity: usize) type {
+    return struct {
+        const Self = @This();
 
-    /// Parses `key=value` components after the first `?` in `target`.
-    ///
-    /// The `?` is located with a vectorized scan; the preceding path bytes are
-    /// never copied.
-    pub fn parse_link(target: []const u8) ParseError!QueryParams {
-        const mark = simd.index_of_byte(target, '?') orelse return .{};
-        return parse(target[mark + 1 ..]);
-    }
+        key_ptrs: [capacity][*]const u8 = undefined,
+        key_lens: [capacity]u32 = undefined,
+        value_ptrs: [capacity][*]const u8 = undefined,
+        value_lens: [capacity]u32 = undefined,
+        count: usize = 0,
 
-    /// Parses raw `key=value` components separated by `&` without allocating.
-    pub fn parse(query: []const u8) ParseError!QueryParams {
-        var result = QueryParams{};
-        var rest = query;
+        /// Forward iterator over pairs borrowed from one parsed view.
+        pub const Iterator = struct {
+            params: *const Self,
+            index: usize = 0,
 
-        while (rest.len != 0) {
-            const separator = simd.index_of_byte(rest, '&') orelse rest.len;
-            const segment = rest[0..separator];
-            rest = if (separator == rest.len) "" else rest[separator + 1 ..];
-            if (segment.len == 0) continue;
-
-            const equals = simd.index_of_byte(segment, '=');
-            const key = if (equals) |index| segment[0..index] else segment;
-            if (key.len == 0) continue;
-            // A flagged component ends at the segment end, so even the empty
-            // value keeps its pointer inside the caller's buffer.
-            const value = if (equals) |index| segment[index + 1 ..] else segment[segment.len..];
-            if (result.count == max_params) return error.TooManyQueryParameters;
-            try result.push(key, value);
-        }
-        return result;
-    }
-
-    /// Returns the pair at `index`, or null when out of range.
-    pub fn at(self: *const QueryParams, index: usize) ?Pair {
-        if (index >= self.count) return null;
-        return .{
-            .key = self.key_ptrs[index][0..@as(usize, self.key_lens[index])],
-            .value = self.value_ptrs[index][0..@as(usize, self.value_lens[index])],
+            pub fn next(self: *Iterator) ?Pair {
+                const pair = self.params.at(self.index) orelse return null;
+                self.index += 1;
+                return pair;
+            }
         };
-    }
 
-    /// Returns the first raw value whose raw key matches `name` byte-exactly.
-    pub fn get(self: *const QueryParams, name: []const u8) ?[]const u8 {
-        for (0..self.count) |index| {
-            const pair = self.at(index).?;
-            if (std.mem.eql(u8, pair.key, name)) return pair.value;
+        /// Parses `key=value` components after the first `?` in `target`.
+        ///
+        /// The `?` is located with a vectorized scan; the preceding path bytes
+        /// are never copied.
+        pub fn parse_link(target: []const u8) ParseError!Self {
+            const mark = simd.index_of_byte(target, '?') orelse return .{};
+            return parse(target[mark + 1 ..]);
         }
-        return null;
-    }
 
-    /// Returns the last raw value whose raw key matches `name` byte-exactly.
-    pub fn get_last(self: *const QueryParams, name: []const u8) ?[]const u8 {
-        var index = self.count;
-        while (index != 0) {
-            index -= 1;
-            const pair = self.at(index).?;
-            if (std.mem.eql(u8, pair.key, name)) return pair.value;
+        /// Parses raw `key=value` components separated by `&` without allocating.
+        pub fn parse(query: []const u8) ParseError!Self {
+            var result = Self{};
+            var rest = query;
+
+            while (rest.len != 0) {
+                const separator = simd.index_of_byte(rest, '&') orelse rest.len;
+                const segment = rest[0..separator];
+                rest = if (separator == rest.len) "" else rest[separator + 1 ..];
+                if (segment.len == 0) continue;
+
+                const equals = simd.index_of_byte(segment, '=');
+                const key = if (equals) |index| segment[0..index] else segment;
+                if (key.len == 0) continue;
+                // A flagged component ends at the segment end, so even the empty
+                // value keeps its pointer inside the caller's buffer.
+                const value = if (equals) |index| segment[index + 1 ..] else segment[segment.len..];
+                if (result.count == capacity) return error.TooManyQueryParameters;
+                try result.push(key, value);
+            }
+            return result;
         }
-        return null;
-    }
 
-    /// Reports whether any raw key matches `name` byte-exactly.
-    pub fn has(self: *const QueryParams, name: []const u8) bool {
-        return self.get(name) != null;
-    }
-
-    /// Counts raw keys matching `name` byte-exactly.
-    pub fn count_named(self: *const QueryParams, name: []const u8) usize {
-        var matches: usize = 0;
-        for (0..self.count) |index| {
-            if (std.mem.eql(u8, self.at(index).?.key, name)) matches += 1;
+        /// Returns the pair at `index`, or null when out of range.
+        pub fn at(self: *const Self, index: usize) ?Pair {
+            // A zero-capacity view stores no slots; the branch is unreachable
+            // at those sizes and keeps empty-array indexing out of the
+            // instantiation.
+            if (comptime capacity == 0) return null;
+            if (index >= self.count) return null;
+            return .{
+                .key = self.key_ptrs[index][0..@as(usize, self.key_lens[index])],
+                .value = self.value_ptrs[index][0..@as(usize, self.value_lens[index])],
+            };
         }
-        return matches;
-    }
 
-    /// Returns an iterator that borrows this view.
-    pub fn pairs(self: *const QueryParams) PairIterator {
-        return .{ .params = self };
-    }
+        /// Returns the first raw value whose raw key matches `name` byte-exactly.
+        pub fn get(self: *const Self, name: []const u8) ?[]const u8 {
+            for (0..self.count) |index| {
+                const pair = self.at(index).?;
+                if (std.mem.eql(u8, pair.key, name)) return pair.value;
+            }
+            return null;
+        }
 
-    fn push(self: *QueryParams, key: []const u8, value: []const u8) ParseError!void {
-        const key_len = std.math.cast(u32, key.len) orelse return error.QueryComponentTooLong;
-        const value_len = std.math.cast(u32, value.len) orelse return error.QueryComponentTooLong;
-        self.key_ptrs[self.count] = key.ptr;
-        self.key_lens[self.count] = key_len;
-        self.value_ptrs[self.count] = value.ptr;
-        self.value_lens[self.count] = value_len;
-        self.count += 1;
-    }
-};
+        /// Returns the last raw value whose raw key matches `name` byte-exactly.
+        pub fn get_last(self: *const Self, name: []const u8) ?[]const u8 {
+            var index = self.count;
+            while (index != 0) {
+                index -= 1;
+                const pair = self.at(index).?;
+                if (std.mem.eql(u8, pair.key, name)) return pair.value;
+            }
+            return null;
+        }
 
-/// Forward iterator over borrowed pairs.
-pub const PairIterator = struct {
-    params: *const QueryParams,
-    index: usize = 0,
+        /// Reports whether any raw key matches `name` byte-exactly.
+        pub fn has(self: *const Self, name: []const u8) bool {
+            return self.get(name) != null;
+        }
 
-    pub fn next(self: *PairIterator) ?Pair {
-        const pair = self.params.at(self.index) orelse return null;
-        self.index += 1;
-        return pair;
-    }
-};
+        /// Counts raw keys matching `name` byte-exactly.
+        pub fn count_named(self: *const Self, name: []const u8) usize {
+            var matches: usize = 0;
+            for (0..self.count) |index| {
+                if (std.mem.eql(u8, self.at(index).?.key, name)) matches += 1;
+            }
+            return matches;
+        }
+
+        /// Returns an iterator that borrows this view.
+        pub fn pairs(self: *const Self) Iterator {
+            return .{ .params = self };
+        }
+
+        fn push(self: *Self, key: []const u8, value: []const u8) ParseError!void {
+            // parse rejects the first pair before reaching here when there
+            // are no slots; the guard keeps empty-array indexing out of the
+            // zero-capacity instantiation.
+            if (comptime capacity == 0) return error.TooManyQueryParameters;
+            const key_len = std.math.cast(u32, key.len) orelse return error.QueryComponentTooLong;
+            const value_len = std.math.cast(u32, value.len) orelse return error.QueryComponentTooLong;
+            self.key_ptrs[self.count] = key.ptr;
+            self.key_lens[self.count] = key_len;
+            self.value_ptrs[self.count] = value.ptr;
+            self.value_lens[self.count] = value_len;
+            self.count += 1;
+        }
+    };
+}
+
+/// Returns a query view type with `capacity` fixed pair slots.
+///
+/// `capacity` is a compile-time bound on the caller's view; the struct of
+/// arrays is stored inline and parsing still never allocates. Zero capacity is
+/// legal and rejects the first non-empty pair with
+/// `error.TooManyQueryParameters`.
+pub const QueryParamsOf = query_params_of;
+
+/// Default pair capacity for `QueryParams`.
+pub const max_params = 32;
+
+/// Fixed-capacity view returned by `Request.query_params` and `form.parse`.
+pub const QueryParams = QueryParamsOf(max_params);
+
+/// Forward iterator over the default-capacity view.
+pub const PairIterator = QueryParams.Iterator;
 
 /// Decodes `%HH` escapes into `scratch`, rejecting malformed escapes.
 ///

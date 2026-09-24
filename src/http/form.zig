@@ -2,7 +2,8 @@
 //!
 //! Parsing reuses the query slicer, so form pairs are borrowed from the
 //! bounded request body and never copied. Use `query.form_decode` before
-//! interpreting values as text.
+//! interpreting values as text. `parse_of` selects the pair capacity at
+//! compile time; `parse` keeps the default-capacity view.
 
 const std = @import("std");
 const query = @import("query.zig");
@@ -25,6 +26,15 @@ pub fn is_form_content_type(value: []const u8) bool {
 /// `content_type` is the caller-supplied header value; it is not fetched
 /// here so the function stays pure and testable.
 pub fn parse(content_type: []const u8, body: []const u8) Error!query.QueryParams {
+    return parse_of(query.max_params, content_type, body);
+}
+
+/// Validates `content_type` and parses `body` with a requested pair capacity.
+pub fn parse_of(
+    comptime capacity: usize,
+    content_type: []const u8,
+    body: []const u8,
+) Error!query.QueryParamsOf(capacity) {
     if (!is_form_content_type(content_type)) return error.UnsupportedMediaType;
-    return query.QueryParams.parse(body);
+    return query.QueryParamsOf(capacity).parse(body);
 }

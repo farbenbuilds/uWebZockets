@@ -149,6 +149,14 @@ pub const Request = struct {
         return query_module.QueryParams.parse_link(self.target);
     }
 
+    /// Parses the request-target query with a compile-time pair capacity.
+    pub fn query_params_of(
+        self: *const Request,
+        comptime capacity: usize,
+    ) !query_module.QueryParamsOf(capacity) {
+        return query_module.QueryParamsOf(capacity).parse_link(self.target);
+    }
+
     /// Validates the media type and parses a form-urlencoded body.
     pub fn form(self: *const Request) !query_module.QueryParams {
         const content_type = self.get_unique_header("content-type") orelse {

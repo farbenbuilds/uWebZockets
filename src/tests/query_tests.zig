@@ -88,6 +88,46 @@ test "query: overflow fails closed instead of truncating" {
     );
 }
 
+test "query: compile-time capacity expands the pair table" {
+    var buffer: [512]u8 = undefined;
+    var offset: usize = 0;
+    for (0..40) |index| {
+        const written = try std.fmt.bufPrint(buffer[offset..], "k{d}=v{d}&", .{ index, index });
+        offset += written.len;
+    }
+    const input = buffer[0..offset];
+
+    const params = try query.QueryParamsOf(64).parse(input);
+    try std.testing.expectEqual(@as(usize, 40), params.count);
+    try std.testing.expectEqualStrings("k0", params.at(0).?.key);
+    try std.testing.expectEqualStrings("v0", params.at(0).?.value);
+    try std.testing.expectEqualStrings("k39", params.at(39).?.key);
+    try std.testing.expectEqualStrings("v39", params.get_last("k39").?);
+
+    try std.testing.expectError(
+        error.TooManyQueryParameters,
+        query.QueryParams.parse(input),
+    );
+}
+
+test "query: small capacity fails closed on the first overflow" {
+    const params = try query.QueryParamsOf(4).parse("a=1&b=2&c=3&d=4");
+    try std.testing.expectEqual(@as(usize, 4), params.count);
+    try std.testing.expectEqualStrings("4", params.get("d").?);
+
+    try std.testing.expectError(
+        error.TooManyQueryParameters,
+        query.QueryParamsOf(4).parse("a=1&b=2&c=3&d=4&e=5"),
+    );
+
+    const empty = try query.QueryParamsOf(0).parse("");
+    try std.testing.expectEqual(@as(usize, 0), empty.count);
+    try std.testing.expectError(
+        error.TooManyQueryParameters,
+        query.QueryParamsOf(0).parse("a=1"),
+    );
+}
+
 test "query: percent_decode decodes escapes and preserves plus" {
     var scratch: [64]u8 = undefined;
 
@@ -158,6 +198,30 @@ test "form: parse validates the media type before slicing" {
     );
 }
 
+test "form: parse_of honors the requested capacity" {
+    var buffer: [512]u8 = undefined;
+    var offset: usize = 0;
+    for (0..36) |index| {
+        const written = try std.fmt.bufPrint(buffer[offset..], "f{d}=v{d}&", .{ index, index });
+        offset += written.len;
+    }
+    const body = buffer[0..offset];
+
+    const fields = try form.parse_of(48, "application/x-www-form-urlencoded", body);
+    try std.testing.expectEqual(@as(usize, 36), fields.count);
+    try std.testing.expectEqualStrings("v0", fields.get("f0").?);
+    try std.testing.expectEqualStrings("v35", fields.get_last("f35").?);
+
+    try std.testing.expectError(
+        error.TooManyQueryParameters,
+        form.parse("application/x-www-form-urlencoded", body),
+    );
+    try std.testing.expectError(
+        error.UnsupportedMediaType,
+        form.parse_of(48, "application/json", body),
+    );
+}
+
 test "query: Request helpers expose query and form views" {
     var get_request = Request{
         .method = "GET",
@@ -188,4 +252,34 @@ test "query: Request helpers expose query and form views" {
     wrong.header_values[0] = "application/json";
     wrong.header_count = 1;
     try std.testing.expectError(error.UnsupportedMediaType, wrong.form());
+}
+
+test "query: Request.query_params_of uses the requested capacity" {
+    var query_buffer: [512]u8 = undefined;
+    var query_offset: usize = 0;
+    for (0..36) |index| {
+        const written = try std.fmt.bufPrint(
+            query_buffer[query_offset..],
+            "k{d}=v{d}&",
+            .{ index, index },
+        );
+        query_offset += written.len;
+    }
+    const query_bytes = query_buffer[0..query_offset];
+
+    var target_buffer: [512]u8 = undefined;
+    const target = try std.fmt.bufPrint(&target_buffer, "/items?{s}", .{query_bytes});
+
+    const request = Request{
+        .method = "GET",
+        .target = target,
+        .path = "/items",
+        .query = query_bytes,
+    };
+    const params = try request.query_params_of(48);
+    try std.testing.expectEqual(@as(usize, 36), params.count);
+    try std.testing.expectEqualStrings("k0", params.at(0).?.key);
+    try std.testing.expectEqualStrings("v35", params.get("k35").?);
+
+    try std.testing.expectError(error.TooManyQueryParameters, request.query_params());
 }
