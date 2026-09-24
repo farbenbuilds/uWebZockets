@@ -10,6 +10,84 @@ pub const SameSite = enum {
     none,
 };
 
+/// One RFC 9110 IMF-fixdate: 29 bytes, for example `Wed, 21 Oct 2015 07:28:00 GMT`.
+pub const HttpDateBuffer = [29]u8;
+
+const weekday_names = [_][]const u8{ "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+const month_names = [_][]const u8{
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+};
+
+/// Civil calendar date decomposed from a day count since the Unix epoch.
+const CivilDate = struct {
+    year: i64,
+    month: u8,
+    day: u8,
+};
+
+/// Formats `unix_seconds` as an IMF-fixdate into caller storage.
+///
+/// Pure integer math; callers own the clock. Seconds before the epoch and
+/// dates past year 9999 fail closed.
+pub fn format_http_date(buffer: *HttpDateBuffer, unix_seconds: i64) error{InvalidExpires}![]const u8 {
+    if (unix_seconds < 0) return error.InvalidExpires;
+    const days = @divFloor(unix_seconds, 86400);
+    const civil = civil_from_days(days);
+    if (civil.year > 9999) return error.InvalidExpires;
+
+    const seconds_of_day = @mod(unix_seconds, 86400);
+    @memcpy(buffer[0..3], weekday_names[@intCast(@mod(days + 4, 7))]);
+    buffer[3] = ',';
+    buffer[4] = ' ';
+    write_two_digits(buffer[5..7], civil.day);
+    buffer[7] = ' ';
+    @memcpy(buffer[8..11], month_names[civil.month - 1]);
+    buffer[11] = ' ';
+    write_four_digits(buffer[12..16], @intCast(civil.year));
+    buffer[16] = ' ';
+    write_two_digits(buffer[17..19], @intCast(@divFloor(seconds_of_day, 3600)));
+    buffer[19] = ':';
+    write_two_digits(buffer[20..22], @intCast(@divFloor(@mod(seconds_of_day, 3600), 60)));
+    buffer[22] = ':';
+    write_two_digits(buffer[23..25], @intCast(@mod(seconds_of_day, 60)));
+    buffer[25] = ' ';
+    @memcpy(buffer[26..29], "GMT");
+    return buffer[0..];
+}
+
+fn write_two_digits(buffer: []u8, value: u8) void {
+    buffer[0] = '0' + value / 10;
+    buffer[1] = '0' + value % 10;
+}
+
+fn write_four_digits(buffer: []u8, value: u16) void {
+    buffer[0] = '0' + @as(u8, @intCast(value / 1000));
+    buffer[1] = '0' + @as(u8, @intCast(value / 100 % 10));
+    buffer[2] = '0' + @as(u8, @intCast(value / 10 % 10));
+    buffer[3] = '0' + @as(u8, @intCast(value % 10));
+}
+
+/// Howard Hinnant's civil-from-days; the inverse of days-from-civil.
+fn civil_from_days(days: i64) CivilDate {
+    const shifted = days + 719468;
+    const era = @divFloor(shifted, 146097);
+    const day_of_era = shifted - era * 146097;
+    const year_of_era = @divTrunc(
+        day_of_era - @divTrunc(day_of_era, 1460) + @divTrunc(day_of_era, 36524) - @divTrunc(day_of_era, 146096),
+        365,
+    );
+    const year = year_of_era + era * 400;
+    const day_of_year = day_of_era - (365 * year_of_era + @divTrunc(year_of_era, 4) - @divTrunc(year_of_era, 100));
+    const month_prime = @divTrunc(5 * day_of_year + 2, 153);
+    const month = if (month_prime < 10) month_prime + 3 else month_prime - 9;
+    return .{
+        .year = year + @intFromBool(month <= 2),
+        .month = @intCast(month),
+        .day = @intCast(day_of_year - @divTrunc(153 * month_prime + 2, 5) + 1),
+    };
+}
+
 /// Set-Cookie attributes; `enforce_prefixes` enables the `__Host-`/`__Secure-`
 /// requirements that browsers apply (RFC 6265bis).
 pub const Options = struct {
@@ -21,6 +99,8 @@ pub const Options = struct {
     same_site: ?SameSite = null,
     /// Reject names whose `__Host-`/`__Secure-` prefix requirements are unmet.
     enforce_prefixes: bool = false,
+    /// Absolute expiry as Unix seconds; emits `Expires` after `Max-Age`.
+    expires_unix: ?i64 = null,
 };
 
 /// Returns the first RFC 6265 cookie pair matching `name`.
@@ -94,6 +174,10 @@ pub fn format(
         try writer.print("; Domain={s}", .{domain});
     }
     if (options.max_age) |max_age| try writer.print("; Max-Age={d}", .{max_age});
+    if (options.expires_unix) |expires| {
+        var date_buffer: HttpDateBuffer = undefined;
+        try writer.print("; Expires={s}", .{try format_http_date(&date_buffer, expires)});
+    }
     if (options.http_only) try writer.writeAll("; HttpOnly");
     if (options.secure) try writer.writeAll("; Secure");
     if (options.same_site) |same_site| {

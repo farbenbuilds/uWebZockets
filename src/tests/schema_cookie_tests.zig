@@ -570,3 +570,101 @@ test "cookie: prefix enforcement opts in without changing defaults" {
     const legacy = try cookie.format(&buffer, "__Host-id", "v", .{});
     try std.testing.expectEqualStrings("Set-Cookie: __Host-id=v; Path=/\r\n", legacy);
 }
+
+test "cookie: format_http_date matches the RFC 9110 IMF-fixdate examples" {
+    var buffer: cookie.HttpDateBuffer = undefined;
+    try std.testing.expectEqualStrings(
+        "Thu, 01 Jan 1970 00:00:00 GMT",
+        try cookie.format_http_date(&buffer, 0),
+    );
+    try std.testing.expectEqualStrings(
+        "Sun, 06 Nov 1994 08:49:37 GMT",
+        try cookie.format_http_date(&buffer, 784111777),
+    );
+    try std.testing.expectEqual(@as(usize, 29), (try cookie.format_http_date(&buffer, 784111777)).len);
+}
+
+test "cookie: format_http_date handles a leap day, post-2038, and year 9999" {
+    var buffer: cookie.HttpDateBuffer = undefined;
+    try std.testing.expectEqualStrings(
+        "Tue, 29 Feb 2000 00:00:00 GMT",
+        try cookie.format_http_date(&buffer, 951782400),
+    );
+    try std.testing.expectEqualStrings(
+        "Tue, 19 Jan 2038 03:14:07 GMT",
+        try cookie.format_http_date(&buffer, 2147483647),
+    );
+    try std.testing.expectEqualStrings(
+        "Fri, 31 Dec 9999 23:59:59 GMT",
+        try cookie.format_http_date(&buffer, 253402300799),
+    );
+}
+
+test "cookie: format_http_date pads one-digit days and names Sunday" {
+    var buffer: cookie.HttpDateBuffer = undefined;
+    try std.testing.expectEqualStrings(
+        "Fri, 01 Jan 2016 00:00:00 GMT",
+        try cookie.format_http_date(&buffer, 1451606400),
+    );
+    try std.testing.expectEqualStrings(
+        "Sun, 04 Jan 1970 00:00:00 GMT",
+        try cookie.format_http_date(&buffer, 259200),
+    );
+}
+
+test "cookie: format_http_date rejects negative seconds and years past 9999" {
+    var buffer: cookie.HttpDateBuffer = undefined;
+    try std.testing.expectError(error.InvalidExpires, cookie.format_http_date(&buffer, -1));
+    try std.testing.expectError(error.InvalidExpires, cookie.format_http_date(&buffer, std.math.minInt(i64)));
+    try std.testing.expectError(error.InvalidExpires, cookie.format_http_date(&buffer, 253402300800));
+    try std.testing.expectError(error.InvalidExpires, cookie.format_http_date(&buffer, std.math.maxInt(i64)));
+}
+
+test "cookie: format emits Expires once and only after Max-Age" {
+    var buffer: [256]u8 = undefined;
+    const field = try cookie.format(&buffer, "session", "abc", .{
+        .path = "/",
+        .max_age = 60,
+        .http_only = true,
+        .expires_unix = 784111777,
+    });
+    try std.testing.expectEqualStrings(
+        "Set-Cookie: session=abc; Path=/; Max-Age=60; Expires=Sun, 06 Nov 1994 08:49:37 GMT; HttpOnly\r\n",
+        field,
+    );
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, field, "Expires="));
+}
+
+test "cookie: format without expires_unix keeps the previous bytes" {
+    var buffer: [256]u8 = undefined;
+    const field = try cookie.format(&buffer, "session", "abc", .{
+        .path = "/",
+        .max_age = 60,
+        .http_only = true,
+    });
+    try std.testing.expectEqualStrings("Set-Cookie: session=abc; Path=/; Max-Age=60; HttpOnly\r\n", field);
+    try std.testing.expectEqual(@as(usize, 0), std.mem.count(u8, field, "Expires"));
+}
+
+test "cookie: format writes both Max-Age and Expires when both are set" {
+    var buffer: [256]u8 = undefined;
+    const field = try cookie.format(&buffer, "session", "abc", .{
+        .max_age = 3600,
+        .expires_unix = 1451606400,
+    });
+    try std.testing.expectEqualStrings(
+        "Set-Cookie: session=abc; Path=/; Max-Age=3600; Expires=Fri, 01 Jan 2016 00:00:00 GMT\r\n",
+        field,
+    );
+    const max_age_position = std.mem.indexOf(u8, field, "Max-Age=3600").?;
+    const expires_position = std.mem.indexOf(u8, field, "Expires=").?;
+    try std.testing.expect(max_age_position < expires_position);
+}
+
+test "cookie: format propagates an invalid expires value" {
+    var buffer: [256]u8 = undefined;
+    try std.testing.expectError(
+        error.InvalidExpires,
+        cookie.format(&buffer, "session", "abc", .{ .expires_unix = -1 }),
+    );
+}
