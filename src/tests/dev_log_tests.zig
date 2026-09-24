@@ -53,6 +53,21 @@ test "render uses the comptime metric name" {
     );
 }
 
+test "render writes a colored file-change line" {
+    var buffer: [dev_log.max_line_bytes]u8 = undefined;
+    const line = try dev_log.render(&buffer, .{
+        .timestamp_ms = 0,
+        .level = .info,
+        .direction = .data_in,
+        .event = .{ .file_changed = .{ .path = "src/router/app.zig", .kind = .modified } },
+    });
+    try testing.expectEqualStrings(
+        "\x1b[2m00:00:00.000\x1b[0m \x1b[1m\x1b[32mIN \x1b[0m " ++
+            "\x1b[36mwatch \x1b[0m \x1b[33mmodified\x1b[0m src/router/app.zig\x1b[0m\n",
+        line,
+    );
+}
+
 test "disabled sink records nothing and flushes nothing" {
     var sink = dev_log.Sink{};
     sink.record(.{

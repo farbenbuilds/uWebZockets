@@ -59,6 +59,15 @@ pub const MetricEvent = struct {
     value: u64,
 };
 
+/// Kind of filesystem change carried by `FileChangedEvent`.
+pub const FileChangeKind = enum { created, modified, deleted };
+
+/// One observed file change.
+pub const FileChangedEvent = struct {
+    path: []const u8,
+    kind: FileChangeKind,
+};
+
 /// Named payload for one development-log record.
 pub const Event = union(enum) {
     connection_opened: ConnectionEvent,
@@ -66,6 +75,7 @@ pub const Event = union(enum) {
     http_request: RequestEvent,
     ws_message: MessageEvent,
     metric: MetricEvent,
+    file_changed: FileChangedEvent,
 };
 
 /// One development-log line: wall clock, severity, direction, and payload.
@@ -389,6 +399,18 @@ fn write_record(writer: *std.Io.Writer, record: Record) std.Io.Writer.Error!void
             try write_prefix(writer, record);
             try write_metric(writer, record.direction, event);
         },
+        .file_changed => |event| {
+            try write_prefix(writer, record);
+            try writer.print("{s}{s:<6}{s} {s}{s:<8}{s} {s}", .{
+                Ansi.cyan,
+                "watch",
+                Ansi.reset,
+                change_color(event.kind),
+                @tagName(event.kind),
+                Ansi.reset,
+                event.path,
+            });
+        },
     }
     try writer.writeAll(Ansi.reset);
     try writer.writeByte('\n');
@@ -511,5 +533,13 @@ fn status_color(status: u16) []const u8 {
         4 => Ansi.yellow,
         5 => Ansi.red,
         else => Ansi.reset,
+    };
+}
+
+fn change_color(kind: FileChangeKind) []const u8 {
+    return switch (kind) {
+        .created => Ansi.green,
+        .modified => Ansi.yellow,
+        .deleted => Ansi.red,
     };
 }

@@ -22,6 +22,7 @@ const datagram_ring_module = @import("../quic/datagram_ring.zig");
 const metrics_module = @import("../observability/metrics.zig");
 const dev_log_module = @import("../observability/dev_log.zig");
 const terminal_module = @import("../observability/terminal.zig");
+const file_watch_module = @import("../observability/file_watch.zig");
 const ebpf_module = @import("../observability/ebpf.zig");
 const xdp_transport_module = @import("../xdp/transport.zig");
 const http_rejection = @import("../http/rejection.zig");
@@ -141,6 +142,7 @@ pub fn configured_app_with_timeout(
         metrics_path: []const u8 = "/metrics",
         dev_log_enabled: bool = false,
         dev_log_file: ?std.Io.File = null,
+        watch_paths: []const []const u8 = &.{},
         ready_started_ns: u64 = 0,
         ebpf_map_fd: i32 = -1,
         static_handlers: [max_static_routes]?*StaticFiles = .{null} ** max_static_routes,
@@ -152,6 +154,7 @@ pub fn configured_app_with_timeout(
         cluster_wakeup_active: bool = false,
         server: ?core_tcp.TcpServer = null,
         sweeper: ?core_timer.connection_sweeper(Pool, idle_timeout_ms) = null,
+        watcher: ?file_watch_module.Watcher = null,
         tls_ctx: ?TlsContext = null,
         quic_tls_ctx: ?TlsContext = null,
         quic_transport: ?QuicTransport = null,
@@ -252,6 +255,7 @@ pub fn configured_app_with_timeout(
                 .metrics_enabled = config.observability,
                 .metrics_path = if (config.observability) config.metrics_path else "/metrics",
                 .dev_log_enabled = config.enable_dev_log,
+                .watch_paths = config.watch_paths,
                 .pubsub = .{},
             };
 
@@ -349,6 +353,8 @@ pub fn configured_app_with_timeout(
                 sw.deinit();
             }
             self.sweeper = null;
+            if (self.watcher) |*watch| watch.deinit();
+            self.watcher = null;
             self.server = null;
 
             if (self.quic_transport) |*transport| transport.deinit();
@@ -414,6 +420,7 @@ pub fn configured_app_with_timeout(
             // Shutdown continues even if the cross-thread wakeup is already closed.
             if (self.cluster_wakeup) |*wakeup| wakeup.notify() catch {};
             if (self.sweeper) |*sw| sw.stop(&self.loop);
+            if (self.watcher) |*watch| watch.stop(self.loop.get_xev_loop());
             if (self.server) |*server| core_tcp.close_server(server, &self.loop);
             if (self.quic_transport) |*transport| transport.shutdown();
 
@@ -433,6 +440,9 @@ pub fn configured_app_with_timeout(
 
         fn verify_shutdown(self: *const Self) !void {
             if (self.pool.count_active() != 0) return error.ShutdownIncomplete;
+            if (self.watcher) |*watch| {
+                if (!watch.is_drained()) return error.ShutdownIncomplete;
+            }
             if (self.server) |server| {
                 if (!server.close_complete) return error.ShutdownIncomplete;
             }
@@ -986,10 +996,21 @@ pub fn configured_app_with_timeout(
             defer self.running = false;
             // Apps that never call a listen function still get the wordmark.
             self.write_startup_banner();
+            try self.start_file_watch();
             self.arm_cluster_wakeup();
             try core_loop.run(&self.loop);
             self.flush_dev_log();
             if (self.shutting_down) try self.verify_shutdown();
+        }
+
+        /// Arms the recursive file watcher configured for the dev log.
+        fn start_file_watch(self: *Self) !void {
+            if (self.watch_paths.len == 0) return;
+            self.watcher = .{};
+            self.watcher.?.start(self.io, self.loop.get_xev_loop(), self.watch_paths) catch |err| {
+                self.watcher = null;
+                return err;
+            };
         }
 
         /// Writes this worker's startup wordmark once, before the first

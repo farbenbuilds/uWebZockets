@@ -335,6 +335,14 @@ that never listen); any pending bytes are drained when the loop exits.
 records the Prometheus registry in slot order. With the toggle false, the
 development log emits nothing at all.
 
+`src/observability/file_watch.zig` supplies real-time file changes on Linux: an
+inotify descriptor is read through the event loop and decoded into
+`file_changed` records, with a bounded directory table (64 watches, 4 KiB of
+paths) that skips `.git`, `.zig-cache`, `zig-out`, `zig-pkg`, `node_modules`,
+and `.cache`. `ServerConfig.watch_paths` with `builder.with_watch_paths`
+enables it, requires `enable_dev_log`, and is rejected while the configuration
+is compiled on targets without the backend.
+
 ## Build graph
 
 `src/version.zig` is the single Zig source of truth for the release version;

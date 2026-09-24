@@ -20,6 +20,7 @@ comptime {
     _ = @import("router_tests.zig");
     _ = @import("shared_nothing_tests.zig");
     _ = @import("udp_tests.zig");
+    _ = @import("watch_tests.zig");
     _ = @import("ws_tests.zig");
     _ = @import("web_standards_tests.zig");
 }

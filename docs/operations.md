@@ -160,6 +160,14 @@ A metric snapshot goes out as one batch. The width probe in
 full wordmark. Lines that cannot fit and failed or short writes are dropped and
 counted in `Sink.dropped` rather than retried.
 
+With `watch_paths` configured, the app arms an inotify watcher before the loop
+starts: `with_dev_log(true)` plus `with_watch_paths(&.{"src"})` logs
+`watch modified src/router/app.zig` for every save, plus created and deleted
+lines for renames and removals. The Linux-only watcher is bounded to 64
+directory watches and 4 KiB of paths, skips build and VCS directories, and
+never allocates per event; targets without the backend reject watch paths while
+the configuration is compiled.
+
 Records carry an explicit direction (`data_in` or `data_out`) and a named event
 payload; there is no ambient logger state. `ServerConfig.enable_dev_log` is the
 opt-in toggle: leaving it false silences the wordmark, request lines, metric

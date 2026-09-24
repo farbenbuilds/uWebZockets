@@ -131,6 +131,12 @@ through its own thread-local sink as soon as it is recorded, so the terminal
 reflects the server in real time without allocating on the event loop. Failed
 or short writes drop the record instead of retrying.
 
+On Linux, `with_watch_paths(&.{ "src", "examples" })` watches those
+directories recursively and prints a `watch` line for every save, create, and
+delete, so edits show up as they happen. Watch paths require
+`with_dev_log(true)` and a Linux build; `.git`, `.zig-cache`, `zig-out`,
+`zig-pkg`, `node_modules`, and `.cache` are skipped.
+
 ```zig
 var server = try uz.Server.builder(init.io)
     .with_observability(true)

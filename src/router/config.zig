@@ -13,6 +13,7 @@ const rejection = @import("../http/rejection.zig");
 const xdp_transport = @import("../xdp/transport.zig");
 const datagram_ring = @import("../quic/datagram_ring.zig");
 const metrics_module = @import("../observability/metrics.zig");
+const file_watch = @import("../observability/file_watch.zig");
 
 /// Request buffer stride alignment; keeps every body start SIMD-friendly.
 pub const request_buffer_alignment = 16;
@@ -40,6 +41,9 @@ pub const Error = error{
     InvalidDatagramCapacity,
     InvalidTransportConfiguration,
     InvalidMetricsPath,
+    InvalidWatchConfiguration,
+    WatchRequiresDevLog,
+    WatchUnavailable,
     MisalignedSlab,
     SlabSizeOverflow,
     SlabTooSmall,
@@ -81,6 +85,11 @@ pub const ServerConfig = struct {
     ///
     /// Opt-in; leaving it false keeps every development-log write silent.
     enable_dev_log: bool = false,
+    /// Directories watched recursively for the development log; empty is off.
+    ///
+    /// Nonempty paths require `enable_dev_log` and a Linux build. Paths are
+    /// borrowed for the application lifetime, like `metrics_path`.
+    watch_paths: []const []const u8 = &.{},
 
     /// Optional per-field replacements accepted by `with`.
     ///
@@ -114,6 +123,8 @@ pub const ServerConfig = struct {
         metrics_path: ?[]const u8 = null,
         /// Replaces `enable_dev_log` when non-null.
         enable_dev_log: ?bool = null,
+        /// Replaces `watch_paths` when non-null.
+        watch_paths: ?[]const []const u8 = null,
     };
 
     /// Returns a copy with every non-null override field replaced.
@@ -133,6 +144,7 @@ pub const ServerConfig = struct {
         if (overrides.observability) |value| result.observability = value;
         if (overrides.metrics_path) |value| result.metrics_path = value;
         if (overrides.enable_dev_log) |value| result.enable_dev_log = value;
+        if (overrides.watch_paths) |value| result.watch_paths = value;
         return result;
     }
 
@@ -145,6 +157,7 @@ pub const ServerConfig = struct {
         if (self.idle_timeout_ms > std.math.maxInt(i64)) return error.InvalidIdleTimeout;
         try self.validate_datagrams();
         try self.validate_transport();
+        try self.validate_watch();
     }
 
     fn validate_datagrams(self: ServerConfig) Error!void {
@@ -178,6 +191,20 @@ pub const ServerConfig = struct {
                 return error.InvalidMetricsPath;
             }
         }
+    }
+
+    fn validate_watch(self: ServerConfig) Error!void {
+        if (self.watch_paths.len == 0) return;
+        if (!self.enable_dev_log) return error.WatchRequiresDevLog;
+        if (self.watch_paths.len > file_watch.max_roots) {
+            return error.InvalidWatchConfiguration;
+        }
+        for (self.watch_paths) |path| {
+            if (path.len == 0 or path.len + 1 > file_watch.max_path_bytes) {
+                return error.InvalidWatchConfiguration;
+            }
+        }
+        if (!file_watch.available) return error.WatchUnavailable;
     }
 
     /// Bytes reserved per connection for all pending datagrams.

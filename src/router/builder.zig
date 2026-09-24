@@ -49,8 +49,8 @@ pub const Server = struct {
 /// a runtime-variable capacity is rejected at compile time by design.
 pub fn configured_builder(comptime config: ServerConfig) type {
     comptime {
-        config.validate() catch @compileError(
-            "invalid ServerConfig: capacities must be non-zero and the idle timeout must fit i64",
+        config.validate() catch |err| @compileError(
+            "invalid ServerConfig: " ++ @errorName(err),
         );
     }
 
@@ -177,6 +177,17 @@ pub fn configured_builder(comptime config: ServerConfig) type {
             self: Self,
             comptime enabled: bool,
         ) configured_builder(config.with(.{ .enable_dev_log = enabled })) {
+            return .{ .io = self.io };
+        }
+
+        /// Watches `paths` recursively and reports file changes to the dev log.
+        ///
+        /// Requires `with_dev_log(true)` and a Linux build; paths are borrowed
+        /// for the application lifetime.
+        pub fn with_watch_paths(
+            self: Self,
+            comptime paths: []const []const u8,
+        ) configured_builder(config.with(.{ .watch_paths = paths })) {
             return .{ .io = self.io };
         }
 

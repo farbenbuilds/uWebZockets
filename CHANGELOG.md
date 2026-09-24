@@ -30,6 +30,11 @@ unchanged.
 - `src/observability/terminal.zig` probes the output width with a best-effort
   `ioctl(TIOCGWINSZ)` or Windows console query, so the wordmark adapts without
   allocating and without branching on the host OS in portable code.
+- `src/observability/file_watch.zig` adds a real-time Linux file watcher:
+  `with_watch_paths(&.{"src"})` streams `watch` lines for created, modified,
+  and deleted files, so saves appear in the terminal as they happen. The watch
+  set is bounded to 64 directories and 4 KiB of paths, skips build and VCS
+  directories, requires `enable_dev_log`, and never allocates per event.
 - `dev_log.Record` carries the wall clock, severity, and an explicit
   `Direction` (`data_in` or `data_out`) beside a named event payload
   (`connection_opened`, `connection_closed`, `http_request`, `ws_message`,
