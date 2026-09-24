@@ -109,7 +109,10 @@ try server.run();
 | `Presets.websocket_chat` | 512 | 32 KiB | 32 KiB | 4 KiB |
 | `Presets.file_server` | 128 | 4 KiB | 512 KiB | 8 KiB |
 
-Oversized input gets a structured rejection instead of a dropped connection:
+`with_max_request_line_size`, `with_max_header_size`, and `with_max_header_count`
+extend the HTTP/1 request limits; fields beyond the inline 64 get per-connection
+slab storage. Oversized input gets a structured rejection instead of a dropped
+connection:
 
 ```json
 {"error":{"code":"payload_too_large","message":"Request body exceeded the 64KB limit. Consider increasing 'max_body_size' in ServerConfig.","limit_bytes":65536}}

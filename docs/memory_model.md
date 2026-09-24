@@ -36,6 +36,7 @@ into these regions, in order:
 | Connection pool storage | `max_connections * sizeof(TcpConnection)` |
 | Pool freelist indices | `max_connections * sizeof(usize)` |
 | HTTP/1.1 request buffers | `max_connections * request_stride` |
+| Header extras beyond the inline 64 | `max_connections * (max_header_count - 64) * 2 slices` when configured |
 | Response write queues | `max_connections * write_queue_size` |
 | WebSocket message storage | `max_connections * max_ws_message_size` |
 | RFC 7692 compression scratch | `max_connections * 2 * worst_case_scratch` when enabled |
@@ -115,8 +116,8 @@ The defaults are deliberately finite:
 
 | Resource | Limit |
 | --- | ---: |
-| Request line | 8 KiB |
-| HTTP headers | 16 KiB total, 64 fields |
+| Request line | 8 KiB default; `ServerConfig.max_request_line_size` |
+| HTTP headers | 16 KiB total and 64 inline fields by default; `max_header_size` and `max_header_count` |
 | Query and form pairs | 32 default; compile-time `query.QueryParamsOf` capacity |
 | HTTP request body | 16 KiB default; `ServerConfig.max_body_size` |
 | Routes | 256 radix nodes |

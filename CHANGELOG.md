@@ -57,6 +57,12 @@ Fixed and Security. The C ABI version moves to 1.4.0 with no structural change.
   `stream.write`/`write_chunk` for raw bytes with transport errors intact, and
   `stream.end()` to finish. Body size is bounded by the configured
   `with_write_queue_size` ring, not by a rendering buffer.
+- Request limits are configurable: `ServerConfig.max_request_line_size`,
+  `max_header_size`, and `max_header_count` (with builder `with_*` methods)
+  replace the fixed 8 KiB request line, 16 KiB header block, and 64-header
+  inline cap. Headers beyond the inline arrays spill into per-connection slab
+  storage sized by `max_header_count`, and the 431 rejection document reports
+  the configured limit. Defaults keep the previous footprint byte-for-byte.
 - `Response.begin_stream` pulls a chunked body from a `StreamProducer`
   callback as the transport drains. Producers park with `.pending` on
   `error.WouldBlock` and are re-invoked when output space frees, so a response
