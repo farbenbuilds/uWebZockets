@@ -144,15 +144,18 @@ var server = try uz.Server.builder(init.io)
 defer server.deinit();
 ```
 
-The exact `µWEBZOCKETS` wordmark is written once at startup, before the
-listening line and followed by a blank padding line; a terminal narrower than
-the block art gets a one-line `µWebZockets` mark instead. HTTP/1.1 requests log
-Vite-style as `HH:MM:SS | [METHOD] /path : STATUS` with a dim clock, cyan
-method, and status-class color. Connection, WebSocket, and metric events follow
-with a colored direction badge. Every worker thread owns one `dev_log.Sink`;
-each record is rendered into its fixed 4096-byte buffer and written immediately,
-so the terminal reflects events in real time and the event loop never
-allocates. A metric snapshot goes out as one batch. The width probe in
+The exact `µWEBZOCKETS` wordmark and a Vite-style ready summary are written
+once at startup, before the first accepting listener: the version with the
+elapsed startup time, then `→ Local:`, `→ Logs:`, and `→ Metrics:` lines. A
+terminal narrower than the block art gets a one-line `µWebZockets` mark
+instead, and builds without the development log keep the plain
+`server listening` std.log line. HTTP/1.1 requests log Vite-style as
+`HH:MM:SS | [METHOD] /path : STATUS` with a dim clock, cyan method, and
+status-class color. Connection, WebSocket, and metric events follow with a
+colored direction badge. Every worker thread owns one `dev_log.Sink`; each
+record is rendered into its fixed 4096-byte buffer and written immediately, so
+the terminal reflects events in real time and the event loop never allocates.
+A metric snapshot goes out as one batch. The width probe in
 `src/observability/terminal.zig` is best effort: redirected output keeps the
 full wordmark. Lines that cannot fit and failed or short writes are dropped and
 counted in `Sink.dropped` rather than retried.

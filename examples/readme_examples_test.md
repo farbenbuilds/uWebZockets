@@ -103,14 +103,16 @@ curl -i http://127.0.0.1:3000/metrics
 npx wscat -c ws://127.0.0.1:3000/echo
 ```
 
-The server prints the `µWEBZOCKETS` wordmark before the listening line,
-followed by a blank line (a one-line `µWebZockets` mark fits narrow terminals),
-and logs each request Vite-style as `HH:MM:SS | [METHOD] /path : STATUS` with a
-dim clock, cyan method, and status-class color, alongside colored connection,
-WebSocket, and metric lines. `/snapshot` records every Prometheus counter into
-the same log and `/metrics` serves the registry. Each worker thread renders and
-writes records through its own `dev_log.Sink` as soon as they are recorded, so
-the event loop never allocates; `App.set_dev_log_file` redirects the output and
+The server prints the `µWEBZOCKETS` wordmark and a Vite-style ready summary
+(`µWebZockets v1.3.0  ready in N ms`, then `→ Local:`, `→ Logs:`, and
+`→ Metrics:` lines) before the first accepting listener; a one-line
+`µWebZockets` mark fits narrow terminals. Each request then logs Vite-style as
+`HH:MM:SS | [METHOD] /path : STATUS` with a dim clock, cyan method, and
+status-class color, alongside colored connection, WebSocket, and metric lines.
+`/snapshot` records every Prometheus counter into the same log and `/metrics`
+serves the registry. Each worker thread renders and writes records through its
+own `dev_log.Sink` as soon as they are recorded, so the event loop never
+allocates; `App.set_dev_log_file` redirects the output and
 `ServerConfig.enable_dev_log` silences it.
 
 ## Capacity presets and custom builder

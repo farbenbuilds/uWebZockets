@@ -323,12 +323,14 @@ reaches its sink without threading a logger pointer through every callback.
 with a counter; `Sink.record_metrics` writes the whole snapshot as one batch.
 `Sink.flush` issues at most one bounded `writeStreaming` per pending batch and
 never retries a short write. `Sink.record_banner` writes the startup wordmark
-once, followed by a blank padding line; `src/observability/terminal.zig` probes
-the terminal width so narrow outputs get a one-line `µWebZockets` mark and
-redirected outputs keep the full block art. When `ServerConfig.enable_dev_log`
-is set, the app enables the worker sink and writes the wordmark before the
-first listening line in `listen`/`listen_udp` (and in `run` for apps that never
-listen); any pending bytes are drained when the loop exits.
+once, followed by a blank padding line, and `Sink.record_ready` renders the
+Vite-style summary: version, elapsed startup time, local URL, log target, and
+the metrics endpoint when observability is on. `src/observability/terminal.zig`
+probes the terminal width so narrow outputs get a one-line `µWebZockets` mark
+and redirected outputs keep the full block art. When `ServerConfig.enable_dev_log`
+is set, the app enables the worker sink and, in `listen`/`listen_udp`, writes
+the summary in place of the `server listening` std.log line (`run` covers apps
+that never listen); any pending bytes are drained when the loop exits.
 `App.set_dev_log_file` rebinds the default stderr output and `App.log_metrics`
 records the Prometheus registry in slot order. With the toggle false, the
 development log emits nothing at all.

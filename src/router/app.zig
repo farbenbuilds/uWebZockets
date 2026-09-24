@@ -141,6 +141,7 @@ pub fn configured_app_with_timeout(
         metrics_path: []const u8 = "/metrics",
         dev_log_enabled: bool = false,
         dev_log_file: ?std.Io.File = null,
+        ready_started_ns: u64 = 0,
         ebpf_map_fd: i32 = -1,
         static_handlers: [max_static_routes]?*StaticFiles = .{null} ** max_static_routes,
         static_handler_count: u8 = 0,
@@ -255,6 +256,9 @@ pub fn configured_app_with_timeout(
             };
 
             if (instance.metrics_registry) |registry| registry.* = .{};
+            // Monotonic start mark for the ready summary; the clock is
+            // non-negative on every supported target.
+            instance.ready_started_ns = @intCast(@max(std.Io.Clock.now(.awake, io).nanoseconds, 0));
 
             if (layout.datagram_rings.len != 0) {
                 const slots = config.datagram_slots;
@@ -934,8 +938,15 @@ pub fn configured_app_with_timeout(
                 sw.start(&self.loop);
             }
 
-            self.write_startup_banner();
-            log.info("server listening on {s}:{d}", .{ address, port });
+            if (self.dev_log_enabled) {
+                self.write_ready_summary(
+                    if (self.tls_ctx != null) "https" else "http",
+                    address,
+                    port,
+                );
+            } else {
+                log.info("server listening on {s}:{d}", .{ address, port });
+            }
         }
 
         /// Binds and starts the UDP/QUIC listener, locking route mutation.
@@ -959,8 +970,11 @@ pub fn configured_app_with_timeout(
             try self.install_observability();
             self.routes_locked = true;
 
-            self.write_startup_banner();
-            log.info("http/3 server listening on {s}:{d}", .{ address, port });
+            if (self.dev_log_enabled) {
+                self.write_ready_summary("https", address, port);
+            } else {
+                log.info("http/3 server listening on {s}:{d}", .{ address, port });
+            }
         }
 
         /// Runs the event loop until shutdown completes or no work remains.
@@ -985,6 +999,31 @@ pub fn configured_app_with_timeout(
             const sink = dev_log_module.thread_sink();
             sink.enable(self.io, self.dev_log_file orelse std.Io.File.stderr());
             sink.record_banner(terminal_module.columns(sink.file));
+        }
+
+        /// Writes the wordmark and the Vite-style ready summary for one bound
+        /// listener.
+        fn write_ready_summary(self: *Self, scheme: []const u8, address: []const u8, port: u16) void {
+            if (!self.dev_log_enabled) return;
+            self.write_startup_banner();
+            const host = dev_log_module.display_host(address);
+            dev_log_module.thread_sink().record_ready(.{
+                .elapsed_ms = self.ready_elapsed_ms(),
+                .scheme = scheme,
+                .host = host,
+                .host_is_ipv6 = std.mem.indexOfScalar(u8, host, ':') != null,
+                .port = port,
+                .metrics_path = if (self.metrics_registry != null) self.metrics_path else null,
+                .log_target = if (self.dev_log_file == null) "stderr" else "bound file",
+            });
+        }
+
+        /// Milliseconds between application construction and listener startup.
+        fn ready_elapsed_ms(self: *const Self) u64 {
+            const now_ns = std.Io.Clock.now(.awake, self.io).nanoseconds;
+            if (now_ns <= 0) return 0;
+            const now: u64 = @intCast(now_ns);
+            return (now -| self.ready_started_ns) / std.time.ns_per_ms;
         }
 
         /// Overrides the development-log output file; defaults to stderr.

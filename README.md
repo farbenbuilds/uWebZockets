@@ -120,15 +120,16 @@ The full capacity table, slab layout, and backpressure model are in
 
 ## Terminal development log
 
-`with_dev_log(true)` prints the `µWEBZOCKETS` wordmark before the listening
-line, followed by a blank padding line, and logs requests Vite-style as
-`HH:MM:SS | [METHOD] /path : STATUS`, plus colored connection, WebSocket, and
-metric lines. The wordmark collapses to a one-line `µWebZockets` mark when the
-terminal is narrower than the block art. Everything renders from fixed stack
-buffers, and each worker thread writes every record through its own
-thread-local sink as soon as it is recorded, so the terminal reflects the
-server in real time without allocating on the event loop. Failed or short
-writes drop the record instead of retrying.
+`with_dev_log(true)` prints the `µWEBZOCKETS` wordmark and a Vite-style ready
+summary before the first accepting listener: `µWebZockets v1.3.0  ready in
+N ms` followed by `→ Local:`, `→ Logs:`, and `→ Metrics:` lines. The wordmark
+collapses to a one-line `µWebZockets` mark when the terminal is narrower than
+the block art. Requests then log Vite-style as `HH:MM:SS | [METHOD] /path :
+STATUS`, plus colored connection, WebSocket, and metric lines. Everything
+renders from fixed stack buffers, and each worker thread writes every record
+through its own thread-local sink as soon as it is recorded, so the terminal
+reflects the server in real time without allocating on the event loop. Failed
+or short writes drop the record instead of retrying.
 
 ```zig
 var server = try uz.Server.builder(init.io)

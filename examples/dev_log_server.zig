@@ -7,9 +7,10 @@
 //!   curl -i http://127.0.0.1:3000/metrics
 //!   npx wscat -c ws://127.0.0.1:3000/echo
 //!
-//! The startup wordmark and Vite-style request lines are written to stderr by
-//! the worker thread that owns the event loop. The wordmark is written before
-//! the listening line and collapses to a one-line mark on narrow terminals.
+//! The startup wordmark, the Vite-style ready summary, and the request lines
+//! are written to stderr by the worker thread that owns the event loop. The
+//! summary lists the local URL, the log target, and the metrics endpoint, and
+//! the wordmark collapses to a one-line mark on narrow terminals.
 //! `GET /snapshot` records every Prometheus counter into the same log, and
 //! `GET /metrics` serves the registry. Set `ServerConfig.enable_dev_log` to
 //! false to silence it all.
@@ -47,9 +48,5 @@ pub fn main(init: std.process.Init) !void {
     _ = try server.ws("/echo", .{ .message = echo });
 
     try server.listen("0.0.0.0", 3000);
-    std.debug.print(
-        "dev log server is running on port 3000; logs go to stderr\n",
-        .{},
-    );
     try server.run();
 }

@@ -77,7 +77,7 @@ pub const ServerConfig = struct {
     observability: bool = false,
     /// Path of the observability endpoint; retained for the app lifetime.
     metrics_path: []const u8 = "/metrics",
-    /// Writes the startup wordmark and colored request lines to the terminal.
+    /// Writes the startup wordmark, ready summary, and colored event lines.
     ///
     /// Opt-in; leaving it false keeps every development-log write silent.
     enable_dev_log: bool = false,

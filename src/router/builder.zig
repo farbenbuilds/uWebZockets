@@ -171,7 +171,8 @@ pub fn configured_builder(comptime config: ServerConfig) type {
             return .{ .io = self.io };
         }
 
-        /// Writes the startup wordmark and colored request lines when enabled.
+        /// Writes the startup wordmark, ready summary, and event lines when
+        /// enabled.
         pub fn with_dev_log(
             self: Self,
             comptime enabled: bool,

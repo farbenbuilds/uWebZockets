@@ -315,6 +315,82 @@ test "terminal columns are unknown for a regular file" {
     try testing.expectEqual(@as(?usize, null), terminal.columns(file));
 }
 
+test "display_host maps wildcard and bracket forms to a loopback host" {
+    try testing.expectEqualStrings("127.0.0.1", dev_log.display_host("0.0.0.0"));
+    try testing.expectEqualStrings("127.0.0.1", dev_log.display_host("::"));
+    try testing.expectEqualStrings("127.0.0.1", dev_log.display_host("[::]"));
+    try testing.expectEqualStrings("::1", dev_log.display_host("[::1]"));
+    try testing.expectEqualStrings("10.0.0.7", dev_log.display_host("10.0.0.7"));
+}
+
+test "render_ready writes the Vite-style startup summary" {
+    var buffer: [512]u8 = undefined;
+    const line = try dev_log.render_ready(&buffer, .{
+        .elapsed_ms = 4,
+        .scheme = "http",
+        .host = "127.0.0.1",
+        .host_is_ipv6 = false,
+        .port = 3000,
+        .metrics_path = "/metrics",
+        .log_target = "stderr",
+    });
+    try testing.expectEqualStrings(
+        "\x1b[1mµWebZockets\x1b[0m \x1b[2mv1.3.0\x1b[0m  \x1b[2mready in 4 ms\x1b[0m\n\n" ++
+            "\x1b[32m→\x1b[0m \x1b[1mLocal:  \x1b[0m \x1b[36mhttp://127.0.0.1:3000/\x1b[0m\n" ++
+            "\x1b[32m→\x1b[0m \x1b[1mLogs:   \x1b[0m stderr\n" ++
+            "\x1b[32m→\x1b[0m \x1b[1mMetrics:\x1b[0m \x1b[36mhttp://127.0.0.1:3000/metrics\x1b[0m\n",
+        line,
+    );
+}
+
+test "render_ready brackets an IPv6 host and omits metrics when unset" {
+    var buffer: [512]u8 = undefined;
+    const line = try dev_log.render_ready(&buffer, .{
+        .elapsed_ms = 12,
+        .scheme = "https",
+        .host = "::1",
+        .host_is_ipv6 = true,
+        .port = 8443,
+        .metrics_path = null,
+        .log_target = "bound file",
+    });
+    try testing.expect(std.mem.find(u8, line, "https://[::1]:8443/") != null);
+    try testing.expect(std.mem.find(u8, line, "Metrics:") == null);
+    try testing.expect(std.mem.find(u8, line, "bound file") != null);
+}
+
+test "record_ready writes the summary immediately" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const info = dev_log.ReadyInfo{
+        .elapsed_ms = 1,
+        .scheme = "http",
+        .host = "127.0.0.1",
+        .host_is_ipv6 = false,
+        .port = 3000,
+        .metrics_path = "/metrics",
+        .log_target = "stderr",
+    };
+    var expected_buffer: [512]u8 = undefined;
+    const expected = try dev_log.render_ready(&expected_buffer, info);
+
+    const file = try tmp.dir.createFile(testing.io, "dev_log.txt", .{});
+    var sink = dev_log.Sink{};
+    sink.enable(testing.io, file);
+    sink.record_ready(info);
+    file.close(testing.io);
+
+    const contents = try tmp.dir.readFileAlloc(
+        testing.io,
+        "dev_log.txt",
+        testing.allocator,
+        .limited(dev_log.capacity),
+    );
+    defer testing.allocator.free(contents);
+    try testing.expectEqualStrings(expected, contents);
+}
+
 test "disabled sink writes no banner" {
     var sink = dev_log.Sink{};
     sink.record_banner(null);

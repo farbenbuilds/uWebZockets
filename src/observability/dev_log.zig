@@ -3,14 +3,18 @@
 //! A `Sink` renders records into a fixed stack buffer using comptime format
 //! strings and writes them with one bounded file operation as soon as they are
 //! recorded, so every event is visible on the terminal without waiting for a
-//! timer or a full buffer. The transport reaches the owning thread's sink
-//! through `thread_sink`, so event-loop callbacks never allocate. HTTP requests
-//! render Vite-style as `HH:MM:SS | [METHOD] /path : STATUS` with a dim clock,
-//! cyan method, and status-class color. Recording is opt-in: a sink is silent
-//! until `enable` binds an output file, which keeps library defaults quiet.
+//! timer or a full buffer. Startup writes the wordmark (`record_banner`)
+//! followed by a Vite-style ready summary (`record_ready`) naming the local
+//! URL, log target, and metrics endpoint. The transport reaches the owning
+//! thread's sink through `thread_sink`, so event-loop callbacks never allocate.
+//! HTTP requests render Vite-style as `HH:MM:SS | [METHOD] /path : STATUS` with
+//! a dim clock, cyan method, and status-class color. Recording is opt-in: a
+//! sink is silent until `enable` binds an output file, which keeps library
+//! defaults quiet.
 
 const std = @import("std");
 const metrics = @import("metrics.zig");
+const version = @import("../version.zig");
 
 /// ANSI SGR sequences used by the renderer.
 pub const Ansi = struct {
@@ -114,6 +118,38 @@ pub fn banner_for_columns(columns: ?usize) []const u8 {
     return banner;
 }
 
+/// Maps wildcard bind addresses to a client-reachable loopback host and strips
+/// IPv6 brackets; every other address is returned unchanged.
+pub fn display_host(address: []const u8) []const u8 {
+    if (std.mem.eql(u8, address, "0.0.0.0") or
+        std.mem.eql(u8, address, "::") or
+        std.mem.eql(u8, address, "[::]"))
+    {
+        return "127.0.0.1";
+    }
+    if (address.len >= 2 and address[0] == '[' and address[address.len - 1] == ']') {
+        return address[1 .. address.len - 1];
+    }
+    return address;
+}
+
+/// One startup summary rendered after the wordmark.
+pub const ReadyInfo = struct {
+    /// Milliseconds between application construction and listener startup.
+    elapsed_ms: u64,
+    /// URL scheme of the bound listener, `http` or `https`.
+    scheme: []const u8,
+    /// Host shown in the local URL, already mapped by `display_host`.
+    host: []const u8,
+    /// True when `host` is an IPv6 literal that needs URL brackets.
+    host_is_ipv6: bool,
+    port: u16,
+    /// Metrics endpoint path, or null when observability is disabled.
+    metrics_path: ?[]const u8,
+    /// Where development records are written, for example `stderr`.
+    log_target: []const u8,
+};
+
 /// Result of one best-effort terminal write.
 pub const FlushOutcome = struct {
     written: usize = 0,
@@ -168,6 +204,19 @@ pub const Sink = struct {
         _ = self.flush();
     }
 
+    /// Renders and writes the startup summary immediately.
+    pub fn record_ready(self: *Sink, info: ReadyInfo) void {
+        if (!self.enabled) return;
+        if (!self.append_ready(info)) {
+            _ = self.flush();
+            if (!self.append_ready(info)) {
+                self.dropped +|= 1;
+                return;
+            }
+        }
+        _ = self.flush();
+    }
+
     /// Writes every pending byte with one bounded file operation.
     ///
     /// A short or failed write drops the pending bytes instead of retrying;
@@ -219,6 +268,12 @@ pub const Sink = struct {
         self.dropped +|= 1;
     }
 
+    fn append_ready(self: *Sink, info: ReadyInfo) bool {
+        const line = render_ready(self.buffer[self.len..], info) catch return false;
+        self.len += line.len;
+        return true;
+    }
+
     fn append(self: *Sink, entry: Record) bool {
         if (self.buffer.len - self.len < max_line_bytes and self.len != 0) return false;
         const line = render(self.buffer[self.len..], entry) catch return false;
@@ -251,6 +306,70 @@ pub fn render(buffer: []u8, record: Record) error{NoSpaceLeft}![]const u8 {
     var writer: std.Io.Writer = .fixed(buffer);
     write_record(&writer, record) catch return error.NoSpaceLeft;
     return writer.buffered();
+}
+
+/// Renders the startup summary into `buffer` without I/O or allocation.
+pub fn render_ready(buffer: []u8, info: ReadyInfo) error{NoSpaceLeft}![]const u8 {
+    var writer: std.Io.Writer = .fixed(buffer);
+    write_ready(&writer, info) catch return error.NoSpaceLeft;
+    return writer.buffered();
+}
+
+fn write_ready(writer: *std.Io.Writer, info: ReadyInfo) std.Io.Writer.Error!void {
+    try writer.print("{s}µWebZockets{s} {s}v{d}.{d}.{d}{s}  {s}ready in {d} ms{s}\n\n", .{
+        Ansi.bold,
+        Ansi.reset,
+        Ansi.dim,
+        version.semantic.major,
+        version.semantic.minor,
+        version.semantic.patch,
+        Ansi.reset,
+        Ansi.dim,
+        info.elapsed_ms,
+        Ansi.reset,
+    });
+
+    const open_bracket = if (info.host_is_ipv6) "[" else "";
+    const close_bracket = if (info.host_is_ipv6) "]" else "";
+    try writer.print("{s}→{s} {s}{s:<8}{s} {s}{s}://{s}{s}{s}:{d}/{s}\n", .{
+        Ansi.green,
+        Ansi.reset,
+        Ansi.bold,
+        "Local:",
+        Ansi.reset,
+        Ansi.cyan,
+        info.scheme,
+        open_bracket,
+        info.host,
+        close_bracket,
+        info.port,
+        Ansi.reset,
+    });
+    try writer.print("{s}→{s} {s}{s:<8}{s} {s}\n", .{
+        Ansi.green,
+        Ansi.reset,
+        Ansi.bold,
+        "Logs:",
+        Ansi.reset,
+        info.log_target,
+    });
+    if (info.metrics_path) |path| {
+        try writer.print("{s}→{s} {s}{s:<8}{s} {s}{s}://{s}{s}{s}:{d}{s}{s}\n", .{
+            Ansi.green,
+            Ansi.reset,
+            Ansi.bold,
+            "Metrics:",
+            Ansi.reset,
+            Ansi.cyan,
+            info.scheme,
+            open_bracket,
+            info.host,
+            close_bracket,
+            info.port,
+            path,
+            Ansi.reset,
+        });
+    }
 }
 
 fn write_record(writer: *std.Io.Writer, record: Record) std.Io.Writer.Error!void {
