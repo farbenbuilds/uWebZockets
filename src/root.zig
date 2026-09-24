@@ -55,6 +55,14 @@ pub const cookie = @import("http/cookie.zig");
 pub const middleware = @import("http/middleware.zig");
 /// Comptime-tagged JSON schema validation.
 pub const schema = @import("http/schema.zig");
+/// Canonical HTTP status codes and status lines.
+pub const status = @import("http/status.zig");
+/// Typed JSON error responses for HTTP handlers.
+pub const errors = @import("http/errors.zig");
+/// Accept-header content negotiation over caller-supplied offers.
+pub const negotiate = @import("http/negotiate.zig");
+/// ETag and conditional-GET helpers for bounded responses.
+pub const cache = @import("http/cache.zig");
 pub const openapi = @import("http/openapi.zig");
 pub const static_files = @import("http/static_files.zig");
 /// Fixed-capacity JSON-RPC 2.0 services and procedure helpers.

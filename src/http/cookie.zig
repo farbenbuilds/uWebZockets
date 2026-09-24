@@ -3,12 +3,15 @@ const std = @import("std");
 const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
 const signature_length = HmacSha256.mac_length * 2;
 
+/// SameSite attribute policy; `none` additionally requires `secure`.
 pub const SameSite = enum {
     strict,
     lax,
     none,
 };
 
+/// Set-Cookie attributes; `enforce_prefixes` enables the `__Host-`/`__Secure-`
+/// requirements that browsers apply (RFC 6265bis).
 pub const Options = struct {
     path: ?[]const u8 = "/",
     domain: ?[]const u8 = null,
@@ -16,6 +19,8 @@ pub const Options = struct {
     http_only: bool = false,
     secure: bool = false,
     same_site: ?SameSite = null,
+    /// Reject names whose `__Host-`/`__Secure-` prefix requirements are unmet.
+    enforce_prefixes: bool = false,
 };
 
 /// Returns the first RFC 6265 cookie pair matching `name`.
@@ -33,7 +38,40 @@ pub fn find(header: []const u8, name: []const u8) ?[]const u8 {
     return null;
 }
 
+/// One raw cookie pair.
+pub const Pair = struct { name: []const u8, value: []const u8 };
+
+/// Iterator over the valid pairs of a single Cookie field.
+pub const Iterator = struct {
+    header: []const u8,
+    offset: usize = 0,
+
+    /// Advances to the next well-formed pair, skipping malformed ones.
+    pub fn next(self: *Iterator) ?Pair {
+        while (self.offset < self.header.len) {
+            const rest = self.header[self.offset..];
+            const separator = std.mem.indexOfScalar(u8, rest, ';') orelse rest.len;
+            self.offset += separator + 1;
+            const raw_pair = std.mem.trim(u8, rest[0..separator], " \t");
+            const equals = std.mem.indexOfScalar(u8, raw_pair, '=') orelse continue;
+            const name = std.mem.trim(u8, raw_pair[0..equals], " \t");
+            const value = std.mem.trim(u8, raw_pair[equals + 1 ..], " \t");
+            if (!valid_name(name) or !valid_value(value)) continue;
+            return .{ .name = name, .value = value };
+        }
+        return null;
+    }
+};
+
+/// Returns an iterator over `header`; malformed pairs are skipped.
+pub fn iterator(header: []const u8) Iterator {
+    return .{ .header = header };
+}
+
 /// Formats one validated Set-Cookie response field into caller storage.
+///
+/// With `options.enforce_prefixes`, `__Host-` requires Secure, an explicit
+/// `Path=/`, and no Domain; `__Secure-` requires Secure.
 pub fn format(
     buffer: []u8,
     name: []const u8,
@@ -43,6 +81,7 @@ pub fn format(
     if (!valid_name(name)) return error.InvalidCookieName;
     if (!valid_value(value)) return error.InvalidCookieValue;
     if (options.same_site == .none and !options.secure) return error.InsecureSameSiteNone;
+    if (options.enforce_prefixes) try enforce_prefix(name, options);
 
     var writer: std.Io.Writer = .fixed(buffer);
     try writer.print("Set-Cookie: {s}={s}", .{ name, value });
@@ -67,6 +106,19 @@ pub fn format(
     }
     try writer.writeAll("\r\n");
     return writer.buffered();
+}
+
+fn enforce_prefix(name: []const u8, options: Options) !void {
+    if (std.mem.startsWith(u8, name, "__Host-")) {
+        if (!options.secure) return error.InsecureCookiePrefix;
+        if (options.domain != null) return error.InsecureCookiePrefix;
+        const path = options.path orelse return error.InsecureCookiePrefix;
+        if (!std.mem.eql(u8, path, "/")) return error.InsecureCookiePrefix;
+        return;
+    }
+    if (std.mem.startsWith(u8, name, "__Secure-") and !options.secure) {
+        return error.InsecureCookiePrefix;
+    }
 }
 
 /// Writes `value.hex(HMAC-SHA256(value, secret))` into caller storage.
@@ -100,6 +152,72 @@ pub fn verify_signed(value: []const u8, secret: []const u8) ![]const u8 {
         return error.InvalidCookieSignature;
     }
     return payload;
+}
+
+/// One rotation key: a public id and a >=32-byte secret.
+pub const Key = struct { id: []const u8, secret: []const u8 };
+
+/// Maximum accepted key-id length.
+pub const max_key_id_length = 32;
+
+/// Writes "id.payload.hex(HMAC-SHA256(id.payload, secret))" into caller storage.
+pub fn sign_versioned(buffer: []u8, value: []const u8, key: Key) ![]const u8 {
+    if (!valid_key_id(key.id)) return error.InvalidKeyId;
+    if (key.secret.len < 32) return error.CookieSecretTooShort;
+    if (!valid_value(value)) return error.InvalidCookieValue;
+
+    const payload_start = key.id.len + 1;
+    const signature_start = payload_start + value.len + 1;
+    const total = signature_start + signature_length;
+    if (buffer.len < total) return error.BufferTooSmall;
+
+    @memcpy(buffer[0..key.id.len], key.id);
+    buffer[key.id.len] = '.';
+    @memcpy(buffer[payload_start..][0..value.len], value);
+    buffer[payload_start + value.len] = '.';
+    var mac: [HmacSha256.mac_length]u8 = undefined;
+    var hmac = HmacSha256.init(key.secret);
+    hmac.update(key.id);
+    hmac.update(".");
+    hmac.update(value);
+    hmac.final(&mac);
+    encode_hex(buffer[signature_start..][0..signature_length], &mac);
+    return buffer[0..total];
+}
+
+/// Verifies a versioned value against any rotation key and returns the payload.
+pub fn verify_versioned(value: []const u8, keys: []const Key) ![]const u8 {
+    const id_end = std.mem.indexOfScalar(u8, value, '.') orelse return error.InvalidCookieSignature;
+    const signature_start = std.mem.lastIndexOfScalar(u8, value, '.') orelse return error.InvalidCookieSignature;
+    if (signature_start == id_end) return error.InvalidCookieSignature;
+
+    const id = value[0..id_end];
+    const payload = value[id_end + 1 .. signature_start];
+    const encoded = value[signature_start + 1 ..];
+
+    for (keys) |key| {
+        if (!std.mem.eql(u8, key.id, id)) continue;
+        if (key.secret.len < 32) return error.CookieSecretTooShort;
+        var supplied: [HmacSha256.mac_length]u8 = undefined;
+        decode_hex(&supplied, encoded) catch return error.InvalidCookieSignature;
+        var expected: [HmacSha256.mac_length]u8 = undefined;
+        var hmac = HmacSha256.init(key.secret);
+        hmac.update(id);
+        hmac.update(".");
+        hmac.update(payload);
+        hmac.final(&expected);
+        if (!std.crypto.timing_safe.eql([HmacSha256.mac_length]u8, expected, supplied)) {
+            return error.InvalidCookieSignature;
+        }
+        return payload;
+    }
+    return error.UnknownKeyId;
+}
+
+fn valid_key_id(id: []const u8) bool {
+    if (id.len == 0 or id.len > max_key_id_length) return false;
+    if (std.mem.indexOfScalar(u8, id, '.') != null) return false;
+    return valid_name(id);
 }
 
 fn valid_name(value: []const u8) bool {
