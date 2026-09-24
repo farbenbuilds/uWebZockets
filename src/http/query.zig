@@ -129,6 +129,20 @@ fn query_params_of(comptime capacity: usize) type {
             return matches;
         }
 
+        /// Parses the first raw value matching `name` as a base-10 integer.
+        ///
+        /// Returns null when the key is absent; a present but malformed value
+        /// reports the integer parse error. Values are raw, so decode escapes with
+        /// `form_decode`/`percent_decode` first when the wire form uses them.
+        pub fn get_int(
+            self: *const Self,
+            comptime T: type,
+            name: []const u8,
+        ) std.fmt.ParseIntError!?T {
+            const raw = self.get(name) orelse return null;
+            return try std.fmt.parseInt(T, raw, 10);
+        }
+
         /// Returns an iterator that borrows this view.
         pub fn pairs(self: *const Self) Iterator {
             return .{ .params = self };

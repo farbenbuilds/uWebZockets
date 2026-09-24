@@ -124,7 +124,19 @@ The full capacity table, slab layout, and backpressure model are in
 ## Request helpers
 
 `Request` and `Response` carry allocation-free helpers for the common API
-surface. `Request.query_params()` and `Request.form()` slice query and form
+surface. Register routes on the path only (`/search`); the query string is
+already split off into `Request.query`. Then read pairs zero-copy:
+
+```zig
+fn search(req: *uz.Request, res: *uz.Response) void {
+    const params = req.query_params() catch return;
+    const page = (params.get_int(u32, "page") catch null) orelse 1;
+    var scratch: [96]u8 = undefined;
+    res.json_buf(.{ .query = params.get("q") orelse "", .page = page }, &scratch) catch {};
+}
+```
+
+`Request.query_params()` and `Request.form()` slice query and form
 pairs out of the bounded buffer with SIMD byte scans into a fixed
 struct-of-arrays view; `query.QueryParamsOf(capacity)` and
 `Request.query_params_of(capacity)` raise that capacity at compile time.

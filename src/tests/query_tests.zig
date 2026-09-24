@@ -283,3 +283,16 @@ test "query: Request.query_params_of uses the requested capacity" {
 
     try std.testing.expectError(error.TooManyQueryParameters, request.query_params());
 }
+
+test "query: get_int parses page-style values and reports absence" {
+    const params = try query.QueryParams.parse("page=42&limit=1000&signed=-7&bad=abc");
+
+    try std.testing.expectEqual(@as(?u32, 42), try params.get_int(u32, "page"));
+    try std.testing.expectEqual(@as(?i32, -7), try params.get_int(i32, "signed"));
+    try std.testing.expectEqual(@as(?u64, null), try params.get_int(u64, "missing"));
+    try std.testing.expectError(error.InvalidCharacter, params.get_int(u32, "bad"));
+    try std.testing.expectError(error.Overflow, params.get_int(u8, "limit"));
+
+    const expanded = try query.QueryParamsOf(64).parse("page=999");
+    try std.testing.expectEqual(@as(?u16, 999), try expanded.get_int(u16, "page"));
+}

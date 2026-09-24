@@ -63,6 +63,9 @@ Fixed and Security. The C ABI version moves to 1.4.0 with no structural change.
   inline cap. Headers beyond the inline arrays spill into per-connection slab
   storage sized by `max_header_count`, and the 431 rejection document reports
   the configured limit. Defaults keep the previous footprint byte-for-byte.
+- `query.QueryParams.get_int` parses the first matching raw value as a
+  base-10 integer in one call, and `examples/basic_microservice.zig` now shows
+  the `GET /search?q=...&page=2` pattern end to end.
 - `Response.begin_stream` pulls a chunked body from a `StreamProducer`
   callback as the transport drains. Producers park with `.pending` on
   `error.WouldBlock` and are re-invoked when output space frees, so a response
