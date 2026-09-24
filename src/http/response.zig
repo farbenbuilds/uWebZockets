@@ -430,16 +430,39 @@ pub const Response = struct {
     }
 
     /// Sends a 200 OK JSON response formatted using caller-owned buffer (zero-allocation).
+    ///
+    /// Polymorphic entry point: `value` is any type `std.json.Stringify`
+    /// supports, including `std.json.Value`. Callers that prefer a named type
+    /// use `json_value_buf`.
     pub fn json_buf(self: *Response, value: anytype, buffer: []u8) !void {
         const payload = std.fmt.bufPrint(buffer, "{f}", .{std.json.fmt(value, .{})}) catch return error.BufferOverflow;
         return self.end_with_headers("200 OK", "Content-Type: application/json; charset=utf-8\r\n", payload);
     }
 
     /// Sends a 200 OK JSON response formatted using an allocator (Web Standards Response.json).
+    ///
+    /// Polymorphic entry point with the same contract as `json_buf`; the
+    /// allocator only backs the temporary rendering, which is released before
+    /// the response returns. Callers that prefer a named type use `json_value`.
     pub fn json(self: *Response, value: anytype, allocator: std.mem.Allocator) !void {
         const payload = try std.fmt.allocPrint(allocator, "{f}", .{std.json.fmt(value, .{})});
         defer allocator.free(payload);
         return self.end_with_headers("200 OK", "Content-Type: application/json; charset=utf-8\r\n", payload);
+    }
+
+    /// Sends a 200 OK JSON response for a dynamic `std.json.Value`.
+    ///
+    /// Named-type alternative to `json_buf` for callers that assemble JSON at
+    /// runtime instead of through a Zig value.
+    pub fn json_value_buf(self: *Response, value: std.json.Value, buffer: []u8) !void {
+        return self.json_buf(value, buffer);
+    }
+
+    /// Sends a 200 OK JSON response for a dynamic `std.json.Value`.
+    ///
+    /// Named-type alternative to `json` with the same allocation contract.
+    pub fn json_value(self: *Response, value: std.json.Value, allocator: std.mem.Allocator) !void {
+        return self.json(value, allocator);
     }
 
     /// Sends a redirection response (Web Standards Response.redirect).

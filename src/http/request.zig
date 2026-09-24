@@ -5,6 +5,7 @@ const cookie_module = @import("cookie.zig");
 const schema_module = @import("schema.zig");
 const query_module = @import("query.zig");
 const form_module = @import("form.zig");
+const negotiate_module = @import("negotiate.zig");
 
 /// Maximum number of allocation-free route parameters on one request.
 pub const max_route_params = 16;
@@ -154,6 +155,15 @@ pub const Request = struct {
             return error.MissingContentType;
         };
         return form_module.parse(content_type, self.body);
+    }
+
+    /// Reports whether the first Accept field accepts `media_type`.
+    ///
+    /// A missing or unparsable Accept header accepts every media type, matching
+    /// RFC 9110's default of `*/*`.
+    pub fn accepts(self: *const Request, media_type: []const u8) bool {
+        const header = self.get_header("accept") orelse "";
+        return negotiate_module.accepts(negotiate_module.parse(header), media_type);
     }
 
     /// Returns a borrowed RFC 6265 cookie value from any Cookie field.

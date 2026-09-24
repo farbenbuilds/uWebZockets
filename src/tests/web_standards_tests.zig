@@ -379,3 +379,50 @@ test "web standards: Response.writable_stream pipes stream chunks into chunked H
     try std.testing.expectEqualStrings("part-one; part-two; ", sink.chunks[0..sink.chunks_len]);
     try std.testing.expect(res.is_complete());
 }
+
+test "web standards: Request.accepts honors the Accept field and defaults to all" {
+    var request = Request{ .method = "GET" };
+    request.header_names[0] = "Accept";
+    request.header_values[0] = "text/html, application/json;q=0.9";
+    request.header_count = 1;
+
+    try std.testing.expect(request.accepts("text/html"));
+    try std.testing.expect(request.accepts("application/json"));
+    try std.testing.expect(!request.accepts("image/png"));
+
+    const without_header = Request{ .method = "GET" };
+    try std.testing.expect(without_header.accepts("image/png"));
+}
+
+test "web standards: Response.json_value serializes a dynamic JSON value" {
+    const parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        std.testing.allocator,
+        "{\"status\":\"ok\",\"count\":2}",
+        .{},
+    );
+    defer parsed.deinit();
+
+    var sink = ResponseSink{};
+    var res = Response{
+        .target = .{
+            .http3 = .{
+                .context = &sink,
+                .end_fn = ResponseSink.end_fn,
+                .begin_fn = ResponseSink.begin_fn,
+                .write_fn = ResponseSink.write_fn,
+                .finish_fn = ResponseSink.finish_fn,
+            },
+        },
+    };
+
+    var json_buf: [128]u8 = undefined;
+    try res.json_value_buf(parsed.value, &json_buf);
+    try std.testing.expectEqualStrings("Content-Type: application/json; charset=utf-8\r\n", sink.headers[0..sink.headers_len]);
+    try std.testing.expect(std.mem.indexOf(u8, sink.body[0..sink.body_len], "\"status\":\"ok\"") != null);
+
+    res.state = .idle;
+    sink = ResponseSink{};
+    try res.json_value(parsed.value, std.testing.allocator);
+    try std.testing.expect(std.mem.indexOf(u8, sink.body[0..sink.body_len], "\"count\":2") != null);
+}
