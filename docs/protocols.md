@@ -63,11 +63,13 @@ emitted with OpenAPI braces.
 `Request.clone(allocator)` creates an owned snapshot for deferred worker work;
 call `deinit` on the returned `OwnedRequest`. Framework modules also expose
 zero-allocation query/form parsing with SIMD slicing and compile-time
-capacities, streaming chunked JSON (`Response.begin_json`), multipart
-iteration, HMAC-SHA256 signed cookies with rotating keys and HTTP-date
-`Expires`, comptime JSON field constraints with typed parse issues, canonical
-status lines, typed JSON error documents, `Accept` negotiation, ETag and
-conditional-GET helpers, CORS and security-header middleware, and SSE.
+capacities, streaming chunked JSON (`Response.begin_json`), drain-driven
+producer bodies that resume past write-queue and flow-control backpressure
+(`Response.begin_stream`), multipart iteration, HMAC-SHA256 signed cookies
+with rotating keys and HTTP-date `Expires`, comptime JSON field constraints
+with typed parse issues, canonical status lines, typed JSON error documents,
+`Accept` negotiation, ETag and conditional-GET helpers, CORS and
+security-header middleware, and SSE.
 
 ## JSON-RPC
 

@@ -128,14 +128,17 @@ struct-of-arrays view; `query.QueryParamsOf(capacity)` and
 `percent_decode` and `form_decode` decode escapes into caller-owned scratch.
 `Request.accepts()` scores the `Accept` field, `Response.json_value` writes
 dynamic `std.json.Value` payloads, `Response.begin_json()` returns a streaming
-chunk writer for arbitrarily large JSON without allocation, `errors.Problem`
-renders typed JSON error documents, `status.line` maps codes to canonical
-status lines, `cache.etag` and `cache.is_not_modified` implement conditional
-GET, `schema` validates decoded JSON against comptime rules, and `cookie` adds
-a zero-copy header iterator plus versioned signing for key rotation. HTTP/1.1
-response heads are written as scatter parts, so header size is bounded by the
-configured write queue instead of a fixed formatting buffer. Every helper reuses
-the existing bounded buffers and stays off the heap on the request path.
+chunk writer for arbitrarily large JSON without allocation, and
+`Response.begin_stream()` pulls a chunked body from an application callback as
+the transport drains, so response size never depends on the write-queue size.
+`errors.Problem` renders typed JSON error documents, `status.line` maps codes
+to canonical status lines, `cache.etag` and `cache.is_not_modified` implement
+conditional GET, `schema` validates decoded JSON against comptime rules, and
+`cookie` adds a zero-copy header iterator plus versioned signing for key
+rotation. HTTP/1.1 response heads are written as scatter parts, so header size
+is bounded by the configured write queue instead of a fixed formatting buffer.
+Every helper reuses the existing bounded buffers and stays off the heap on the
+request path.
 
 ## Terminal development log
 

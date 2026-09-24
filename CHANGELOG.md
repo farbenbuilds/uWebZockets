@@ -57,6 +57,14 @@ Fixed and Security. The C ABI version moves to 1.4.0 with no structural change.
   `stream.write`/`write_chunk` for raw bytes with transport errors intact, and
   `stream.end()` to finish. Body size is bounded by the configured
   `with_write_queue_size` ring, not by a rendering buffer.
+- `Response.begin_stream` pulls a chunked body from a `StreamProducer`
+  callback as the transport drains. Producers park with `.pending` on
+  `error.WouldBlock` and are re-invoked when output space frees, so a response
+  body is not limited by the configured write queue. HTTP/1.1 resumes on write
+  completion, HTTP/2 on write completion and WINDOW_UPDATE (window exhaustion
+  is normalized to `WouldBlock`), and HTTP/3 on lsquic write drain. Targets
+  without a producer callback fail closed with
+  `error.ProducerStreamingUnsupported` before writing.
 - Query capacity is no longer fixed at 32: `query.QueryParamsOf(capacity)`,
   `Request.query_params_of(capacity)`, and `form.parse_of(capacity, ...)`
   specialize the fixed pair table at compile time; the existing default names

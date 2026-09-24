@@ -157,6 +157,9 @@ terminators are copied into the same ring as parts, so chunked responses need no
 per-connection scratch. HTTP/1.1 heads are scatter-written the same way, so a
 response with thousands of header fields is bounded by the ring, not by a fixed
 header-formatting buffer; `with_write_queue_size` sizes that ring per server.
+`Response.begin_stream` bodies park on `error.WouldBlock` and are re-invoked
+when the ring drains, so the queue bounds one step of a response, never its
+total size.
 
 ## DX rejection documents
 
