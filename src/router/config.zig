@@ -8,6 +8,7 @@
 const std = @import("std");
 const core_tcp = @import("../core/tcp.zig");
 const http_parser = @import("../http/parser.zig");
+const request_module = @import("../http/request.zig");
 const ws_deflate = @import("../ws/deflate.zig");
 const rejection = @import("../http/rejection.zig");
 const xdp_transport = @import("../xdp/transport.zig");
@@ -37,6 +38,8 @@ pub const Error = error{
     InvalidWebSocketMessageCapacity,
     InvalidWriteQueueCapacity,
     InvalidBodyCapacity,
+    InvalidRequestLineCapacity,
+    InvalidHeaderCapacity,
     InvalidIdleTimeout,
     InvalidDatagramCapacity,
     InvalidTransportConfiguration,
@@ -62,6 +65,21 @@ pub const ServerConfig = struct {
     write_queue_size: usize = 64 * 1024,
     /// Largest accepted HTTP/1.1 request body.
     max_body_size: usize = http_parser.default_max_body_size,
+    /// Largest accepted HTTP/1.1 request line in bytes.
+    ///
+    /// The request buffer reserves this many bytes ahead of the header block.
+    max_request_line_size: usize = http_parser.max_request_line_size,
+    /// Largest accepted HTTP/1.1 header block in bytes.
+    ///
+    /// The request buffer reserves this many bytes ahead of the body; headers
+    /// beyond the inline `Request` arrays also need `max_header_count` slots.
+    max_header_size: usize = http_parser.max_header_size,
+    /// Maximum headers accepted on one request, including overflow storage.
+    ///
+    /// Values below `Request.max_headers` are rejected because the inline
+    /// arrays cannot shrink; larger values carve one name/value pair per extra
+    /// header into the per-connection slab region.
+    max_header_count: usize = request_module.max_headers,
     /// Inactivity timeout in milliseconds; zero disables the sweeper.
     idle_timeout_ms: u64 = 120_000,
     /// Reserves per-connection RFC 7692 scratch inside the startup slab.
@@ -105,6 +123,12 @@ pub const ServerConfig = struct {
         write_queue_size: ?usize = null,
         /// Replaces `max_body_size` when non-null.
         max_body_size: ?usize = null,
+        /// Replaces `max_request_line_size` when non-null.
+        max_request_line_size: ?usize = null,
+        /// Replaces `max_header_size` when non-null.
+        max_header_size: ?usize = null,
+        /// Replaces `max_header_count` when non-null.
+        max_header_count: ?usize = null,
         /// Replaces `idle_timeout_ms` when non-null.
         idle_timeout_ms: ?u64 = null,
         /// Replaces `compression` when non-null.
@@ -136,6 +160,9 @@ pub const ServerConfig = struct {
         if (overrides.max_ws_message_size) |value| result.max_ws_message_size = value;
         if (overrides.write_queue_size) |value| result.write_queue_size = value;
         if (overrides.max_body_size) |value| result.max_body_size = value;
+        if (overrides.max_request_line_size) |value| result.max_request_line_size = value;
+        if (overrides.max_header_size) |value| result.max_header_size = value;
+        if (overrides.max_header_count) |value| result.max_header_count = value;
         if (overrides.idle_timeout_ms) |value| result.idle_timeout_ms = value;
         if (overrides.compression) |value| result.compression = value;
         if (overrides.transport) |value| result.transport = value;
@@ -156,6 +183,11 @@ pub const ServerConfig = struct {
         if (self.max_ws_message_size == 0) return error.InvalidWebSocketMessageCapacity;
         if (self.write_queue_size == 0) return error.InvalidWriteQueueCapacity;
         if (self.max_body_size == 0) return error.InvalidBodyCapacity;
+        if (self.max_request_line_size == 0) return error.InvalidRequestLineCapacity;
+        if (self.max_header_size == 0) return error.InvalidHeaderCapacity;
+        if (self.max_header_count < request_module.max_headers) return error.InvalidHeaderCapacity;
+        // Reject header counts whose per-connection pointer storage overflows.
+        _ = try self.extra_header_stride();
         if (self.idle_timeout_ms > std.math.maxInt(i64)) return error.InvalidIdleTimeout;
         try self.validate_datagrams();
         try self.validate_transport();
@@ -237,14 +269,35 @@ pub const ServerConfig = struct {
 
         const fixed = std.math.add(
             usize,
-            http_parser.max_request_line_size,
-            http_parser.max_header_size,
+            self.max_request_line_size,
+            self.max_header_size,
         ) catch return error.SlabSizeOverflow;
         const fixed_with_slack = std.math.add(usize, fixed, 1024) catch
             return error.SlabSizeOverflow;
         const total = std.math.add(usize, self.max_body_size, fixed_with_slack) catch
             return error.SlabSizeOverflow;
         return align_checked(total, request_buffer_alignment);
+    }
+
+    /// Header slots reserved per connection beyond the inline `Request` arrays.
+    pub fn extra_header_capacity(self: ServerConfig) Error!usize {
+        if (self.max_header_count < request_module.max_headers) {
+            return error.InvalidHeaderCapacity;
+        }
+        return self.max_header_count - request_module.max_headers;
+    }
+
+    /// Bytes reserved per connection for the extra header name/value pointers.
+    ///
+    /// Zero when `max_header_count` matches the inline `Request` capacity.
+    pub fn extra_header_stride(self: ServerConfig) Error!usize {
+        const capacity = try self.extra_header_capacity();
+        if (capacity == 0) return 0;
+        const pointers = std.math.mul(usize, capacity, 2) catch
+            return error.SlabSizeOverflow;
+        const bytes = std.math.mul(usize, pointers, @sizeOf([]const u8)) catch
+            return error.SlabSizeOverflow;
+        return align_checked(bytes, request_buffer_alignment);
     }
 
     /// Bytes reserved per connection for paired RFC 7692 scratch regions.
@@ -265,7 +318,10 @@ pub const ServerConfig = struct {
 
     /// Fixed rejection policy rendered into transport error responses.
     pub fn rejection_policy(self: ServerConfig) rejection.RejectionPolicy {
-        return .{ .max_body_size = self.max_body_size };
+        return .{
+            .max_body_size = self.max_body_size,
+            .max_header_size = self.max_header_size,
+        };
     }
 
     /// Named presets for common deployment shapes.
@@ -342,6 +398,8 @@ const LayoutOffsets = struct {
     freelist_end: usize,
     request_start: usize,
     request_end: usize,
+    header_extras_start: usize,
+    header_extras_end: usize,
     write_start: usize,
     write_end: usize,
     message_start: usize,
@@ -377,6 +435,9 @@ pub const SlabLayout = struct {
     freelist: []usize,
     /// One HTTP/1.1 request buffer per connection, `request_buffer_stride` apart.
     request_buffers: []u8,
+    /// Per-connection header name/value pointer storage beyond the inline
+    /// `Request` arrays, `extra_header_stride` apart.
+    header_extras: []u8,
     /// One bounded response ring per connection, `write_queue_size` apart.
     write_queues: []u8,
     /// One WebSocket message region per connection, `max_ws_message_size` apart.
@@ -405,6 +466,8 @@ pub const SlabLayout = struct {
     metrics_registry: ?*metrics_module.Registry,
     /// Byte distance between consecutive request buffers.
     request_buffer_stride: usize,
+    /// Byte distance between consecutive header-extras pointer regions.
+    extra_header_stride: usize,
     /// Byte distance between consecutive paired compression scratch regions.
     compression_stride: usize,
     /// Total bytes consumed inside `slab`.
@@ -431,6 +494,7 @@ pub const SlabLayout = struct {
                 region_bytes(usize, slab, offsets.freelist_start, offsets.freelist_end),
             ),
             .request_buffers = slab[offsets.request_start..offsets.request_end],
+            .header_extras = slab[offsets.header_extras_start..offsets.header_extras_end],
             .write_queues = slab[offsets.write_start..offsets.write_end],
             .ws_messages = slab[offsets.message_start..offsets.message_end],
             .compression_scratch = slab[offsets.compression_start..offsets.compression_end],
@@ -470,6 +534,7 @@ pub const SlabLayout = struct {
             else
                 null,
             .request_buffer_stride = try config.request_buffer_stride(),
+            .extra_header_stride = try config.extra_header_stride(),
             .compression_stride = if (config.compression) try config.compression_stride() else 0,
             .total_bytes = offsets.total_bytes,
             .alignment = config.required_alignment(),
@@ -491,6 +556,7 @@ fn layout_offsets(config: ServerConfig) Error!LayoutOffsets {
     try config.validate();
 
     const request_stride = try config.request_buffer_stride();
+    const extra_header_stride = try config.extra_header_stride();
     const compression_stride = if (config.compression) try config.compression_stride() else 0;
 
     var offsets: LayoutOffsets = undefined;
@@ -511,6 +577,12 @@ fn layout_offsets(config: ServerConfig) Error!LayoutOffsets {
     offsets.request_start = cursor;
     cursor = try add_product(cursor, request_stride, config.max_connections);
     offsets.request_end = cursor;
+
+    // Extra header pointers sit next to the request buffers that publish them.
+    cursor = try align_checked(cursor, request_buffer_alignment);
+    offsets.header_extras_start = cursor;
+    cursor = try add_product(cursor, extra_header_stride, config.max_connections);
+    offsets.header_extras_end = cursor;
 
     cursor = try align_checked(cursor, write_queue_alignment);
     offsets.write_start = cursor;

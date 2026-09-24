@@ -11,7 +11,8 @@ const DeflateContext = @import("../ws/deflate.zig").Context;
 const TlsContext = @import("../crypto/tls.zig").TlsContext;
 const quic = @import("../quic/engine.zig");
 const udp = @import("../core/udp.zig");
-const Request = @import("../http/request.zig").Request;
+const request_module = @import("../http/request.zig");
+const Request = request_module.Request;
 const Response = @import("../http/response.zig").Response;
 const json_rpc_http = @import("../rpc/http.zig");
 const static_files_module = @import("../http/static_files.zig");
@@ -111,6 +112,13 @@ pub fn configured_app_with_timeout(
         slab_allocator: std.mem.Allocator,
         request_buffers: []u8,
         request_buffer_stride: usize,
+        // Per-request parser limits and the shared extra-header pointer region.
+        max_request_line_size: usize,
+        max_header_size: usize,
+        max_header_count: usize,
+        header_extras: []align(config_module.request_buffer_alignment) u8,
+        extra_header_capacity: usize,
+        extra_header_stride: usize,
         max_body_size: usize,
         reject_policy: http_rejection.RejectionPolicy = .{},
         ws_message_storage: []u8,
@@ -221,6 +229,7 @@ pub fn configured_app_with_timeout(
             }
 
             const layout = try config_module.carve(slab, config);
+            const extra_header_capacity = try config.extra_header_capacity();
 
             var loop = try core_loop.init();
             errdefer core_loop.deinit(&loop);
@@ -235,6 +244,12 @@ pub fn configured_app_with_timeout(
                 .slab_allocator = allocator,
                 .request_buffers = layout.request_buffers,
                 .request_buffer_stride = layout.request_buffer_stride,
+                .max_request_line_size = config.max_request_line_size,
+                .max_header_size = config.max_header_size,
+                .max_header_count = config.max_header_count,
+                .header_extras = @alignCast(layout.header_extras),
+                .extra_header_capacity = extra_header_capacity,
+                .extra_header_stride = layout.extra_header_stride,
                 .max_body_size = config.max_body_size,
                 .reject_policy = config.rejection_policy(),
                 .ws_message_storage = layout.ws_messages,
@@ -805,6 +820,24 @@ pub fn configured_app_with_timeout(
             self.ws_deflate = context;
         }
 
+        /// Returns one connection's borrowed slices of the shared extra-header
+        /// pointer region; empty when the configuration matches inline capacity.
+        fn connection_header_extras(self: *Self, connection_index: usize) HeaderExtras {
+            if (self.extra_header_capacity == 0) return .{ .names = &.{}, .values = &.{} };
+
+            // A runtime slice cannot prove alignment; the layout aligned this
+            // region to the boundary, so re-assert it for the pointer reinterpret.
+            const start = connection_index * self.extra_header_stride;
+            const bytes: []align(config_module.request_buffer_alignment) u8 = @alignCast(
+                self.header_extras[start .. start + self.extra_header_stride],
+            );
+            const pointers = std.mem.bytesAsSlice([]const u8, bytes);
+            return .{
+                .names = pointers[0..self.extra_header_capacity],
+                .values = pointers[self.extra_header_capacity .. self.extra_header_capacity * 2],
+            };
+        }
+
         // callback triggered when the tcp server accepts a new socket.
         fn on_new_connection(socket: xev.TCP, user_data: ?*anyopaque) void {
             const self: *Self = @ptrCast(@alignCast(user_data));
@@ -818,8 +851,17 @@ pub fn configured_app_with_timeout(
                 return;
             };
 
+            // acquire only returns pointers into this pool's contiguous slab.
+            const connection_index = self.pool.index_of(conn) orelse unreachable;
+            const extras = self.connection_header_extras(connection_index);
             conn.req = .{};
-            conn.parser = .{ .max_body_size = self.max_body_size };
+            conn.parser = .{
+                .max_body_size = self.max_body_size,
+                .max_request_line_bytes = self.max_request_line_size,
+                .max_header_bytes = self.max_header_size,
+                .extra_header_names = extras.names,
+                .extra_header_values = extras.values,
+            };
             conn.reset_protocol() catch {
                 _ = self.pool.release(conn);
                 close_socket_now(socket);
@@ -856,8 +898,6 @@ pub fn configured_app_with_timeout(
 
             conn.socket = socket;
             conn.loop = &self.loop.xev_loop;
-            // acquire only returns pointers into this pool's contiguous slab.
-            const connection_index = self.pool.index_of(conn) orelse unreachable;
             const request_start = connection_index * self.request_buffer_stride;
             conn.request_buffer = self.request_buffers[request_start .. request_start + self.request_buffer_stride];
             conn.reject_policy = &self.reject_policy;
@@ -1387,6 +1427,14 @@ pub fn configured_app_with_timeout(
         }
     };
 }
+
+/// One connection's borrowed slices of the shared extra-header pointer region.
+pub const HeaderExtras = struct {
+    /// Header-name slices beyond the inline `Request` arrays.
+    names: [][]const u8,
+    /// Header-value slices matching `names`.
+    values: [][]const u8,
+};
 
 /// Separate borrowed scratch slices for inbound and outbound compression.
 pub const CompressionBuffers = struct {

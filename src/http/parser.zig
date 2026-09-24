@@ -67,6 +67,17 @@ pub const HttpParser = struct {
     /// Per-connection body policy; the owner's request buffer must be at least
     /// this large plus request-line, header, and framing slack.
     max_body_size: usize = default_max_body_size,
+    /// Per-connection request-line policy.
+    max_request_line_bytes: usize = max_request_line_size,
+    /// Per-connection header-block policy.
+    max_header_bytes: usize = max_header_size,
+    /// Overflow storage for headers beyond the inline `Request` arrays.
+    ///
+    /// Both slices must be the same length and stay valid for the connection
+    /// lifetime; an owner that supplies none fails closed at the inline cap.
+    extra_header_names: [][]const u8 = &.{},
+    extra_header_values: [][]const u8 = &.{},
+    extra_header_count: usize = 0,
 };
 
 /// Parses bytes into `req` and returns the prefix consumed by this request.
@@ -81,7 +92,7 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
             .method => {
                 if (std.mem.indexOfScalar(u8, buffer[i..], ' ')) |space_idx| {
                     const abs_space = i + space_idx;
-                    if (abs_space > max_request_line_size) {
+                    if (abs_space > parser.max_request_line_bytes) {
                         parser.state = .error_headers_too_large;
                         return buffer.len;
                     }
@@ -104,7 +115,7 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                         parser.state = .error_invalid;
                         return buffer.len;
                     }
-                    if (buffer.len > max_request_line_size) {
+                    if (buffer.len > parser.max_request_line_bytes) {
                         parser.state = .error_headers_too_large;
                     }
                     return buffer.len; // need more data
@@ -114,7 +125,7 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                 if (std.mem.indexOfScalar(u8, buffer[i..], ' ')) |space_idx| {
                     const abs_space = i + space_idx;
                     const path = buffer[parser.mark..abs_space];
-                    if (abs_space > max_request_line_size) {
+                    if (abs_space > parser.max_request_line_bytes) {
                         parser.state = .error_headers_too_large;
                         return buffer.len;
                     }
@@ -144,7 +155,7 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                         parser.state = .error_invalid;
                         return buffer.len;
                     }
-                    if (buffer.len > max_request_line_size) {
+                    if (buffer.len > parser.max_request_line_bytes) {
                         parser.state = .error_headers_too_large;
                     }
                     return buffer.len;
@@ -153,7 +164,7 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
             .protocol => {
                 if (std.mem.indexOfScalar(u8, buffer[i..], '\n')) |nl_idx| {
                     const abs_nl = i + nl_idx;
-                    if (abs_nl + 1 > max_request_line_size) {
+                    if (abs_nl + 1 > parser.max_request_line_bytes) {
                         parser.state = .error_headers_too_large;
                         return buffer.len;
                     }
@@ -171,7 +182,7 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                         return buffer.len;
                     }
                 } else {
-                    if (buffer.len > max_request_line_size) {
+                    if (buffer.len > parser.max_request_line_bytes) {
                         parser.state = .error_headers_too_large;
                     }
                     return buffer.len;
@@ -183,7 +194,7 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                 else
                     null;
                 if (headers_end) |end| {
-                    if (end - parser.mark > max_header_size) {
+                    if (end - parser.mark > parser.max_header_bytes) {
                         parser.state = .error_headers_too_large;
                         return buffer.len;
                     }
@@ -264,12 +275,18 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                             }
 
                             if (req.header_count >= req.header_names.len) {
-                                parser.state = .error_headers_too_large;
-                                return buffer.len;
+                                if (parser.extra_header_count >= parser.extra_header_names.len) {
+                                    parser.state = .error_headers_too_large;
+                                    return buffer.len;
+                                }
+                                parser.extra_header_names[parser.extra_header_count] = name;
+                                parser.extra_header_values[parser.extra_header_count] = value;
+                                parser.extra_header_count += 1;
+                            } else {
+                                req.header_names[req.header_count] = name;
+                                req.header_values[req.header_count] = value;
+                                req.header_count += 1;
                             }
-                            req.header_names[req.header_count] = name;
-                            req.header_values[req.header_count] = value;
-                            req.header_count += 1;
                         } else {
                             parser.state = .error_invalid;
                             return buffer.len;
@@ -285,6 +302,9 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                         parser.state = .error_invalid;
                         return buffer.len;
                     }
+
+                    req.extra_header_names = parser.extra_header_names[0..parser.extra_header_count];
+                    req.extra_header_values = parser.extra_header_values[0..parser.extra_header_count];
 
                     if (has_te) {
                         parser.state = .chunk_size;
@@ -305,7 +325,7 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                     parser.state = .done;
                     return end + 4;
                 } else {
-                    if (buffer.len - parser.mark > max_header_size) {
+                    if (buffer.len - parser.mark > parser.max_header_bytes) {
                         parser.state = .error_headers_too_large;
                     }
                     return buffer.len;
@@ -429,7 +449,7 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                     }
                     if (simd.index_of_header_end(buffer[parser.mark..])) |relative_end| {
                         const end_idx = parser.mark + relative_end;
-                        if (!valid_trailers(buffer[parser.mark..end_idx])) {
+                        if (!valid_trailers(buffer[parser.mark..end_idx], parser.max_header_bytes)) {
                             parser.state = .error_invalid;
                             return buffer.len;
                         }
@@ -447,8 +467,8 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
     return i;
 }
 
-fn valid_trailers(trailers: []const u8) bool {
-    if (trailers.len > max_header_size) return false;
+fn valid_trailers(trailers: []const u8, max_bytes: usize) bool {
+    if (trailers.len > max_bytes) return false;
 
     var field_count: usize = 0;
     var lines = std.mem.splitSequence(u8, trailers, "\r\n");
@@ -479,6 +499,7 @@ fn valid_trailers(trailers: []const u8) bool {
 
 /// Resets parser offsets and lengths before parsing the next request.
 pub fn reset(parser: *HttpParser) void {
+    parser.extra_header_count = 0;
     parser.state = .method;
     parser.mark = 0;
     parser.content_length = 0;

@@ -611,3 +611,204 @@ test "http: begin_stream fails closed on transports without producer support" {
     );
     try std.testing.expect(!http3.is_started());
 }
+
+test "http: honors per-connection request line limits" {
+    var wire: [16 * 1024]u8 = undefined;
+    const prefix = "GET /";
+    const suffix = " HTTP/1.1\r\nHost: example.test\r\n\r\n";
+    const fill = 9000;
+    @memcpy(wire[0..prefix.len], prefix);
+    @memset(wire[prefix.len .. prefix.len + fill], 'a');
+    @memcpy(wire[prefix.len + fill .. prefix.len + fill + suffix.len], suffix);
+    const length = prefix.len + fill + suffix.len;
+
+    var raised = parser.HttpParser{ .max_request_line_bytes = 12 * 1024 };
+    var raised_request = Request{};
+    const consumed = parser.consume(&raised, &raised_request, wire[0..length]);
+    try std.testing.expectEqual(length, consumed);
+    try std.testing.expectEqual(parser.ParserState.done, raised.state);
+    try std.testing.expectEqual(@as(usize, 1 + fill), raised_request.path.len);
+
+    var lowered = parser.HttpParser{ .max_request_line_bytes = 1024 };
+    var lowered_request = Request{};
+    _ = parser.consume(&lowered, &lowered_request, wire[0..length]);
+    try std.testing.expectEqual(parser.ParserState.error_headers_too_large, lowered.state);
+}
+
+test "http: honors per-connection header block limits" {
+    var wire: [12 * 1024]u8 = undefined;
+    const head = "GET / HTTP/1.1\r\nHost: example.test\r\nX-Fill: ";
+    const tail = "\r\n\r\n";
+    const fill = 5000;
+    @memcpy(wire[0..head.len], head);
+    @memset(wire[head.len .. head.len + fill], 'v');
+    @memcpy(wire[head.len + fill .. head.len + fill + tail.len], tail);
+    const length = head.len + fill + tail.len;
+
+    var raised = parser.HttpParser{ .max_header_bytes = 8 * 1024 };
+    var raised_request = Request{};
+    const consumed = parser.consume(&raised, &raised_request, wire[0..length]);
+    try std.testing.expectEqual(length, consumed);
+    try std.testing.expectEqual(parser.ParserState.done, raised.state);
+    try std.testing.expectEqual(@as(usize, fill), raised_request.get_header("X-Fill").?.len);
+
+    var lowered = parser.HttpParser{ .max_header_bytes = 2 * 1024 };
+    var lowered_request = Request{};
+    _ = parser.consume(&lowered, &lowered_request, wire[0..length]);
+    try std.testing.expectEqual(parser.ParserState.error_headers_too_large, lowered.state);
+}
+
+test "http: stores headers beyond the inline arrays in extras" {
+    var wire: [8 * 1024]u8 = undefined;
+    const head = "GET /many HTTP/1.1\r\nHost: example.test\r\n";
+    @memcpy(wire[0..head.len], head);
+    var length = head.len;
+    for (0..99) |index| {
+        const line = try std.fmt.bufPrint(
+            wire[length..],
+            "X-Fill-{d:0>3}: value-{d}\r\n",
+            .{ index, index },
+        );
+        length += line.len;
+    }
+    wire[length] = '\r';
+    wire[length + 1] = '\n';
+    length += 2;
+
+    var names: [40][]const u8 = undefined;
+    var values: [40][]const u8 = undefined;
+    var p = parser.HttpParser{
+        .extra_header_names = &names,
+        .extra_header_values = &values,
+    };
+    var req = Request{};
+
+    const consumed = parser.consume(&p, &req, wire[0..length]);
+    try std.testing.expectEqual(length, consumed);
+    try std.testing.expectEqual(parser.ParserState.done, p.state);
+    try std.testing.expectEqual(@as(usize, support.http_request.max_headers), req.header_count);
+    try std.testing.expectEqual(@as(usize, 36), req.extra_header_names.?.len);
+    try std.testing.expectEqualStrings("example.test", req.get_header("Host").?);
+    try std.testing.expectEqualStrings("value-0", req.get_header("X-Fill-000").?);
+    try std.testing.expectEqualStrings("value-98", req.get_header("X-Fill-098").?);
+
+    var iterator = req.header_entries();
+    var total: usize = 0;
+    while (iterator.next()) |_| total += 1;
+    try std.testing.expectEqual(@as(usize, 100), total);
+
+    var owned = try req.clone(std.testing.allocator);
+    defer owned.deinit();
+    try std.testing.expectEqual(@as(usize, 100), owned.header_names.len);
+    try std.testing.expectEqualStrings("value-98", owned.request.get_header("X-Fill-098").?);
+}
+
+test "http: extra header overflow fails closed" {
+    var wire: [8 * 1024]u8 = undefined;
+    const head = "GET / HTTP/1.1\r\nHost: example.test\r\n";
+    @memcpy(wire[0..head.len], head);
+    var length = head.len;
+    for (0..69) |index| {
+        const line = try std.fmt.bufPrint(wire[length..], "X-Over-{d:0>3}: v\r\n", .{index});
+        length += line.len;
+    }
+    wire[length] = '\r';
+    wire[length + 1] = '\n';
+    length += 2;
+
+    var names: [4][]const u8 = undefined;
+    var values: [4][]const u8 = undefined;
+    var p = parser.HttpParser{
+        .extra_header_names = &names,
+        .extra_header_values = &values,
+    };
+    var req = Request{};
+
+    _ = parser.consume(&p, &req, wire[0..length]);
+    try std.testing.expectEqual(parser.ParserState.error_headers_too_large, p.state);
+    try std.testing.expectEqual(@as(usize, 4), p.extra_header_count);
+}
+
+test "http: parser reset clears extras for the next request" {
+    var wire: [8 * 1024]u8 = undefined;
+    const head = "GET /first HTTP/1.1\r\nHost: example.test\r\n";
+    @memcpy(wire[0..head.len], head);
+    var length = head.len;
+    for (0..69) |index| {
+        const line = try std.fmt.bufPrint(wire[length..], "X-Old-{d:0>3}: v\r\n", .{index});
+        length += line.len;
+    }
+    wire[length] = '\r';
+    wire[length + 1] = '\n';
+    length += 2;
+
+    var names: [8][]const u8 = undefined;
+    var values: [8][]const u8 = undefined;
+    var p = parser.HttpParser{
+        .extra_header_names = &names,
+        .extra_header_values = &values,
+    };
+    var req = Request{};
+    _ = parser.consume(&p, &req, wire[0..length]);
+    try std.testing.expectEqual(parser.ParserState.done, p.state);
+    try std.testing.expectEqual(@as(usize, 6), req.extra_header_names.?.len);
+    try std.testing.expect(req.get_header("X-Old-068") != null);
+
+    parser.reset(&p);
+    req = .{};
+
+    var next = "GET /second HTTP/1.1\r\nHost: example.test\r\n\r\n".*;
+    _ = parser.consume(&p, &req, &next);
+    try std.testing.expectEqual(parser.ParserState.done, p.state);
+    try std.testing.expectEqual(@as(usize, 0), req.extra_header_names.?.len);
+    try std.testing.expect(req.get_header("X-Old-068") == null);
+}
+
+test "http: configured extras stride parses a max-size header block" {
+    const config = support.config.ServerConfig{
+        .max_connections = 1,
+        .max_header_size = 24 * 1024,
+        .max_header_count = 256,
+    };
+    try config.validate();
+    const capacity = try config.extra_header_capacity();
+    const stride = try config.extra_header_stride();
+    const storage = try std.testing.allocator.alignedAlloc(
+        u8,
+        std.mem.Alignment.fromByteUnits(support.config.request_buffer_alignment),
+        stride,
+    );
+    defer std.testing.allocator.free(storage);
+
+    const slots = std.mem.bytesAsSlice([]const u8, storage);
+    var p = parser.HttpParser{
+        .max_header_bytes = config.max_header_size,
+        .extra_header_names = slots[0..capacity],
+        .extra_header_values = slots[capacity .. capacity * 2],
+    };
+
+    var wire: [24 * 1024]u8 = undefined;
+    const head = "GET /big HTTP/1.1\r\nHost: example.test\r\n";
+    @memcpy(wire[0..head.len], head);
+    var length = head.len;
+    for (0..127) |index| {
+        const line = try std.fmt.bufPrint(
+            wire[length..],
+            "X-Large-{d:0>3}: " ++ ("v" ** 160) ++ "\r\n",
+            .{index},
+        );
+        length += line.len;
+    }
+    wire[length] = '\r';
+    wire[length + 1] = '\n';
+    length += 2;
+    try std.testing.expect(length - head.len <= config.max_header_size);
+
+    var req = Request{};
+    const consumed = parser.consume(&p, &req, wire[0..length]);
+    try std.testing.expectEqual(length, consumed);
+    try std.testing.expectEqual(parser.ParserState.done, p.state);
+    try std.testing.expectEqual(@as(usize, 64), req.extra_header_names.?.len);
+    try std.testing.expectEqual(@as(usize, 160), req.get_header("X-Large-126").?.len);
+    try std.testing.expectEqual(@as(usize, 160), req.get_header("X-Large-063").?.len);
+}

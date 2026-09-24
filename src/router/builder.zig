@@ -99,6 +99,30 @@ pub fn configured_builder(comptime config: ServerConfig) type {
             return .{ .io = self.io };
         }
 
+        /// Overrides the largest accepted HTTP/1.1 request line.
+        pub fn with_max_request_line_size(
+            self: Self,
+            comptime value: usize,
+        ) configured_builder(config.with(.{ .max_request_line_size = value })) {
+            return .{ .io = self.io };
+        }
+
+        /// Overrides the largest accepted HTTP/1.1 header block.
+        pub fn with_max_header_size(
+            self: Self,
+            comptime value: usize,
+        ) configured_builder(config.with(.{ .max_header_size = value })) {
+            return .{ .io = self.io };
+        }
+
+        /// Overrides the maximum number of headers accepted on one request.
+        pub fn with_max_header_count(
+            self: Self,
+            comptime value: usize,
+        ) configured_builder(config.with(.{ .max_header_count = value })) {
+            return .{ .io = self.io };
+        }
+
         /// Overrides the inactivity timeout; zero disables the sweeper.
         pub fn with_idle_timeout_ms(
             self: Self,

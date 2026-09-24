@@ -142,6 +142,89 @@ test "config: with derives a modified copy" {
     );
 }
 
+test "config: configured request line and header sizes drive the stride" {
+    const base = ServerConfig{};
+    const grown = ServerConfig{
+        .max_request_line_size = 16 * 1024,
+        .max_header_size = 32 * 1024,
+    };
+
+    const grown_extra = (16 * 1024 - support.http_parser.max_request_line_size) +
+        (32 * 1024 - support.http_parser.max_header_size);
+    try std.testing.expectEqual(
+        (try base.request_buffer_stride()) + grown_extra,
+        try grown.request_buffer_stride(),
+    );
+
+    const policy = grown.rejection_policy();
+    try std.testing.expectEqual(@as(usize, 32 * 1024), policy.max_header_size);
+    try std.testing.expectEqual(grown.max_body_size, policy.max_body_size);
+}
+
+test "config: extra header storage grows with max_header_count" {
+    const config = ServerConfig{ .max_connections = 8, .max_header_count = 256 };
+    try config.validate();
+
+    const capacity = try config.extra_header_capacity();
+    try std.testing.expectEqual(@as(usize, 256 - support.http_request.max_headers), capacity);
+    const stride = try config.extra_header_stride();
+    try std.testing.expectEqual(capacity * 2 * @sizeOf([]const u8), stride);
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        stride % config_module.request_buffer_alignment,
+    );
+
+    const default_bytes = try (ServerConfig{ .max_connections = 8 }).slab_bytes();
+    const total = try config.slab_bytes();
+    try std.testing.expect(total > default_bytes);
+
+    const slab = try std.testing.allocator.alignedAlloc(
+        u8,
+        std.mem.Alignment.fromByteUnits(config_module.slab_alignment),
+        total,
+    );
+    defer std.testing.allocator.free(slab);
+
+    const layout = try config_module.carve(slab, config);
+    try std.testing.expectEqual(@as(usize, 8 * stride), layout.header_extras.len);
+    try std.testing.expectEqual(stride, layout.extra_header_stride);
+}
+
+test "config: validate rejects invalid request limits" {
+    try std.testing.expectError(
+        error.InvalidRequestLineCapacity,
+        (ServerConfig{ .max_request_line_size = 0 }).validate(),
+    );
+    try std.testing.expectError(
+        error.InvalidHeaderCapacity,
+        (ServerConfig{ .max_header_size = 0 }).validate(),
+    );
+    try std.testing.expectError(
+        error.InvalidHeaderCapacity,
+        (ServerConfig{ .max_header_count = support.http_request.max_headers - 1 }).validate(),
+    );
+    try (ServerConfig{ .max_header_count = support.http_request.max_headers }).validate();
+
+    const huge = ServerConfig{ .max_header_count = std.math.maxInt(usize) / 2 };
+    try std.testing.expectError(error.SlabSizeOverflow, huge.validate());
+}
+
+test "config: with merges request limit overrides" {
+    const derived = (ServerConfig{}).with(.{
+        .max_request_line_size = 4096,
+        .max_header_size = 8192,
+        .max_header_count = 96,
+    });
+    try std.testing.expectEqual(@as(usize, 4096), derived.max_request_line_size);
+    try std.testing.expectEqual(@as(usize, 8192), derived.max_header_size);
+    try std.testing.expectEqual(@as(usize, 96), derived.max_header_count);
+    try std.testing.expectEqual((ServerConfig{}).max_body_size, derived.max_body_size);
+    try std.testing.expectEqual(
+        (ServerConfig{}).max_header_size,
+        (ServerConfig{}).with(.{}).max_header_size,
+    );
+}
+
 test "config: carve partitions one slab into disjoint aligned regions" {
     const config = ServerConfig{
         .max_connections = 4,
@@ -490,6 +573,34 @@ test "config: builder exposes datagram, bypass, and observability knobs" {
     try std.testing.expectEqual(@as(usize, 2), server.datagram_rings.len);
     try std.testing.expectEqual(@as(usize, 2 * 4), server.datagram_session_ids.len);
     try std.testing.expectEqual(@as(usize, 4 * 128), server.datagram_stride);
+}
+
+test "config: builder exposes request limit knobs" {
+    const builder = builder_module.Server.builder(std.testing.io)
+        .with_max_clients(2)
+        .with_max_ws_message_size(1024)
+        .with_write_queue_size(4096)
+        .with_max_body_size(8192)
+        .with_idle_timeout_ms(0)
+        .with_max_request_line_size(12 * 1024)
+        .with_max_header_size(24 * 1024)
+        .with_max_header_count(128);
+
+    const configuration = builder.configuration();
+    try std.testing.expectEqual(@as(usize, 12 * 1024), configuration.max_request_line_size);
+    try std.testing.expectEqual(@as(usize, 24 * 1024), configuration.max_header_size);
+    try std.testing.expectEqual(@as(usize, 128), configuration.max_header_count);
+
+    var server = try builder.build(std.testing.allocator);
+    defer server.deinit();
+    try std.testing.expectEqual(@as(usize, 12 * 1024), server.max_request_line_size);
+    try std.testing.expectEqual(@as(usize, 24 * 1024), server.max_header_size);
+    try std.testing.expectEqual(@as(usize, 128), server.max_header_count);
+    try std.testing.expectEqual(@as(usize, 64), server.extra_header_capacity);
+    try std.testing.expectEqual(
+        @as(usize, 2 * server.extra_header_stride),
+        server.header_extras.len,
+    );
 }
 
 test "config: build allocates exactly one slab and routing never allocates" {
