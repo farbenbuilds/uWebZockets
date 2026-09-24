@@ -29,6 +29,12 @@ pub const OwnedRequest = @import("http/request.zig").OwnedRequest;
 pub const Response = @import("http/response.zig").Response;
 /// Copyable, generation-checked one-shot asynchronous response token.
 pub const AsyncResponse = @import("http/response.zig").AsyncResponse;
+/// Drain-driven chunked response producer callback.
+pub const StreamProducer = @import("http/response.zig").StreamProducer;
+/// Outcome of one drain-driven producer invocation.
+pub const StreamStatus = @import("http/response.zig").StreamStatus;
+/// Streaming JSON body writer returned by `Response.begin_json`.
+pub const JsonStream = @import("http/response.zig").JsonStream;
 /// Connection-owned state backing asynchronous response tokens.
 pub const AsyncResponseState = @import("http/response.zig").AsyncResponseState;
 /// Lifecycle of a connection-owned asynchronous response slot.
