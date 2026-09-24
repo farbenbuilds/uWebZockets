@@ -507,3 +507,107 @@ test "http: body-forbidden statuses scatter headers without Content-Length" {
     try std.testing.expect(std.mem.indexOf(u8, written, "Content-Length") == null);
     try std.testing.expect(std.mem.endsWith(u8, written, "\r\n\r\n"));
 }
+
+test "http: begin_stream resumes after write-ring backpressure" {
+    const Producer = struct {
+        remaining: usize = 64,
+        chunk: [100]u8 = undefined,
+
+        fn produce(
+            context: *anyopaque,
+            stream: *response.Response,
+        ) anyerror!response.StreamStatus {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            @memset(&self.chunk, 'x');
+            while (self.remaining != 0) {
+                stream.write_chunk(&self.chunk) catch |err| switch (err) {
+                    error.WouldBlock => return .pending,
+                    else => return err,
+                };
+                self.remaining -= 1;
+            }
+            try stream.end_chunks();
+            return .done;
+        }
+    };
+
+    var ring: [4096]u8 = undefined;
+    var conn = test_connection(&ring);
+    conn.read_active = true;
+    var res = response.Response{ .target = .{ .tcp = &conn } };
+
+    var producer = Producer{};
+    try res.begin_stream("200 OK", "", &producer, Producer.produce);
+    try std.testing.expect(conn.stream_producer != null);
+    try std.testing.expect(producer.remaining != 0);
+    try std.testing.expect(!res.is_complete());
+
+    var total: usize = conn.write_len;
+    var iterations: usize = 0;
+    while (conn.stream_producer != null and iterations < 64) : (iterations += 1) {
+        conn.write_len = 0;
+        conn.pump_stream_body();
+        total += conn.write_len;
+    }
+
+    try std.testing.expectEqual(@as(usize, 0), producer.remaining);
+    try std.testing.expect(conn.stream_producer == null);
+    try std.testing.expect(total >= 64 * 100);
+}
+
+test "http: begin_stream completes synchronously when the body fits" {
+    const Producer = struct {
+        fn produce(
+            _: *anyopaque,
+            stream: *response.Response,
+        ) anyerror!response.StreamStatus {
+            try stream.write_chunk("small body");
+            try stream.end_chunks();
+            return .done;
+        }
+    };
+
+    var ring: [4096]u8 = undefined;
+    var conn = test_connection(&ring);
+    var res = response.Response{ .target = .{ .tcp = &conn } };
+
+    var marker: u8 = 0;
+    try res.begin_stream("200 OK", "", &marker, Producer.produce);
+    try std.testing.expect(res.is_complete());
+    try std.testing.expect(conn.stream_producer == null);
+    const written = ring[0..conn.write_len];
+    try std.testing.expect(std.mem.indexOf(u8, written, "a\r\nsmall body\r\n") != null);
+    try std.testing.expect(std.mem.endsWith(u8, written, "0\r\n\r\n"));
+}
+
+test "http: begin_stream fails closed on transports without producer support" {
+    var context: u8 = 0;
+
+    var http2 = response.Response{ .target = .{ .http2 = .{
+        .context = &context,
+        .router = &context,
+        .stream_id = 1,
+        .end_fn = undefined,
+        .begin_fn = undefined,
+        .write_fn = undefined,
+        .finish_fn = undefined,
+    } } };
+    try std.testing.expectError(
+        error.ProducerStreamingUnsupported,
+        http2.begin_stream("200 OK", "", &context, undefined),
+    );
+    try std.testing.expect(!http2.is_started());
+
+    var http3 = response.Response{ .target = .{ .http3 = .{
+        .context = &context,
+        .end_fn = undefined,
+        .begin_fn = undefined,
+        .write_fn = undefined,
+        .finish_fn = undefined,
+    } } };
+    try std.testing.expectError(
+        error.ProducerStreamingUnsupported,
+        http3.begin_stream("200 OK", "", &context, undefined),
+    );
+    try std.testing.expect(!http3.is_started());
+}

@@ -29,6 +29,45 @@ pub const AsyncCompleteFn = *const fn (*anyopaque, []const u8, []const u8, []con
 /// Wakes the suspended transport dispatch after deferred completion.
 pub const AsyncWakeFn = *const fn (*anyopaque) void;
 
+/// Outcome of one drain-driven producer invocation.
+pub const StreamStatus = enum {
+    /// The transport accepted all bytes it can hold; the producer runs again
+    /// when output space frees.
+    pending,
+    /// The producer called `end_chunks`; the response is complete.
+    done,
+};
+
+/// Pull-based chunked response body producer.
+///
+/// The callback writes through `response.write_chunk` as much as fits and
+/// returns `.pending` when the transport backpressures, or `.done` after it
+/// calls `response.end_chunks`. It is re-invoked on the owning event loop
+/// whenever output space frees, so arbitrarily large bodies need no queue
+/// sizing.
+pub const StreamProducer = *const fn (*anyopaque, *Response) anyerror!StreamStatus;
+
+/// HTTP/3 producer arming callback: context, status, headers, producer
+/// context, producer. Returns true when the producer already finished.
+pub const Http3StreamBeginFn = *const fn (
+    *anyopaque,
+    []const u8,
+    []const u8,
+    *anyopaque,
+    StreamProducer,
+) anyerror!bool;
+/// HTTP/2 producer arming callback: context, stream id, status, headers,
+/// producer context, producer. Returns true when the producer already
+/// finished.
+pub const Http2StreamBeginFn = *const fn (
+    *anyopaque,
+    u32,
+    []const u8,
+    []const u8,
+    *anyopaque,
+    StreamProducer,
+) anyerror!bool;
+
 /// HTTP/3 stream callbacks used by the transport-neutral response writer.
 pub const Http3Target = struct {
     context: *anyopaque,
@@ -36,6 +75,8 @@ pub const Http3Target = struct {
     begin_fn: Http3BeginFn,
     write_fn: Http3WriteFn,
     finish_fn: Http3FinishFn,
+    /// Optional drain-driven producer arming; null reports unsupported.
+    begin_stream_fn: ?Http3StreamBeginFn = null,
 };
 
 /// HTTP/2 stream callbacks backed by a connection-owned bounded session.
@@ -47,6 +88,8 @@ pub const Http2Target = struct {
     begin_fn: Http2BeginFn,
     write_fn: Http2WriteFn,
     finish_fn: Http2FinishFn,
+    /// Optional drain-driven producer arming; null reports unsupported.
+    begin_stream_fn: ?Http2StreamBeginFn = null,
 };
 
 /// Active transport receiving response bytes.
@@ -322,6 +365,52 @@ pub const Response = struct {
             },
         }
         self.state = .streaming;
+    }
+
+    /// Starts a chunked response fed by `producer` as the transport drains.
+    ///
+    /// The producer runs immediately and again whenever output space frees, so
+    /// arbitrarily large bodies never require sizing the write queue. Return
+    /// `.pending` whenever `write_chunk` backpressures and `.done` after
+    /// calling `end_chunks`. All transports resume producers; a target whose
+    /// callback is absent fails closed with `error.ProducerStreamingUnsupported`
+    /// before any bytes are written.
+    pub fn begin_stream(
+        self: *Response,
+        status: []const u8,
+        headers: []const u8,
+        context: *anyopaque,
+        producer: StreamProducer,
+    ) !void {
+        if (self.state != .idle) return error.ResponseAlreadyStarted;
+        const code = status_code(status) orelse return error.InvalidStatus;
+        if (!valid_headers(headers)) return error.InvalidHeaders;
+        if (status_forbids_body(code)) return error.BodyNotAllowed;
+
+        switch (self.target) {
+            .tcp => |conn| {
+                try self.begin_chunked(status, headers);
+                const finished = conn.start_stream(context, producer, self.close_after_end);
+                self.state = if (finished) .ended else .streaming;
+            },
+            .http2 => |target| {
+                const arm = target.begin_stream_fn orelse return error.ProducerStreamingUnsupported;
+                const finished = try arm(
+                    target.context,
+                    target.stream_id,
+                    status,
+                    headers,
+                    context,
+                    producer,
+                );
+                self.state = if (finished) .ended else .streaming;
+            },
+            .http3 => |target| {
+                const arm = target.begin_stream_fn orelse return error.ProducerStreamingUnsupported;
+                const finished = try arm(target.context, status, headers, context, producer);
+                self.state = if (finished) .ended else .streaming;
+            },
+        }
     }
 
     /// Appends one chunk to a streaming response.

@@ -114,6 +114,12 @@ pub const TcpConnection = struct {
     file_remaining: u64 = 0,
     file_close_after: bool = false,
 
+    // Drain-driven response producer. Set while a `begin_stream` body still has
+    // bytes to pull; cleared when the producer finishes or the connection dies.
+    stream_context: ?*anyopaque = null,
+    stream_producer: ?http_response.StreamProducer = null,
+    stream_close_after: bool = false,
+
     ssl: ?*c.SSL = null,
     network_bio: ?*c.BIO = null,
     protocol_state: ProtocolState = .detect,
@@ -149,6 +155,7 @@ pub const TcpConnection = struct {
         self.abort_controller.reset();
         self.protocol_state = .detect;
         self.protocol_probe_len = 0;
+        self.clear_stream();
         try self.h2.reset();
         for (&self.h2_async_states, &self.h2_async_contexts) |*state, *context| {
             state.cancel();
@@ -763,13 +770,71 @@ pub const TcpConnection = struct {
     }
 
     fn finish_sync_dispatch(self: *TcpConnection, response: *Response) void {
-        if (response.is_complete()) return;
+        if (response.is_complete()) {
+            // A handler that ended its own streaming response leaves no
+            // producer behind; clear any armed one defensively.
+            self.clear_stream();
+            return;
+        }
+        if (self.stream_producer != null) {
+            // The producer owns completion and resumes dispatch on finish.
+            self.dispatch_suspended = true;
+            return;
+        }
         if (response.is_started()) {
             close_after_flush(self);
             return;
         }
         response.end("500 Internal Server Error", "Handler did not complete the response") catch
             close_connection(self);
+    }
+
+    /// Arms a drained chunked body and pumps it once; true when finished.
+    pub fn start_stream(
+        self: *TcpConnection,
+        context: *anyopaque,
+        producer: http_response.StreamProducer,
+        close_after: bool,
+    ) bool {
+        self.stream_context = context;
+        self.stream_producer = producer;
+        self.stream_close_after = close_after;
+        return self.step_stream() == .done;
+    }
+
+    /// Advances the active producer once, clearing it when it finishes.
+    fn step_stream(self: *TcpConnection) http_response.StreamStatus {
+        const producer = self.stream_producer orelse return .done;
+        const context = self.stream_context.?;
+        if (self.closing or self.close_when_drained) {
+            self.clear_stream();
+            return .done;
+        }
+
+        var response = Response{
+            .target = .{ .tcp = self },
+            .state = .streaming,
+            .close_after_end = self.stream_close_after,
+        };
+        const status = producer(context, &response) catch {
+            self.clear_stream();
+            close_connection(self);
+            return .done;
+        };
+        if (status == .done) self.clear_stream();
+        return status;
+    }
+
+    /// Re-invokes the active producer after queued output drained.
+    pub fn pump_stream_body(self: *TcpConnection) void {
+        if (self.stream_producer == null or self.closing) return;
+        if (self.step_stream() == .done) self.resume_async_dispatch();
+    }
+
+    fn clear_stream(self: *TcpConnection) void {
+        self.stream_producer = null;
+        self.stream_context = null;
+        self.stream_close_after = false;
     }
 
     fn async_target(self: *TcpConnection) http_response.AsyncTarget {
@@ -1278,6 +1343,8 @@ fn on_write_complete(
         if (conn.ws.initialized) conn.ws.notify_drain();
     }
 
+    if (conn.stream_producer != null) conn.pump_stream_body();
+
     if (conn.write_len == 0 and conn.close_when_drained) {
         close_connection(conn);
         return .disarm;
@@ -1324,6 +1391,7 @@ pub fn close_connection(conn: *TcpConnection) void {
     conn.dispatch_suspended = false;
     conn.pending_request_consumed = 0;
     conn.pending_close_requested = false;
+    conn.clear_stream();
     conn.protocol_probe_len = 0;
     conn.async_response_state.cancel();
     for (&conn.h2_async_states) |*state| state.cancel();
