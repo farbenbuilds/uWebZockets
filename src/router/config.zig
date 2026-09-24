@@ -43,7 +43,6 @@ pub const Error = error{
     InvalidMetricsPath,
     InvalidWatchConfiguration,
     WatchRequiresDevLog,
-    WatchUnavailable,
     MisalignedSlab,
     SlabSizeOverflow,
     SlabTooSmall,
@@ -87,7 +86,8 @@ pub const ServerConfig = struct {
     enable_dev_log: bool = false,
     /// Directories watched recursively for the development log; empty is off.
     ///
-    /// Nonempty paths require `enable_dev_log` and a Linux build. Paths are
+    /// Nonempty paths require `enable_dev_log`. Linux watches them through
+    /// inotify; every other target scans them on a loop timer. Paths are
     /// borrowed for the application lifetime, like `metrics_path`.
     watch_paths: []const []const u8 = &.{},
 
@@ -204,7 +204,6 @@ pub const ServerConfig = struct {
                 return error.InvalidWatchConfiguration;
             }
         }
-        if (!file_watch.available) return error.WatchUnavailable;
     }
 
     /// Bytes reserved per connection for all pending datagrams.

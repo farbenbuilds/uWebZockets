@@ -112,8 +112,9 @@ status-class color, alongside colored connection, WebSocket, and metric lines.
 `/snapshot` records every Prometheus counter into the same log and `/metrics`
 serves the registry. Each worker thread renders and writes records through its
 own `dev_log.Sink` as soon as they are recorded, so the event loop never
-allocates; on Linux the example also watches `src` and `examples` and prints a
-`watch` line for each saved file. `App.set_dev_log_file` redirects the output
+allocates; the example also watches `src` and `examples` and prints a `watch`
+line for each saved file (inotify on Linux, a 500 ms scan elsewhere).
+`App.set_dev_log_file` redirects the output
 and `ServerConfig.enable_dev_log` silences it.
 
 ## Capacity presets and custom builder

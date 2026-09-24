@@ -160,13 +160,14 @@ A metric snapshot goes out as one batch. The width probe in
 full wordmark. Lines that cannot fit and failed or short writes are dropped and
 counted in `Sink.dropped` rather than retried.
 
-With `watch_paths` configured, the app arms an inotify watcher before the loop
-starts: `with_dev_log(true)` plus `with_watch_paths(&.{"src"})` logs
+With `watch_paths` configured, the app arms a watcher before the loop starts:
+`with_dev_log(true)` plus `with_watch_paths(&.{"src"})` logs
 `watch modified src/router/app.zig` for every save, plus created and deleted
-lines for renames and removals. The Linux-only watcher is bounded to 64
-directory watches and 4 KiB of paths, skips build and VCS directories, and
-never allocates per event; targets without the backend reject watch paths while
-the configuration is compiled.
+lines for renames and removals. Linux reads an inotify descriptor through the
+event loop, so changes are real time and the idle loop stays blocked; other
+targets walk the roots on a 500 ms loop timer and diff modification time and
+size. Both backends are bounded and never allocate per event, and both skip
+build and VCS directories.
 
 Records carry an explicit direction (`data_in` or `data_out`) and a named event
 payload; there is no ambient logger state. `ServerConfig.enable_dev_log` is the

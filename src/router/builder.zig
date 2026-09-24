@@ -182,8 +182,9 @@ pub fn configured_builder(comptime config: ServerConfig) type {
 
         /// Watches `paths` recursively and reports file changes to the dev log.
         ///
-        /// Requires `with_dev_log(true)` and a Linux build; paths are borrowed
-        /// for the application lifetime.
+        /// Requires `with_dev_log(true)`; paths are borrowed for the
+        /// application lifetime. Linux reports changes in real time through
+        /// inotify, other targets scan on the loop timer.
         pub fn with_watch_paths(
             self: Self,
             comptime paths: []const []const u8,

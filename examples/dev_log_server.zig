@@ -10,14 +10,13 @@
 //! The startup wordmark, the Vite-style ready summary, and the request lines
 //! are written to stderr by the worker thread that owns the event loop. The
 //! summary lists the local URL and log target, and the wordmark collapses to
-//! a one-line mark on narrow terminals. On Linux the example also watches
-//! `src` and `examples` recursively and prints every saved file.
+//! a one-line mark on narrow terminals. The example also watches `src` and
+//! `examples` recursively and prints every saved file.
 //! `GET /snapshot` records every Prometheus counter into the same log, and
 //! `GET /metrics` serves the registry. Set `ServerConfig.enable_dev_log` to
 //! false to silence it all.
 
 const std = @import("std");
-const builtin = @import("builtin");
 const uz = @import("uWebZockets");
 
 /// Same generated application type as the builder chain below.
@@ -42,7 +41,7 @@ pub fn main(init: std.process.Init) !void {
         .with_max_clients(256)
         .with_observability(true)
         .with_dev_log(true)
-        .with_watch_paths(if (builtin.os.tag == .linux) &.{ "src", "examples" } else &.{})
+        .with_watch_paths(&.{ "src", "examples" })
         .build(std.heap.page_allocator);
     defer server.deinit();
 
