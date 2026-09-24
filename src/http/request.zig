@@ -3,6 +3,8 @@ const fetch = @import("fetch.zig");
 const multipart_module = @import("multipart.zig");
 const cookie_module = @import("cookie.zig");
 const schema_module = @import("schema.zig");
+const query_module = @import("query.zig");
+const form_module = @import("form.zig");
 
 /// Maximum number of allocation-free route parameters on one request.
 pub const max_route_params = 16;
@@ -139,6 +141,19 @@ pub const Request = struct {
         };
         const boundary = try multipart_module.boundary_from_content_type(content_type);
         return multipart_module.Parser.init(self.body, boundary);
+    }
+
+    /// Parses the request-target query into a zero-copy borrowed view.
+    pub fn query_params(self: *const Request) !query_module.QueryParams {
+        return query_module.QueryParams.parse_link(self.target);
+    }
+
+    /// Validates the media type and parses a form-urlencoded body.
+    pub fn form(self: *const Request) !query_module.QueryParams {
+        const content_type = self.get_unique_header("content-type") orelse {
+            return error.MissingContentType;
+        };
+        return form_module.parse(content_type, self.body);
     }
 
     /// Returns a borrowed RFC 6265 cookie value from any Cookie field.

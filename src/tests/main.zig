@@ -16,6 +16,7 @@ comptime {
     _ = @import("observability_tests.zig");
     _ = @import("quic_tests.zig");
     _ = @import("quic_phase3_tests.zig");
+    _ = @import("query_tests.zig");
     _ = @import("rpc_tests.zig");
     _ = @import("router_tests.zig");
     _ = @import("shared_nothing_tests.zig");

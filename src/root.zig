@@ -45,6 +45,10 @@ pub const abort = @import("http/abort.zig");
 pub const compression_stream = @import("http/compression_stream.zig");
 /// Zero-allocation RFC 7578 multipart parsing primitives.
 pub const multipart = @import("http/multipart.zig");
+/// Zero-allocation query-string slicing and percent decoding.
+pub const query = @import("http/query.zig");
+/// Zero-allocation form-urlencoded body parsing.
+pub const form = @import("http/form.zig");
 /// RFC 6265 parsing, formatting, and HMAC-SHA256 signing helpers.
 pub const cookie = @import("http/cookie.zig");
 /// Fixed-state CORS and browser security-header middleware.
