@@ -100,6 +100,12 @@ pub const TcpConnection = struct {
     h2_async_states: [max_http2_streams]http_response.AsyncResponseState =
         .{http_response.AsyncResponseState{}} ** max_http2_streams,
     h2_async_contexts: [max_http2_streams]Http2AsyncContext = undefined,
+    // Drain-driven HTTP/2 bodies, parallel to the async slots. The producer
+    // owns its stream until it reports done or the stream is reset.
+    h2_stream_producers: [max_http2_streams]?http_response.StreamProducer =
+        .{null} ** max_http2_streams,
+    h2_stream_producer_contexts: [max_http2_streams]*anyopaque = undefined,
+    h2_stream_producer_close: [max_http2_streams]bool = .{false} ** max_http2_streams,
 
     last_active_ms: i64 = 0,
     request_len: usize = 0,
@@ -161,6 +167,7 @@ pub const TcpConnection = struct {
             state.cancel();
             context.* = .{ .connection = self };
         }
+        for (0..max_http2_streams) |index| self.clear_http2_producer(@intCast(index));
     }
 
     /// Returns a cancellation signal scoped to the current pooled connection.
@@ -336,7 +343,14 @@ pub const TcpConnection = struct {
             close_connection(self);
             return;
         };
-        if (self.h2.is_closed()) close_after_flush(self);
+        if (self.h2.is_closed()) {
+            close_after_flush(self);
+            return;
+        }
+        if (self.closing or self.close_when_drained) return;
+        // WINDOW_UPDATE frames processed above may have freed send credit for
+        // producers parked on flow control.
+        self.pump_http2_streams();
     }
 
     pub fn http2_callbacks(self: *TcpConnection) http2_server.Callbacks {
@@ -357,6 +371,9 @@ pub const TcpConnection = struct {
         const self: *TcpConnection = @ptrCast(@alignCast(context));
         if (self.ws.initialized and self.ws.h2_stream_id == stream_id) self.ws.deinit();
         if (index >= self.h2_async_states.len) return;
+        // Producers have no stream-id mirror; a close notification is exact for
+        // its slot, so the bounds check is the only guard the slot needs.
+        self.clear_http2_producer(index);
         if (self.h2_async_contexts[index].stream_id != stream_id) return;
         if (self.h2_async_states[index].is_pending()) self.h2_async_states[index].cancel();
         self.h2_async_contexts[index].stream_id = 0;
@@ -396,6 +413,7 @@ pub const TcpConnection = struct {
             .begin_fn = begin_http2_response,
             .write_fn = write_http2_response,
             .finish_fn = finish_http2_response,
+            .begin_stream_fn = begin_http2_stream,
         } } };
         const method = radix.HttpMethod.parse(request.method);
         if (self.early_data_forbids(method)) {
@@ -500,9 +518,18 @@ pub const TcpConnection = struct {
     }
 
     fn finish_http2_dispatch(self: *TcpConnection, response: *Response) !void {
-        _ = self;
         if (response.is_complete()) return;
         if (response.is_started()) {
+            // An armed producer owns completion; ending here would emit a
+            // second terminal frame when the producer later calls end_chunks.
+            switch (response.target) {
+                .http2 => |target| {
+                    if (self.h2.connection.streams.find(target.stream_id)) |index| {
+                        if (self.h2_stream_producers[index] != null) return;
+                    }
+                },
+                .tcp, .http3 => {},
+            }
             try response.end_chunks();
             return;
         }
@@ -539,13 +566,96 @@ pub const TcpConnection = struct {
     ) !void {
         const self: *TcpConnection = @ptrCast(@alignCast(context));
         const callbacks = self.http2_callbacks();
-        try self.h2.write_response_data(stream_id, bytes, callbacks);
+        self.h2.write_response_data(stream_id, bytes, callbacks) catch |err| switch (err) {
+            // Flow-control exhaustion is retryable: the reservation is atomic,
+            // so no bytes or credit were consumed.
+            error.SendWindowExhausted => return error.WouldBlock,
+            else => |write_error| return write_error,
+        };
     }
 
     fn finish_http2_response(context: *anyopaque, stream_id: u32) !void {
         const self: *TcpConnection = @ptrCast(@alignCast(context));
         const callbacks = self.http2_callbacks();
-        try self.h2.finish_response(stream_id, callbacks);
+        self.h2.finish_response(stream_id, callbacks) catch |err| switch (err) {
+            // The producer must retry its failed chunk before the terminal
+            // frame can be written.
+            error.ResponseWritePending => return error.WouldBlock,
+            else => |finish_error| return finish_error,
+        };
+    }
+
+    /// Arms one drain-driven HTTP/2 body and runs its first producer step.
+    fn begin_http2_stream(
+        context: *anyopaque,
+        stream_id: u32,
+        status: []const u8,
+        headers: []const u8,
+        producer_context: *anyopaque,
+        producer: http_response.StreamProducer,
+    ) anyerror!bool {
+        const self: *TcpConnection = @ptrCast(@alignCast(context));
+        const index = self.h2.connection.streams.find(stream_id) orelse
+            return error.StreamClosed;
+        const callbacks = self.http2_callbacks();
+        try self.h2.begin_response(stream_id, status, headers, callbacks);
+        self.h2_stream_producers[index] = producer;
+        self.h2_stream_producer_contexts[index] = producer_context;
+        self.h2_stream_producer_close[index] = false;
+        return self.step_http2_stream(index) == .done;
+    }
+
+    /// Advances one armed HTTP/2 producer; a producer error resets its stream.
+    fn step_http2_stream(self: *TcpConnection, index: u16) http_response.StreamStatus {
+        const producer = self.h2_stream_producers[index] orelse return .done;
+        if (!self.h2.connection.streams.active[index]) {
+            self.clear_http2_producer(index);
+            return .done;
+        }
+        const producer_context = self.h2_stream_producer_contexts[index];
+        const stream_id = self.h2.connection.streams.stream_ids[index];
+        if (self.closing or self.close_when_drained) {
+            self.clear_http2_producer(index);
+            return .done;
+        }
+
+        var response = Response{
+            .target = .{ .http2 = .{
+                .context = self,
+                .router = self.router,
+                .stream_id = stream_id,
+                .end_fn = end_http2_response,
+                .begin_fn = begin_http2_response,
+                .write_fn = write_http2_response,
+                .finish_fn = finish_http2_response,
+            } },
+            .state = .streaming,
+            .close_after_end = self.h2_stream_producer_close[index],
+        };
+        const status = producer(producer_context, &response) catch {
+            const callbacks = self.http2_callbacks();
+            self.h2.reset_stream(stream_id, .internal_error, callbacks) catch
+                close_connection(self);
+            self.clear_http2_producer(index);
+            return .done;
+        };
+        if (status == .done) self.clear_http2_producer(index);
+        return status;
+    }
+
+    /// Resumes every armed HTTP/2 producer after queued output drains.
+    pub fn pump_http2_streams(self: *TcpConnection) void {
+        for (0..self.h2_stream_producers.len) |slot| {
+            if (self.closing or self.close_when_drained) return;
+            if (self.h2_stream_producers[slot] == null) continue;
+            _ = self.step_http2_stream(@intCast(slot));
+        }
+    }
+
+    fn clear_http2_producer(self: *TcpConnection, index: u16) void {
+        self.h2_stream_producers[index] = null;
+        self.h2_stream_producer_contexts[index] = undefined;
+        self.h2_stream_producer_close[index] = false;
     }
 
     fn arm_http2_async(
@@ -1337,6 +1447,9 @@ fn on_write_complete(
             return .disarm;
         };
     }
+    // Buffered frames and WINDOW credit freed by the flush can now resume
+    // producers that stopped at transport backpressure.
+    conn.pump_http2_streams();
 
     if (conn.was_backpressured and conn.write_len < conn.write_queue.len / 2) {
         conn.was_backpressured = false;
