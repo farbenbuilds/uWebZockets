@@ -356,6 +356,10 @@ pub const Response = struct {
     /// Queues one validated response field before the response starts.
     pub fn append_header(self: *Response, name: []const u8, value: []const u8) !void {
         if (self.state != .idle) return error.ResponseAlreadyStarted;
+        // `valid_headers` validates field syntax, but a CR/LF inside one value
+        // would parse as an extra well-formed field; reject the split here so
+        // every singular header helper stays injection-safe.
+        if (std.mem.indexOfAny(u8, value, "\r\n") != null) return error.InvalidHeaders;
         var line_buffer: [1024]u8 = undefined;
         const line = std.fmt.bufPrint(&line_buffer, "{s}: {s}\r\n", .{ name, value }) catch {
             return error.BufferOverflow;

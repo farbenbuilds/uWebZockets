@@ -208,6 +208,43 @@ test "http: response metadata rejects framing ambiguity" {
     ));
 }
 
+test "http: append_header rejects field splitting" {
+    const Sink = struct {
+        fn http3_end(_: *anyopaque, _: []const u8, _: []const u8, _: []const u8) anyerror!void {
+            return error.UnexpectedDispatch;
+        }
+
+        fn http3_begin(_: *anyopaque, _: []const u8, _: []const u8) anyerror!void {
+            return error.UnexpectedDispatch;
+        }
+
+        fn http3_write(_: *anyopaque, _: []const u8) anyerror!void {
+            return error.UnexpectedDispatch;
+        }
+
+        fn http3_finish(_: *anyopaque) anyerror!void {
+            return error.UnexpectedDispatch;
+        }
+    };
+    var res = response.Response{ .target = .{ .http3 = .{
+        .context = undefined,
+        .end_fn = Sink.http3_end,
+        .begin_fn = Sink.http3_begin,
+        .write_fn = Sink.http3_write,
+        .finish_fn = Sink.http3_finish,
+    } } };
+
+    try std.testing.expectError(
+        error.InvalidHeaders,
+        res.append_header("X-Trace", "value\r\nX-Injected: yes"),
+    );
+    try std.testing.expectEqual(@as(usize, 0), res.pending_header_length);
+    try std.testing.expect(!res.is_started());
+
+    try res.append_header("X-Trace", "safe-value");
+    try std.testing.expect(res.pending_header_length != 0);
+}
+
 test "http: async response validates metadata before completion" {
     var capture = AsyncCapture{};
     var state = response.AsyncResponseState{};
