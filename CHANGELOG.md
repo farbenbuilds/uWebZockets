@@ -21,7 +21,7 @@ stalled terminal. Wire behavior, capacities, and the C ABI are unchanged.
   reach a batch without threading a logger pointer through every callback.
 - HTTP requests log Vite-style as `HH:MM:SS | [METHOD] /path : STATUS` with a
   dim clock, cyan method, and green, cyan, yellow, or red status by class. The
-  exact `UWEBSOCKETS` wordmark from a Zig multiline string is written and
+  exact `µWEBZOCKETS` wordmark from a Zig multiline string is written and
   flushed once at startup.
 - `dev_log.Record` carries the wall clock, severity, and an explicit
   `Direction` (`data_in` or `data_out`) beside a named event payload

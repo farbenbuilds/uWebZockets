@@ -103,7 +103,7 @@ curl -i http://127.0.0.1:3000/metrics
 npx wscat -c ws://127.0.0.1:3000/echo
 ```
 
-The server prints the `UWEBSOCKETS` wordmark at startup and logs each request
+The server prints the `µWEBZOCKETS` wordmark at startup and logs each request
 Vite-style as `HH:MM:SS | [METHOD] /path : STATUS` with a dim clock, cyan
 method, and status-class color, alongside colored connection, WebSocket, and
 metric lines. `/snapshot` records every Prometheus counter into the same log

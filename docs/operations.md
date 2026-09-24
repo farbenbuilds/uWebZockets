@@ -144,7 +144,7 @@ var server = try uz.Server.builder(init.io)
 defer server.deinit();
 ```
 
-The exact `UWEBSOCKETS` wordmark is written and flushed once at startup, and
+The exact `µWEBZOCKETS` wordmark is written and flushed once at startup, and
 HTTP/1.1 requests log Vite-style as `HH:MM:SS | [METHOD] /path : STATUS` with a
 dim clock, cyan method, and status-class color. Connection, WebSocket, and
 metric events follow with a colored direction badge. Every worker thread owns

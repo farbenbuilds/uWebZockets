@@ -120,7 +120,7 @@ The full capacity table, slab layout, and backpressure model are in
 
 ## Terminal development log
 
-`with_dev_log(true)` prints the `UWEBSOCKETS` wordmark at startup and logs
+`with_dev_log(true)` prints the `µWEBZOCKETS` wordmark at startup and logs
 requests Vite-style as `HH:MM:SS | [METHOD] /path : STATUS`, plus colored
 connection, WebSocket, and metric lines. Everything renders from fixed stack
 buffers, and each worker thread batches records in a thread-local sink, so the
