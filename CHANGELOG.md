@@ -22,8 +22,13 @@ unchanged.
   can reach it without threading a logger pointer through every callback.
 - HTTP requests log Vite-style as `HH:MM:SS | [METHOD] /path : STATUS` with a
   dim clock, cyan method, and green, cyan, yellow, or red status by class. The
-  exact `µWEBZOCKETS` wordmark from a Zig multiline string is written and
-  flushed once at startup.
+  exact `µWEBZOCKETS` wordmark from a Zig multiline string is written once
+  before the first listening line, followed by a blank padding line; a terminal
+  narrower than the block art gets a one-line `µWebZockets` mark instead, and
+  redirected output keeps the full wordmark.
+- `src/observability/terminal.zig` probes the output width with a best-effort
+  `ioctl(TIOCGWINSZ)` or Windows console query, so the wordmark adapts without
+  allocating and without branching on the host OS in portable code.
 - `dev_log.Record` carries the wall clock, severity, and an explicit
   `Direction` (`data_in` or `data_out`) beside a named event payload
   (`connection_opened`, `connection_closed`, `http_request`, `ws_message`,

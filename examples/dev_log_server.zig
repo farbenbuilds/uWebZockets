@@ -8,9 +8,11 @@
 //!   npx wscat -c ws://127.0.0.1:3000/echo
 //!
 //! The startup wordmark and Vite-style request lines are written to stderr by
-//! the worker thread that owns the event loop. `GET /snapshot` records every
-//! Prometheus counter into the same log, and `GET /metrics` serves the
-//! registry. Set `ServerConfig.enable_dev_log` to false to silence it all.
+//! the worker thread that owns the event loop. The wordmark is written before
+//! the listening line and collapses to a one-line mark on narrow terminals.
+//! `GET /snapshot` records every Prometheus counter into the same log, and
+//! `GET /metrics` serves the registry. Set `ServerConfig.enable_dev_log` to
+//! false to silence it all.
 
 const std = @import("std");
 const uz = @import("uWebZockets");

@@ -4,6 +4,7 @@ const std = @import("std");
 const support = @import("test_support");
 const dev_log = support.dev_log;
 const metrics = support.metrics;
+const terminal = support.terminal;
 
 const testing = std.testing;
 
@@ -219,14 +220,39 @@ test "banner matches the startup wordmark exactly" {
     try testing.expectEqualStrings(expected, dev_log.banner);
 }
 
-test "record_banner appends the wordmark on its own line" {
+test "banner width constants match the wordmark lines" {
+    var lines = std.mem.splitScalar(u8, dev_log.banner, '\n');
+    while (lines.next()) |line| {
+        try testing.expectEqual(dev_log.banner_columns, try std.unicode.utf8CountCodepoints(line));
+    }
+    try testing.expectEqual(
+        dev_log.wordmark_columns,
+        try std.unicode.utf8CountCodepoints(dev_log.wordmark),
+    );
+}
+
+test "banner_for_columns picks the widest wordmark that fits" {
+    try testing.expectEqualStrings(dev_log.banner, dev_log.banner_for_columns(null));
+    try testing.expectEqualStrings(dev_log.banner, dev_log.banner_for_columns(dev_log.banner_columns));
+    try testing.expectEqualStrings(
+        dev_log.wordmark,
+        dev_log.banner_for_columns(dev_log.banner_columns - 1),
+    );
+    try testing.expectEqualStrings(
+        dev_log.wordmark,
+        dev_log.banner_for_columns(dev_log.wordmark_columns),
+    );
+    try testing.expectEqualStrings("", dev_log.banner_for_columns(dev_log.wordmark_columns - 1));
+}
+
+test "record_banner writes the full wordmark and a padding line" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
     const file = try tmp.dir.createFile(testing.io, "dev_log.txt", .{});
     var sink = dev_log.Sink{};
     sink.enable(testing.io, file);
-    sink.record_banner();
+    sink.record_banner(null);
     file.close(testing.io);
 
     const contents = try tmp.dir.readFileAlloc(
@@ -236,12 +262,63 @@ test "record_banner appends the wordmark on its own line" {
         .limited(dev_log.capacity),
     );
     defer testing.allocator.free(contents);
-    try testing.expectEqualStrings(dev_log.banner ++ "\n", contents);
+    try testing.expectEqualStrings(dev_log.banner ++ "\n\n", contents);
+}
+
+test "record_banner writes the one-line wordmark on a narrow terminal" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const file = try tmp.dir.createFile(testing.io, "dev_log.txt", .{});
+    var sink = dev_log.Sink{};
+    sink.enable(testing.io, file);
+    sink.record_banner(dev_log.wordmark_columns);
+    file.close(testing.io);
+
+    const contents = try tmp.dir.readFileAlloc(
+        testing.io,
+        "dev_log.txt",
+        testing.allocator,
+        .limited(dev_log.capacity),
+    );
+    defer testing.allocator.free(contents);
+    try testing.expectEqualStrings(dev_log.wordmark ++ "\n\n", contents);
+}
+
+test "record_banner writes once per sink" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const file = try tmp.dir.createFile(testing.io, "dev_log.txt", .{});
+    var sink = dev_log.Sink{};
+    sink.enable(testing.io, file);
+    sink.record_banner(null);
+    sink.record_banner(null);
+    file.close(testing.io);
+
+    const contents = try tmp.dir.readFileAlloc(
+        testing.io,
+        "dev_log.txt",
+        testing.allocator,
+        .limited(dev_log.capacity),
+    );
+    defer testing.allocator.free(contents);
+    try testing.expectEqualStrings(dev_log.banner ++ "\n\n", contents);
+}
+
+test "terminal columns are unknown for a regular file" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const file = try tmp.dir.createFile(testing.io, "out.txt", .{});
+    defer file.close(testing.io);
+    try testing.expectEqual(@as(?usize, null), terminal.columns(file));
 }
 
 test "disabled sink writes no banner" {
     var sink = dev_log.Sink{};
-    sink.record_banner();
+    sink.record_banner(null);
+    try testing.expect(!sink.banner_written);
     try testing.expectEqual(@as(usize, 0), sink.len);
     try testing.expectEqual(@as(u64, 0), sink.dropped);
 }

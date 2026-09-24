@@ -13,6 +13,7 @@ pub const affinity = @import("core/affinity.zig");
 pub const ebpf = @import("observability/ebpf.zig");
 pub const metrics = @import("observability/metrics.zig");
 pub const dev_log = @import("observability/dev_log.zig");
+pub const terminal = @import("observability/terminal.zig");
 
 pub const http_parser = @import("http/parser.zig");
 pub const http_request = @import("http/request.zig");

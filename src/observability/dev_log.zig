@@ -89,6 +89,31 @@ pub const banner =
     \\╚═╝                                                                                          
 ;
 
+/// Columns occupied by every `banner` line; all glyphs are single width and
+/// the multiline literal is valid UTF-8 by construction.
+pub const banner_columns = blk: {
+    const first_line_end = std.mem.indexOfScalar(u8, banner, '\n') orelse banner.len;
+    break :blk std.unicode.utf8CountCodepoints(banner[0..first_line_end]) catch unreachable;
+};
+
+/// One-line wordmark used when the terminal is narrower than `banner`.
+pub const wordmark = "µWebZockets";
+
+/// Columns occupied by `wordmark`; the literal is valid UTF-8 by construction.
+pub const wordmark_columns = std.unicode.utf8CountCodepoints(wordmark) catch unreachable;
+
+/// Returns the widest wordmark that fits `columns`.
+///
+/// A null width means the output is not a terminal or the probe failed, so
+/// captured logs keep the full block wordmark. A terminal too narrow for the
+/// one-line mark gets nothing rather than a wrapped line.
+pub fn banner_for_columns(columns: ?usize) []const u8 {
+    const width = columns orelse return banner;
+    if (width < wordmark_columns) return "";
+    if (width < banner_columns) return wordmark;
+    return banner;
+}
+
 /// Result of one best-effort terminal write.
 pub const FlushOutcome = struct {
     written: usize = 0,
@@ -104,6 +129,7 @@ pub const Sink = struct {
     io: std.Io = undefined,
     file: std.Io.File = undefined,
     enabled: bool = false,
+    banner_written: bool = false,
     dropped: u64 = 0,
     written: u64 = 0,
 
@@ -114,18 +140,24 @@ pub const Sink = struct {
         self.enabled = true;
     }
 
-    /// Appends the startup wordmark on its own line and writes it immediately.
-    pub fn record_banner(self: *Sink) void {
-        if (!self.enabled) return;
-        if (self.buffer.len - self.len < banner.len + 1) _ = self.flush();
-        if (self.buffer.len - self.len < banner.len + 1) {
+    /// Writes the startup wordmark once, sized to the output terminal, on its
+    /// own line followed by a blank padding line.
+    pub fn record_banner(self: *Sink, columns: ?usize) void {
+        if (!self.enabled or self.banner_written) return;
+        self.banner_written = true;
+        const art = banner_for_columns(columns);
+        if (art.len == 0) return;
+        const bytes = art.len + 2;
+        if (self.buffer.len - self.len < bytes) _ = self.flush();
+        if (self.buffer.len - self.len < bytes) {
             self.dropped +|= 1;
             return;
         }
-        @memcpy(self.buffer[self.len..][0..banner.len], banner);
-        self.len += banner.len;
+        @memcpy(self.buffer[self.len..][0..art.len], art);
+        self.len += art.len;
         self.buffer[self.len] = '\n';
-        self.len += 1;
+        self.buffer[self.len + 1] = '\n';
+        self.len += 2;
         _ = self.flush();
     }
 

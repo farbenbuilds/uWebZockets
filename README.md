@@ -120,9 +120,11 @@ The full capacity table, slab layout, and backpressure model are in
 
 ## Terminal development log
 
-`with_dev_log(true)` prints the `µWEBZOCKETS` wordmark at startup and logs
-requests Vite-style as `HH:MM:SS | [METHOD] /path : STATUS`, plus colored
-connection, WebSocket, and metric lines. Everything renders from fixed stack
+`with_dev_log(true)` prints the `µWEBZOCKETS` wordmark before the listening
+line, followed by a blank padding line, and logs requests Vite-style as
+`HH:MM:SS | [METHOD] /path : STATUS`, plus colored connection, WebSocket, and
+metric lines. The wordmark collapses to a one-line `µWebZockets` mark when the
+terminal is narrower than the block art. Everything renders from fixed stack
 buffers, and each worker thread writes every record through its own
 thread-local sink as soon as it is recorded, so the terminal reflects the
 server in real time without allocating on the event loop. Failed or short

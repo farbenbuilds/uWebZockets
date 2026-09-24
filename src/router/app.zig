@@ -21,6 +21,7 @@ const datagram_module = @import("datagram.zig");
 const datagram_ring_module = @import("../quic/datagram_ring.zig");
 const metrics_module = @import("../observability/metrics.zig");
 const dev_log_module = @import("../observability/dev_log.zig");
+const terminal_module = @import("../observability/terminal.zig");
 const ebpf_module = @import("../observability/ebpf.zig");
 const xdp_transport_module = @import("../xdp/transport.zig");
 const http_rejection = @import("../http/rejection.zig");
@@ -933,6 +934,7 @@ pub fn configured_app_with_timeout(
                 sw.start(&self.loop);
             }
 
+            self.write_startup_banner();
             log.info("server listening on {s}:{d}", .{ address, port });
         }
 
@@ -957,6 +959,7 @@ pub fn configured_app_with_timeout(
             try self.install_observability();
             self.routes_locked = true;
 
+            self.write_startup_banner();
             log.info("http/3 server listening on {s}:{d}", .{ address, port });
         }
 
@@ -967,20 +970,26 @@ pub fn configured_app_with_timeout(
 
             self.running = true;
             defer self.running = false;
-            if (self.dev_log_enabled) {
-                const sink = dev_log_module.thread_sink();
-                sink.enable(self.io, self.dev_log_file orelse std.Io.File.stderr());
-                // The wordmark belongs to startup; it is written before the
-                // loop begins accepting work.
-                sink.record_banner();
-            }
+            // Apps that never call a listen function still get the wordmark.
+            self.write_startup_banner();
             self.arm_cluster_wakeup();
             try core_loop.run(&self.loop);
             self.flush_dev_log();
             if (self.shutting_down) try self.verify_shutdown();
         }
 
+        /// Writes this worker's startup wordmark once, before the first
+        /// listening line and sized to the output terminal.
+        fn write_startup_banner(self: *Self) void {
+            if (!self.dev_log_enabled) return;
+            const sink = dev_log_module.thread_sink();
+            sink.enable(self.io, self.dev_log_file orelse std.Io.File.stderr());
+            sink.record_banner(terminal_module.columns(sink.file));
+        }
+
         /// Overrides the development-log output file; defaults to stderr.
+        ///
+        /// Call it before `listen` or `run` so the startup wordmark uses it.
         pub fn set_dev_log_file(self: *Self, file: std.Io.File) void {
             self.dev_log_file = file;
         }

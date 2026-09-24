@@ -144,15 +144,18 @@ var server = try uz.Server.builder(init.io)
 defer server.deinit();
 ```
 
-The exact `µWEBZOCKETS` wordmark is written once at startup, and HTTP/1.1
-requests log Vite-style as `HH:MM:SS | [METHOD] /path : STATUS` with a dim
-clock, cyan method, and status-class color. Connection, WebSocket, and metric
-events follow with a colored direction badge. Every worker thread owns one
-`dev_log.Sink`; each record is rendered into its fixed 4096-byte buffer and
-written immediately, so the terminal reflects events in real time and the event
-loop never allocates. A metric snapshot goes out as one batch. Lines that
-cannot fit and failed or short writes are dropped and counted in `Sink.dropped`
-rather than retried.
+The exact `µWEBZOCKETS` wordmark is written once at startup, before the
+listening line and followed by a blank padding line; a terminal narrower than
+the block art gets a one-line `µWebZockets` mark instead. HTTP/1.1 requests log
+Vite-style as `HH:MM:SS | [METHOD] /path : STATUS` with a dim clock, cyan
+method, and status-class color. Connection, WebSocket, and metric events follow
+with a colored direction badge. Every worker thread owns one `dev_log.Sink`;
+each record is rendered into its fixed 4096-byte buffer and written immediately,
+so the terminal reflects events in real time and the event loop never
+allocates. A metric snapshot goes out as one batch. The width probe in
+`src/observability/terminal.zig` is best effort: redirected output keeps the
+full wordmark. Lines that cannot fit and failed or short writes are dropped and
+counted in `Sink.dropped` rather than retried.
 
 Records carry an explicit direction (`data_in` or `data_out`) and a named event
 payload; there is no ambient logger state. `ServerConfig.enable_dev_log` is the
