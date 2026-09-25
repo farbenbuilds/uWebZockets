@@ -18,6 +18,27 @@ pub const CertificateNames = struct {
     ip_addresses: []const []const u8 = &.{ "127.0.0.1", "::1" },
 };
 
+/// Server-side client-certificate verification policy.
+pub const ClientAuth = enum {
+    /// Do not request or verify a client certificate.
+    none,
+    /// Request a certificate and verify it when the client presents one;
+    /// anonymous clients still complete the handshake.
+    optional,
+    /// Request a certificate and fail the handshake when the client presents
+    /// none, or one that does not verify against the configured trust store.
+    required,
+};
+
+/// Client-certificate authentication policy for `TlsContext.init_mtls`.
+pub const ClientAuthConfig = struct {
+    /// Verification policy applied to the server context.
+    mode: ClientAuth,
+    /// PEM bundle of trusted CA certificates. Required unless `mode` is
+    /// `.none`; the file is read once at context creation.
+    ca_path: [:0]const u8 = "",
+};
+
 /// Owning BoringSSL server context with a fixed ALPN policy.
 pub const TlsContext = struct {
     ctx: *c.SSL_CTX,
@@ -28,7 +49,23 @@ pub const TlsContext = struct {
     /// attacker, so the HTTP dispatcher admits only safe methods before the
     /// handshake is confirmed (see `TcpConnection.early_data_forbids`).
     pub fn init(cert_path: [:0]const u8, key_path: [:0]const u8) !TlsContext {
-        return init_with_alpn(cert_path, key_path, select_http_alpn, true);
+        return init_with_alpn(cert_path, key_path, .{ .mode = .none }, select_http_alpn, true);
+    }
+
+    /// Loads an HTTPS context that authenticates clients with certificates.
+    ///
+    /// ALPN (`h2` then `http/1.1`) and the safe-method 0-RTT replay policy
+    /// match `init`. `.none` skips the trust store entirely: BoringSSL's
+    /// default `SSL_VERIFY_NONE` sends no CertificateRequest, so `ca_path` is
+    /// never opened. Any other mode rejects an empty `ca_path` with
+    /// `error.InvalidClientAuthConfig` and a bundle that cannot be read or
+    /// parsed with `error.TrustStoreLoadFailed`.
+    pub fn init_mtls(
+        cert_path: [:0]const u8,
+        key_path: [:0]const u8,
+        config: ClientAuthConfig,
+    ) !TlsContext {
+        return init_with_alpn(cert_path, key_path, config, select_http_alpn, true);
     }
 
     /// Loads an HTTP/3-only context advertising `h3`.
@@ -36,7 +73,7 @@ pub const TlsContext = struct {
     /// lsquic owns QUIC 0-RTT replay protection, so the engine keeps early
     /// data disabled until that policy is defined end to end.
     pub fn init_http3(cert_path: [:0]const u8, key_path: [:0]const u8) !TlsContext {
-        return init_with_alpn(cert_path, key_path, select_http3_alpn, false);
+        return init_with_alpn(cert_path, key_path, .{ .mode = .none }, select_http3_alpn, false);
     }
 
     /// Generates a self-signed P-256 certificate and key in memory, then
@@ -68,6 +105,7 @@ pub const TlsContext = struct {
     fn init_with_alpn(
         cert_path: [:0]const u8,
         key_path: [:0]const u8,
+        client_auth: ClientAuthConfig,
         callback: AlpnCallback,
         early_data: bool,
     ) !TlsContext {
@@ -83,6 +121,7 @@ pub const TlsContext = struct {
         if (c.SSL_CTX_check_private_key(ctx) != 1) {
             return error.KeyMismatch;
         }
+        try apply_client_auth(ctx, client_auth);
         return TlsContext{ .ctx = ctx };
     }
 
@@ -112,6 +151,28 @@ fn new_server_context(callback: AlpnCallback, early_data: bool) !*c.SSL_CTX {
     c.SSL_CTX_set_alpn_select_cb(ctx, callback, null);
     c.SSL_CTX_set_early_data_enabled(ctx, @intFromBool(early_data));
     return ctx;
+}
+
+/// Applies the client-certificate policy to a server context.
+///
+/// `.none` leaves BoringSSL's default `SSL_VERIFY_NONE` in place: no
+/// CertificateRequest is sent and the trust store is never opened. Every other
+/// mode requires a CA bundle and asks BoringSSL to verify client chains
+/// against it, failing closed when the bundle cannot be loaded.
+fn apply_client_auth(ctx: *c.SSL_CTX, config: ClientAuthConfig) !void {
+    if (config.mode == .none) return;
+    if (config.ca_path.len == 0) return error.InvalidClientAuthConfig;
+    if (c.SSL_CTX_load_verify_locations(ctx, config.ca_path.ptr, null) != 1) {
+        return error.TrustStoreLoadFailed;
+    }
+
+    // SSL_VERIFY_PEER requests the certificate and makes verification errors
+    // fatal; the extra flag rejects clients that decline to send one.
+    const fail_without_certificate: c_int = if (config.mode == .required)
+        c.SSL_VERIFY_FAIL_IF_NO_PEER_CERT
+    else
+        0;
+    c.SSL_CTX_set_verify(ctx, c.SSL_VERIFY_PEER | fail_without_certificate, null);
 }
 
 /// Generates a P-256 key with a matching self-signed certificate and installs

@@ -112,6 +112,62 @@ certificate and key into both contexts.
   failing during the first handshake.
 - Paths are NUL-terminated Zig slices (`[:0]const u8`).
 
+## Client certificates (mTLS)
+
+Use client-certificate authentication when the caller's identity must be
+proven before a request reaches a route: service-to-service APIs, internal
+admin surfaces, or device fleets that already hold certificates from a private
+CA. The server verifies the client chain against a CA bundle you provide, and
+the TLS layer fails the handshake closed before any HTTP parser sees a byte.
+
+```zig
+var server = try uz.App(128).init_https_mtls(
+    init.io,
+    "certs/fullchain.pem",
+    "certs/privkey.pem",
+    .{ .mode = .required, .ca_path = "certs/client-ca.pem" },
+);
+defer server.deinit();
+```
+
+`tls.TlsContext.init_mtls(cert_path, key_path, config)` is the context-level
+entry point and `App.init_https_mtls` is the application-level one. Both keep
+the `init`/`init_https` ALPN policy (`h2`, then `http/1.1`) and the safe-method
+0-RTT replay policy. `ClientAuthConfig.ca_path` accepts a NUL-terminated
+(`[:0]const u8`) path and defaults to empty.
+
+### Modes
+
+`tls.ClientAuth` selects one of three policies:
+
+| Mode | Requests a certificate | Verifies it | Anonymous clients |
+| --- | --- | --- | --- |
+| `tls.ClientAuth.none` | No | No | Allowed |
+| `tls.ClientAuth.optional` | Yes | When presented | Allowed |
+| `tls.ClientAuth.required` | Yes | Yes; a missing certificate fails the handshake | Rejected |
+
+`none` is the `init`/`init_https` default and skips the trust store entirely:
+no certificate is requested, so BoringSSL never opens `ca_path` and the field
+may stay empty. The other modes require a non-empty `ca_path` and reject the
+configuration with `error.InvalidClientAuthConfig` otherwise. A bundle that
+BoringSSL cannot read or parse fails context creation with
+`error.TrustStoreLoadFailed`; a context is never returned with a partially
+configured trust store.
+
+### CA bundle format
+
+`ca_path` points at a PEM file of trust anchors for client chains. One file
+may hold a single CA certificate or several concatenated in any order;
+BoringSSL loads them all, along with any CRLs in the file. The bundle is read
+once when the context is created, so replacing it requires a restart.
+
+### HTTP/3
+
+Client authentication is TCP-only in 1.7.0. The HTTP/3 context created by
+`init_http3` advertises `h3`, keeps early data disabled, and does not request a
+client certificate. Wiring client certificates through the QUIC transport is
+future work.
+
 ## Protocol policy
 
 - TLS 1.3 only; older protocol versions are rejected at the context.
@@ -151,6 +207,8 @@ generated credential cannot be created, the C layer reports
 | `CertificateLoadFailed` | The PEM chain could not be read or parsed |
 | `PrivateKeyLoadFailed` | The PEM key could not be read or parsed |
 | `KeyMismatch` | Certificate and key do not belong together |
+| `InvalidClientAuthConfig` | A client-auth mode other than `.none` was given with an empty `ca_path` |
+| `TrustStoreLoadFailed` | The client CA bundle could not be read or parsed |
 | `TlsContextCreationFailed` | BoringSSL could not allocate the context |
 | `ProtocolConfigurationFailed` | TLS 1.3 bounds could not be applied |
 | `EphemeralKeyGenerationFailed` | P-256 key generation failed |
