@@ -49,3 +49,6 @@ jobs:
 
       - name: Check release metadata
         run: sh scripts/check_release_version.sh
+
+      - name: Check documentation links
+        run: sh scripts/check_docs.sh
