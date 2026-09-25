@@ -28,13 +28,16 @@ spec grounding, adversarial review, proof, and measured paths.
 
 # Focus Areas
 
-- `src/quic/engine.zig`: `quic_engine(capacity, response_capacity)` over
-  lsquic; stream pool `capacity`, header pool `capacity * 2`, packet pool
-  `max(16, capacity * 4)`; four byte slabs for decoded headers, request
-  bodies, response headers, and response bodies; PLPMTU and batch settings;
+- `src/quic/engine.zig`: `quic_engine(capacity, response_capacity,
+  route_param_extra_capacity, stream_capacities)` over lsquic; stream pool
+  `capacity`, header pool `capacity * 2`, packet pool `max(16, capacity * 4)`;
+  byte slabs for decoded headers, request bodies, response headers, and
+  response bodies sized from `stream_capacities`; PLPMTU and batch settings;
   QPACK decode policy; 0-RTT rejection; deinit drained assertion.
-- `src/quic/stream.zig`: `HeaderSet` decode into caller storage (16 KiB
-  headers, 16 KiB request body, 4 KiB response headers, 64 fields) and
+- `src/quic/stream.zig`: `stream_with(io, capacities)` and `HeaderSet` decode
+  into caller storage with request headers spilling through
+  `Request.add_header` into engine-provided extras; defaults stay 16 KiB
+  headers, 16 KiB request body, 4 KiB response headers, 64 fields, and
   `QuicStream` phases with generation-checked async tokens.
 - `src/quic/packet.zig`: `inspect_packet` for RFC 9000 long/short form, fixed
   bit, 20-byte connection-ID bound, varint decode, version negotiation, and

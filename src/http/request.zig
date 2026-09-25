@@ -66,8 +66,12 @@ pub const Request = struct {
     extra_param_values: ?[][]const u8 = null,
     /// Number of valid entries in `extra_param_names` and `extra_param_values`.
     extra_param_count: usize = 0,
-    extra_header_names: ?[]const []const u8 = null,
-    extra_header_values: ?[]const []const u8 = null,
+    /// Caller-provided header slots beyond the inline arrays; transports borrow
+    /// one capacity pair and reuse it for successive requests on that slot.
+    extra_header_names: ?[][]const u8 = null,
+    extra_header_values: ?[][]const u8 = null,
+    /// Number of valid entries in `extra_header_names` and `extra_header_values`.
+    extra_header_count: usize = 0,
 
     /// Returns the first field value matching `name` case-insensitively.
     pub fn get_header(self: *const Request, name: []const u8) ?[]const u8 {
@@ -76,10 +80,34 @@ pub const Request = struct {
         }
         const names = self.extra_header_names orelse return null;
         const values = self.extra_header_values orelse return null;
-        for (names[0..@min(names.len, values.len)], 0..) |h_name, i| {
+        const count = @min(self.extra_header_count, @min(names.len, values.len));
+        for (names[0..count], 0..) |h_name, i| {
             if (std.ascii.eqlIgnoreCase(h_name, name)) return values[i];
         }
         return null;
+    }
+
+    /// Appends one borrowed header, spilling past the inline arrays into the
+    /// caller-provided capacity slices while room remains.
+    ///
+    /// Both extra slices are caller-provided capacity; a transport that supplies
+    /// none fails closed once `header_count` reaches `max_headers`.
+    pub fn add_header(self: *Request, name: []const u8, value: []const u8) !void {
+        if (self.header_count < max_headers) {
+            self.header_names[self.header_count] = name;
+            self.header_values[self.header_count] = value;
+            self.header_count += 1;
+            return;
+        }
+
+        const names = self.extra_header_names orelse return error.HeaderCapacityReached;
+        const values = self.extra_header_values orelse return error.HeaderCapacityReached;
+        if (self.extra_header_count >= @min(names.len, values.len)) {
+            return error.HeaderCapacityReached;
+        }
+        names[self.extra_header_count] = name;
+        values[self.extra_header_count] = value;
+        self.extra_header_count += 1;
     }
 
     /// Reports whether a header exists case-insensitively (Fetch API).
@@ -92,11 +120,12 @@ pub const Request = struct {
         const count = @min(self.header_count, max_headers);
         const extra_names = self.extra_header_names orelse &.{};
         const extra_values = self.extra_header_values orelse &.{};
+        const extra_count = @min(self.extra_header_count, @min(extra_names.len, extra_values.len));
         return fetch.HeadersView.init_with_extra(
             self.header_names[0..count],
             self.header_values[0..count],
-            extra_names,
-            extra_values,
+            extra_names[0..extra_count],
+            extra_values[0..extra_count],
         );
     }
 
@@ -187,7 +216,8 @@ pub const Request = struct {
         }
         if (self.extra_header_names) |names| {
             if (self.extra_header_values) |values| {
-                for (names[0..@min(names.len, values.len)], 0..) |header_name, index| {
+                const valid = @min(self.extra_header_count, @min(names.len, values.len));
+                for (names[0..valid], 0..) |header_name, index| {
                     if (!std.ascii.eqlIgnoreCase(header_name, "cookie")) continue;
                     if (cookie_module.find(values[index], name)) |found| return found;
                 }
@@ -258,6 +288,7 @@ pub const Request = struct {
         if (header_count > max_headers) {
             result.extra_header_names = header_names[max_headers..];
             result.extra_header_values = header_values[max_headers..];
+            result.extra_header_count = header_count - max_headers;
         }
 
         for (0..param_count) |index| {
@@ -304,7 +335,8 @@ pub const Request = struct {
         }
         if (self.extra_header_names) |names| {
             if (self.extra_header_values) |values| {
-                for (names[0..@min(names.len, values.len)], 0..) |header_name, index| {
+                const valid = @min(self.extra_header_count, @min(names.len, values.len));
+                for (names[0..valid], 0..) |header_name, index| {
                     if (!std.ascii.eqlIgnoreCase(header_name, name)) continue;
                     if (value != null) return null;
                     value = values[index];
@@ -322,7 +354,8 @@ pub const Request = struct {
         }
         if (self.extra_header_names) |names| {
             if (self.extra_header_values) |values| {
-                for (names[0..@min(names.len, values.len)]) |header_name| {
+                const valid = @min(self.extra_header_count, @min(names.len, values.len));
+                for (names[0..valid]) |header_name| {
                     if (std.ascii.eqlIgnoreCase(header_name, name)) count += 1;
                 }
             }
@@ -339,7 +372,8 @@ pub const Request = struct {
         }
         if (self.extra_header_names) |names| {
             if (self.extra_header_values) |values| {
-                for (names[0..@min(names.len, values.len)], 0..) |header_name, index| {
+                const valid = @min(self.extra_header_count, @min(names.len, values.len));
+                for (names[0..valid], 0..) |header_name, index| {
                     if (!std.ascii.eqlIgnoreCase(header_name, name)) continue;
                     if (value_has_token(values[index], token)) return true;
                 }
@@ -405,7 +439,8 @@ pub const Request = struct {
         const inline_count = @min(self.header_count, max_headers);
         const extra_names = self.extra_header_names orelse return inline_count;
         const extra_values = self.extra_header_values orelse return inline_count;
-        return inline_count + @min(extra_names.len, extra_values.len);
+        const extra_count = @min(self.extra_header_count, @min(extra_names.len, extra_values.len));
+        return inline_count + extra_count;
     }
 
     fn total_param_count(self: *const Request) usize {

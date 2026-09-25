@@ -2,7 +2,7 @@
 
 ## Scope
 
-µWebZockets 1.4.0 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
+µWebZockets 1.4.5 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
 server library with bounded HPACK protocol storage. It combines an
 event-driven cross-platform transport (POSIX and Windows IOCP), fixed-capacity
 protocol state, a data-oriented router, and C libraries for TLS, compression, and QUIC.
@@ -88,7 +88,7 @@ uWebZockets/
 │   ├── edge/                 # WinterCG-compatible edge surface
 │   ├── ffi/                  # bounded generation-checked shared memory
 │   ├── http/                 # strict HTTP/1.1 parser, response writer, and request helpers
-│   ├── http2/                # bounded frames, stream slab, and HPACK
+│   ├── http2/                # bounded frames, slab-carved session storage, and HPACK
 │   ├── router/               # slab-carved radix router, App API, config, builder
 │   ├── rpc/                  # bounded JSON-RPC registry and dispatcher
 │   ├── ws/                   # streams, pure backpressure, framing, pub/sub

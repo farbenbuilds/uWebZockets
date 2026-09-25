@@ -846,7 +846,8 @@ test "http2: captures beyond 16 resolve from the connection extras" {
     conn.router = &router;
     conn.route_param_names = &names;
     conn.route_param_values = &values;
-    try conn.h2.reset();
+    var h2_bundle = support.tcp.Http2Session.Bundle(support.tcp.Http2Session.default_capacities){};
+    conn.h2 = try support.tcp.Http2Session.init(h2_bundle.storage());
 
     // HPACK block: static GET, static https, then a raw literal :path.
     var header_block: [96]u8 = undefined;

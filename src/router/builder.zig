@@ -64,6 +64,7 @@ pub fn configured_builder(comptime config: ServerConfig) type {
             config.write_queue_size,
             config.idle_timeout_ms,
             config.max_route_params,
+            config.h3_capacities(),
         );
 
         io: std.Io,
@@ -169,6 +170,62 @@ pub fn configured_builder(comptime config: ServerConfig) type {
             self: Self,
             comptime value: usize,
         ) configured_builder(config.with(.{ .max_route_registry_size = value })) {
+            return .{ .io = self.io };
+        }
+
+        /// Overrides the largest accepted HTTP/2 header block.
+        pub fn with_max_h2_header_block_size(
+            self: Self,
+            comptime value: usize,
+        ) configured_builder(config.with(.{ .max_h2_header_block_size = value })) {
+            return .{ .io = self.io };
+        }
+
+        /// Overrides the largest accepted HTTP/2 request body.
+        pub fn with_max_h2_body_size(
+            self: Self,
+            comptime value: usize,
+        ) configured_builder(config.with(.{ .max_h2_body_size = value })) {
+            return .{ .io = self.io };
+        }
+
+        /// Overrides the largest encoded HTTP/2 response header block.
+        pub fn with_max_h2_response_header_size(
+            self: Self,
+            comptime value: usize,
+        ) configured_builder(config.with(.{ .max_h2_response_header_size = value })) {
+            return .{ .io = self.io };
+        }
+
+        /// Overrides the maximum HTTP/2 response header fields.
+        pub fn with_max_h2_response_header_count(
+            self: Self,
+            comptime value: usize,
+        ) configured_builder(config.with(.{ .max_h2_response_header_count = value })) {
+            return .{ .io = self.io };
+        }
+
+        /// Overrides the largest accepted HTTP/3 request body.
+        pub fn with_max_h3_body_size(
+            self: Self,
+            comptime value: usize,
+        ) configured_builder(config.with(.{ .max_h3_body_size = value })) {
+            return .{ .io = self.io };
+        }
+
+        /// Overrides the largest encoded HTTP/3 response header storage.
+        pub fn with_max_h3_response_header_size(
+            self: Self,
+            comptime value: usize,
+        ) configured_builder(config.with(.{ .max_h3_response_header_size = value })) {
+            return .{ .io = self.io };
+        }
+
+        /// Overrides the maximum decoded HTTP/3 response header fields.
+        pub fn with_max_h3_response_header_count(
+            self: Self,
+            comptime value: usize,
+        ) configured_builder(config.with(.{ .max_h3_response_header_count = value })) {
             return .{ .io = self.io };
         }
 

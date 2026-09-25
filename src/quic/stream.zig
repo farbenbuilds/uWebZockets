@@ -11,13 +11,32 @@ const validation = @import("validation.zig");
 
 /// Reports that HTTP/3 stream support is compiled in.
 pub const available = true;
-/// Per-stream decoded request-header storage capacity.
-pub const header_capacity = http_parser.max_header_size;
-/// Per-stream request body capacity.
-pub const request_body_capacity = http_parser.max_body_size;
-/// Per-stream encoded response-header storage capacity.
-pub const response_header_capacity: usize = 4096;
-const max_headers = 64;
+
+/// Per-stream HTTP/3 storage and field capacities.
+///
+/// `decoded_header_count` caps the regular request fields accepted from one
+/// field section; pseudo-fields are validated into named slots and do not
+/// consume it. `header_extra_capacity` reserves the request-field pointer slots
+/// the engine lends beyond the inline `Request` arrays.
+pub const Capacities = struct {
+    request_header_size: usize = http_parser.max_header_size,
+    request_body_size: usize = http_parser.default_max_body_size,
+    response_header_size: usize = 4096,
+    response_header_count: usize = 64,
+    decoded_header_count: usize = 64,
+    header_extra_capacity: usize = 0,
+};
+
+/// Default per-stream capacity record; the production stream is specialized
+/// with these values.
+pub const default_capacities: Capacities = .{};
+
+/// Per-stream decoded request-header storage capacity of the default record.
+pub const header_capacity = default_capacities.request_header_size;
+/// Per-stream request body capacity of the default record.
+pub const request_body_capacity = default_capacities.request_body_size;
+/// Per-stream encoded response-header storage capacity of the default record.
+pub const response_header_capacity = default_capacities.response_header_size;
 
 /// Returns a header set to the owner that lent it storage.
 const HeaderReleaseFn = *const fn (*anyopaque, *HeaderSet) void;
@@ -27,6 +46,8 @@ pub const HeaderSet = struct {
     owner: *anyopaque = undefined,
     release_fn: ?HeaderReleaseFn = null,
     storage: []u8 = &.{},
+    /// Per-stream capacities the engine specialized the owning stream with.
+    capacities: Capacities = default_capacities,
     decoded: c.struct_uz_lsxpack_header = std.mem.zeroes(c.struct_uz_lsxpack_header),
     request: Request = .{},
     method: ?[]const u8 = null,
@@ -36,24 +57,38 @@ pub const HeaderSet = struct {
     protocol: ?[]const u8 = null,
     content_length: ?usize = null,
     write_offset: usize = 0,
+    /// Regular fields accepted from this field section so far.
+    decoded_field_count: usize = 0,
     regular_headers_seen: bool = false,
     host_seen: bool = false,
     is_trailer: bool = false,
     finished: bool = false,
     claimed: bool = false,
 
-    /// Reinitializes the header set with borrowed owner and decode storage.
+    /// Reinitializes the header set with borrowed owner, decode storage, and
+    /// engine-provided request-field capacity slices.
+    ///
+    /// `header_extra_names` and `header_extra_values` are equal-length
+    /// caller-owned capacity slices; pass empty slices when the inline
+    /// `Request` arrays must cover every accepted field.
     pub fn reset(
         self: *HeaderSet,
         owner: *anyopaque,
         release_fn: HeaderReleaseFn,
         storage: []u8,
+        header_extra_names: [][]const u8,
+        header_extra_values: [][]const u8,
+        capacities: Capacities,
     ) void {
         self.* = .{
             .owner = owner,
             .release_fn = release_fn,
             .storage = storage,
+            .capacities = capacities,
         };
+        self.request.extra_header_names = header_extra_names;
+        self.request.extra_header_values = header_extra_values;
+        self.request.extra_header_count = 0;
     }
 
     /// Reinitializes the header set for a trailing field section.
@@ -62,8 +97,18 @@ pub const HeaderSet = struct {
         owner: *anyopaque,
         release_fn: HeaderReleaseFn,
         storage: []u8,
+        header_extra_names: [][]const u8,
+        header_extra_values: [][]const u8,
+        capacities: Capacities,
     ) void {
-        self.reset(owner, release_fn, storage);
+        self.reset(
+            owner,
+            release_fn,
+            storage,
+            header_extra_names,
+            header_extra_values,
+            capacities,
+        );
         self.is_trailer = true;
     }
 
@@ -169,7 +214,7 @@ pub const HeaderSet = struct {
         if (std.mem.eql(u8, name, "content-length")) {
             if (self.content_length != null) return false;
             const length = validation.parse_decimal(value) orelse return false;
-            if (length > request_body_capacity) return false;
+            if (length > self.capacities.request_body_size) return false;
             self.content_length = length;
         }
         if (std.mem.eql(u8, name, "host")) {
@@ -180,11 +225,11 @@ pub const HeaderSet = struct {
             }
         }
 
-        if (self.request.header_count >= self.request.header_names.len) return false;
-        const index = self.request.header_count;
-        self.request.header_names[index] = name;
-        self.request.header_values[index] = value;
-        self.request.header_count += 1;
+        if (self.decoded_field_count >= self.capacities.decoded_header_count) return false;
+        // Both inline and engine-provided slots are exhausted past capacity;
+        // either way the field section fails closed on this stream.
+        self.request.add_header(name, value) catch return false;
+        self.decoded_field_count += 1;
         self.regular_headers_seen = true;
         return true;
     }
@@ -216,11 +261,7 @@ pub const HeaderSet = struct {
 
         if (!self.host_seen) {
             const authority = self.authority orelse return false;
-            if (self.request.header_count >= self.request.header_names.len) return false;
-            const index = self.request.header_count;
-            self.request.header_names[index] = "host";
-            self.request.header_values[index] = authority;
-            self.request.header_count += 1;
+            self.request.add_header("host", authority) catch return false;
         }
 
         self.request.method = method;
@@ -288,8 +329,17 @@ pub const lsquic_stream_io: StreamIo = .{
 };
 
 /// Returns connection-owned, fixed-buffer HTTP/3 stream state bound to the
-/// given lsquic stream entry points.
-pub fn stream_with(comptime io: StreamIo) type {
+/// given lsquic stream entry points and per-stream capacity record.
+pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type {
+    if (capacities.response_header_size == 0 or
+        capacities.response_header_size > std.math.maxInt(u16))
+    {
+        @compileError("HTTP/3 response header size must fit u16 offsets");
+    }
+    if (capacities.response_header_count == 0) {
+        @compileError("HTTP/3 response header count must be greater than zero");
+    }
+
     return struct {
         const Self = @This();
         /// Returns a stream to the owner that lent it storage.
@@ -307,10 +357,14 @@ pub fn stream_with(comptime io: StreamIo) type {
         // stream dispatches; empty when captures stay inline.
         extra_param_names: [][]const u8 = &.{},
         extra_param_values: [][]const u8 = &.{},
-        response_name_offsets: [max_headers]u16 = .{0} ** max_headers,
-        response_name_lengths: [max_headers]u16 = .{0} ** max_headers,
-        response_value_offsets: [max_headers]u16 = .{0} ** max_headers,
-        response_value_lengths: [max_headers]u16 = .{0} ** max_headers,
+        // Engine-owned request-field capacity slices, reused by every header
+        // set this stream presents; empty when request fields stay inline.
+        header_extra_names: [][]const u8 = &.{},
+        header_extra_values: [][]const u8 = &.{},
+        response_name_offsets: [capacities.response_header_count]u16 = .{0} ** capacities.response_header_count,
+        response_name_lengths: [capacities.response_header_count]u16 = .{0} ** capacities.response_header_count,
+        response_value_offsets: [capacities.response_header_count]u16 = .{0} ** capacities.response_header_count,
+        response_value_lengths: [capacities.response_header_count]u16 = .{0} ** capacities.response_header_count,
         response_status: [10]u8 = undefined,
         body_length: usize = 0,
         response_body_length: usize = 0,
@@ -329,9 +383,10 @@ pub fn stream_with(comptime io: StreamIo) type {
 
         /// Reinitializes a pooled stream with borrowed transport and storage.
         ///
-        /// `extra_param_names` and `extra_param_values` are equal-length
-        /// caller-owned capture slices; pass empty slices when the inline
-        /// `Request` arrays cover every configured capture.
+        /// `extra_param_names`, `extra_param_values`, `header_extra_names`,
+        /// and `header_extra_values` are equal-length caller-owned capacity
+        /// slices; pass empty slices when the inline `Request` arrays cover
+        /// every configured capture and request field.
         pub fn reset(
             self: *Self,
             owner: *anyopaque,
@@ -343,6 +398,8 @@ pub fn stream_with(comptime io: StreamIo) type {
             response_header_storage: []u8,
             extra_param_names: [][]const u8,
             extra_param_values: [][]const u8,
+            header_extra_names: [][]const u8,
+            header_extra_values: [][]const u8,
         ) void {
             var next_generation = self.async_response_state.generation +% 1;
             if (next_generation == 0) next_generation = 1;
@@ -356,6 +413,8 @@ pub fn stream_with(comptime io: StreamIo) type {
                 .response_header_storage = response_header_storage,
                 .extra_param_names = extra_param_names,
                 .extra_param_values = extra_param_values,
+                .header_extra_names = header_extra_names,
+                .header_extra_values = header_extra_values,
             };
             self.async_response_state.generation = next_generation;
             self.async_response_state.state = .cancelled;
@@ -816,7 +875,9 @@ pub fn stream_with(comptime io: StreamIo) type {
             var lines = std.mem.splitSequence(u8, headers, "\r\n");
             while (lines.next()) |line| {
                 if (line.len == 0) continue;
-                if (self.response_header_count >= max_headers) return error.BufferOverflow;
+                if (self.response_header_count >= capacities.response_header_count) {
+                    return error.BufferOverflow;
+                }
                 const colon = std.mem.indexOfScalar(u8, line, ':') orelse return error.InvalidHeaders;
                 const name = line[0..colon];
                 const value = std.mem.trim(u8, line[colon + 1 ..], " \t");
@@ -853,7 +914,7 @@ pub fn stream_with(comptime io: StreamIo) type {
         }
 
         fn send_headers(self: *Self) bool {
-            var header_array: [max_headers + 1]c.struct_uz_lsxpack_header = undefined;
+            var header_array: [capacities.response_header_count + 1]c.struct_uz_lsxpack_header = undefined;
             set_xpack_header(&header_array[0], &self.response_status, 0, 7, 7, 3);
 
             var index: usize = 0;
@@ -896,7 +957,7 @@ pub fn stream_with(comptime io: StreamIo) type {
 }
 
 /// Production HTTP/3 stream state bound to the lsquic stream API.
-pub const QuicStream = stream_with(lsquic_stream_io);
+pub const QuicStream = stream_with(lsquic_stream_io, default_capacities);
 
 fn forbidden_trailer_field(name: []const u8) bool {
     return std.mem.eql(u8, name, "content-length") or

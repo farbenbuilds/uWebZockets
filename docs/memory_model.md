@@ -37,10 +37,12 @@ into these regions, in order:
 | Pool freelist indices | `max_connections * sizeof(usize)` |
 | HTTP/1.1 request buffers | `max_connections * request_stride` |
 | Header extras beyond the inline 64 | `max_connections * (max_header_count - 64) * 2 slices` when configured |
-| Router storage (nodes, patterns, middleware, registry) | `max_route_nodes` / `max_pattern_routes` / `max_middleware` / `max_route_registry_size` |
+| Route-param extras beyond the inline 16 | `max_connections * (max_route_params - 16) * 2 slices` when configured |
+| HTTP/2 session storage | `max_connections * h2_session_stride` |
 | Response write queues | `max_connections * write_queue_size` |
 | WebSocket message storage | `max_connections * max_ws_message_size` |
 | RFC 7692 compression scratch | `max_connections * 2 * worst_case_scratch` when enabled |
+| Router storage (nodes, patterns, middleware, registry) | appended after the per-connection regions |
 
 `request_stride` is the request line, header block, framing slack, and
 `max_body_size`, rounded to a 16-byte boundary. Write queues start on a cache
@@ -134,14 +136,16 @@ The defaults are deliberately finite:
 | Route path | 2 KiB default; `max_route_path_size` |
 | WebSocket message | 16 KiB with `App` |
 | WebSocket control payload | 125 bytes |
-| HTTP/3 decoded headers | 16 KiB total, 64 fields |
-| HTTP/3 request body | 16 KiB |
-| HTTP/3 response metadata | 4 KiB, 64 fields |
+| HTTP/3 decoded headers | `max_header_size` bytes and `max_header_count` fields (spill extras) |
+| HTTP/3 request body | `max_h3_body_size` |
+| HTTP/3 response metadata | `max_h3_response_header_size`, `max_h3_response_header_count` |
 | HTTP/3 response body | configured write-queue capacity |
 | QUIC UDP payload | 2 KiB |
 | QUIC connections and active streams | configured connection capacity |
-| HTTP/2 active streams | caller-selected compile-time slab capacity |
-| HPACK table, fields, and decoded bytes | caller-owned capacities |
+| HTTP/2 active streams | compile-time `max_http2_streams` (8) |
+| HTTP/2 session storage | `h2_session_bytes()` per connection in the startup slab |
+| HTTP/2 header block, bodies, response headers | `max_h2_header_block_size`, `max_h2_body_size`, `max_h2_response_header_size`, `max_h2_response_header_count` |
+| HPACK table, fields, and decoded bytes | `Capacities`/`Storage` carved per session |
 | C ABI | 1,024 connections, 64 copied route paths |
 | Write queue | fixed per connection |
 | Idle timeout | 120 seconds by default |

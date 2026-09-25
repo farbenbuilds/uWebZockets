@@ -67,7 +67,7 @@ test "quic: sockaddr conversion preserves address family and port" {
 }
 
 test "quic: engine policy pins BBR congestion control and pacing" {
-    const TestEngine = engine.quic_engine(2, 1024, 0);
+    const TestEngine = engine.quic_engine(2, 1024, 0, stream.default_capacities);
     var settings: c.lsquic_engine_settings = std.mem.zeroes(c.lsquic_engine_settings);
     TestEngine.apply_settings(&settings);
 
@@ -86,7 +86,7 @@ test "quic: engine policy pins BBR congestion control and pacing" {
 }
 
 test "quic: each live stream reserves independent request and trailer header slots" {
-    const TestEngine = engine.quic_engine(2, 64, 0);
+    const TestEngine = engine.quic_engine(2, 64, 0, stream.default_capacities);
     var quic_engine = try TestEngine.init();
     defer quic_engine.deinit();
 
@@ -104,7 +104,7 @@ test "quic: bounded header set validates pseudo headers and framing" {
         fn release(_: *anyopaque, _: *HeaderSet) void {}
     };
     var owner: u8 = 0;
-    header_set.reset(&owner, Owner.release, &storage);
+    header_set.reset(&owner, Owner.release, &storage, &.{}, &.{}, stream.default_capacities);
 
     try std.testing.expect(add_test_header(&header_set, ":method", "GET"));
     try std.testing.expect(add_test_header(&header_set, ":scheme", "https"));
@@ -125,7 +125,7 @@ test "quic: HTTP/3 QUERY exposes invalid media type before dispatch" {
         fn release(_: *anyopaque, _: *HeaderSet) void {}
     };
     var owner: u8 = 0;
-    header_set.reset(&owner, Owner.release, &storage);
+    header_set.reset(&owner, Owner.release, &storage, &.{}, &.{}, stream.default_capacities);
 
     try std.testing.expect(add_test_header(&header_set, ":method", "QUERY"));
     try std.testing.expect(add_test_header(&header_set, ":scheme", "https"));
@@ -147,20 +147,20 @@ test "quic: header set rejects forbidden connection metadata" {
         fn release(_: *anyopaque, _: *HeaderSet) void {}
     };
     var owner: u8 = 0;
-    header_set.reset(&owner, Owner.release, &storage);
+    header_set.reset(&owner, Owner.release, &storage, &.{}, &.{}, stream.default_capacities);
 
     try std.testing.expect(!add_test_header(&header_set, "connection", "close"));
     try std.testing.expect(!validation.valid_target("/path#fragment"));
     try std.testing.expect(validation.parse_decimal("184467440737095516160") == null);
 
-    header_set.reset(&owner, Owner.release, &storage);
+    header_set.reset(&owner, Owner.release, &storage, &.{}, &.{}, stream.default_capacities);
     try std.testing.expect(add_test_header(&header_set, ":method", "GET"));
     try std.testing.expect(add_test_header(&header_set, ":scheme", "https"));
     try std.testing.expect(add_test_header(&header_set, ":authority", "localhost"));
     try std.testing.expect(add_test_header(&header_set, ":path", "*"));
     try std.testing.expect(!header_set.process_header(null));
 
-    header_set.reset(&owner, Owner.release, &storage);
+    header_set.reset(&owner, Owner.release, &storage, &.{}, &.{}, stream.default_capacities);
     try std.testing.expect(add_test_header(&header_set, ":method", "OPTIONS"));
     try std.testing.expect(add_test_header(&header_set, ":scheme", "https"));
     try std.testing.expect(add_test_header(&header_set, ":authority", "localhost"));
@@ -175,7 +175,7 @@ test "quic: HTTP/3 regular CONNECT requires authority and omits scheme and path"
         fn release(_: *anyopaque, _: *HeaderSet) void {}
     };
     var owner: u8 = 0;
-    header_set.reset(&owner, Owner.release, &storage);
+    header_set.reset(&owner, Owner.release, &storage, &.{}, &.{}, stream.default_capacities);
 
     try std.testing.expect(add_test_header(&header_set, ":method", "CONNECT"));
     try std.testing.expect(add_test_header(&header_set, ":authority", "localhost:443"));
@@ -184,23 +184,23 @@ test "quic: HTTP/3 regular CONNECT requires authority and omits scheme and path"
     try std.testing.expectEqualStrings("", header_set.request.path);
     try std.testing.expectEqualStrings("localhost:443", header_set.request.get_header("host").?);
 
-    header_set.reset(&owner, Owner.release, &storage);
+    header_set.reset(&owner, Owner.release, &storage, &.{}, &.{}, stream.default_capacities);
     try std.testing.expect(add_test_header(&header_set, ":method", "CONNECT"));
     try std.testing.expect(!header_set.process_header(null));
 
-    header_set.reset(&owner, Owner.release, &storage);
+    header_set.reset(&owner, Owner.release, &storage, &.{}, &.{}, stream.default_capacities);
     try std.testing.expect(add_test_header(&header_set, ":method", "CONNECT"));
     try std.testing.expect(add_test_header(&header_set, ":scheme", "https"));
     try std.testing.expect(add_test_header(&header_set, ":authority", "localhost:443"));
     try std.testing.expect(add_test_header(&header_set, ":path", "/tunnel"));
     try std.testing.expect(!header_set.process_header(null));
 
-    header_set.reset(&owner, Owner.release, &storage);
+    header_set.reset(&owner, Owner.release, &storage, &.{}, &.{}, stream.default_capacities);
     try std.testing.expect(add_test_header(&header_set, ":method", "CONNECT"));
     try std.testing.expect(add_test_header(&header_set, ":protocol", "websocket"));
     try std.testing.expect(!header_set.process_header(null));
 
-    header_set.reset(&owner, Owner.release, &storage);
+    header_set.reset(&owner, Owner.release, &storage, &.{}, &.{}, stream.default_capacities);
     try std.testing.expect(add_test_header(&header_set, ":method", "CONNECT"));
     try std.testing.expect(add_test_header(&header_set, ":protocol", "websocket"));
     try std.testing.expect(add_test_header(&header_set, ":scheme", "https"));
@@ -218,18 +218,18 @@ test "quic: HTTP/3 trailers reject pseudo and framing fields" {
         fn release(_: *anyopaque, _: *HeaderSet) void {}
     };
     var owner: u8 = 0;
-    header_set.reset_trailer(&owner, Owner.release, &storage);
+    header_set.reset_trailer(&owner, Owner.release, &storage, &.{}, &.{}, stream.default_capacities);
 
     try std.testing.expect(add_test_header(&header_set, "x-checksum", "complete"));
     try std.testing.expect(header_set.process_header(null));
 
-    header_set.reset_trailer(&owner, Owner.release, &storage);
+    header_set.reset_trailer(&owner, Owner.release, &storage, &.{}, &.{}, stream.default_capacities);
     try std.testing.expect(!add_test_header(&header_set, ":path", "/late"));
 
-    header_set.reset_trailer(&owner, Owner.release, &storage);
+    header_set.reset_trailer(&owner, Owner.release, &storage, &.{}, &.{}, stream.default_capacities);
     try std.testing.expect(!add_test_header(&header_set, "content-length", "0"));
 
-    header_set.reset_trailer(&owner, Owner.release, &storage);
+    header_set.reset_trailer(&owner, Owner.release, &storage, &.{}, &.{}, stream.default_capacities);
     try std.testing.expect(!add_test_header(&header_set, "host", "example.com"));
 }
 
@@ -244,7 +244,14 @@ test "quic: HTTP/3 trailer sets are released after one phase transition" {
     var owner: u8 = 0;
     var request_storage: [stream.header_capacity]u8 = undefined;
     var request_headers = HeaderSet{};
-    request_headers.reset(&owner, Release.header, &request_storage);
+    request_headers.reset(
+        &owner,
+        Release.header,
+        &request_storage,
+        &.{},
+        &.{},
+        stream.default_capacities,
+    );
     try std.testing.expect(add_test_header(&request_headers, ":method", "POST"));
     try std.testing.expect(add_test_header(&request_headers, ":scheme", "https"));
     try std.testing.expect(add_test_header(&request_headers, ":authority", "localhost"));
@@ -256,7 +263,14 @@ test "quic: HTTP/3 trailer sets are released after one phase transition" {
 
     var trailer_storage: [stream.header_capacity]u8 = undefined;
     var trailers = HeaderSet{};
-    trailers.reset_trailer(&owner, Release.header, &trailer_storage);
+    trailers.reset_trailer(
+        &owner,
+        Release.header,
+        &trailer_storage,
+        &.{},
+        &.{},
+        stream.default_capacities,
+    );
     try std.testing.expect(add_test_header(&trailers, "x-checksum", "complete"));
     try std.testing.expect(trailers.process_header(null));
 
@@ -381,7 +395,7 @@ const FakeStreamIo = struct {
     };
 };
 
-const TestQuicStream = stream.stream_with(FakeStreamIo.table);
+const TestQuicStream = stream.stream_with(FakeStreamIo.table, stream.default_capacities);
 
 const TestRelease = struct {
     fn release(_: *anyopaque, _: *TestQuicStream) void {}
@@ -770,6 +784,8 @@ test "quic: captures beyond 16 resolve from engine storage" {
         &response_header_storage,
         &extra_names,
         &extra_values,
+        &.{},
+        &.{},
     );
 
     const HeaderOwner = struct {
@@ -777,7 +793,14 @@ test "quic: captures beyond 16 resolve from engine storage" {
     };
     var header_storage: [stream.header_capacity]u8 = undefined;
     var header_set = HeaderSet{};
-    header_set.reset(&owner, HeaderOwner.release, &header_storage);
+    header_set.reset(
+        &owner,
+        HeaderOwner.release,
+        &header_storage,
+        &.{},
+        &.{},
+        stream.default_capacities,
+    );
     try std.testing.expect(add_test_header(&header_set, ":method", "GET"));
     try std.testing.expect(add_test_header(&header_set, ":scheme", "https"));
     try std.testing.expect(add_test_header(&header_set, ":authority", "localhost"));
@@ -817,4 +840,133 @@ test "quic: HTTP/3 write backpressure keeps the stream armed" {
     try std.testing.expectEqual(@as(usize, 4), fake.write_bytes);
     try std.testing.expectEqual(@as(c_int, 0), fake.wantwrite);
     try std.testing.expectEqual(@as(usize, 1), fake.shutdowns);
+}
+
+test "quic: configured response header capacity accepts wide headers" {
+    const WideStream = stream.stream_with(FakeStreamIo.table, stream.Capacities{
+        .response_header_size = 8 * 1024,
+        .response_header_count = 96,
+    });
+    const WideRelease = struct {
+        fn release(_: *anyopaque, _: *WideStream) void {}
+    };
+
+    var head_storage: [8 * 1024]u8 = undefined;
+    var value_storage: [48]u8 = undefined;
+    @memset(&value_storage, 'v');
+    var head_length: usize = 0;
+    for (0..80) |index| {
+        const line = try std.fmt.bufPrint(
+            head_storage[head_length..],
+            "x-fill-{d}: {s}\r\n",
+            .{ index, value_storage },
+        );
+        head_length += line.len;
+    }
+    try std.testing.expect(head_length > 4 * 1024);
+
+    var wide_fake = FakeStream{};
+    var wide_body: [64]u8 = undefined;
+    var wide_header_storage: [8 * 1024]u8 = undefined;
+    var wide = WideStream{
+        .owner = undefined,
+        .release_fn = WideRelease.release,
+        .stream = @ptrCast(&wide_fake),
+        .router = undefined,
+        .body_storage = &wide_body,
+        .response_body_storage = &wide_body,
+        .response_header_storage = &wide_header_storage,
+    };
+    const wide_target = wide.target();
+    try wide_target.begin_fn(wide_target.context, "200 OK", head_storage[0..head_length]);
+
+    try std.testing.expectEqual(@as(usize, 80), wide.response_header_count);
+    try std.testing.expect(wide.response_header_length > 4 * 1024);
+
+    // A non-producer streaming response arms its final drain through `finish`.
+    try wide_target.finish_fn(wide_target.context);
+    wide.on_write();
+
+    try std.testing.expectEqual(@as(usize, 1), wide_fake.headers);
+    try std.testing.expect(wide.response_phase == .done);
+
+    var default_fake = FakeStream{};
+    var default_body: [64]u8 = undefined;
+    var default_header_storage: [stream.response_header_capacity]u8 = undefined;
+    var default_stream = test_quic_stream(&default_fake, &default_body, &default_header_storage);
+    const default_target = default_stream.target();
+    try std.testing.expectError(
+        error.BufferOverflow,
+        default_target.begin_fn(default_target.context, "200 OK", head_storage[0..head_length]),
+    );
+}
+
+test "quic: request headers spill into engine extras" {
+    const capacities = stream.Capacities{
+        .decoded_header_count = 72,
+        .header_extra_capacity = 8,
+    };
+    const Owner = struct {
+        fn release(_: *anyopaque, _: *HeaderSet) void {}
+    };
+    var owner: u8 = 0;
+    var storage: [stream.header_capacity]u8 = undefined;
+    var extra_names: [capacities.header_extra_capacity][]const u8 = undefined;
+    var extra_values: [capacities.header_extra_capacity][]const u8 = undefined;
+    var header_set = HeaderSet{};
+    header_set.reset(
+        &owner,
+        Owner.release,
+        &storage,
+        &extra_names,
+        &extra_values,
+        capacities,
+    );
+
+    try std.testing.expect(add_test_header(&header_set, ":method", "GET"));
+    try std.testing.expect(add_test_header(&header_set, ":scheme", "https"));
+    try std.testing.expect(add_test_header(&header_set, ":authority", "localhost"));
+    try std.testing.expect(add_test_header(&header_set, ":path", "/spill"));
+
+    var name_storage: [24]u8 = undefined;
+    var value_buffer: [24]u8 = undefined;
+    for (0..70) |index| {
+        const name = try std.fmt.bufPrint(&name_storage, "x-spill-{d}", .{index});
+        const value = try std.fmt.bufPrint(&value_buffer, "value-{d}", .{index});
+        try std.testing.expect(add_test_header(&header_set, name, value));
+    }
+    try std.testing.expect(header_set.process_header(null));
+
+    // The 70 spilled fields plus the authority-derived `host` field fill 7 of
+    // the 8 engine-provided slots; the inline and spilled fields are both
+    // visible through the request view.
+    try std.testing.expectEqual(@as(usize, 70), header_set.decoded_field_count);
+    try std.testing.expectEqual(@as(usize, 7), header_set.request.extra_header_count);
+    // The request view exposes all 70 inline and spilled fields plus `host`.
+    var entries = header_set.request.header_entries();
+    var visible: usize = 0;
+    while (entries.next()) |_| visible += 1;
+    try std.testing.expectEqual(@as(usize, 71), visible);
+    try std.testing.expectEqualStrings("value-0", header_set.request.get_header("x-spill-0").?);
+    try std.testing.expectEqualStrings("value-63", header_set.request.get_header("x-spill-63").?);
+    try std.testing.expectEqualStrings("value-64", header_set.request.get_header("x-spill-64").?);
+    try std.testing.expectEqualStrings("value-69", header_set.request.get_header("x-spill-69").?);
+    try std.testing.expectEqualStrings("localhost", header_set.request.get_header("host").?);
+
+    var strict_storage: [stream.header_capacity]u8 = undefined;
+    var strict = HeaderSet{};
+    strict.reset(&owner, Owner.release, &strict_storage, &.{}, &.{}, stream.default_capacities);
+    try std.testing.expect(add_test_header(&strict, ":method", "GET"));
+    try std.testing.expect(add_test_header(&strict, ":scheme", "https"));
+    try std.testing.expect(add_test_header(&strict, ":authority", "localhost"));
+    try std.testing.expect(add_test_header(&strict, ":path", "/strict"));
+
+    var accepted: usize = 0;
+    for (0..64) |index| {
+        const name = try std.fmt.bufPrint(&name_storage, "x-strict-{d}", .{index});
+        if (!add_test_header(&strict, name, "v")) break;
+        accepted += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 64), accepted);
+    try std.testing.expect(!add_test_header(&strict, "x-overflow", "v"));
 }

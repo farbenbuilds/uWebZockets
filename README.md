@@ -45,6 +45,59 @@ The first build downloads the pinned dependency packages through Zig's
 package manager and caches them; later builds reuse the caches. The
 `vendor/h1spec` submodule is only needed for the h1spec compliance suite.
 
+### Use it in your own project
+
+µWebZockets is a Zig package. Fetch a released tag (or a full commit) and
+import the module; nothing else needs to be installed, and the package
+manifest pulls BoringSSL, lsquic, and the other pinned dependencies itself.
+
+```sh
+zig fetch --save 'git+https://github.com/farbenbuilds/uWebZockets#<tag-or-commit>'
+```
+
+Wire the dependency in `build.zig`:
+
+```zig
+const uz = b.dependency("uWebZockets", .{
+    .target = target,
+    .optimize = optimize,
+});
+exe.root_module.addImport("uWebZockets", uz.module("uWebZockets"));
+```
+
+Then a complete server is a few lines:
+
+```zig
+const std = @import("std");
+const uz = @import("uWebZockets");
+
+fn hello(_: *uz.Request, res: *uz.Response) void {
+    res.text("hello from a dependency") catch {};
+}
+
+pub fn main(init: std.process.Init) !void {
+    var app = try uz.App(128).init(init.io);
+    defer app.deinit();
+
+    _ = try app.get("/", hello);
+    try app.listen("0.0.0.0", 3000);
+    try app.run();
+}
+```
+
+`zig build run` starts it and `curl http://127.0.0.1:3000/` prints the body.
+The same module carries the rest of the battery: `app.ws(...)` for WebSocket,
+`app.rpc(...)` for JSON-RPC, `app.static(...)` for assets,
+`build_cluster` for thread-per-core workers, and `listen_udp` plus
+`init_http3` for HTTP/3. `zig build lib` also installs
+`zig-out/include/uWebZockets.h` for C and C++ consumers.
+
+Pin a tag or full commit rather than a moving branch so dependency resolution
+stays reproducible, and use the minimum Zig release the package declares
+(0.16.0). The `tests/package_consumer` fixture compiles this exact snippet in
+CI. [Operations](docs/operations.md#use-as-a-zig-dependency) covers path
+dependencies, archive linking, and the C ABI contract.
+
 ## Shared-nothing by default
 
 `App.cluster(worker_count)` gives every worker its own loop, connection pool,
@@ -114,7 +167,11 @@ extend the HTTP/1 request limits; fields beyond the inline 64 get per-connection
 slab storage. `with_max_route_nodes`, `with_max_pattern_routes`,
 `with_max_middleware`, `with_max_route_path_size`,
 `with_max_route_registry_size`, and `with_max_route_params` size the
-slab-carved router and its capture spill. Oversized input gets a structured
+slab-carved router and its capture spill. HTTP/2 metadata is sized by
+`with_max_h2_header_block_size`, `with_max_h2_body_size`,
+`with_max_h2_response_header_size`, and `with_max_h2_response_header_count`;
+HTTP/3 uses `with_max_h3_body_size`, `with_max_h3_response_header_size`, and
+`with_max_h3_response_header_count`. Oversized input gets a structured
 rejection instead of a dropped connection:
 
 ```json
@@ -161,7 +218,7 @@ request path.
 ## Terminal development log
 
 `with_dev_log(true)` prints the `µWEBZOCKETS` wordmark and a Vite-style ready
-summary before the first accepting listener: `µWebZockets v1.4.0  ready in
+summary before the first accepting listener: `µWebZockets v1.4.5  ready in
 0.6 ms` followed by the `→ Local:` line; the elapsed time scales
 through nanoseconds, microseconds, milliseconds, and seconds. The wordmark
 collapses to a one-line `µWebZockets` mark when the terminal is narrower than

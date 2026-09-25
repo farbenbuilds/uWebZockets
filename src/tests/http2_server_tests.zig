@@ -6,8 +6,40 @@ const Request = support.http_request.Request;
 const Response = support.http_response.Response;
 const radix = support.radix;
 
-const TestSession = http2_server.server_session(4, 4096, 4096, 1024);
-const SingleStreamSession = http2_server.server_session(1, 4096, 4096, 1024);
+const TestSession = http2_server.server_session(4);
+const SingleStreamSession = http2_server.server_session(1);
+const test_capacities = TestSession.Capacities{
+    .header_block_size = 4096,
+    .request_header_size = 4096,
+    .body_size = 1024,
+};
+const single_capacities = SingleStreamSession.Capacities{
+    .header_block_size = 4096,
+    .request_header_size = 4096,
+    .body_size = 1024,
+};
+const TestBundle = TestSession.Bundle(test_capacities);
+const SingleBundle = SingleStreamSession.Bundle(single_capacities);
+
+/// Owns one session's carved storage and hands out the bound session value.
+const SessionFixture = struct {
+    bundle: TestBundle = .{},
+    session: TestSession = .{},
+
+    fn init(self: *SessionFixture) !void {
+        self.session = try TestSession.init(self.bundle.storage());
+    }
+};
+
+/// Owns one single-stream session's carved storage.
+const SingleFixture = struct {
+    bundle: SingleBundle = .{},
+    session: SingleStreamSession = .{},
+
+    fn init(self: *SingleFixture) !void {
+        self.session = try SingleStreamSession.init(self.bundle.storage());
+    }
+};
 
 const TestState = struct {
     session: *TestSession,
@@ -415,8 +447,9 @@ fn trailer_route_handler(
 }
 
 test "http2 server: interleaved streams dispatch router and encode responses" {
-    var session: TestSession = .{};
-    try session.reset();
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
     var state = TestState{ .session = &session };
     state.init_router();
     try state.router.use(&state, middleware);
@@ -480,8 +513,9 @@ test "http2 server: interleaved streams dispatch router and encode responses" {
 }
 
 test "http2 server: invalid QUERY metadata bypasses middleware" {
-    var session: TestSession = .{};
-    try session.reset();
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
     var state = TestState{ .session = &session };
     state.init_router();
     try state.router.use(&state, middleware);
@@ -513,8 +547,9 @@ test "http2 server: invalid QUERY metadata bypasses middleware" {
 }
 
 test "http2 server: trailers preserve HPACK dynamic table synchronization" {
-    var session: TestSession = .{};
-    try session.reset();
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
     var state = TestState{ .session = &session };
     state.init_router();
     try state.router.route_context(.get, "/trail", &state, trailer_route_handler);
@@ -543,8 +578,9 @@ test "http2 server: trailers preserve HPACK dynamic table synchronization" {
 }
 
 test "http2 server: refused END_HEADERS preserves HPACK dynamic table state" {
-    var session: SingleStreamSession = .{};
-    try session.reset();
+    var fixture: SingleFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
     var state = RefusalState{};
 
     const active_headers = [_]u8{ 0x82, 0x86, 0x84 };
@@ -613,8 +649,9 @@ test "http2 server: refused END_HEADERS preserves HPACK dynamic table state" {
 }
 
 test "http2 server: fragmented refused headers reset only after completion" {
-    var session: SingleStreamSession = .{};
-    try session.reset();
+    var fixture: SingleFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
     var state = RefusalState{};
 
     const active_headers = [_]u8{ 0x82, 0x86, 0x84 };
@@ -675,8 +712,9 @@ test "http2 server: fragmented refused headers reset only after completion" {
 }
 
 test "http2 server: skipped-stream headers preserve HPACK before reset" {
-    var session: TestSession = .{};
-    try session.reset();
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
     var state = RefusalState{};
 
     const active_headers = [_]u8{ 0x82, 0x86, 0x84 };
@@ -702,8 +740,9 @@ test "http2 server: skipped-stream headers preserve HPACK before reset" {
 }
 
 test "http2 server: half-closed fragmented headers reset after completion" {
-    var session: TestSession = .{};
-    try session.reset();
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
     var state = RefusalState{};
 
     const active_headers = [_]u8{ 0x82, 0x86, 0x84 };
@@ -754,8 +793,9 @@ test "http2 server: half-closed fragmented headers reset after completion" {
 }
 
 test "http2 server: duplicate Host and authority mismatch are stream errors" {
-    var session: TestSession = .{};
-    try session.reset();
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
     var state = TestState{ .session = &session };
     state.init_router();
 
@@ -806,8 +846,9 @@ test "http2 server: duplicate Host and authority mismatch are stream errors" {
 }
 
 test "http2 server: regular CONNECT receives an ordinary 501 response" {
-    var session: TestSession = .{};
-    try session.reset();
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
     var state = TestState{ .session = &session };
     state.init_router();
 
@@ -841,8 +882,9 @@ test "http2 server: regular CONNECT receives an ordinary 501 response" {
 }
 
 test "http2 server: rejected CONNECT trailers never dispatch a stale stream" {
-    var session: TestSession = .{};
-    try session.reset();
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
     var state = TestState{ .session = &session };
     state.init_router();
 
@@ -878,8 +920,9 @@ test "http2 server: rejected CONNECT trailers never dispatch a stale stream" {
 }
 
 test "http2 server: 205 responses reject a body" {
-    var session: TestSession = .{};
-    try session.reset();
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
     var state = RefusalState{};
 
     const request_headers = [_]u8{ 0x82, 0x86, 0x84 };
@@ -904,8 +947,9 @@ test "http2 server: 205 responses reject a body" {
 }
 
 test "http2 server: pending body resumes through partial stream credit" {
-    var session: TestSession = .{};
-    try session.reset();
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
     var state = FlowState{};
 
     const zero_window = [_]u8{ 0x00, 0x04, 0, 0, 0, 0 };
@@ -947,8 +991,9 @@ test "http2 server: pending body resumes through partial stream credit" {
 }
 
 test "http2 server: connection and stream response credit are independent" {
-    var session: TestSession = .{};
-    try session.reset();
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
     var state = FlowState{};
 
     const request_headers = [_]u8{ 0x82, 0x86, 0x84 };
@@ -980,8 +1025,9 @@ test "http2 server: connection and stream response credit are independent" {
 }
 
 test "http2 server: blocked and failed DATA writes retain offsets and credit" {
-    var session: TestSession = .{};
-    try session.reset();
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
     var state = FlowState{};
 
     const request_headers = [_]u8{ 0x82, 0x86, 0x84 };
@@ -1013,8 +1059,9 @@ test "http2 server: blocked and failed DATA writes retain offsets and credit" {
         try frame_count(state.output[0..state.output_length], .data, 1),
     );
 
-    var failed_session: TestSession = .{};
-    try failed_session.reset();
+    var failed_fixture: SessionFixture = .{};
+    try failed_fixture.init();
+    var failed_session = failed_fixture.session;
     var failed_state = FlowState{};
     try failed_session.receive(input[0..input_length], failed_state.callbacks());
     const failed_index = failed_session.connection.streams.find(1) orelse
@@ -1051,8 +1098,9 @@ test "http2 server: blocked and failed DATA writes retain offsets and credit" {
 }
 
 test "http2 server: small transport queues make bounded DATA progress" {
-    var session: TestSession = .{};
-    try session.reset();
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
     var state = FlowState{};
 
     const request_headers = [_]u8{ 0x82, 0x86, 0x84 };
@@ -1101,8 +1149,9 @@ test "http2 server: small transport queues make bounded DATA progress" {
 }
 
 test "http2 server: oversized response HEADERS fail before state commit" {
-    var session: TestSession = .{};
-    try session.reset();
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
     var state = FlowState{};
 
     const request_headers = [_]u8{ 0x82, 0x86, 0x84 };
@@ -1134,8 +1183,9 @@ test "http2 server: oversized response HEADERS fail before state commit" {
 }
 
 test "http2 server: streaming DATA retry precedes END_STREAM" {
-    var session: TestSession = .{};
-    try session.reset();
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
     var state = FlowState{};
 
     const request_headers = [_]u8{ 0x82, 0x86, 0x84 };
@@ -1195,8 +1245,9 @@ test "http2 server: streaming DATA retry precedes END_STREAM" {
 }
 
 test "http2 server: first peer frame must be non-ack settings" {
-    var session: TestSession = .{};
-    try session.reset();
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
     var state = TestState{ .session = &session };
     state.init_router();
     var input: [64]u8 = undefined;
@@ -1232,8 +1283,9 @@ test "http2 server: first peer frame must be non-ack settings" {
 }
 
 test "http2 server: deferred response token retains one stream only" {
-    var session: TestSession = .{};
-    try session.reset();
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
     var state = TestState{ .session = &session };
     state.init_router();
     try state.router.route_async_context(.get, "/async", &state, async_route_handler);
@@ -1298,8 +1350,9 @@ test "http2 server: deferred response token retains one stream only" {
 }
 
 test "http2 server: peer reset expires a retained async response" {
-    var session: TestSession = .{};
-    try session.reset();
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
     var state = TestState{ .session = &session };
     state.init_router();
     try state.router.route_async_context(.get, "/async", &state, async_route_handler);
@@ -1327,8 +1380,9 @@ test "http2 server: peer reset expires a retained async response" {
 }
 
 test "http2 server: content length is unique numeric and exact" {
-    var session: TestSession = .{};
-    try session.reset();
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
     var state = TestState{ .session = &session };
     state.init_router();
 
@@ -1364,8 +1418,9 @@ test "http2 server: content length is unique numeric and exact" {
 }
 
 test "http2 server: configured body limit rejects oversized content length" {
-    var session: TestSession = .{};
-    try session.reset();
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
     session.request_body_limit = 4;
     var state = TestState{ .session = &session };
     state.init_router();
@@ -1387,8 +1442,9 @@ test "http2 server: configured body limit rejects oversized content length" {
 }
 
 test "http2 server: configured body limit bounds streaming bodies" {
-    var session: TestSession = .{};
-    try session.reset();
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
     session.request_body_limit = 3;
     var state = TestState{ .session = &session };
     state.init_router();
@@ -1412,8 +1468,9 @@ test "http2 server: configured body limit bounds streaming bodies" {
 }
 
 test "http2 server: extended CONNECT with :protocol websocket dispatches to handler" {
-    var session: TestSession = .{};
-    try session.reset();
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
     var state = TestState{ .session = &session };
     state.init_router();
     try state.router.route_context(.connect, "/ws", &state, route_handler);
@@ -1442,8 +1499,9 @@ test "http2 server: extended CONNECT with :protocol websocket dispatches to hand
 }
 
 test "http2 server: extended CONNECT data requires an accepted tunnel" {
-    var session: TestSession = .{};
-    try session.reset();
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
     var state = RefusalState{};
 
     const connect_ws_headers = [_]u8{
@@ -1573,7 +1631,8 @@ test "http2: producer that fits the write ring completes synchronously" {
 
     var ring: [1024]u8 = undefined;
     var conn = producer_connection(&ring, &router);
-    try conn.h2.reset();
+    var h2_bundle = support.tcp.Http2Session.Bundle(support.tcp.Http2Session.default_capacities){};
+    conn.h2 = try support.tcp.Http2Session.init(h2_bundle.storage());
 
     const request_headers = producer_request_headers();
     var input: [128]u8 = undefined;
@@ -1621,7 +1680,8 @@ test "http2: producer resumes when the write ring drains" {
 
     var ring: [1024]u8 = undefined;
     var conn = producer_connection(&ring, &router);
-    try conn.h2.reset();
+    var h2_bundle = support.tcp.Http2Session.Bundle(support.tcp.Http2Session.default_capacities){};
+    conn.h2 = try support.tcp.Http2Session.init(h2_bundle.storage());
 
     const request_headers = producer_request_headers();
     var input: [128]u8 = undefined;
@@ -1664,7 +1724,8 @@ test "http2: producer failure resets the stream and clears the slot" {
 
     var ring: [1024]u8 = undefined;
     var conn = producer_connection(&ring, &router);
-    try conn.h2.reset();
+    var h2_bundle = support.tcp.Http2Session.Bundle(support.tcp.Http2Session.default_capacities){};
+    conn.h2 = try support.tcp.Http2Session.init(h2_bundle.storage());
 
     const request_headers = producer_request_headers();
     var input: [128]u8 = undefined;
@@ -1693,7 +1754,8 @@ test "http2: pending producer keeps the dispatch from force-ending" {
 
     var ring: [1024]u8 = undefined;
     var conn = producer_connection(&ring, &router);
-    try conn.h2.reset();
+    var h2_bundle = support.tcp.Http2Session.Bundle(support.tcp.Http2Session.default_capacities){};
+    conn.h2 = try support.tcp.Http2Session.init(h2_bundle.storage());
 
     const request_headers = producer_request_headers();
     var input: [128]u8 = undefined;
@@ -1731,7 +1793,8 @@ test "http2: pending producer keeps the dispatch from force-ending" {
 
 test "http2: reset_protocol clears armed producer slots" {
     var conn = support.tcp.TcpConnection{ .socket = undefined };
-    try conn.h2.reset();
+    var h2_bundle = support.tcp.Http2Session.Bundle(support.tcp.Http2Session.default_capacities){};
+    conn.h2 = try support.tcp.Http2Session.init(h2_bundle.storage());
     conn.h2_stream_producers[0] = StreamProducerState.produce;
     conn.h2_stream_producer_close[0] = true;
 
@@ -1782,7 +1845,8 @@ test "http2: producer completes across flow-control window updates" {
 
     var ring: [128 * 1024]u8 = undefined;
     var conn = producer_connection(&ring, &router);
-    try conn.h2.reset();
+    var h2_bundle = support.tcp.Http2Session.Bundle(support.tcp.Http2Session.default_capacities){};
+    conn.h2 = try support.tcp.Http2Session.init(h2_bundle.storage());
 
     var input: [128]u8 = undefined;
     try prime_stream_connection(&conn, &input);
@@ -1835,7 +1899,8 @@ test "http2: write_chunk maps window exhaustion to WouldBlock" {
 
     var ring: [128 * 1024]u8 = undefined;
     var conn = producer_connection(&ring, &router);
-    try conn.h2.reset();
+    var h2_bundle = support.tcp.Http2Session.Bundle(support.tcp.Http2Session.default_capacities){};
+    conn.h2 = try support.tcp.Http2Session.init(h2_bundle.storage());
 
     var input: [128]u8 = undefined;
     try prime_stream_connection(&conn, &input);
@@ -1867,7 +1932,8 @@ test "http2: stalled producer runs once per pump" {
 
     var ring: [1024]u8 = undefined;
     var conn = producer_connection(&ring, &router);
-    try conn.h2.reset();
+    var h2_bundle = support.tcp.Http2Session.Bundle(support.tcp.Http2Session.default_capacities){};
+    conn.h2 = try support.tcp.Http2Session.init(h2_bundle.storage());
 
     var input: [128]u8 = undefined;
     try prime_stream_connection(&conn, &input);
@@ -1890,4 +1956,148 @@ test "http2: stalled producer runs once per pump" {
         @as(usize, 0),
         try reset_count(ring[0..conn.write_len], 1, .internal_error),
     );
+}
+
+test "http2: configured response header capacity accepts wide headers" {
+    const WideSession = http2_server.server_session(2);
+    const wide_capacities = WideSession.Capacities{
+        .response_header_size = 8 * 1024,
+        .response_header_count = 64,
+    };
+    var wide_bundle = WideSession.Bundle(wide_capacities){};
+    var session = try WideSession.init(wide_bundle.storage());
+
+    const WideState = struct {
+        session: *WideSession,
+        output: [32 * 1024]u8 = undefined,
+        output_length: usize = 0,
+        dispatch_count: usize = 0,
+
+        fn callbacks(self: *@This()) http2_server.Callbacks {
+            return .{ .context = self, .write_fn = write, .request_fn = dispatch };
+        }
+
+        fn write(context: *anyopaque, parts: []const []const u8) !void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            for (parts) |part| {
+                if (part.len > self.output.len - self.output_length) return error.OutputTooSmall;
+                @memcpy(self.output[self.output_length .. self.output_length + part.len], part);
+                self.output_length += part.len;
+            }
+        }
+
+        fn dispatch(context: *anyopaque, _: *Request, stream_id: u32) !void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            self.dispatch_count += 1;
+            var headers: [8 * 1024]u8 = undefined;
+            var length: usize = 0;
+            for (0..60) |index| {
+                const line = try std.fmt.bufPrint(
+                    headers[length..],
+                    "X-Wide-{d:0>2}: " ++ ("v" ** 100) ++ "\r\n",
+                    .{index},
+                );
+                length += line.len;
+            }
+            try self.session.send_response(
+                stream_id,
+                "200 OK",
+                headers[0..length],
+                "",
+                self.callbacks(),
+            );
+        }
+    };
+
+    var state = WideState{ .session = &session };
+    const request_headers = [_]u8{ 0x82, 0x86, 0x84 };
+    var input: [80]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x5, 1, &request_headers);
+    try session.receive(input[0..input_length], state.callbacks());
+
+    try std.testing.expectEqual(@as(usize, 1), state.dispatch_count);
+    try std.testing.expect(!session.is_closed());
+    try std.testing.expect(session.connection.streams.find(1) == null);
+
+    var offset: usize = 0;
+    var saw_wide_headers = false;
+    while (offset < state.output_length) {
+        const header = try http2.FrameHeader.parse(state.output[offset..][0..9]);
+        if (header.frame_type == @intFromEnum(http2.FrameType.headers) and
+            header.stream_id == 1)
+        {
+            try std.testing.expect(header.payload_length > 4 * 1024);
+            saw_wide_headers = true;
+        }
+        offset += 9 + header.payload_length;
+    }
+    try std.testing.expect(saw_wide_headers);
+}
+
+test "http2: decoded request headers spill into extras" {
+    const SpillSession = http2_server.server_session(2);
+    const spill_capacities = SpillSession.Capacities{ .decoded_header_count = 96 };
+    var spill_bundle = SpillSession.Bundle(spill_capacities){};
+    var session = try SpillSession.init(spill_bundle.storage());
+
+    const SpillState = struct {
+        dispatch_count: usize = 0,
+        inline_count: usize = 0,
+        extra_count: usize = 0,
+        first: ?[]const u8 = null,
+        last: ?[]const u8 = null,
+        entries: usize = 0,
+
+        fn callbacks(self: *@This()) http2_server.Callbacks {
+            return .{ .context = self, .write_fn = write, .request_fn = dispatch };
+        }
+
+        fn write(_: *anyopaque, _: []const []const u8) !void {}
+
+        fn dispatch(context: *anyopaque, request: *Request, _: u32) !void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            self.dispatch_count += 1;
+            self.inline_count = request.header_count;
+            self.extra_count = request.extra_header_count;
+            self.first = request.get_header("x-spill-00");
+            self.last = request.get_header("x-spill-69");
+            var iterator = request.header_entries();
+            while (iterator.next() != null) self.entries += 1;
+        }
+    };
+
+    var state = SpillState{};
+    var block: [1024]u8 = undefined;
+    block[0] = 0x82;
+    block[1] = 0x86;
+    block[2] = 0x84;
+    var block_length: usize = 3;
+    var name_buffer: [16]u8 = undefined;
+    for (0..70) |index| {
+        const name = try std.fmt.bufPrint(&name_buffer, "x-spill-{d:0>2}", .{index});
+        block[block_length] = 0x00;
+        block[block_length + 1] = @intCast(name.len);
+        @memcpy(block[block_length + 2 ..][0..name.len], name);
+        block[block_length + 2 + name.len] = 0x01;
+        block[block_length + 2 + name.len + 1] = 'v';
+        block_length += 2 + name.len + 2;
+    }
+
+    var input: [1280]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x5, 1, block[0..block_length]);
+    try session.receive(input[0..input_length], state.callbacks());
+
+    try std.testing.expect(!session.is_closed());
+    try std.testing.expectEqual(@as(usize, 1), state.dispatch_count);
+    try std.testing.expectEqual(@as(usize, 64), state.inline_count);
+    try std.testing.expectEqual(@as(usize, 6), state.extra_count);
+    try std.testing.expectEqualStrings("v", state.first.?);
+    try std.testing.expectEqualStrings("v", state.last.?);
+    try std.testing.expectEqual(@as(usize, 70), state.entries);
 }

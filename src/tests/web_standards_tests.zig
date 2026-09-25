@@ -136,10 +136,11 @@ test "web standards: request helpers preserve borrowed fallback fields" {
     request.header_names[0] = "Connection";
     request.header_values[0] = "keep-alive";
     request.header_count = 1;
-    const extra_names = [_][]const u8{ "X-Extra", "Connection" };
-    const extra_values = [_][]const u8{ "value", "upgrade" };
+    var extra_names = [_][]const u8{ "X-Extra", "Connection" };
+    var extra_values = [_][]const u8{ "value", "upgrade" };
     request.extra_header_names = &extra_names;
     request.extra_header_values = &extra_values;
+    request.extra_header_count = extra_names.len;
     var param_names = [_][]const u8{"overflow"};
     var param_values = [_][]const u8{"capture"};
     request.extra_param_names = &param_names;
@@ -198,6 +199,90 @@ test "request: add_param spills into capacity extras and fails closed" {
     try std.testing.expectEqualStrings("v20", request.get_param("p20").?);
 }
 
+test "request: add_header spills into capacity extras and fails closed" {
+    var request = Request{};
+    var names: [4][]const u8 = undefined;
+    var values: [4][]const u8 = undefined;
+    request.extra_header_names = &names;
+    request.extra_header_values = &values;
+
+    var name_storage: [70 * 16]u8 = undefined;
+    var value_storage: [70 * 16]u8 = undefined;
+    for (0..68) |index| {
+        const name = try std.fmt.bufPrint(
+            name_storage[index * 16 ..][0..16],
+            "x-extra-{d:0>3}",
+            .{index},
+        );
+        const value = try std.fmt.bufPrint(
+            value_storage[index * 16 ..][0..16],
+            "value-{d:0>3}",
+            .{index},
+        );
+        try request.add_header(name, value);
+    }
+    try std.testing.expectEqual(@as(usize, 64), request.header_count);
+    try std.testing.expectEqual(@as(usize, 4), request.extra_header_count);
+    try std.testing.expectEqualStrings("value-000", request.get_header("x-extra-000").?);
+    try std.testing.expectEqualStrings("value-063", request.get_header("x-extra-063").?);
+    try std.testing.expectEqualStrings("value-067", request.get_header("x-extra-067").?);
+    try std.testing.expectError(
+        error.HeaderCapacityReached,
+        request.add_header("x-extra-068", "value-068"),
+    );
+
+    var owned = try request.clone(std.testing.allocator);
+    defer owned.deinit();
+    try std.testing.expectEqual(@as(usize, 64), owned.request.header_count);
+    try std.testing.expectEqual(@as(usize, 4), owned.request.extra_header_count);
+    try std.testing.expectEqualStrings("value-067", owned.request.get_header("x-extra-067").?);
+}
+
+test "request: spilled headers resolve through every view" {
+    var request = Request{};
+    var names: [8][]const u8 = undefined;
+    var values: [8][]const u8 = undefined;
+    request.extra_header_names = &names;
+    request.extra_header_values = &values;
+
+    var name_storage: [70 * 16]u8 = undefined;
+    var value_storage: [70 * 16]u8 = undefined;
+    for (0..70) |index| {
+        const name = try std.fmt.bufPrint(
+            name_storage[index * 16 ..][0..16],
+            "x-spill-{d:0>2}",
+            .{index},
+        );
+        const value = try std.fmt.bufPrint(
+            value_storage[index * 16 ..][0..16],
+            "v{d}",
+            .{index},
+        );
+        try request.add_header(name, value);
+    }
+    try std.testing.expectEqual(@as(usize, 64), request.header_count);
+    try std.testing.expectEqual(@as(usize, 6), request.extra_header_count);
+    try std.testing.expectEqualStrings("v69", request.get_header("x-spill-69").?);
+    try std.testing.expectEqual(@as(usize, 1), request.count_headers("x-spill-69"));
+    try std.testing.expect(request.header_has_token("x-spill-69", "v69"));
+
+    var entries = request.header_entries();
+    var total: usize = 0;
+    while (entries.next()) |entry| {
+        if (std.mem.eql(u8, entry.name, "x-spill-69")) {
+            try std.testing.expectEqualStrings("v69", entry.value);
+        }
+        total += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 70), total);
+
+    var owned = try request.clone(std.testing.allocator);
+    defer owned.deinit();
+    try std.testing.expectEqual(@as(usize, 70), owned.header_names.len);
+    try std.testing.expectEqual(@as(usize, 6), owned.request.extra_header_count);
+    try std.testing.expectEqual(@as(usize, 6), owned.request.extra_header_names.?.len);
+    try std.testing.expectEqualStrings("v69", owned.request.get_header("x-spill-69").?);
+}
 test "web standards: pipe rejects an invalid callback byte count" {
     const InvalidReader = struct {
         cancelled: bool = false,
