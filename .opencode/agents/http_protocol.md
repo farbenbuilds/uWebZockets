@@ -59,8 +59,10 @@ input, spec grounding, proof, root-cause fixes, and measured hot paths.
   dynamic table, integer canonicalization, pseudo-header ordering/dedup,
   `:authority`/`host` agreement, connection-specific field rejection.
 - `src/http2/server.zig`: per-stream request/response/async tokens,
-  `server_session(max_streams, max_header_block_size, request_storage_capacity,
-  body_capacity)`, HPACK decode for discarded streams, `WouldBlock` retry.
+  `server_session(max_streams)` with `Capacities`/`Storage` carved from the
+  startup slab (`ServerConfig.h2_capacities()`), HPACK decode for discarded
+  streams, request-header overflow through `Request.add_header`, `WouldBlock`
+  retry.
 - Tests: `src/tests/http_tests.zig`, `http2_tests.zig`,
   `http2_hpack_tests.zig`, `http2_server_tests.zig`, `framework_tests.zig`,
   `web_standards_tests.zig`, and the parse corpora in `src/tests/fuzz_main.zig`.

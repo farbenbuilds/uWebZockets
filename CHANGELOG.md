@@ -3,6 +3,54 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.4.5] - 2026-09-25
+
+This release completes the capacity redesign: the last fixed per-stream HTTP/2
+and HTTP/3 protocol metadata now follows `ServerConfig`, and request-header
+overflow is unified across every transport. Public application APIs are
+unchanged; the internal storage constructors and the advanced
+`configured_app_with_route_params` helper take capacities explicitly.
+
+### Added
+
+- Request header overflow: `Request.add_header` spills beyond the inline 64
+  into caller-provided capacity slices (`extra_header_count`), used by the
+  HTTP/1.1 parser, the HTTP/2 server session, and HTTP/3 header sets. All
+  transports honor `max_header_size` and `max_header_count`.
+- HTTP/2 per-stream capacities: `ServerConfig.max_h2_header_block_size`,
+  `max_h2_body_size`, `max_h2_response_header_size`, and
+  `max_h2_response_header_count` (builder `with_max_h2_*`) size a slab-carved
+  session (`Capacities`/`Storage`/`carve_storage`/`Bundle`), so response
+  headers, decoded header lists, and request/response bodies are no longer
+  fixed at 4 KiB, 32 fields, or 16 KiB.
+- HTTP/3 per-stream capacities: `ServerConfig.max_h3_body_size`,
+  `max_h3_response_header_size`, and `max_h3_response_header_count` (builder
+  `with_max_h3_*`) parameterize `quic_engine`/`stream_with` through
+  `stream.Capacities`, and engine-provided header extras spill request headers
+  beyond the inline 64.
+
+### Changed
+
+- `http2_server.server_session(max_streams)` replaces the four-argument
+  constructor; capacities move to `Capacities`/`Storage` carved from the
+  startup slab through `ServerConfig.h2_capacities()`, and per-connection
+  session storage lives in a new slab region.
+- `quic_engine` takes `stream.Capacities` and `stream_with` takes capacities;
+  `QuicStream` and `default_capacities` preserve the previous defaults.
+- `configured_app_with_route_params` takes the HTTP/3 capacities as an
+  additional compile-time parameter.
+- Default capacities match the previous constants, but HTTP/2 session storage
+  moved from inline `TcpConnection` arrays into the single startup allocation:
+  the default slab grows by the per-connection session region while the pool
+  stride shrinks by roughly the same amount per connection.
+
+### Security
+
+- Request-header limits remain enforced at the configured bounds across
+  HTTP/1.1, HTTP/2, and HTTP/3. Every new capacity is validated
+  (`InvalidHttp2Capacity`/`InvalidHttp3Capacity`) with overflow-checked slab
+  and engine math.
+
 ## [1.4.0] - 2026-09-25
 
 This release hardens the application helper layer. Every addition is additive,

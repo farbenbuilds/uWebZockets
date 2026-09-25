@@ -114,7 +114,11 @@ extend the HTTP/1 request limits; fields beyond the inline 64 get per-connection
 slab storage. `with_max_route_nodes`, `with_max_pattern_routes`,
 `with_max_middleware`, `with_max_route_path_size`,
 `with_max_route_registry_size`, and `with_max_route_params` size the
-slab-carved router and its capture spill. Oversized input gets a structured
+slab-carved router and its capture spill. HTTP/2 metadata is sized by
+`with_max_h2_header_block_size`, `with_max_h2_body_size`,
+`with_max_h2_response_header_size`, and `with_max_h2_response_header_count`;
+HTTP/3 uses `with_max_h3_body_size`, `with_max_h3_response_header_size`, and
+`with_max_h3_response_header_count`. Oversized input gets a structured
 rejection instead of a dropped connection:
 
 ```json
@@ -161,7 +165,7 @@ request path.
 ## Terminal development log
 
 `with_dev_log(true)` prints the `µWEBZOCKETS` wordmark and a Vite-style ready
-summary before the first accepting listener: `µWebZockets v1.4.0  ready in
+summary before the first accepting listener: `µWebZockets v1.4.5  ready in
 0.6 ms` followed by the `→ Local:` line; the elapsed time scales
 through nanoseconds, microseconds, milliseconds, and seconds. The wordmark
 collapses to a one-line `µWebZockets` mark when the terminal is narrower than
