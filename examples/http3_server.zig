@@ -10,11 +10,7 @@ fn index(_: *uz.Request, response: *uz.Response) void {
 }
 
 pub fn main(init: std.process.Init) !void {
-    var server = try uz.App(128).init_http3(
-        init.io,
-        "certs/cert.pem",
-        "certs/key.pem",
-    );
+    var server = try uz.App(128).init_http3_ephemeral(init.io);
     defer server.deinit();
 
     _ = try server.get("/", index);

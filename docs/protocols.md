@@ -127,7 +127,10 @@ disable idle sweeping.
 
 `init_https` loads PEM certificate and private-key paths. The server negotiates
 TLS 1.3 and prefers ALPN `h2`, then `http/1.1`. Plaintext listeners also detect
-the HTTP/2 prior-knowledge preface; h2c Upgrade is not required.
+the HTTP/2 prior-knowledge preface; h2c Upgrade is not required. For local
+development, `init_https_ephemeral` skips the files and generates a self-signed
+P-256 certificate in memory at startup; [tls.md](tls.md) covers both credential
+paths.
 
 The HTTPS context enables TLS 1.3 0-RTT (early data). Early data is replayable
 by a network attacker, so only safe methods (`GET`, `HEAD`, `OPTIONS`) are
@@ -158,7 +161,8 @@ connection permits one active tunnel and additional tunnels receive
 ## HTTP/3
 
 `init_http3` creates isolated TLS 1.3 contexts: TCP advertises `h2` and
-`http/1.1`, while QUIC advertises only `h3`. Register the same HTTP handlers,
+`http/1.1`, while QUIC advertises only `h3`. `init_http3_ephemeral` performs
+the same setup with an in-memory certificate. Register the same HTTP handlers,
 then bind the QUIC endpoint with `listen_udp`. The adapter decodes HTTP/3
 pseudo-headers directly into the existing `Request` shape and writes structured
 QPACK response headers without converting through HTTP/1.1 text. The `App`

@@ -12,6 +12,7 @@ describes the layout, the startup slab, and the capacity contract.
 | `build` / `init` | One contiguous application slab via the caller allocator |
 | Route registration | Fixed router storage only; lazily allocated RFC 7692 scratch is freed in `deinit` |
 | `init_tls` | BoringSSL-internal state, bounded per connection |
+| `init_https_ephemeral` / `init_http3_ephemeral` | One-time P-256 key and certificate generation; every generated object is released before startup |
 | `listen_udp` | QUIC engine pools created before the listener succeeds |
 | Request path | None |
 | `deinit` | Every slab released once through its owner |

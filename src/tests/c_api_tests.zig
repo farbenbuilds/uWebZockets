@@ -42,6 +42,8 @@ const CMiddleware = *const fn (
 ) callconv(.c) c_int;
 
 extern fn uwz_app_create(?*?*anyopaque) callconv(.c) c_int;
+extern fn uwz_app_create_tls_ephemeral(?*?*anyopaque) callconv(.c) c_int;
+extern fn uwz_app_create_http3_ephemeral(?*?*anyopaque) callconv(.c) c_int;
 extern fn uwz_app_shutdown(?*anyopaque) callconv(.c) c_int;
 extern fn uwz_app_destroy(?*?*anyopaque) callconv(.c) c_int;
 extern fn uwz_app_listen(
@@ -217,6 +219,18 @@ test "C async QUERY registration and middleware use fixed capacities" {
     try std.testing.expectEqual(ok, uwz_app_shutdown(app));
     try std.testing.expectEqual(ok, uwz_app_destroy(&app));
     try std.testing.expect(app == null);
+}
+
+test "C ephemeral TLS applications create and destroy" {
+    var app_handle: ?*anyopaque = null;
+    try std.testing.expectEqual(ok, uwz_app_create_tls_ephemeral(&app_handle));
+    defer _ = uwz_app_destroy(&app_handle);
+    try std.testing.expect(app_handle != null);
+
+    var http3_handle: ?*anyopaque = null;
+    try std.testing.expectEqual(ok, uwz_app_create_http3_ephemeral(&http3_handle));
+    defer _ = uwz_app_destroy(&http3_handle);
+    try std.testing.expect(http3_handle != null);
 }
 
 test "C errors classify invalid listener and pubsub input" {

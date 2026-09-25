@@ -25,6 +25,8 @@ pub const uwz_error_name = errors.uwz_error_name;
 pub const uwz_app_create = app.uwz_app_create;
 pub const uwz_app_create_tls = app.uwz_app_create_tls;
 pub const uwz_app_create_http3 = app.uwz_app_create_http3;
+pub const uwz_app_create_tls_ephemeral = app.uwz_app_create_tls_ephemeral;
+pub const uwz_app_create_http3_ephemeral = app.uwz_app_create_http3_ephemeral;
 pub const uwz_app_shutdown = app.uwz_app_shutdown;
 pub const uwz_app_destroy = app.uwz_app_destroy;
 pub const uwz_app_route = app.uwz_app_route;
@@ -77,6 +79,8 @@ comptime {
     _ = uwz_app_create;
     _ = uwz_app_create_tls;
     _ = uwz_app_create_http3;
+    _ = uwz_app_create_tls_ephemeral;
+    _ = uwz_app_create_http3_ephemeral;
     _ = uwz_app_shutdown;
     _ = uwz_app_destroy;
     _ = uwz_app_route;

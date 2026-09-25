@@ -405,6 +405,9 @@ pub fn configured_app_with_route_params(
         }
 
         /// Initializes an HTTPS application from NUL-terminated certificate paths.
+        ///
+        /// Use `init_https_ephemeral` for local development when no
+        /// certificate files exist.
         pub fn init_https(io: std.Io, cert_path: [:0]const u8, key_path: [:0]const u8) !Self {
             var instance = try Self.init(io);
             errdefer instance.deinit();
@@ -413,11 +416,37 @@ pub fn configured_app_with_route_params(
         }
 
         /// Initializes isolated TCP/TLS and HTTP/3/QUIC server contexts.
+        ///
+        /// Use `init_http3_ephemeral` for local development when no
+        /// certificate files exist.
         pub fn init_http3(io: std.Io, cert_path: [:0]const u8, key_path: [:0]const u8) !Self {
             var instance = try Self.init(io);
             errdefer instance.deinit();
             instance.tls_ctx = try TlsContext.init(cert_path, key_path);
             instance.quic_tls_ctx = try TlsContext.init_http3(cert_path, key_path);
+            instance.http3_enabled = true;
+            return instance;
+        }
+
+        /// Initializes an HTTPS application with an in-memory self-signed
+        /// certificate for `localhost`, `127.0.0.1`, and `::1`.
+        ///
+        /// Use this for local development and tests when no certificate files
+        /// exist; production deployments must pass real paths to `init_https`.
+        pub fn init_https_ephemeral(io: std.Io) !Self {
+            var instance = try Self.init(io);
+            errdefer instance.deinit();
+            instance.tls_ctx = try TlsContext.init_ephemeral(.{});
+            return instance;
+        }
+
+        /// Initializes a dual HTTPS and HTTP/3 application with in-memory
+        /// self-signed certificates for `localhost`, `127.0.0.1`, and `::1`.
+        pub fn init_http3_ephemeral(io: std.Io) !Self {
+            var instance = try Self.init(io);
+            errdefer instance.deinit();
+            instance.tls_ctx = try TlsContext.init_ephemeral(.{});
+            instance.quic_tls_ctx = try TlsContext.init_http3_ephemeral(.{});
             instance.http3_enabled = true;
             return instance;
         }

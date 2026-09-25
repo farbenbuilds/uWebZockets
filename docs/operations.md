@@ -237,7 +237,10 @@ both `zig build install` and `zig build lib` install it as
 
 - Opaque handles, `uwz_slice` byte views, and a versioned `uwz_error` mapping.
 - `uwz_app_create`, `uwz_app_shutdown`, and `uwz_app_destroy` make ownership
-  explicit; destroy nulls the caller's handle.
+  explicit; destroy nulls the caller's handle. `uwz_app_create_tls_ephemeral`
+  and `uwz_app_create_http3_ephemeral` create development applications from an
+  in-memory self-signed certificate; [tls.md](tls.md) explains when to use
+  them and when to pass PEM paths instead.
 - Shutdown requested from a callback is drained by the active `uwz_app_run`
   call. Destroying from a callback returns `UWZ_ERROR_INVALID_STATE` and leaves
   the handle valid for destruction after the run returns.

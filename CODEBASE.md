@@ -2,7 +2,7 @@
 
 ## Scope
 
-µWebZockets 1.4.5 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
+µWebZockets 1.5.0 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
 server library with bounded HPACK protocol storage. It combines an
 event-driven cross-platform transport (POSIX and Windows IOCP), fixed-capacity
 protocol state, a data-oriented router, and C libraries for TLS, compression, and QUIC.
@@ -74,7 +74,7 @@ uWebZockets/
 │       ├── wasm.zig           # freestanding and WASI edge graph
 │       └── ebpf.zig           # XDP redirect and latency histogram objects
 ├── flake.nix                 # native GNU/musl and macOS packages
-├── docs/                     # architecture, memory model, protocols, operations
+├── docs/                     # architecture, TLS, memory model, protocols, operations
 ├── include/uWebZockets.h     # versioned C ABI declarations
 ├── src/
 │   ├── root.zig              # supported public API
@@ -84,7 +84,7 @@ uWebZockets/
 │   │   ├── affinity.zig      # physical-core selection and thread pinning
 │   │   ├── ktls.zig          # Linux kTLS and zero-copy file transfer
 │   │   └── udp.zig           # completion-owned UDP/QUIC transport
-│   ├── crypto/               # bounded BoringSSL TLS and Web Crypto
+│   ├── crypto/               # bounded BoringSSL TLS, ephemeral certificates, Web Crypto
 │   ├── edge/                 # WinterCG-compatible edge surface
 │   ├── ffi/                  # bounded generation-checked shared memory
 │   ├── http/                 # strict HTTP/1.1 parser, response writer, and request helpers
@@ -101,7 +101,7 @@ uWebZockets/
 ├── tests/
 │   ├── autobahn/             # RFC 6455 target, Deno runner, and config
 │   └── h1spec/               # HTTP/1.1 compliance target
-├── examples/                 # HTTP, WebSocket, JSON-RPC, builder, and cluster examples
+├── examples/                 # HTTP, HTTPS, WebSocket, JSON-RPC, builder, and cluster examples
 └── vendor/                   # h1spec submodule and the lsquic source overlay
 ```
 

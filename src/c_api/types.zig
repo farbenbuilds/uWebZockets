@@ -132,6 +132,8 @@ pub const CreateMode = enum {
     plain,
     tls,
     http3,
+    tls_ephemeral,
+    http3_ephemeral,
 };
 
 /// C-compatible WebSocket callback and limit configuration.

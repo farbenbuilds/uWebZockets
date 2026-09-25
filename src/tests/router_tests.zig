@@ -279,6 +279,13 @@ test "router: application route capacities follow the configuration" {
     try std.testing.expectError(error.InvalidRoutePath, limited.get(&over, dummy_handler));
 }
 
+test "router: ephemeral TLS applications size their contexts" {
+    const TestApp = app.app(1);
+    var server = try TestApp.init_https_ephemeral(std.testing.io);
+    defer server.deinit();
+    try std.testing.expect(server.tls_ctx != null);
+}
+
 test "router: callback shutdown is drained by the active outer run" {
     const TestApp = app.configured_app_with_timeout(1, 1024, 4096, 0);
     const Probe = struct {

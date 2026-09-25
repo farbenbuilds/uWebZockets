@@ -72,6 +72,16 @@ pub export fn uwz_app_create_http3(
     return create_app(.http3, certificate_path, private_key_path, out_app);
 }
 
+/// Creates a TLS application with an in-memory self-signed localhost certificate.
+pub export fn uwz_app_create_tls_ephemeral(out_app: ?*?*anyopaque) c_int {
+    return create_app(.tls_ephemeral, null, null, out_app);
+}
+
+/// Creates a dual HTTP/1.1 and HTTP/3 application with in-memory self-signed localhost certificates.
+pub export fn uwz_app_create_http3_ephemeral(out_app: ?*?*anyopaque) c_int {
+    return create_app(.http3_ephemeral, null, null, out_app);
+}
+
 /// Stops new work and drains every completion that owns application storage.
 pub export fn uwz_app_shutdown(app_pointer: ?*anyopaque) c_int {
     const app = cast_app(app_pointer) orelse return invalid_argument;
@@ -298,6 +308,8 @@ fn create_app(
 
     app.app = switch (mode) {
         .plain => App.init(app.threaded.io()),
+        .tls_ephemeral => App.init_https_ephemeral(app.threaded.io()),
+        .http3_ephemeral => App.init_http3_ephemeral(app.threaded.io()),
         .tls, .http3 => init: {
             if (certificate_path == null or private_key_path == null) {
                 app.threaded.deinit();
