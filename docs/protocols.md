@@ -71,6 +71,34 @@ with typed parse issues, canonical status lines, typed JSON error documents,
 `Accept` negotiation, ETag and conditional-GET helpers, CORS and
 security-header middleware, and SSE.
 
+### Authentication and rate limiting
+
+`Auth` validates the unique `Authorization` field against caller-owned Basic
+and Bearer credential lists; it decodes Basic into a bounded stack buffer,
+compares in constant time, and answers missing, duplicate, or invalid
+credentials with `401 Unauthorized` plus a challenge listing only the
+configured schemes. `RateLimit` charges caller-owned token buckets keyed by a
+custom function, an FNV-1a hash of a configured header, or a constant, refills
+continuously from the monotonic clock, and answers an empty bucket with
+`429 Too Many Requests` and `Retry-After`. Both are allocation-free and one
+bucket table belongs to one event loop.
+
+```zig
+var credentials = uz.middleware.auth(.{
+    .realm = "ops",
+    .basic = &.{.{ .username = "admin", .password = "secret" }},
+});
+_ = try app.use(&credentials, uz.middleware.Auth.handler);
+
+var buckets: [256]uz.middleware.RateLimitBucket = @splat(.{});
+var limiter = uz.middleware.rate_limit(io, .{
+    .rate_per_second = 20,
+    .burst = 40,
+    .key_header = "x-api-key",
+}, &buckets);
+_ = try app.use(&limiter, uz.middleware.RateLimit.handler);
+```
+
 ## JSON-RPC
 
 `json_rpc.Service` is a type-safe, fixed-capacity JSON-RPC 2.0 registry. Mount

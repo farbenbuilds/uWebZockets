@@ -398,9 +398,9 @@ The Zig surface exported from `src/root.zig` includes `App`, `ConfiguredApp`,
 `ConfiguredAppWithTimeout`, `Request`, `Response`, `WebSocket`, `WsBehavior`,
 `Opcode`, TLS configuration, chunked HTTP helpers, zero-allocation query and
 form parsing, canonical status and typed JSON error helpers, `Accept`
-negotiation, ETag helpers, comptime schema validation, zero-copy cookie
-parsing and signing helpers, and
-WebSocket masking. The
+negotiation, ETag helpers, CORS, security-header, authentication, and
+rate-limit middleware, comptime schema validation, zero-copy cookie parsing
+and signing helpers, and WebSocket masking. The
 surface also includes `WsCompression`, fixed-capacity `json_rpc`,
 completion-driven `udp`, bounded
 `http2`, `http2_hpack`, `http3_extensions`, `webtransport`, `http3_available`,

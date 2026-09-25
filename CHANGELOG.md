@@ -7,7 +7,17 @@ uses Semantic Versioning.
 
 ### Added
 
--
+- `middleware.Auth` and `middleware.auth`: Basic and Bearer request
+  authentication over caller-owned credential lists with a bounded stack
+  decode, constant-time comparison, duplicate `Authorization` rejection, and
+  `WWW-Authenticate` challenges listing only the configured schemes.
+- `middleware.RateLimit` and `middleware.rate_limit`: token-bucket rate
+  limiting over caller-owned buckets with custom, FNV-1a hashed-header, or
+  constant keys, continuous monotonic refill, oldest-bucket eviction, and
+  `Retry-After` on `429`.
+- `middleware.rate_limit_step`, `middleware.RateLimitDecision`, and
+  `middleware.fnv1a_64`: the pure token math and stable key hash behind the
+  limiter.
 
 ### Changed
 
