@@ -113,6 +113,10 @@ fields they need:
   their lengths live in four parallel fixed arrays (32 entries), so every slice
   stays borrowed from the request target and `Request.query_params()` performs
   no copy and no allocation.
+- **Cookie pairs** (`src/http/cookie.zig`): name and value pointers plus their
+  lengths live in four parallel fixed arrays (32 entries), populated by a
+  vectorized `=`/`;` scan over the header; `CookieJar.parse` performs no copy
+  and no allocation.
 
 ## Capacity and protocol limits
 
@@ -123,6 +127,7 @@ The defaults are deliberately finite:
 | Request line | 8 KiB default; `ServerConfig.max_request_line_size` |
 | HTTP headers | 16 KiB total and 64 inline fields by default; `max_header_size` and `max_header_count` |
 | Query and form pairs | 32 default; compile-time `query.QueryParamsOf` capacity |
+| Cookie pairs | 32 default; compile-time `cookie.CookieJarOf` capacity |
 | HTTP request body | 16 KiB default; `ServerConfig.max_body_size` |
 | Routes | 256 radix nodes; `max_route_nodes` |
 | Parameterized routes | `max_pattern_routes` patterns; `max_route_params` captures per request (16 inline) |

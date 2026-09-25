@@ -29,6 +29,32 @@ pub fn index_of_byte(input: []const u8, needle: u8) ?usize {
         null;
 }
 
+/// Returns the first index where `input` holds `first` or `second`.
+///
+/// One pass finds either delimiter, so callers that split on a structural
+/// byte and terminate on another (Cookie `=` and `;`) do not scan twice.
+pub fn index_of_either_byte(input: []const u8, first: u8, second: u8) ?usize {
+    const first_needles: ByteVector = @splat(first);
+    const second_needles: ByteVector = @splat(second);
+    var offset: usize = 0;
+
+    while (input.len - offset >= lane_count) : (offset += lane_count) {
+        const bytes: [lane_count]u8 = input[offset..][0..lane_count].*;
+        const values: ByteVector = @bitCast(bytes);
+        const matches = (values == first_needles) | (values == second_needles);
+        if (!@reduce(.Or, matches)) continue;
+
+        for (bytes, 0..) |byte, index| {
+            if (byte == first or byte == second) return offset + index;
+        }
+        unreachable;
+    }
+    for (input[offset..], offset..) |byte, index| {
+        if (byte == first or byte == second) return index;
+    }
+    return null;
+}
+
 /// Returns the first occurrence of `needle`, vectorizing the first-byte scan.
 pub fn index_of(input: []const u8, needle: []const u8) ?usize {
     if (needle.len == 0) return 0;

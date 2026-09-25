@@ -2,7 +2,7 @@
 
 ## Scope
 
-µWebZockets 1.5.0 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
+µWebZockets 1.6.0 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
 server library with bounded HPACK protocol storage. It combines an
 event-driven cross-platform transport (POSIX and Windows IOCP), fixed-capacity
 protocol state, a data-oriented router, and C libraries for TLS, compression, and QUIC.
@@ -398,7 +398,8 @@ The Zig surface exported from `src/root.zig` includes `App`, `ConfiguredApp`,
 `ConfiguredAppWithTimeout`, `Request`, `Response`, `WebSocket`, `WsBehavior`,
 `Opcode`, TLS configuration, chunked HTTP helpers, zero-allocation query and
 form parsing, canonical status and typed JSON error helpers, `Accept`
-negotiation, ETag helpers, comptime schema validation, cookie helpers, and
+negotiation, ETag helpers, comptime schema validation, zero-copy cookie
+parsing and signing helpers, and
 WebSocket masking. The
 surface also includes `WsCompression`, fixed-capacity `json_rpc`,
 completion-driven `udp`, bounded
