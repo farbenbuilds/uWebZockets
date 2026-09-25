@@ -20,6 +20,7 @@ pub const http_parser = @import("http/parser.zig");
 pub const http_request = @import("http/request.zig");
 pub const http_response = @import("http/response.zig");
 pub const fetch = @import("http/fetch.zig");
+pub const client = @import("client/client.zig");
 pub const streams = @import("http/streams.zig");
 pub const multipart = @import("http/multipart.zig");
 pub const query = @import("http/query.zig");

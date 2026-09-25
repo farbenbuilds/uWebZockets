@@ -3,13 +3,13 @@
 ## Supported versions
 
 Security fixes apply to the current development revision and the latest
-`1.1.x` patch release. Older snapshots and unsupported raw transport internals
+released minor line. Older snapshots and unsupported raw transport internals
 do not receive backports.
 
 | Version | Supported |
 | --- | --- |
 | Current development revision | Yes |
-| Latest `1.1.x` release | Yes |
+| Latest released minor line | Yes |
 | Older tagged releases | No |
 | Earlier snapshots | No |
 

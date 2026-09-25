@@ -3,6 +3,20 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.7.0] - 2026-09-26
+
+### Added
+
+-
+
+### Changed
+
+-
+
+### Security
+
+-
+
 ## [1.6.0] - 2026-09-26
 
 This release adds a vectorized, zero-copy parser for `Cookie` request fields.
