@@ -37,6 +37,7 @@ into these regions, in order:
 | Pool freelist indices | `max_connections * sizeof(usize)` |
 | HTTP/1.1 request buffers | `max_connections * request_stride` |
 | Header extras beyond the inline 64 | `max_connections * (max_header_count - 64) * 2 slices` when configured |
+| Router storage (nodes, patterns, middleware, registry) | `max_route_nodes` / `max_pattern_routes` / `max_middleware` / `max_route_registry_size` |
 | Response write queues | `max_connections * write_queue_size` |
 | WebSocket message storage | `max_connections * max_ws_message_size` |
 | RFC 7692 compression scratch | `max_connections * 2 * worst_case_scratch` when enabled |
@@ -120,9 +121,9 @@ The defaults are deliberately finite:
 | HTTP headers | 16 KiB total and 64 inline fields by default; `max_header_size` and `max_header_count` |
 | Query and form pairs | 32 default; compile-time `query.QueryParamsOf` capacity |
 | HTTP request body | 16 KiB default; `ServerConfig.max_body_size` |
-| Routes | 256 radix nodes |
-| Parameterized routes | 64 patterns, 16 captures per request |
-| Middleware | 32 callbacks |
+| Routes | 256 radix nodes; `max_route_nodes` |
+| Parameterized routes | 64 patterns; `max_pattern_routes` (16 captures per request) |
+| Middleware | 32 callbacks; `max_middleware` |
 | OpenAPI route registry | 320 entries, 64 KiB of paths |
 | JSON-RPC procedures | 64 by default |
 | JSON-RPC method names | 4 KiB copied storage by default |
@@ -130,7 +131,7 @@ The defaults are deliberately finite:
 | Mounted static directories | 8 |
 | Static file body | configured write queue minus 4 KiB |
 | Cluster message queue | 64 messages per worker |
-| Route path | 2 KiB |
+| Route path | 2 KiB default; `max_route_path_size` |
 | WebSocket message | 16 KiB with `App` |
 | WebSocket control payload | 125 bytes |
 | HTTP/3 decoded headers | 16 KiB total, 64 fields |

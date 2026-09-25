@@ -64,8 +64,15 @@ Fixed and Security. The C ABI version moves to 1.4.0 with no structural change.
   storage sized by `max_header_count`, and the 431 rejection document reports
   the configured limit. Defaults keep the previous footprint byte-for-byte.
 - `query.QueryParams.get_int` parses the first matching raw value as a
-  base-10 integer in one call, and `examples/basic_microservice.zig` now shows
-  the `GET /search?q=...&page=2` pattern end to end.
+  base-10 integer in one call, and `examples/basic_microservice.zig` shows the
+  `GET /search?q=...&page=2` pattern end to end.
+- Router capacities are configurable: `ServerConfig.max_route_nodes`,
+  `max_pattern_routes`, `max_middleware`, `max_route_path_size`, and
+  `max_route_registry_size` (with builder knobs) size a slab-carved router
+  whose storage lives in the single startup allocation. Defaults keep the
+  previous 256 nodes, 64 patterns, 32 callbacks, 2 KiB paths, and 64 KiB
+  registry, and cluster workers now receive the full builder configuration
+  instead of the type-level defaults.
 - `Response.begin_stream` pulls a chunked body from a `StreamProducer`
   callback as the transport drains. Producers park with `.pending` on
   `error.WouldBlock` and are re-invoked when output space frees, so a response

@@ -89,7 +89,7 @@ uWebZockets/
 │   ├── ffi/                  # bounded generation-checked shared memory
 │   ├── http/                 # strict HTTP/1.1 parser, response writer, and request helpers
 │   ├── http2/                # bounded frames, stream slab, and HPACK
-│   ├── router/               # fixed-capacity radix router, App API, config, builder
+│   ├── router/               # slab-carved radix router, App API, config, builder
 │   ├── rpc/                  # bounded JSON-RPC registry and dispatcher
 │   ├── ws/                   # streams, pure backpressure, framing, pub/sub
 │   ├── observability/        # Prometheus registry, terminal dev log, and eBPF reader
