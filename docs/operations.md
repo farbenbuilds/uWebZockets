@@ -149,7 +149,7 @@ once at startup, before the first accepting listener: the version with the
 elapsed startup time, then the `→ Local:` line. A
 terminal narrower than the block art gets a one-line `µWebZockets` mark
 instead, and builds without the development log keep the plain
-`server listening` std.log line. HTTP/1.1 requests log Vite-style as
+`server listening` std.log line. HTTP/1.1 and HTTP/2 requests log Vite-style as
 `HH:MM:SS | [METHOD] /path : STATUS` with a dim clock, cyan method, and
 status-class color. Connection, WebSocket, and metric events follow with a
 colored direction badge. Every worker thread owns one `dev_log.Sink`; each
@@ -178,10 +178,10 @@ an explicit `App.set_dev_log_file` always records. `App.flush_dev_log` writes
 any pending bytes, and `App.log_metrics` records every counter of the bounded
 Prometheus registry. The `uwz_connections_accepted`, `uwz_connections_closed`,
 `uwz_http_requests`, and `uwz_ws_messages` counters advance when observability
-is enabled on TCP transports. HTTP/2 dispatch does not emit records in this
-release; HTTP/3 emits one `http_request` record per completed request/response
-through the owning thread's sink, while the QUIC path never advances the
-counter registry.
+is enabled on TCP transports. HTTP/2 dispatch emits the same request records as
+HTTP/1.1 and advances the `uwz_http_requests` counter; HTTP/3 emits one
+`http_request` record per completed request/response through the owning
+thread's sink, while the QUIC path never advances the counter registry.
 
 ## Use as a Zig dependency
 
