@@ -14,6 +14,55 @@ These examples target the live `App` transports. The bounded HTTP/2/HPACK
 components and the C ABI header are library surfaces rather than standalone
 example servers.
 
+## Use as a Zig dependency
+
+µWebZockets is consumed as a normal Zig package. From a new project, fetch a
+released tag or a full commit:
+
+```sh
+zig fetch --save 'git+https://github.com/farbenbuilds/uWebZockets#<tag-or-commit>'
+```
+
+Add the module to `build.zig`:
+
+```zig
+const uz = b.dependency("uWebZockets", .{
+    .target = target,
+    .optimize = optimize,
+});
+exe.root_module.addImport("uWebZockets", uz.module("uWebZockets"));
+```
+
+A minimal `src/main.zig` is then:
+
+```zig
+const std = @import("std");
+const uz = @import("uWebZockets");
+
+fn hello(_: *uz.Request, res: *uz.Response) void {
+    res.text("hello from a dependency") catch {};
+}
+
+pub fn main(init: std.process.Init) !void {
+    var app = try uz.App(128).init(init.io);
+    defer app.deinit();
+
+    _ = try app.get("/", hello);
+    try app.listen("0.0.0.0", 3000);
+    try app.run();
+}
+```
+
+Run `zig build run` and verify with `curl http://127.0.0.1:3000/`. The rest of
+the battery is on the same module: `app.ws(...)` for WebSocket, `app.rpc(...)`
+for JSON-RPC, `app.static(...)` for assets, `build_cluster` for
+thread-per-core workers, and `listen_udp` plus `init_http3` for HTTP/3. Run
+`zig build lib` to install `zig-out/include/uWebZockets.h` for C and C++
+consumers.
+
+Pin tags or full commits rather than branches so dependency resolution stays
+reproducible. The `tests/package_consumer` fixture compiles this snippet in CI.
+
 ## HTTP/1.1 server
 
 Start the server:

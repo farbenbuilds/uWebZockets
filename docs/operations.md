@@ -225,8 +225,9 @@ ls-hpack, and libdeflate from immutable URLs or commits with Zig package
 hashes, so a downstream path dependency does not need the h1spec submodule. The
 public module carries native link metadata, orders dependency builds, and
 supplies the C shim through its clean static-library edge. The
-`tests/package_consumer` fixture compiles this contract in CI against the
-release module surface.
+`tests/package_consumer` fixture compiles the README Quick Start snippet in CI
+against the release module surface, so the documented `zig fetch` and
+`build.zig` wiring cannot drift.
 
 ## C ABI
 
