@@ -5,7 +5,6 @@ const Router = @import("../router/radix.zig").Router;
 const api = @import("lsquic_api.zig");
 const stream = @import("stream.zig");
 const HeaderSet = stream.HeaderSet;
-const QuicStream = stream.QuicStream;
 
 /// Reports that the build includes the lsquic-backed QUIC engine.
 pub const available = true;
@@ -23,15 +22,40 @@ pub const PacketSlot = struct {
 /// `capacity` bounds concurrent connections and request streams;
 /// `response_capacity` reserves response body bytes per stream during `init`;
 /// `route_param_extra_capacity` reserves capture slots per stream beyond the
-/// inline `Request` arrays (zero keeps every capture inline).
+/// inline `Request` arrays (zero keeps every capture inline);
+/// `stream_capacities` fixes every per-stream HTTP/3 storage region and field
+/// cap. The engine allocates its pools and byte slabs once in `init`, and
+/// `deinit` releases them; nothing on the datagram path allocates.
 pub fn quic_engine(
     comptime capacity: usize,
     comptime response_capacity: usize,
     comptime route_param_extra_capacity: usize,
+    comptime stream_capacities: stream.Capacities,
 ) type {
     if (capacity == 0) @compileError("QUIC capacity must be greater than zero");
     if (capacity > std.math.maxInt(c_uint)) @compileError("QUIC capacity exceeds lsquic limits");
     if (response_capacity == 0) @compileError("HTTP/3 response capacity must be greater than zero");
+    if (stream_capacities.request_header_size == 0) {
+        @compileError("HTTP/3 request header capacity must be greater than zero");
+    }
+    // `es_max_header_list_size` is a u32; a larger field list cannot be carried.
+    if (stream_capacities.request_header_size > std.math.maxInt(c_uint)) {
+        @compileError("HTTP/3 request header capacity exceeds lsquic limits");
+    }
+    if (stream_capacities.request_body_size == 0) {
+        @compileError("HTTP/3 request body capacity must be greater than zero");
+    }
+    if (stream_capacities.response_header_size == 0 or
+        stream_capacities.response_header_size > std.math.maxInt(u16))
+    {
+        @compileError("HTTP/3 response header capacity must fit u16 offsets");
+    }
+    if (stream_capacities.response_header_count == 0) {
+        @compileError("HTTP/3 response header count must be greater than zero");
+    }
+    if (stream_capacities.decoded_header_count == 0) {
+        @compileError("HTTP/3 decoded header count must be greater than zero");
+    }
     if (capacity > std.math.maxInt(usize) / 4) @compileError("QUIC packet capacity overflows usize");
     if (capacity > std.math.maxInt(usize) / 2) @compileError("HTTP/3 header slot count overflows usize");
     if (route_param_extra_capacity > std.math.maxInt(usize) / 2) {
@@ -45,24 +69,45 @@ pub fn quic_engine(
     }
     const route_param_slot_count = capacity * route_param_pointer_count;
     const header_slot_count = capacity * 2;
-    if (header_slot_count > std.math.maxInt(usize) / stream.header_capacity) {
+    if (header_slot_count > std.math.maxInt(usize) / stream_capacities.request_header_size) {
         @compileError("HTTP/3 header storage size overflows usize");
     }
-    if (capacity > std.math.maxInt(usize) / stream.request_body_capacity) {
+    if (capacity > std.math.maxInt(usize) / stream_capacities.request_body_size) {
         @compileError("HTTP/3 request storage size overflows usize");
     }
-    const stream_receive_capacity = stream.header_capacity + stream.request_body_capacity;
+    if (stream_capacities.request_body_size >
+        std.math.maxInt(usize) - stream_capacities.request_header_size)
+    {
+        @compileError("HTTP/3 receive capacity overflows usize");
+    }
+    const stream_receive_capacity =
+        stream_capacities.request_header_size + stream_capacities.request_body_size;
+    // `es_init_max_stream_data_bidi_remote` is a u32 as well.
+    if (stream_receive_capacity > std.math.maxInt(c_uint)) {
+        @compileError("HTTP/3 receive capacity exceeds lsquic limits");
+    }
     if (capacity > std.math.maxInt(usize) / stream_receive_capacity) {
         @compileError("HTTP/3 connection flow-control capacity overflows usize");
     }
-    if (capacity > std.math.maxInt(usize) / stream.response_header_capacity) {
+    if (capacity > std.math.maxInt(usize) / stream_capacities.response_header_size) {
         @compileError("HTTP/3 response header storage size overflows usize");
     }
     if (capacity > std.math.maxInt(usize) / response_capacity) {
         @compileError("HTTP/3 response storage size overflows usize");
     }
+    if (stream_capacities.header_extra_capacity > std.math.maxInt(usize) / 2) {
+        @compileError("HTTP/3 header extra capacity overflows usize");
+    }
+    const header_extra_pointer_count = stream_capacities.header_extra_capacity * 2;
+    if (header_extra_pointer_count != 0 and
+        capacity > std.math.maxInt(usize) / header_extra_pointer_count)
+    {
+        @compileError("HTTP/3 header extra storage size overflows usize");
+    }
+    const header_extra_slot_count = capacity * header_extra_pointer_count;
 
     const packet_slot_count = @max(@as(usize, 16), capacity * 4);
+    const QuicStream = stream.stream_with(stream.lsquic_stream_io, stream_capacities);
     const StreamPool = pool.freelist_pool(QuicStream, capacity);
     const HeaderPool = pool.freelist_pool(HeaderSet, header_slot_count);
     const PacketPool = pool.freelist_pool(PacketSlot, packet_slot_count);
@@ -90,6 +135,9 @@ pub fn quic_engine(
         /// Per-stream capture slots beyond the inline `Request` arrays;
         /// empty when `route_param_extra_capacity` is zero.
         route_param_storage: [][]const u8,
+        /// Per-stream request-field slots beyond the inline `Request` arrays;
+        /// empty when `stream_capacities.header_extra_capacity` is zero.
+        header_extra_storage: [][]const u8,
         active_connections: usize = 0,
         global_acquired: bool = false,
         /// Depth of active lsquic callbacks; cooldown must not re-enter them.
@@ -109,17 +157,17 @@ pub fn quic_engine(
 
             const header_storage = try std.heap.page_allocator.alloc(
                 u8,
-                header_slot_count * stream.header_capacity,
+                header_slot_count * stream_capacities.request_header_size,
             );
             errdefer std.heap.page_allocator.free(header_storage);
             const request_body_storage = try std.heap.page_allocator.alloc(
                 u8,
-                capacity * stream.request_body_capacity,
+                capacity * stream_capacities.request_body_size,
             );
             errdefer std.heap.page_allocator.free(request_body_storage);
             const response_header_storage = try std.heap.page_allocator.alloc(
                 u8,
-                capacity * stream.response_header_capacity,
+                capacity * stream_capacities.response_header_size,
             );
             errdefer std.heap.page_allocator.free(response_header_storage);
             const response_body_storage = try std.heap.page_allocator.alloc(
@@ -134,6 +182,11 @@ pub fn quic_engine(
                 route_param_slot_count,
             );
             errdefer std.heap.page_allocator.free(route_param_storage);
+            const header_extra_storage = try std.heap.page_allocator.alloc(
+                []const u8,
+                header_extra_slot_count,
+            );
+            errdefer std.heap.page_allocator.free(header_extra_storage);
 
             return .{
                 .stream_pool = stream_pool,
@@ -144,6 +197,7 @@ pub fn quic_engine(
                 .response_header_storage = response_header_storage,
                 .response_body_storage = response_body_storage,
                 .route_param_storage = route_param_storage,
+                .header_extra_storage = header_extra_storage,
             };
         }
 
@@ -159,12 +213,12 @@ pub fn quic_engine(
             settings.es_pace_packets = 1;
             settings.es_max_streams_in = @intCast(capacity);
             settings.es_max_inchoate = @intCast(capacity);
-            settings.es_max_header_list_size = stream.header_capacity;
+            settings.es_max_header_list_size = @intCast(stream_capacities.request_header_size);
             settings.es_max_header_sets = 1;
             settings.es_qpack_dec_max_size = 0;
             settings.es_qpack_dec_max_blocked = 0;
             settings.es_init_max_streams_bidi = @intCast(capacity);
-            settings.es_init_max_stream_data_bidi_remote = stream_receive_capacity;
+            settings.es_init_max_stream_data_bidi_remote = @intCast(stream_receive_capacity);
             settings.es_init_max_data = @intCast(@min(
                 capacity * stream_receive_capacity,
                 std.math.maxInt(c_uint),
@@ -265,6 +319,7 @@ pub fn quic_engine(
             std.heap.page_allocator.free(self.request_body_storage);
             std.heap.page_allocator.free(self.header_storage);
             std.heap.page_allocator.free(self.route_param_storage);
+            std.heap.page_allocator.free(self.header_extra_storage);
             self.packet_pool.deinit();
             self.header_pool.deinit();
             self.stream_pool.deinit();
@@ -344,15 +399,34 @@ pub fn quic_engine(
             return std.math.clamp(rounded, 1, 50);
         }
 
-        fn acquire_header_set(self: *Self, is_trailer: bool) ?*HeaderSet {
+        fn acquire_header_set(
+            self: *Self,
+            is_trailer: bool,
+            header_extra_names: [][]const u8,
+            header_extra_values: [][]const u8,
+        ) ?*HeaderSet {
             const header_set = self.header_pool.acquire() orelse return null;
             const index = self.header_pool.index_of(header_set) orelse unreachable;
-            const storage_start = index * stream.header_capacity;
-            const storage = self.header_storage[storage_start .. storage_start + stream.header_capacity];
+            const storage_start = index * stream_capacities.request_header_size;
+            const storage = self.header_storage[storage_start .. storage_start + stream_capacities.request_header_size];
             if (is_trailer) {
-                header_set.reset_trailer(self, release_header_set, storage);
+                header_set.reset_trailer(
+                    self,
+                    release_header_set,
+                    storage,
+                    header_extra_names,
+                    header_extra_values,
+                    stream_capacities,
+                );
             } else {
-                header_set.reset(self, release_header_set, storage);
+                header_set.reset(
+                    self,
+                    release_header_set,
+                    storage,
+                    header_extra_names,
+                    header_extra_values,
+                    stream_capacities,
+                );
             }
             return header_set;
         }
@@ -365,10 +439,11 @@ pub fn quic_engine(
         fn acquire_stream(self: *Self, lsquic_stream: *c.lsquic_stream) ?*QuicStream {
             const quic_stream = self.stream_pool.acquire() orelse return null;
             const index = self.stream_pool.index_of(quic_stream) orelse unreachable;
-            const body_start = index * stream.request_body_capacity;
-            const response_header_start = index * stream.response_header_capacity;
+            const body_start = index * stream_capacities.request_body_size;
+            const response_header_start = index * stream_capacities.response_header_size;
             const response_body_start = index * response_capacity;
             const route_param_start = index * route_param_pointer_count;
+            const header_extra_start = index * header_extra_pointer_count;
             const route_param_names: [][]const u8 = if (route_param_extra_capacity == 0)
                 &.{}
             else
@@ -377,16 +452,26 @@ pub fn quic_engine(
                 &.{}
             else
                 self.route_param_storage[route_param_start + route_param_extra_capacity .. route_param_start + route_param_pointer_count];
+            const header_extra_names: [][]const u8 = if (stream_capacities.header_extra_capacity == 0)
+                &.{}
+            else
+                self.header_extra_storage[header_extra_start .. header_extra_start + stream_capacities.header_extra_capacity];
+            const header_extra_values: [][]const u8 = if (stream_capacities.header_extra_capacity == 0)
+                &.{}
+            else
+                self.header_extra_storage[header_extra_start + stream_capacities.header_extra_capacity .. header_extra_start + header_extra_pointer_count];
             quic_stream.reset(
                 self,
                 release_stream,
                 lsquic_stream,
                 self.router,
-                self.request_body_storage[body_start .. body_start + stream.request_body_capacity],
+                self.request_body_storage[body_start .. body_start + stream_capacities.request_body_size],
                 self.response_body_storage[response_body_start .. response_body_start + response_capacity],
-                self.response_header_storage[response_header_start .. response_header_start + stream.response_header_capacity],
+                self.response_header_storage[response_header_start .. response_header_start + stream_capacities.response_header_size],
                 route_param_names,
                 route_param_values,
+                header_extra_names,
+                header_extra_values,
             );
             return quic_stream;
         }
@@ -462,12 +547,25 @@ pub fn quic_engine(
         ) callconv(.c) ?*anyopaque {
             if (is_push_promise != 0) return null;
             const self: *Self = @ptrCast(@alignCast(context orelse return null));
-            const is_trailer = if (lsquic_stream) |raw_stream| blk: {
-                const raw_context = c.lsquic_stream_get_ctx(raw_stream) orelse break :blk false;
-                const quic_stream: *QuicStream = @ptrCast(@alignCast(raw_context));
-                break :blk quic_stream.request_phase != .waiting_headers;
-            } else false;
-            return self.acquire_header_set(is_trailer);
+            var quic_stream: ?*QuicStream = null;
+            if (lsquic_stream) |raw_stream| {
+                if (c.lsquic_stream_get_ctx(raw_stream)) |raw_context| {
+                    quic_stream = @ptrCast(@alignCast(raw_context));
+                }
+            }
+            const is_trailer = if (quic_stream) |active|
+                active.request_phase != .waiting_headers
+            else
+                false;
+            const header_extra_names: [][]const u8 = if (quic_stream) |active|
+                active.header_extra_names
+            else
+                &.{};
+            const header_extra_values: [][]const u8 = if (quic_stream) |active|
+                active.header_extra_values
+            else
+                &.{};
+            return self.acquire_header_set(is_trailer, header_extra_names, header_extra_values);
         }
 
         fn prepare_header_decode(

@@ -10,6 +10,7 @@ const PubSubEngine = @import("../ws/pubsub.zig").PubSubEngine;
 const DeflateContext = @import("../ws/deflate.zig").Context;
 const TlsContext = @import("../crypto/tls.zig").TlsContext;
 const quic = @import("../quic/engine.zig");
+const quic_stream = @import("../quic/stream.zig");
 const udp = @import("../core/udp.zig");
 const request_module = @import("../http/request.zig");
 const Request = request_module.Request;
@@ -80,19 +81,24 @@ pub fn configured_app_with_timeout(
         write_queue_size,
         idle_timeout_ms,
         request_module.max_route_params,
+        quic_stream.default_capacities,
     );
 }
 
-/// Returns an application type with an explicit route capture capacity.
+/// Returns an application type with explicit route capture and HTTP/3
+/// capacities.
 ///
 /// `max_route_params` counts the captures a request may hold; values above the
 /// inline `Request.max_route_params` carve a per-connection extras region.
+/// `h3_capacities` specializes the HTTP/3 stream type and the QUIC engine's
+/// per-stream storage, so it must match `ServerConfig.h3_capacities()`.
 pub fn configured_app_with_route_params(
     comptime max_connections: usize,
     comptime max_ws_message_size: usize,
     comptime write_queue_size: usize,
     comptime idle_timeout_ms: u64,
     comptime max_route_params: usize,
+    comptime h3_capacities: quic_stream.Capacities,
 ) type {
     if (max_connections == 0) @compileError("connection capacity must be greater than zero");
     if (max_ws_message_size == 0) @compileError("WebSocket message capacity must be greater than zero");
@@ -116,6 +122,7 @@ pub fn configured_app_with_route_params(
             max_connections,
             write_queue_size,
             route_param_extra_capacity,
+            h3_capacities,
         );
         const QuicTransport = udp.quic_transport(QuicEngine);
         const static_file_capacity = if (write_queue_size > 4096) write_queue_size - 4096 else write_queue_size;
@@ -153,6 +160,11 @@ pub fn configured_app_with_route_params(
         route_param_extras: []align(@alignOf([]const u8)) u8,
         extra_route_param_capacity: usize,
         extra_route_param_stride: usize,
+        // Per-connection carved HTTP/2 session storage; the stride covers one
+        // session's whole storage plan and stays aligned to it.
+        h2_sessions: []u8,
+        h2_session_stride: usize,
+        h2_capacities: core_tcp.Http2Session.Capacities,
         max_body_size: usize,
         reject_policy: http_rejection.RejectionPolicy = .{},
         ws_message_storage: []u8,
@@ -268,6 +280,11 @@ pub fn configured_app_with_route_params(
                 if (config.max_route_params != max_route_params) @compileError(
                     "ServerConfig.max_route_params must match the generated App capacity",
                 );
+                // The QUIC engine type is specialized with these capacities, so
+                // a mismatched runtime config would carve mismatched storage.
+                if (!std.meta.eql(config.h3_capacities(), h3_capacities)) @compileError(
+                    "ServerConfig HTTP/3 capacities must match the generated App capacity",
+                );
             }
 
             const layout = try config_module.carve(slab, config);
@@ -300,6 +317,9 @@ pub fn configured_app_with_route_params(
                 .route_param_extras = @alignCast(layout.route_param_extras),
                 .extra_route_param_capacity = extra_route_param_capacity,
                 .extra_route_param_stride = layout.extra_route_param_stride,
+                .h2_sessions = layout.h2_sessions,
+                .h2_session_stride = layout.h2_session_stride,
+                .h2_capacities = config.h2_capacities(),
                 .max_body_size = config.max_body_size,
                 .reject_policy = config.rejection_policy(),
                 .ws_message_storage = layout.ws_messages,
@@ -946,6 +966,21 @@ pub fn configured_app_with_route_params(
                 .max_header_bytes = self.max_header_size,
                 .extra_header_names = extras.names,
                 .extra_header_values = extras.values,
+            };
+            const h2_start = connection_index * self.h2_session_stride;
+            const h2_region = self.h2_sessions[h2_start .. h2_start + self.h2_session_stride];
+            const h2_storage = core_tcp.Http2Session.carve_storage(
+                h2_region,
+                self.h2_capacities,
+            ) catch {
+                _ = self.pool.release(conn);
+                close_socket_now(socket);
+                return;
+            };
+            conn.h2 = core_tcp.Http2Session.init(h2_storage) catch {
+                _ = self.pool.release(conn);
+                close_socket_now(socket);
+                return;
             };
             conn.reset_protocol() catch {
                 _ = self.pool.release(conn);

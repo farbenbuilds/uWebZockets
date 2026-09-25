@@ -1,7 +1,8 @@
 const std = @import("std");
 const connection_module = @import("connection.zig");
 const hpack = @import("hpack.zig");
-const Request = @import("../http/request.zig").Request;
+const request_module = @import("../http/request.zig");
+const Request = request_module.Request;
 
 /// HTTP/2 error codes emitted by the bounded server session.
 pub const ErrorCode = enum(u32) {
@@ -46,49 +47,460 @@ pub const Callbacks = struct {
     max_frame_payload: usize = connection_module.maximum_frame_size,
 };
 
-/// Returns an allocation-free HTTP/2 server session with fixed capacities.
+/// Returns an allocation-free HTTP/2 server session over caller-carved storage.
 ///
-/// The session uses one connection-wide HPACK table and contiguous per-stream
-/// request/body slabs. Call `reset` only after the value reaches its stable
-/// connection-owned address because the HPACK table borrows inline storage.
-pub fn server_session(
-    comptime max_streams: usize,
-    comptime max_header_block_size: usize,
-    comptime request_storage_capacity: usize,
-    comptime body_capacity: usize,
-) type {
+/// `max_streams` stays compile-time because the embedded connection state and
+/// producer arrays are sized by it. Every byte matrix is carved from `Storage`,
+/// so runtime capacities are planned once by `storage_bytes`/`carve_storage` or
+/// `Bundle`. Call `reset` only after the value reaches its stable
+/// connection-owned address because the HPACK table borrows the carved
+/// dynamic-table slices.
+pub fn server_session(comptime max_streams: usize) type {
     if (max_streams == 0) @compileError("HTTP/2 server stream capacity must be positive");
-    if (max_header_block_size == 0) @compileError("HTTP/2 header block capacity must be positive");
-    if (request_storage_capacity == 0) @compileError("HTTP/2 request storage must be positive");
-    if (body_capacity == 0) @compileError("HTTP/2 body capacity must be positive");
 
     return struct {
         const Self = @This();
         const Connection = connection_module.connection(max_streams);
-        const dynamic_table_size = 4096;
-        const dynamic_entry_count = dynamic_table_size / 32;
-        const max_decoded_headers = 64;
-        const max_response_headers = 32;
-        const max_response_header_bytes = 4096;
+        /// RFC 7541 4.1 per-entry overhead used to size dynamic-table metadata.
+        const dynamic_entry_overhead = 32;
         const DiscardedHeaderAction = enum {
             ignore,
             refuse,
             stream_closed,
         };
 
+        /// Runtime capacity configuration for one session's carved storage.
+        pub const Capacities = struct {
+            /// Largest cumulative header-block fragments per request.
+            header_block_size: usize = 16 * 1024,
+            /// Per-stream bytes for the request first line and header fields.
+            request_header_size: usize = 16 * 1024,
+            /// Per-stream bytes for one request body and one response body.
+            body_size: usize = 16 * 1024,
+            /// Per-stream bytes for one encoded response header block.
+            response_header_size: usize = 4 * 1024,
+            /// Response header metadata slots per session.
+            response_header_count: usize = 32,
+            /// Maximum decoded request header fields per header block.
+            decoded_header_count: usize = 64,
+            /// HPACK dynamic table bytes; zero disables dynamic indexing.
+            dynamic_table_size: usize = 4096,
+        };
+
+        /// Borrowed typed storage for one session.
+        ///
+        /// The per-stream request first line, header bytes, header-overflow
+        /// pointer slots, and body bytes are carved as fixed strides; the
+        /// stride fields and `header_extra_capacity` template one stream's
+        /// slices. `carve_storage` and `Bundle.storage` produce aligned,
+        /// non-overlapping spans that the session borrows for its lifetime.
+        pub const Storage = struct {
+            /// Per-stream request metadata slots.
+            requests: []Request,
+            /// Flat per-stream request first-line and header bytes.
+            request_storage: []u8,
+            /// Flat per-stream request body bytes.
+            body_storage: []u8,
+            /// Flat per-stream encoded response header bytes.
+            response_header_storage: []u8,
+            /// Flat per-stream response body bytes.
+            response_body_storage: []u8,
+            /// Decoded request header metadata for one header block.
+            decoded_headers: []hpack.Header,
+            /// Decoded request header bytes for one header block.
+            decoded_header_bytes: []u8,
+            /// HPACK dynamic-table metadata slots.
+            dynamic_entries: []hpack.DynamicEntry,
+            /// HPACK dynamic-table packed name/value bytes.
+            dynamic_bytes: []u8,
+            /// Cumulative header-block fragment bytes for one request.
+            header_block: []u8,
+            /// Frame header and payload bytes for one inbound frame.
+            frame_buffer: []u8,
+            /// Response header metadata for one encoded response.
+            response_fields: []hpack.Header,
+            /// Encoded response header block bytes for one response.
+            response_encode: []u8,
+            /// Lowercased response field names for one encoded response.
+            lowercase_names: []u8,
+            /// Flat per-stream header-overflow name pointer slots.
+            header_extra_names: [][]const u8,
+            /// Flat per-stream header-overflow value pointer slots.
+            header_extra_values: [][]const u8,
+            /// Byte distance between consecutive request-header slabs.
+            request_header_stride: usize,
+            /// Byte distance between consecutive body slabs.
+            body_stride: usize,
+            /// Byte distance between consecutive response-header slabs.
+            response_header_stride: usize,
+            /// Header-overflow pointer slots per stream.
+            header_extra_capacity: usize,
+        };
+
+        /// Alignment every carved region base must satisfy for `storage_bytes`
+        /// to be the exact consumed size.
+        pub const storage_alignment = @alignOf(Storage);
+
+        /// Failures raised while binding caller-carved session storage.
+        pub const SessionError = hpack.Error || error{
+            InvalidHttp2Capacity,
+            InvalidSessionStorage,
+        };
+
+        /// Aligned byte span inside a carved session region.
+        const Span = struct {
+            start: usize,
+            end: usize,
+        };
+
+        /// Byte span of every carved sub-array plus the total region size.
+        const StoragePlan = struct {
+            requests: Span,
+            request_storage: Span,
+            body_storage: Span,
+            response_body_storage: Span,
+            response_header_storage: Span,
+            decoded_headers: Span,
+            decoded_header_bytes: Span,
+            dynamic_entries: Span,
+            dynamic_bytes: Span,
+            header_block: Span,
+            frame_buffer: Span,
+            response_fields: Span,
+            response_encode: Span,
+            lowercase_names: Span,
+            header_extra_names: Span,
+            header_extra_values: Span,
+            total: usize,
+        };
+
+        /// Metadata slots the RFC 7541 dynamic table needs for its byte limit.
+        fn dynamic_entry_count(dynamic_table_size: usize) usize {
+            return dynamic_table_size / dynamic_entry_overhead +
+                @as(usize, @intFromBool(dynamic_table_size % dynamic_entry_overhead != 0));
+        }
+
+        /// Header-overflow pointer slots per stream beyond the inline arrays.
+        fn header_extra_capacity_for(capacities: Capacities) usize {
+            if (capacities.decoded_header_count <= request_module.max_headers) return 0;
+            return capacities.decoded_header_count - request_module.max_headers;
+        }
+
+        /// Validates one capacity set; every rejection marks a configuration
+        /// the session cannot represent or use.
+        fn validate_capacities(capacities: Capacities) error{InvalidHttp2Capacity}!void {
+            if (capacities.header_block_size == 0) return error.InvalidHttp2Capacity;
+            if (capacities.request_header_size == 0) return error.InvalidHttp2Capacity;
+            if (capacities.body_size == 0) return error.InvalidHttp2Capacity;
+            if (capacities.response_header_size == 0) return error.InvalidHttp2Capacity;
+            if (capacities.response_header_count == 0) return error.InvalidHttp2Capacity;
+            if (capacities.decoded_header_count == 0) return error.InvalidHttp2Capacity;
+        }
+
+        /// Reserves `count` elements in a carved region; `element_bytes` is
+        /// explicit so untyped byte ranges share checked arithmetic.
+        fn reserve(
+            cursor: *usize,
+            count: usize,
+            element_bytes: usize,
+            alignment: usize,
+        ) error{InvalidHttp2Capacity}!Span {
+            const bytes = std.math.mul(usize, count, element_bytes) catch {
+                return error.InvalidHttp2Capacity;
+            };
+            const remainder = cursor.* % alignment;
+            const padding = if (remainder == 0) 0 else alignment - remainder;
+            const start = std.math.add(usize, cursor.*, padding) catch {
+                return error.InvalidHttp2Capacity;
+            };
+            const end = std.math.add(usize, start, bytes) catch return error.InvalidHttp2Capacity;
+            cursor.* = end;
+            return .{ .start = start, .end = end };
+        }
+
+        /// Plans the exact carve layout; `storage_bytes` and `carve_storage`
+        /// both use this plan so region size and offsets cannot drift.
+        fn plan_storage(capacities: Capacities) error{InvalidHttp2Capacity}!StoragePlan {
+            try validate_capacities(capacities);
+            const extra_capacity = header_extra_capacity_for(capacities);
+            const extra_slot_count = std.math.mul(
+                usize,
+                max_streams,
+                extra_capacity,
+            ) catch return error.InvalidHttp2Capacity;
+
+            var cursor: usize = 0;
+            var plan: StoragePlan = undefined;
+            plan.requests = try reserve(
+                &cursor,
+                max_streams,
+                @sizeOf(Request),
+                @alignOf(Request),
+            );
+            plan.request_storage = try reserve(
+                &cursor,
+                max_streams,
+                capacities.request_header_size,
+                1,
+            );
+            plan.body_storage = try reserve(&cursor, max_streams, capacities.body_size, 1);
+            plan.response_body_storage = try reserve(
+                &cursor,
+                max_streams,
+                capacities.body_size,
+                1,
+            );
+            plan.response_header_storage = try reserve(
+                &cursor,
+                max_streams,
+                capacities.response_header_size,
+                1,
+            );
+            plan.decoded_headers = try reserve(
+                &cursor,
+                capacities.decoded_header_count,
+                @sizeOf(hpack.Header),
+                @alignOf(hpack.Header),
+            );
+            plan.decoded_header_bytes = try reserve(
+                &cursor,
+                capacities.request_header_size,
+                1,
+                1,
+            );
+            plan.dynamic_entries = try reserve(
+                &cursor,
+                dynamic_entry_count(capacities.dynamic_table_size),
+                @sizeOf(hpack.DynamicEntry),
+                @alignOf(hpack.DynamicEntry),
+            );
+            plan.dynamic_bytes = try reserve(&cursor, capacities.dynamic_table_size, 1, 1);
+            plan.header_block = try reserve(&cursor, capacities.header_block_size, 1, 1);
+            plan.frame_buffer = try reserve(
+                &cursor,
+                9 + connection_module.default_max_frame_size,
+                1,
+                1,
+            );
+            plan.response_fields = try reserve(
+                &cursor,
+                capacities.response_header_count,
+                @sizeOf(hpack.Header),
+                @alignOf(hpack.Header),
+            );
+            plan.response_encode = try reserve(&cursor, capacities.response_header_size, 1, 1);
+            plan.lowercase_names = try reserve(&cursor, capacities.response_header_size, 1, 1);
+            plan.header_extra_names = try reserve(
+                &cursor,
+                extra_slot_count,
+                @sizeOf([]const u8),
+                @alignOf([]const u8),
+            );
+            plan.header_extra_values = try reserve(
+                &cursor,
+                extra_slot_count,
+                @sizeOf([]const u8),
+                @alignOf([]const u8),
+            );
+            plan.total = cursor;
+            return plan;
+        }
+
+        /// Total bytes required for `carve_storage`, with every sub-array aligned.
+        pub fn storage_bytes(capacities: Capacities) error{InvalidHttp2Capacity}!usize {
+            return (try plan_storage(capacities)).total;
+        }
+
+        /// Re-tags one planned byte span; `carve_storage` proved the pointer aligned.
+        fn carved_slice(comptime T: type, region: []u8, prefix: usize, span: Span) []T {
+            const bytes = region[prefix + span.start .. prefix + span.end];
+            const aligned = @as([*]align(@alignOf(T)) u8, @alignCast(bytes.ptr));
+            const pointer: [*]T = @ptrCast(aligned);
+            return pointer[0 .. bytes.len / @sizeOf(T)];
+        }
+
+        /// Carves `region` into typed, aligned slices for `capacities`.
+        ///
+        /// The carved layout consumes exactly `storage_bytes` bytes from the
+        /// first address in `region` that satisfies `storage_alignment`; a
+        /// misaligned base therefore needs up to `storage_alignment - 1` extra
+        /// bytes.
+        pub fn carve_storage(
+            region: []u8,
+            capacities: Capacities,
+        ) error{InvalidHttp2Capacity}!Storage {
+            const plan = try plan_storage(capacities);
+            const base = @intFromPtr(region.ptr);
+            const padded = std.math.add(usize, base, storage_alignment - 1) catch {
+                return error.InvalidHttp2Capacity;
+            };
+            const start = padded - (padded % storage_alignment);
+            const prefix = start - base;
+            if (prefix > region.len) return error.InvalidHttp2Capacity;
+            if (plan.total > region.len - prefix) return error.InvalidHttp2Capacity;
+
+            return .{
+                .requests = carved_slice(Request, region, prefix, plan.requests),
+                .request_storage = carved_slice(u8, region, prefix, plan.request_storage),
+                .body_storage = carved_slice(u8, region, prefix, plan.body_storage),
+                .response_header_storage = carved_slice(
+                    u8,
+                    region,
+                    prefix,
+                    plan.response_header_storage,
+                ),
+                .response_body_storage = carved_slice(
+                    u8,
+                    region,
+                    prefix,
+                    plan.response_body_storage,
+                ),
+                .decoded_headers = carved_slice(
+                    hpack.Header,
+                    region,
+                    prefix,
+                    plan.decoded_headers,
+                ),
+                .decoded_header_bytes = carved_slice(
+                    u8,
+                    region,
+                    prefix,
+                    plan.decoded_header_bytes,
+                ),
+                .dynamic_entries = carved_slice(
+                    hpack.DynamicEntry,
+                    region,
+                    prefix,
+                    plan.dynamic_entries,
+                ),
+                .dynamic_bytes = carved_slice(u8, region, prefix, plan.dynamic_bytes),
+                .header_block = carved_slice(u8, region, prefix, plan.header_block),
+                .frame_buffer = carved_slice(u8, region, prefix, plan.frame_buffer),
+                .response_fields = carved_slice(
+                    hpack.Header,
+                    region,
+                    prefix,
+                    plan.response_fields,
+                ),
+                .response_encode = carved_slice(u8, region, prefix, plan.response_encode),
+                .lowercase_names = carved_slice(u8, region, prefix, plan.lowercase_names),
+                .header_extra_names = carved_slice(
+                    []const u8,
+                    region,
+                    prefix,
+                    plan.header_extra_names,
+                ),
+                .header_extra_values = carved_slice(
+                    []const u8,
+                    region,
+                    prefix,
+                    plan.header_extra_values,
+                ),
+                .request_header_stride = capacities.request_header_size,
+                .body_stride = capacities.body_size,
+                .response_header_stride = capacities.response_header_size,
+                .header_extra_capacity = header_extra_capacity_for(capacities),
+            };
+        }
+
+        /// Inline storage for tests and stack callers; `storage()` yields the slices.
+        pub fn bundle(comptime capacities: Capacities) type {
+            comptime {
+                _ = storage_bytes(capacities) catch
+                    @compileError("invalid HTTP/2 session capacities");
+            }
+            const extra_capacity = header_extra_capacity_for(capacities);
+            const extra_slot_count = max_streams * extra_capacity;
+            return struct {
+                const BundleSelf = @This();
+
+                requests: [max_streams]Request = undefined,
+                request_storage: [max_streams * capacities.request_header_size]u8 = undefined,
+                body_storage: [max_streams * capacities.body_size]u8 = undefined,
+                response_header_storage: [max_streams * capacities.response_header_size]u8 = undefined,
+                response_body_storage: [max_streams * capacities.body_size]u8 = undefined,
+                decoded_headers: [capacities.decoded_header_count]hpack.Header = undefined,
+                decoded_header_bytes: [capacities.request_header_size]u8 = undefined,
+                dynamic_entries: [dynamic_entry_count(capacities.dynamic_table_size)]hpack.DynamicEntry = undefined,
+                dynamic_bytes: [capacities.dynamic_table_size]u8 = undefined,
+                header_block: [capacities.header_block_size]u8 = undefined,
+                frame_buffer: [9 + connection_module.default_max_frame_size]u8 = undefined,
+                response_fields: [capacities.response_header_count]hpack.Header = undefined,
+                response_encode: [capacities.response_header_size]u8 = undefined,
+                lowercase_names: [capacities.response_header_size]u8 = undefined,
+                header_extra_names: [extra_slot_count][]const u8 = undefined,
+                header_extra_values: [extra_slot_count][]const u8 = undefined,
+
+                comptime {
+                    // `storage_bytes` already rejected bad capacities at
+                    // instantiation; this guards against field-layout drift.
+                    if (@sizeOf(BundleSelf) < (storage_bytes(capacities) catch unreachable)) {
+                        @compileError("HTTP/2 session bundle layout must cover carve_storage");
+                    }
+                }
+
+                /// Borrows the bundle's inline arrays as session storage.
+                pub fn storage(self: *BundleSelf) Storage {
+                    return .{
+                        .requests = &self.requests,
+                        .request_storage = &self.request_storage,
+                        .body_storage = &self.body_storage,
+                        .response_header_storage = &self.response_header_storage,
+                        .response_body_storage = &self.response_body_storage,
+                        .decoded_headers = &self.decoded_headers,
+                        .decoded_header_bytes = &self.decoded_header_bytes,
+                        .dynamic_entries = &self.dynamic_entries,
+                        .dynamic_bytes = &self.dynamic_bytes,
+                        .header_block = &self.header_block,
+                        .frame_buffer = &self.frame_buffer,
+                        .response_fields = &self.response_fields,
+                        .response_encode = &self.response_encode,
+                        .lowercase_names = &self.lowercase_names,
+                        .header_extra_names = &self.header_extra_names,
+                        .header_extra_values = &self.header_extra_values,
+                        .request_header_stride = capacities.request_header_size,
+                        .body_stride = capacities.body_size,
+                        .response_header_stride = capacities.response_header_size,
+                        .header_extra_capacity = extra_capacity,
+                    };
+                }
+            };
+        }
+
+        /// Inline storage for tests and stack callers.
+        pub const Bundle = bundle;
+        /// Default session capacity configuration.
+        pub const default_capacities = Capacities{};
+
         connection: Connection = .{},
         dynamic_table: ?hpack.DynamicTable = null,
 
-        requests: [max_streams]Request = .{Request{}} ** max_streams,
-        request_storage: [max_streams][request_storage_capacity]u8 = undefined,
-        body_storage: [max_streams][body_capacity]u8 = undefined,
-        response_header_storage: [max_streams][max_response_header_bytes]u8 = undefined,
-        response_body_storage: [max_streams][body_capacity]u8 = undefined,
+        requests: []Request = &.{},
+        request_storage: []u8 = &.{},
+        body_storage: []u8 = &.{},
+        response_header_storage: []u8 = &.{},
+        response_body_storage: []u8 = &.{},
+        decoded_headers: []hpack.Header = &.{},
+        decoded_header_bytes: []u8 = &.{},
+        dynamic_entries: []hpack.DynamicEntry = &.{},
+        dynamic_bytes: []u8 = &.{},
+        header_block: []u8 = &.{},
+        frame_buffer: []u8 = &.{},
+        response_fields: []hpack.Header = &.{},
+        response_encode: []u8 = &.{},
+        lowercase_names: []u8 = &.{},
+        header_extra_names: [][]const u8 = &.{},
+        header_extra_values: [][]const u8 = &.{},
+        request_header_stride: usize = 0,
+        body_stride: usize = 0,
+        response_header_stride: usize = 0,
+        header_extra_capacity: usize = 0,
+
         request_storage_lengths: [max_streams]usize = .{0} ** max_streams,
         body_lengths: [max_streams]usize = .{0} ** max_streams,
         /// Runtime request-body ceiling applied by `ServerConfig.max_body_size`.
-        /// The compiled `body_capacity` slab remains the hard upper bound.
-        request_body_limit: usize = body_capacity,
+        /// The carved `body_stride` remains the hard upper bound.
+        request_body_limit: usize = 0,
         pending_header_lengths: [max_streams]usize = .{0} ** max_streams,
         pending_body_lengths: [max_streams]usize = .{0} ** max_streams,
         pending_body_offsets: [max_streams]usize = .{0} ** max_streams,
@@ -105,11 +517,6 @@ pub fn server_session(
         pending_stream_end: [max_streams]bool = .{false} ** max_streams,
         stream_write_retry_required: [max_streams]bool = .{false} ** max_streams,
 
-        dynamic_entries: [dynamic_entry_count]hpack.DynamicEntry = undefined,
-        dynamic_bytes: [dynamic_table_size]u8 = undefined,
-        decoded_headers: [max_decoded_headers]hpack.Header = undefined,
-        decoded_header_bytes: [request_storage_capacity]u8 = undefined,
-        header_block: [max_header_block_size]u8 = undefined,
         header_block_length: usize = 0,
         header_stream_index: ?u16 = null,
         refused_header_stream_id: ?u32 = null,
@@ -118,19 +525,85 @@ pub fn server_session(
         header_end_stream: bool = false,
         header_is_trailer: bool = false,
 
-        frame_buffer: [9 + connection_module.default_max_frame_size]u8 = undefined,
         frame_length: usize = 0,
         frame_target_length: usize = 9,
         settings_sent: bool = false,
         closed: bool = false,
 
+        /// Binds caller-carved storage and arms every protocol field.
+        pub fn init(storage: Storage) SessionError!Self {
+            try validate_storage(storage);
+            var session = Self{
+                .requests = storage.requests,
+                .request_storage = storage.request_storage,
+                .body_storage = storage.body_storage,
+                .response_header_storage = storage.response_header_storage,
+                .response_body_storage = storage.response_body_storage,
+                .decoded_headers = storage.decoded_headers,
+                .decoded_header_bytes = storage.decoded_header_bytes,
+                .dynamic_entries = storage.dynamic_entries,
+                .dynamic_bytes = storage.dynamic_bytes,
+                .header_block = storage.header_block,
+                .frame_buffer = storage.frame_buffer,
+                .response_fields = storage.response_fields,
+                .response_encode = storage.response_encode,
+                .lowercase_names = storage.lowercase_names,
+                .header_extra_names = storage.header_extra_names,
+                .header_extra_values = storage.header_extra_values,
+                .request_header_stride = storage.request_header_stride,
+                .body_stride = storage.body_stride,
+                .response_header_stride = storage.response_header_stride,
+                .header_extra_capacity = storage.header_extra_capacity,
+            };
+            try session.reset();
+            return session;
+        }
+
+        /// Rejects storage whose slices cannot back every runtime capacity.
+        fn validate_storage(storage: Storage) error{InvalidSessionStorage}!void {
+            if (storage.requests.len != max_streams) return error.InvalidSessionStorage;
+            if (storage.request_header_stride == 0) return error.InvalidSessionStorage;
+            if (storage.body_stride == 0) return error.InvalidSessionStorage;
+            if (storage.response_header_stride == 0) return error.InvalidSessionStorage;
+            if (storage.request_header_stride > storage.request_storage.len / max_streams) {
+                return error.InvalidSessionStorage;
+            }
+            if (storage.body_stride > storage.body_storage.len / max_streams) {
+                return error.InvalidSessionStorage;
+            }
+            if (storage.body_stride > storage.response_body_storage.len / max_streams) {
+                return error.InvalidSessionStorage;
+            }
+            if (storage.response_header_stride > storage.response_header_storage.len / max_streams) {
+                return error.InvalidSessionStorage;
+            }
+            if (storage.header_extra_names.len % max_streams != 0) {
+                return error.InvalidSessionStorage;
+            }
+            if (storage.header_extra_capacity != storage.header_extra_names.len / max_streams) {
+                return error.InvalidSessionStorage;
+            }
+            if (storage.header_extra_names.len != storage.header_extra_values.len) {
+                return error.InvalidSessionStorage;
+            }
+            if (storage.decoded_headers.len == 0) return error.InvalidSessionStorage;
+            if (storage.decoded_header_bytes.len == 0) return error.InvalidSessionStorage;
+            if (storage.header_block.len == 0) return error.InvalidSessionStorage;
+            if (storage.frame_buffer.len < 9 + connection_module.default_max_frame_size) {
+                return error.InvalidSessionStorage;
+            }
+            if (storage.response_fields.len == 0) return error.InvalidSessionStorage;
+            if (storage.response_encode.len == 0) return error.InvalidSessionStorage;
+            if (storage.lowercase_names.len == 0) return error.InvalidSessionStorage;
+        }
+
         /// Reinitializes all protocol state at a stable memory address.
-        pub fn reset(self: *Self) !void {
+        pub fn reset(self: *Self) hpack.Error!void {
             self.connection = .{};
             self.dynamic_table = try hpack.DynamicTable.init(
-                &self.dynamic_entries,
-                &self.dynamic_bytes,
-                dynamic_table_size,
+                self.dynamic_entries,
+                self.dynamic_bytes,
+                self.dynamic_bytes.len,
             );
             self.header_block_length = 0;
             self.header_stream_index = null;
@@ -145,7 +618,7 @@ pub fn server_session(
             self.closed = false;
             @memset(&self.request_storage_lengths, 0);
             @memset(&self.body_lengths, 0);
-            self.request_body_limit = body_capacity;
+            self.request_body_limit = self.body_stride;
             @memset(&self.pending_header_lengths, 0);
             @memset(&self.pending_body_lengths, 0);
             @memset(&self.pending_body_offsets, 0);
@@ -159,7 +632,7 @@ pub fn server_session(
             @memset(&self.pending_response_active, false);
             @memset(&self.pending_stream_end, false);
             @memset(&self.stream_write_retry_required, false);
-            for (&self.requests) |*request| request.* = .{};
+            for (self.requests) |*request| request.* = .{};
         }
 
         /// Incrementally consumes plaintext HTTP/2 bytes and emits output.
@@ -169,6 +642,7 @@ pub fn server_session(
         /// `reset`, allowing the listener to close when bytes cannot be queued.
         pub fn receive(self: *Self, input: []const u8, callbacks: Callbacks) !void {
             if (self.dynamic_table == null) return error.SessionNotInitialized;
+            if (self.requests.len != max_streams) return error.SessionNotInitialized;
             if (self.closed) return error.ConnectionClosed;
 
             var offset: usize = 0;
@@ -233,33 +707,34 @@ pub fn server_session(
             const code = parse_status(status) orelse return error.InvalidStatus;
             if (status_forbids_body(code) and body.len != 0) return error.BodyNotAllowed;
 
-            var fields: [max_response_headers]hpack.Header = undefined;
-            var lowercase_names: [1024]u8 = undefined;
             var content_length_buffer: [24]u8 = undefined;
             const field_count = try response_fields(
                 raw_headers,
                 body.len,
                 !status_forbids_body(code),
-                &fields,
-                &lowercase_names,
+                self.response_fields,
+                self.lowercase_names,
                 &content_length_buffer,
             );
-            var encoded: [max_response_header_bytes]u8 = undefined;
-            const block = try hpack.encode_response(code, fields[0..field_count], &encoded);
+            const block = try hpack.encode_response(
+                code,
+                self.response_fields[0..field_count],
+                self.response_encode,
+            );
 
             const suppress_body = std.mem.eql(u8, self.requests[index].method, "HEAD") or
                 status_forbids_body(code);
             const transmitted_body = if (suppress_body) "" else body;
-            if (transmitted_body.len > self.response_body_storage[index].len) {
+            if (transmitted_body.len > self.body_stride) {
                 return error.ResponseBodyTooLarge;
             }
             try self.validate_response_headers(block.len, callbacks);
             if (transmitted_body.len != 0 and self.data_frame_capacity(callbacks) == 0) {
                 return error.ResponseDataTooLarge;
             }
-            @memcpy(self.response_header_storage[index][0..block.len], block);
+            @memcpy(self.response_header_bytes(index)[0..block.len], block);
             @memcpy(
-                self.response_body_storage[index][0..transmitted_body.len],
+                self.response_body_bytes(index)[0..transmitted_body.len],
                 transmitted_body,
             );
             self.pending_header_lengths[index] = block.len;
@@ -297,19 +772,20 @@ pub fn server_session(
 
             const code = parse_status(status) orelse return error.InvalidStatus;
             if (status_forbids_body(code)) return error.BodyNotAllowed;
-            var fields: [max_response_headers]hpack.Header = undefined;
-            var lowercase_names: [1024]u8 = undefined;
-            var unused_length: [24]u8 = undefined;
+            var content_length_buffer: [24]u8 = undefined;
             const field_count = try response_fields(
                 raw_headers,
                 0,
                 false,
-                &fields,
-                &lowercase_names,
-                &unused_length,
+                self.response_fields,
+                self.lowercase_names,
+                &content_length_buffer,
             );
-            var encoded: [max_response_header_bytes]u8 = undefined;
-            const block = try hpack.encode_response(code, fields[0..field_count], &encoded);
+            const block = try hpack.encode_response(
+                code,
+                self.response_fields[0..field_count],
+                self.response_encode,
+            );
             try self.validate_response_headers(block.len, callbacks);
             try self.send_headers(stream_id, block, false, callbacks);
             self.response_started[index] = true;
@@ -607,12 +1083,12 @@ pub fn server_session(
             callbacks: Callbacks,
         ) !void {
             const table = &(self.dynamic_table orelse return error.SessionNotInitialized);
-            var decoder = hpack.Decoder.init(table, request_storage_capacity);
+            var decoder = hpack.Decoder.init(table, self.request_header_stride);
             if (self.header_is_trailer) {
                 const fields = decoder.decode_fields(
                     self.header_block[0..self.header_block_length],
-                    &self.decoded_headers,
-                    &self.decoded_header_bytes,
+                    self.decoded_headers,
+                    self.decoded_header_bytes,
                 ) catch |err| {
                     self.finish_header_block();
                     switch (err) {
@@ -651,8 +1127,8 @@ pub fn server_session(
             }
             const decoded = decoder.decode_request(
                 self.header_block[0..self.header_block_length],
-                &self.decoded_headers,
-                &self.decoded_header_bytes,
+                self.decoded_headers,
+                self.decoded_header_bytes,
             ) catch |err| {
                 self.finish_header_block();
                 switch (err) {
@@ -735,11 +1211,11 @@ pub fn server_session(
             callbacks: Callbacks,
         ) !void {
             const table = &(self.dynamic_table orelse return error.SessionNotInitialized);
-            var decoder = hpack.Decoder.init(table, request_storage_capacity);
+            var decoder = hpack.Decoder.init(table, self.request_header_stride);
             _ = decoder.decode_fields(
                 self.header_block[0..self.header_block_length],
-                &self.decoded_headers,
-                &self.decoded_header_bytes,
+                self.decoded_headers,
+                self.decoded_header_bytes,
             ) catch |err| {
                 self.finish_header_block();
                 switch (err) {
@@ -801,7 +1277,7 @@ pub fn server_session(
                 try self.send_reset(stream_id, .enhance_your_calm, callbacks);
                 return;
             }
-            if (event.bytes.len > self.body_storage[index].len - self.body_lengths[index]) {
+            if (event.bytes.len > self.body_stride - self.body_lengths[index]) {
                 try self.send_reset(stream_id, .enhance_your_calm, callbacks);
                 return;
             }
@@ -812,7 +1288,7 @@ pub fn server_session(
                 }
             }
             @memcpy(
-                self.body_storage[index][self.body_lengths[index] .. self.body_lengths[index] + event.bytes.len],
+                self.body_bytes(index)[self.body_lengths[index] .. self.body_lengths[index] + event.bytes.len],
                 event.bytes,
             );
             self.body_lengths[index] += event.bytes.len;
@@ -834,7 +1310,7 @@ pub fn server_session(
                 }
             }
             self.dispatched[index] = true;
-            self.requests[index].body = self.body_storage[index][0..self.body_lengths[index]];
+            self.requests[index].body = self.body_bytes(index)[0..self.body_lengths[index]];
             self.callback_active[index] = true;
             callbacks.request_fn(callbacks.context, &self.requests[index], stream_id) catch {
                 self.callback_active[index] = false;
@@ -853,6 +1329,9 @@ pub fn server_session(
             }
             const raw_target = decoded.path orelse return error.UnsupportedConnect;
             self.requests[index] = .{};
+            const extra_start = @as(usize, index) * self.header_extra_capacity;
+            self.requests[index].extra_header_names = self.header_extra_names[extra_start..][0..self.header_extra_capacity];
+            self.requests[index].extra_header_values = self.header_extra_values[extra_start..][0..self.header_extra_capacity];
             self.request_storage_lengths[index] = 0;
             self.body_lengths[index] = 0;
             self.expected_content_lengths[index] = null;
@@ -875,19 +1354,11 @@ pub fn server_session(
 
             var has_host = false;
             for (decoded.fields) |field| {
-                if (self.requests[index].header_count == self.requests[index].header_names.len) {
-                    return error.HeaderCapacityExceeded;
-                }
-                const header_index = self.requests[index].header_count;
-                self.requests[index].header_names[header_index] = try self.copy_request_bytes(
-                    index,
-                    field.name,
-                );
-                self.requests[index].header_values[header_index] = try self.copy_request_bytes(
-                    index,
-                    field.value,
-                );
-                self.requests[index].header_count += 1;
+                const name = try self.copy_request_bytes(index, field.name);
+                const value = try self.copy_request_bytes(index, field.value);
+                self.requests[index].add_header(name, value) catch |err| switch (err) {
+                    error.HeaderCapacityReached => return error.HeaderCapacityExceeded,
+                };
                 if (std.mem.eql(u8, field.name, "host")) has_host = true;
                 if (std.mem.eql(u8, field.name, "content-length")) {
                     if (self.expected_content_lengths[index] != null) {
@@ -899,30 +1370,23 @@ pub fn server_session(
                 }
             }
             if (has_host or decoded.authority == null) return;
-            if (self.requests[index].header_count == self.requests[index].header_names.len) {
-                return error.HeaderCapacityExceeded;
-            }
-            const header_index = self.requests[index].header_count;
-            self.requests[index].header_names[header_index] = try self.copy_request_bytes(
-                index,
-                "host",
-            );
-            self.requests[index].header_values[header_index] = try self.copy_request_bytes(
-                index,
-                decoded.authority.?,
-            );
-            self.requests[index].header_count += 1;
+            const host_name = try self.copy_request_bytes(index, "host");
+            const host_value = try self.copy_request_bytes(index, decoded.authority.?);
+            self.requests[index].add_header(host_name, host_value) catch |err| switch (err) {
+                error.HeaderCapacityReached => return error.HeaderCapacityExceeded,
+            };
         }
 
         fn copy_request_bytes(self: *Self, index: u16, bytes: []const u8) ![]const u8 {
             const start = self.request_storage_lengths[index];
-            if (bytes.len > self.request_storage[index].len - start) {
+            const storage = self.request_bytes(index);
+            if (bytes.len > storage.len - start) {
                 return error.RequestStorageExceeded;
             }
             const end = start + bytes.len;
-            @memcpy(self.request_storage[index][start..end], bytes);
+            @memcpy(storage[start..end], bytes);
             self.request_storage_lengths[index] = end;
-            return self.request_storage[index][start..end];
+            return storage[start..end];
         }
 
         fn send_settings(self: *Self, callbacks: Callbacks) !void {
@@ -933,7 +1397,7 @@ pub fn server_session(
             write_setting(
                 payload[12..18],
                 0x6,
-                @intCast(@min(request_storage_capacity, std.math.maxInt(u32))),
+                @intCast(@min(self.request_header_stride, std.math.maxInt(u32))),
             );
             write_setting(payload[18..24], 0x8, 1);
             try self.send_frame(.settings, 0, 0, &payload, callbacks);
@@ -957,6 +1421,9 @@ pub fn server_session(
             block_length: usize,
             callbacks: Callbacks,
         ) !void {
+            if (block_length > self.response_header_stride) {
+                return error.ResponseHeadersTooLarge;
+            }
             if (block_length > self.connection.peer_settings.max_frame_size or
                 block_length > callbacks.max_frame_payload)
             {
@@ -1001,7 +1468,7 @@ pub fn server_session(
             }
             const stream_id = self.connection.streams.stream_ids[index];
             if (self.pending_response_active[index] and self.pending_header_ready[index]) {
-                const header_block = self.response_header_storage[index][0..self.pending_header_lengths[index]];
+                const header_block = self.response_header_bytes(index)[0..self.pending_header_lengths[index]];
                 const end_stream = self.pending_body_lengths[index] == 0;
                 self.send_headers(stream_id, header_block, end_stream, callbacks) catch |err| {
                     if (err == error.WouldBlock) return;
@@ -1038,7 +1505,7 @@ pub fn server_session(
                 self.send_data_frame(
                     index,
                     stream_id,
-                    self.response_body_storage[index][offset .. offset + frame_size],
+                    self.response_body_bytes(index)[offset .. offset + frame_size],
                     flags,
                     callbacks,
                 ) catch |err| {
@@ -1248,6 +1715,26 @@ pub fn server_session(
             _ = self;
             const callback = callbacks.stream_closed_fn orelse return;
             callback(callbacks.context, stream_id, index);
+        }
+
+        fn request_bytes(self: *Self, index: u16) []u8 {
+            const start = @as(usize, index) * self.request_header_stride;
+            return self.request_storage[start .. start + self.request_header_stride];
+        }
+
+        fn body_bytes(self: *Self, index: u16) []u8 {
+            const start = @as(usize, index) * self.body_stride;
+            return self.body_storage[start .. start + self.body_stride];
+        }
+
+        fn response_header_bytes(self: *Self, index: u16) []u8 {
+            const start = @as(usize, index) * self.response_header_stride;
+            return self.response_header_storage[start .. start + self.response_header_stride];
+        }
+
+        fn response_body_bytes(self: *Self, index: u16) []u8 {
+            const start = @as(usize, index) * self.body_stride;
+            return self.response_body_storage[start .. start + self.body_stride];
         }
     };
 }

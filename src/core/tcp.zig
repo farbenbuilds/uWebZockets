@@ -43,12 +43,8 @@ pub const file_tick_budget: usize = 4 * zero_copy.max_chunk;
 const tls_bio_capacity = 32 * 1024;
 const tls_plaintext_record_capacity = 16 * 1024;
 const tls_record_overhead = 64;
-const Http2Session = http2_server.server_session(
-    max_http2_streams,
-    http_parser.max_header_size,
-    http_parser.max_header_size,
-    http_parser.default_max_body_size,
-);
+/// HTTP/2 session type sized for one TCP connection's stream capacity.
+pub const Http2Session = http2_server.server_session(max_http2_streams);
 
 /// Per-stream context for one asynchronous HTTP/2 response.
 const Http2AsyncContext = struct {

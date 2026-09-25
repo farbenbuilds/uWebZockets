@@ -9,6 +9,7 @@ const std = @import("std");
 const core_tcp = @import("../core/tcp.zig");
 const http_parser = @import("../http/parser.zig");
 const request_module = @import("../http/request.zig");
+const quic_stream = @import("../quic/stream.zig");
 const ws_deflate = @import("../ws/deflate.zig");
 const rejection = @import("../http/rejection.zig");
 const xdp_transport = @import("../xdp/transport.zig");
@@ -27,6 +28,9 @@ pub const message_storage_alignment = 16;
 /// Every carved region starts on at least a cache line.
 pub const slab_alignment = @max(64, @alignOf(core_tcp.TcpConnection));
 
+/// HTTP/2 session type instantiated with the TCP connection stream capacity.
+const Http2Session = core_tcp.Http2Session;
+
 /// Transport backend selected by a configuration.
 ///
 /// `kernel_bypass` is a request, not a guarantee: `xdp_transport.resolve_mode`
@@ -42,6 +46,8 @@ pub const Error = error{
     InvalidBodyCapacity,
     InvalidRequestLineCapacity,
     InvalidHeaderCapacity,
+    InvalidHttp2Capacity,
+    InvalidHttp3Capacity,
     InvalidRouterCapacity,
     InvalidIdleTimeout,
     InvalidDatagramCapacity,
@@ -107,6 +113,30 @@ pub const ServerConfig = struct {
     ///
     /// Must hold at least one `max_route_path_size` path.
     max_route_registry_size: usize = 64 * 1024,
+    /// Largest accepted HTTP/2 header block in bytes per request.
+    max_h2_header_block_size: usize = 16 * 1024,
+    /// Largest accepted HTTP/2 request body in bytes per stream.
+    max_h2_body_size: usize = 16 * 1024,
+    /// Largest encoded HTTP/2 response header block in bytes per response.
+    ///
+    /// The HPACK encoder fails closed when a response block exceeds it.
+    max_h2_response_header_size: usize = 4 * 1024,
+    /// Maximum HTTP/2 response header fields per response.
+    ///
+    /// Includes the status field and the generated `content-length` field.
+    max_h2_response_header_count: usize = 32,
+    /// Largest accepted HTTP/3 request body in bytes per stream.
+    ///
+    /// The QUIC engine reserves this much body storage per configured client
+    /// outside the startup slab.
+    max_h3_body_size: usize = 16 * 1024,
+    /// Largest encoded HTTP/3 response header storage in bytes per response.
+    ///
+    /// The QUIC stream fails closed when a response head exceeds it; values
+    /// above 65535 are rejected because field offsets and lengths are u16.
+    max_h3_response_header_size: usize = 4096,
+    /// Maximum decoded HTTP/3 response header fields per response.
+    max_h3_response_header_count: usize = 64,
     /// Inactivity timeout in milliseconds; zero disables the sweeper.
     idle_timeout_ms: u64 = 120_000,
     /// Reserves per-connection RFC 7692 scratch inside the startup slab.
@@ -168,6 +198,20 @@ pub const ServerConfig = struct {
         max_route_params: ?usize = null,
         /// Replaces `max_route_registry_size` when non-null.
         max_route_registry_size: ?usize = null,
+        /// Replaces `max_h2_header_block_size` when non-null.
+        max_h2_header_block_size: ?usize = null,
+        /// Replaces `max_h2_body_size` when non-null.
+        max_h2_body_size: ?usize = null,
+        /// Replaces `max_h2_response_header_size` when non-null.
+        max_h2_response_header_size: ?usize = null,
+        /// Replaces `max_h2_response_header_count` when non-null.
+        max_h2_response_header_count: ?usize = null,
+        /// Replaces `max_h3_body_size` when non-null.
+        max_h3_body_size: ?usize = null,
+        /// Replaces `max_h3_response_header_size` when non-null.
+        max_h3_response_header_size: ?usize = null,
+        /// Replaces `max_h3_response_header_count` when non-null.
+        max_h3_response_header_count: ?usize = null,
         /// Replaces `idle_timeout_ms` when non-null.
         idle_timeout_ms: ?u64 = null,
         /// Replaces `compression` when non-null.
@@ -208,6 +252,13 @@ pub const ServerConfig = struct {
         if (overrides.max_route_path_size) |value| result.max_route_path_size = value;
         if (overrides.max_route_params) |value| result.max_route_params = value;
         if (overrides.max_route_registry_size) |value| result.max_route_registry_size = value;
+        if (overrides.max_h2_header_block_size) |value| result.max_h2_header_block_size = value;
+        if (overrides.max_h2_body_size) |value| result.max_h2_body_size = value;
+        if (overrides.max_h2_response_header_size) |value| result.max_h2_response_header_size = value;
+        if (overrides.max_h2_response_header_count) |value| result.max_h2_response_header_count = value;
+        if (overrides.max_h3_body_size) |value| result.max_h3_body_size = value;
+        if (overrides.max_h3_response_header_size) |value| result.max_h3_response_header_size = value;
+        if (overrides.max_h3_response_header_count) |value| result.max_h3_response_header_count = value;
         if (overrides.idle_timeout_ms) |value| result.idle_timeout_ms = value;
         if (overrides.compression) |value| result.compression = value;
         if (overrides.transport) |value| result.transport = value;
@@ -224,6 +275,9 @@ pub const ServerConfig = struct {
 
     /// Rejects configurations that cannot produce a usable slab.
     pub fn validate(self: ServerConfig) Error!void {
+        // Builder specialization evaluates the whole plan at compile time; the
+        // default quota is too small for the combined router and H2 planners.
+        @setEvalBranchQuota(10_000);
         if (self.max_connections == 0) return error.InvalidConnectionCapacity;
         if (self.max_ws_message_size == 0) return error.InvalidWebSocketMessageCapacity;
         if (self.write_queue_size == 0) return error.InvalidWriteQueueCapacity;
@@ -237,6 +291,10 @@ pub const ServerConfig = struct {
         // Reject header and route-param counts whose pointer storage overflows.
         _ = try self.extra_header_stride();
         _ = try self.extra_route_param_stride();
+        // Reject H3 engine capacities the QUIC storage plan cannot carry.
+        try self.validate_h3();
+        // Reject H2 session capacities the storage planner cannot lay out.
+        _ = try self.h2_session_stride();
         // Reject router capacities the radix router cannot represent.
         try self.validate_router();
         if (self.idle_timeout_ms > std.math.maxInt(i64)) return error.InvalidIdleTimeout;
@@ -409,6 +467,97 @@ pub const ServerConfig = struct {
         return self.router_capacities().storage_bytes() catch error.InvalidRouterCapacity;
     }
 
+    /// Capacity set projected into the HTTP/2 session's storage planner.
+    ///
+    /// Request header bytes and decoded field counts follow the HTTP/1 policy
+    /// so one connection cannot accept a larger field list over HTTP/2.
+    pub fn h2_capacities(self: ServerConfig) Http2Session.Capacities {
+        return .{
+            .header_block_size = self.max_h2_header_block_size,
+            .request_header_size = self.max_header_size,
+            .body_size = self.max_h2_body_size,
+            .response_header_size = self.max_h2_response_header_size,
+            .response_header_count = self.max_h2_response_header_count,
+            .decoded_header_count = self.max_header_count,
+            .dynamic_table_size = Http2Session.default_capacities.dynamic_table_size,
+        };
+    }
+
+    /// Bytes one connection's carved HTTP/2 session storage needs.
+    pub fn h2_session_bytes(self: ServerConfig) Error!usize {
+        return Http2Session.storage_bytes(self.h2_capacities()) catch
+            error.InvalidHttp2Capacity;
+    }
+
+    /// Aligned per-connection stride of the HTTP/2 session storage region.
+    pub fn h2_session_stride(self: ServerConfig) Error!usize {
+        return align_checked(try self.h2_session_bytes(), Http2Session.storage_alignment);
+    }
+
+    /// Capacity set projected into the QUIC engine's per-stream storage.
+    ///
+    /// Request header bytes and the decoded field cap follow the HTTP/1 policy
+    /// so one client cannot accept a larger field list over HTTP/3; request
+    /// fields beyond the inline `Request` arrays use the extra pointer slots.
+    /// Callers run `validate` first; an invalid header count projects to zero
+    /// extra slots.
+    pub fn h3_capacities(self: ServerConfig) quic_stream.Capacities {
+        return .{
+            .request_header_size = self.max_header_size,
+            .request_body_size = self.max_h3_body_size,
+            .response_header_size = self.max_h3_response_header_size,
+            .response_header_count = self.max_h3_response_header_count,
+            .decoded_header_count = self.max_header_count,
+            .header_extra_capacity = self.max_header_count -| request_module.max_headers,
+        };
+    }
+
+    /// Bytes the QUIC engine allocates outside the startup slab for this config.
+    ///
+    /// The engine keeps its pools and per-stream slabs in page-allocated
+    /// regions created at `listen_udp`; this total covers the large byte slabs
+    /// and pointer arrays so the per-client cost is documented and checked.
+    /// It mirrors the product bounds `quic_engine` enforces at comptime.
+    pub fn h3_engine_bytes(self: ServerConfig) Error!usize {
+        const capacities = self.h3_capacities();
+        const connections = self.max_connections;
+
+        // Two header-set slabs per connection; one request body, response
+        // header, and response body slab; two pointer slices per extra slot.
+        const header_slots = std.math.mul(usize, connections, 2) catch
+            return error.SlabSizeOverflow;
+        var total = std.math.mul(usize, header_slots, capacities.request_header_size) catch
+            return error.SlabSizeOverflow;
+        total = try h3_sum(total, try h3_product(connections, capacities.request_body_size));
+        total = try h3_sum(total, try h3_product(connections, capacities.response_header_size));
+        total = try h3_sum(total, try h3_product(connections, self.write_queue_size));
+
+        const route_pointers = try h3_product(try self.extra_route_param_capacity(), 2);
+        const route_bytes = try h3_product(route_pointers, @sizeOf([]const u8));
+        total = try h3_sum(total, try h3_product(connections, route_bytes));
+
+        const header_extra_pointers = try h3_product(capacities.header_extra_capacity, 2);
+        const header_extra_bytes = try h3_product(header_extra_pointers, @sizeOf([]const u8));
+        return h3_sum(total, try h3_product(connections, header_extra_bytes));
+    }
+
+    /// Rejects HTTP/3 capacities the QUIC engine cannot represent or carry.
+    fn validate_h3(self: ServerConfig) Error!void {
+        if (self.max_h3_body_size == 0) return error.InvalidHttp3Capacity;
+        if (self.max_h3_response_header_size == 0) return error.InvalidHttp3Capacity;
+        if (self.max_h3_response_header_count == 0) return error.InvalidHttp3Capacity;
+        // Response field offsets and lengths are u16 in the lsquic header API.
+        if (self.max_h3_response_header_size > std.math.maxInt(u16)) {
+            return error.InvalidHttp3Capacity;
+        }
+        // Request header bytes and the QUIC receive credit are u32.
+        if (self.max_header_size > std.math.maxInt(u32)) return error.InvalidHttp3Capacity;
+        if (self.max_h3_body_size > std.math.maxInt(u32) - self.max_header_size) {
+            return error.InvalidHttp3Capacity;
+        }
+        _ = try self.h3_engine_bytes();
+    }
+
     /// Fixed rejection policy rendered into transport error responses.
     pub fn rejection_policy(self: ServerConfig) rejection.RejectionPolicy {
         return .{
@@ -495,6 +644,8 @@ const LayoutOffsets = struct {
     header_extras_end: usize,
     route_param_extras_start: usize,
     route_param_extras_end: usize,
+    h2_session_start: usize,
+    h2_session_end: usize,
     write_start: usize,
     write_end: usize,
     message_start: usize,
@@ -538,6 +689,8 @@ pub const SlabLayout = struct {
     /// Per-connection route-capture pointer storage beyond the inline
     /// `Request` arrays, `extra_route_param_stride` apart.
     route_param_extras: []u8,
+    /// Per-connection carved HTTP/2 session storage, `h2_session_stride` apart.
+    h2_sessions: []u8,
     /// One bounded response ring per connection, `write_queue_size` apart.
     write_queues: []u8,
     /// One WebSocket message region per connection, `max_ws_message_size` apart.
@@ -568,6 +721,8 @@ pub const SlabLayout = struct {
     router_storage: []u8,
     /// Byte distance between consecutive request buffers.
     request_buffer_stride: usize,
+    /// Byte distance between consecutive HTTP/2 session storage regions.
+    h2_session_stride: usize,
     /// Byte distance between consecutive header-extras pointer regions.
     extra_header_stride: usize,
     /// Byte distance between consecutive route-capture pointer regions.
@@ -600,6 +755,7 @@ pub const SlabLayout = struct {
             .request_buffers = slab[offsets.request_start..offsets.request_end],
             .header_extras = slab[offsets.header_extras_start..offsets.header_extras_end],
             .route_param_extras = slab[offsets.route_param_extras_start..offsets.route_param_extras_end],
+            .h2_sessions = slab[offsets.h2_session_start..offsets.h2_session_end],
             .write_queues = slab[offsets.write_start..offsets.write_end],
             .ws_messages = slab[offsets.message_start..offsets.message_end],
             .compression_scratch = slab[offsets.compression_start..offsets.compression_end],
@@ -640,6 +796,7 @@ pub const SlabLayout = struct {
                 null,
             .router_storage = slab[offsets.router_storage_start..offsets.router_storage_end],
             .request_buffer_stride = try config.request_buffer_stride(),
+            .h2_session_stride = try config.h2_session_stride(),
             .extra_header_stride = try config.extra_header_stride(),
             .extra_route_param_stride = try config.extra_route_param_stride(),
             .compression_stride = if (config.compression) try config.compression_stride() else 0,
@@ -665,6 +822,7 @@ fn layout_offsets(config: ServerConfig) Error!LayoutOffsets {
     const request_stride = try config.request_buffer_stride();
     const extra_header_stride = try config.extra_header_stride();
     const extra_route_param_stride = try config.extra_route_param_stride();
+    const h2_session_stride = try config.h2_session_stride();
     const compression_stride = if (config.compression) try config.compression_stride() else 0;
 
     var offsets: LayoutOffsets = undefined;
@@ -698,6 +856,13 @@ fn layout_offsets(config: ServerConfig) Error!LayoutOffsets {
     offsets.route_param_extras_start = cursor;
     cursor = try add_product(cursor, extra_route_param_stride, config.max_connections);
     offsets.route_param_extras_end = cursor;
+
+    // HTTP/2 session storage is carved per connection; the stride is aligned so
+    // each region can be re-tagged as `Http2Session.Storage` without slack.
+    cursor = try align_checked(cursor, Http2Session.storage_alignment);
+    offsets.h2_session_start = cursor;
+    cursor = try add_product(cursor, h2_session_stride, config.max_connections);
+    offsets.h2_session_end = cursor;
 
     cursor = try align_checked(cursor, write_queue_alignment);
     offsets.write_start = cursor;
@@ -819,6 +984,16 @@ var empty_datagram_ring_storage: [0]datagram_ring.DatagramRing = .{};
 fn add_product(cursor: usize, element_size: usize, count: usize) Error!usize {
     const bytes = std.math.mul(usize, element_size, count) catch return error.SlabSizeOverflow;
     return std.math.add(usize, cursor, bytes) catch return error.SlabSizeOverflow;
+}
+
+/// Checked QUIC-engine product; overflow means the slab cannot be represented.
+fn h3_product(count: usize, stride: usize) Error!usize {
+    return std.math.mul(usize, count, stride) catch error.SlabSizeOverflow;
+}
+
+/// Checked QUIC-engine sum; overflow means the slab cannot be represented.
+fn h3_sum(a: usize, b: usize) Error!usize {
+    return std.math.add(usize, a, b) catch error.SlabSizeOverflow;
 }
 
 /// Re-tags an aligned slab region; `layout_offsets` guarantees the alignment.

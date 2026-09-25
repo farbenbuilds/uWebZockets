@@ -305,6 +305,7 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
 
                     req.extra_header_names = parser.extra_header_names[0..parser.extra_header_count];
                     req.extra_header_values = parser.extra_header_values[0..parser.extra_header_count];
+                    req.extra_header_count = parser.extra_header_count;
 
                     if (has_te) {
                         parser.state = .chunk_size;

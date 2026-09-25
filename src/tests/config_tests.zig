@@ -231,14 +231,15 @@ test "config: default slab carries the router region at the end" {
     try std.testing.expectEqual(@as(usize, 858_240), router_bytes);
 
     const total = try config.slab_bytes();
-    // The connection slab dominates the default footprint; the inline route
+    // The connection slab dominates the default footprint. The inline route
     // capture accessors added a pointer pair and a count to `TcpConnection`,
-    // moving the previous 671_455_360 to the current total.
-    try std.testing.expectEqual(@as(usize, 671_561_856), total);
+    // and the per-stream HTTP/2 session storage moved out of `TcpConnection`
+    // into a carved per-connection region, moving 671_561_856 to this total.
+    try std.testing.expectEqual(@as(usize, 681_367_680), total);
     // The default route-param extras stride is zero: the region extends the
     // slab by exactly one router region's bytes.
     try std.testing.expectEqual(@as(usize, 0), try config.extra_route_param_stride());
-    try std.testing.expectEqual(@as(usize, 670_703_616), total - router_bytes);
+    try std.testing.expectEqual(@as(usize, 680_509_440), total - router_bytes);
 }
 
 test "config: slab bytes grow with each router capacity knob" {
@@ -256,6 +257,88 @@ test "config: slab bytes grow with each router capacity knob" {
         const grown = base.with(override);
         try std.testing.expect(try grown.router_storage_bytes() > base_router);
         try std.testing.expect(try grown.slab_bytes() > base_bytes);
+    }
+}
+
+test "config: slab bytes grow with each HTTP/2 capacity knob" {
+    const base = ServerConfig{ .max_connections = 2 };
+    const base_bytes = try base.slab_bytes();
+    const base_h2 = try base.h2_session_bytes();
+    const overrides = [_]ServerConfig.Overrides{
+        .{ .max_h2_header_block_size = base.max_h2_header_block_size + 4096 },
+        .{ .max_h2_body_size = base.max_h2_body_size + 4096 },
+        .{ .max_h2_response_header_size = base.max_h2_response_header_size + 4096 },
+        .{ .max_h2_response_header_count = base.max_h2_response_header_count + 8 },
+        // Decoded field count drives the per-stream header-overflow pointers.
+        .{ .max_header_count = base.max_header_count + 32 },
+    };
+    for (overrides) |override| {
+        const grown = base.with(override);
+        try grown.validate();
+        try std.testing.expect(try grown.h2_session_bytes() > base_h2);
+        try std.testing.expect(try grown.slab_bytes() > base_bytes);
+    }
+
+    const defaults = ServerConfig{};
+    try std.testing.expectEqual(@as(usize, 16 * 1024), defaults.max_h2_header_block_size);
+    try std.testing.expectEqual(@as(usize, 16 * 1024), defaults.max_h2_body_size);
+    try std.testing.expectEqual(@as(usize, 4 * 1024), defaults.max_h2_response_header_size);
+    try std.testing.expectEqual(@as(usize, 32), defaults.max_h2_response_header_count);
+}
+
+test "config: validate rejects invalid HTTP/2 capacities" {
+    const invalid = [_]ServerConfig{
+        .{ .max_h2_header_block_size = 0 },
+        .{ .max_h2_body_size = 0 },
+        .{ .max_h2_response_header_size = 0 },
+        .{ .max_h2_response_header_count = 0 },
+        .{ .max_h2_body_size = std.math.maxInt(usize) / 2 },
+    };
+    for (invalid) |config| {
+        try std.testing.expectError(error.InvalidHttp2Capacity, config.validate());
+        try std.testing.expectError(error.InvalidHttp2Capacity, config.h2_session_bytes());
+    }
+
+    try (ServerConfig{
+        .max_h2_header_block_size = 1024,
+        .max_h2_body_size = 1024,
+        .max_h2_response_header_size = 512,
+        .max_h2_response_header_count = 4,
+    }).validate();
+}
+
+test "config: H2 session storage is carved per connection and initializes" {
+    const config = ServerConfig{ .max_connections = 2, .max_h2_body_size = 8 * 1024 };
+    try config.validate();
+    const stride = try config.h2_session_stride();
+    try std.testing.expect(stride >= try config.h2_session_bytes());
+    try std.testing.expectEqual(@as(usize, 0), stride % support.tcp.Http2Session.storage_alignment);
+
+    const total = try config_module.required_bytes(config);
+    const slab = try std.testing.allocator.alignedAlloc(
+        u8,
+        std.mem.Alignment.fromByteUnits(config_module.slab_alignment),
+        total,
+    );
+    defer std.testing.allocator.free(slab);
+
+    const layout = try config_module.carve(slab, config);
+    try std.testing.expectEqual(@as(usize, 2 * stride), layout.h2_sessions.len);
+    try std.testing.expectEqual(stride, layout.h2_session_stride);
+
+    const capacities = config.h2_capacities();
+    for (0..2) |index| {
+        const start = index * layout.h2_session_stride;
+        const storage = try support.tcp.Http2Session.carve_storage(
+            layout.h2_sessions[start .. start + layout.h2_session_stride],
+            capacities,
+        );
+        const session = try support.tcp.Http2Session.init(storage);
+        try std.testing.expect(session.requests.len == support.tcp.max_http2_streams);
+        try std.testing.expectEqual(
+            capacities.dynamic_table_size,
+            session.dynamic_bytes.len,
+        );
     }
 }
 
@@ -823,6 +906,122 @@ test "config: builder exposes request limit knobs" {
     try std.testing.expectEqual(
         @as(usize, 2 * server.extra_header_stride),
         server.header_extras.len,
+    );
+}
+
+test "config: builder exposes HTTP/2 capacity knobs" {
+    const builder = builder_module.Server.builder(std.testing.io)
+        .with_max_clients(2)
+        .with_max_ws_message_size(1024)
+        .with_write_queue_size(4096)
+        .with_max_body_size(8192)
+        .with_idle_timeout_ms(0)
+        .with_max_h2_header_block_size(12 * 1024)
+        .with_max_h2_body_size(20 * 1024)
+        .with_max_h2_response_header_size(8 * 1024)
+        .with_max_h2_response_header_count(48);
+
+    const configuration = builder.configuration();
+    try std.testing.expectEqual(
+        @as(usize, 12 * 1024),
+        configuration.max_h2_header_block_size,
+    );
+    try std.testing.expectEqual(@as(usize, 20 * 1024), configuration.max_h2_body_size);
+    try std.testing.expectEqual(
+        @as(usize, 8 * 1024),
+        configuration.max_h2_response_header_size,
+    );
+    try std.testing.expectEqual(@as(usize, 48), configuration.max_h2_response_header_count);
+
+    var server = try builder.build(std.testing.allocator);
+    defer server.deinit();
+    try std.testing.expectEqual(@as(usize, 12 * 1024), server.h2_capacities.header_block_size);
+    try std.testing.expectEqual(@as(usize, 20 * 1024), server.h2_capacities.body_size);
+    try std.testing.expectEqual(
+        @as(usize, 8 * 1024),
+        server.h2_capacities.response_header_size,
+    );
+    try std.testing.expectEqual(@as(usize, 48), server.h2_capacities.response_header_count);
+}
+
+test "config: H3 capacity knobs validate, size, and reach the engine type" {
+    const builder = builder_module.Server.builder(std.testing.io)
+        .with_max_clients(4)
+        .with_max_ws_message_size(1024)
+        .with_write_queue_size(4096)
+        .with_max_body_size(8192)
+        .with_idle_timeout_ms(0)
+        .with_max_header_size(24 * 1024)
+        .with_max_header_count(128)
+        .with_max_h3_body_size(20 * 1024)
+        .with_max_h3_response_header_size(8 * 1024)
+        .with_max_h3_response_header_count(48);
+
+    const configuration = builder.configuration();
+    try std.testing.expectEqual(@as(usize, 20 * 1024), configuration.max_h3_body_size);
+    try std.testing.expectEqual(@as(usize, 8 * 1024), configuration.max_h3_response_header_size);
+    try std.testing.expectEqual(@as(usize, 48), configuration.max_h3_response_header_count);
+    try configuration.validate();
+
+    const projection_source = ServerConfig{
+        .max_connections = 4,
+        .max_ws_message_size = 1024,
+        .write_queue_size = 4096,
+        .idle_timeout_ms = 0,
+        .max_header_size = 24 * 1024,
+        .max_header_count = 128,
+        .max_h3_body_size = 20 * 1024,
+        .max_h3_response_header_size = 8 * 1024,
+        .max_h3_response_header_count = 48,
+    };
+    const capacities = comptime projection_source.h3_capacities();
+    try std.testing.expectEqual(@as(usize, 24 * 1024), capacities.request_header_size);
+    try std.testing.expectEqual(@as(usize, 20 * 1024), capacities.request_body_size);
+    try std.testing.expectEqual(@as(usize, 8 * 1024), capacities.response_header_size);
+    try std.testing.expectEqual(@as(usize, 48), capacities.response_header_count);
+    try std.testing.expectEqual(@as(usize, 128), capacities.decoded_header_count);
+    try std.testing.expectEqual(@as(usize, 64), capacities.header_extra_capacity);
+
+    // The engine reserves its storage outside the startup slab, so H3 knobs
+    // change the documented engine cost without changing `slab_bytes`.
+    const slab_only = configuration.with(.{
+        .max_h3_body_size = 16 * 1024,
+        .max_h3_response_header_size = 4096,
+        .max_h3_response_header_count = 64,
+    });
+    try std.testing.expectEqual(try slab_only.slab_bytes(), try configuration.slab_bytes());
+    try std.testing.expect(
+        try configuration.h3_engine_bytes() > try slab_only.h3_engine_bytes(),
+    );
+
+    const TestEngine = support.quic_engine.quic_engine(4, 4096, 0, capacities);
+    var quic = try TestEngine.init();
+    defer quic.deinit();
+    try std.testing.expectEqual(@as(usize, 2 * 4 * 24 * 1024), quic.header_storage.len);
+    try std.testing.expectEqual(@as(usize, 4 * 20 * 1024), quic.request_body_storage.len);
+    try std.testing.expectEqual(@as(usize, 4 * 8 * 1024), quic.response_header_storage.len);
+    try std.testing.expectEqual(@as(usize, 4 * 64 * 2), quic.header_extra_storage.len);
+
+    try std.testing.expectError(
+        error.InvalidHttp3Capacity,
+        (ServerConfig{ .max_h3_body_size = 0 }).validate(),
+    );
+    try std.testing.expectError(
+        error.InvalidHttp3Capacity,
+        (ServerConfig{ .max_h3_response_header_size = 0 }).validate(),
+    );
+    try std.testing.expectError(
+        error.InvalidHttp3Capacity,
+        (ServerConfig{ .max_h3_response_header_count = 0 }).validate(),
+    );
+    // Response field offsets and lengths are u16 in the lsquic header API.
+    try std.testing.expectError(
+        error.InvalidHttp3Capacity,
+        (ServerConfig{ .max_h3_response_header_size = std.math.maxInt(u16) + 1 }).validate(),
+    );
+    try std.testing.expectError(
+        error.SlabSizeOverflow,
+        (ServerConfig{ .max_connections = std.math.maxInt(usize) / 2 }).h3_engine_bytes(),
     );
 }
 
