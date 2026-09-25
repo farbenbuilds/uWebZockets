@@ -106,8 +106,8 @@ pub fn configured_app_with_timeout(
         io: std.Io,
         loop: core_loop.Loop,
         pool: Pool,
-        // One contiguous startup slab backs the pool, request, message, and
-        // queue regions so deinit releases exactly one allocation.
+        // One contiguous startup slab backs the pool, request, message, queue,
+        // and router regions so deinit releases exactly one allocation.
         slab: []u8,
         slab_allocator: std.mem.Allocator,
         request_buffers: []u8,
@@ -127,7 +127,11 @@ pub fn configured_app_with_timeout(
         ws_compression_owned: bool = false,
         ws_deflate: ?DeflateContext = null,
         write_queue_storage: []u8,
-        router: radix.Router,
+        // Router typed storage carved from the startup slab; the router binds
+        // it on first route work, when the App address is stable.
+        router_storage: radix.Storage = undefined,
+        router_bound: bool = false,
+        router: radix.Router = .{},
         // WebTransport datagram state. The metadata arrays are SoA and the
         // payload slab is one fixed stride per connection, all carved from the
         // startup slab so no datagram ever allocates.
@@ -182,8 +186,9 @@ pub fn configured_app_with_timeout(
 
         /// Allocates the whole startup slab once, then initializes from it.
         ///
-        /// Every pool, request, message, queue, and optional compression region
-        /// comes from this one allocation; the runtime I/O loop never allocates.
+        /// Every pool, request, message, queue, router, and optional compression
+        /// region comes from this one allocation; the runtime I/O loop never
+        /// allocates.
         pub fn init_configured(
             io: std.Io,
             allocator: std.mem.Allocator,
@@ -230,6 +235,10 @@ pub fn configured_app_with_timeout(
 
             const layout = try config_module.carve(slab, config);
             const extra_header_capacity = try config.extra_header_capacity();
+            const router_storage = try radix.carve_storage(
+                layout.router_storage,
+                config.router_capacities(),
+            );
 
             var loop = try core_loop.init();
             errdefer core_loop.deinit(&loop);
@@ -259,7 +268,7 @@ pub fn configured_app_with_timeout(
                 else
                     layout.compression_stride / 2,
                 .write_queue_storage = layout.write_queues,
-                .router = radix.Router.init(),
+                .router_storage = router_storage,
                 .datagram_session_ids = layout.datagram_session_ids,
                 .datagram_sequences = layout.datagram_sequences,
                 .datagram_payload_lengths = layout.datagram_payload_lengths,
@@ -773,9 +782,20 @@ pub fn configured_app_with_timeout(
             return &self.datagram_rings[connection_index];
         }
 
-        fn ensure_routes_mutable(self: *const Self) !void {
+        fn ensure_routes_mutable(self: *Self) !void {
             if (self.shutting_down or self.deinitialized) return error.ApplicationUnavailable;
             if (self.routes_locked) return error.RoutesLocked;
+            try self.ensure_router();
+        }
+
+        /// Binds the slab-backed router storage on first route work.
+        ///
+        /// A pre-bound router (an initialized `router` injected by tests or
+        /// callers) wins over lazy binding.
+        fn ensure_router(self: *Self) !void {
+            if (self.router_bound or self.router.node_count != 0) return;
+            self.router = try radix.Router.init(self.router_storage);
+            self.router_bound = true;
         }
 
         /// Installs the hidden metrics route once, before routes are locked.
@@ -970,6 +990,7 @@ pub fn configured_app_with_timeout(
         pub fn listen(self: *Self, address: []const u8, port: u16) !void {
             if (self.shutting_down or self.deinitialized) return error.ApplicationUnavailable;
             if (self.server != null) return error.AlreadyListening;
+            try self.ensure_router();
 
             const server = try core_tcp.init_server(address, port, on_new_connection, self);
             errdefer close_socket_now(server.listener);
@@ -1002,6 +1023,7 @@ pub fn configured_app_with_timeout(
             if (self.shutting_down or self.deinitialized) return error.ApplicationUnavailable;
             if (!self.http3_enabled or self.quic_tls_ctx == null) return error.Http3NotInitialized;
             if (self.quic_transport != null) return error.AlreadyListening;
+            try self.ensure_router();
 
             self.quic_transport = try QuicTransport.init(
                 self.quic_tls_ctx.?.ctx,
@@ -1155,14 +1177,15 @@ pub fn configured_app_with_timeout(
                 deinitialized: bool = false,
 
                 pub fn init(allocator: std.mem.Allocator, io: std.Io) !Cluster {
-                    return init_with_options(allocator, io, .{});
+                    return init_with_options(allocator, io, default_config, .{});
                 }
 
-                /// Builds every worker slab on this thread; each worker then owns
-                /// its slab exclusively for its whole lifetime.
+                /// Builds every worker slab on this thread with `config`; each
+                /// worker then owns its slab exclusively for its whole lifetime.
                 pub fn init_with_options(
                     allocator: std.mem.Allocator,
                     io: std.Io,
+                    comptime config: config_module.ServerConfig,
                     startup_options: ClusterOptions,
                 ) !Cluster {
                     const workers = try allocator.alloc(Self, worker_count);
@@ -1178,7 +1201,7 @@ pub fn configured_app_with_timeout(
                         for (workers[0..initialized]) |*app_worker| app_worker.deinit();
                     }
                     for (workers, 0..) |*app_worker, index| {
-                        app_worker.* = try Self.init(io);
+                        app_worker.* = try Self.init_configured(io, allocator, config);
                         initialized += 1;
                         try app_worker.attach_cluster_inbox(&inboxes[index]);
                     }
@@ -1301,6 +1324,7 @@ pub fn configured_app_with_timeout(
         fn listen_reuse_port(self: *Self, address: []const u8, port: u16) !void {
             if (self.shutting_down or self.deinitialized) return error.ApplicationUnavailable;
             if (self.server != null) return error.AlreadyListening;
+            try self.ensure_router();
 
             const server = try core_tcp.init_reuse_port_server(address, port, on_new_connection, self);
             errdefer close_socket_now(server.listener);
@@ -1412,7 +1436,8 @@ pub fn configured_app_with_timeout(
 
         fn serve_openapi(context: *anyopaque, _: *Request, response: *Response) void {
             const router: *const radix.Router = @ptrCast(@alignCast(context));
-            var buffer: [32 * 1024]u8 = undefined;
+            // The document shares the buffer with write_openapi's route snapshot.
+            var buffer: [64 * 1024]u8 = undefined;
             const document = router.write_openapi(&buffer, .{}) catch {
                 // The handler ABI cannot propagate a response write failure.
                 response.end("500 Internal Server Error", "OpenAPI document exceeds capacity") catch {};

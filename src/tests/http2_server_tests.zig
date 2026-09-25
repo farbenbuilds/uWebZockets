@@ -11,7 +11,8 @@ const SingleStreamSession = http2_server.server_session(1, 4096, 4096, 1024);
 
 const TestState = struct {
     session: *TestSession,
-    router: radix.Router = radix.Router.init(),
+    router_bundle: radix.DefaultBundle = .{},
+    router: radix.Router = .{},
     output: [8192]u8 = undefined,
     output_length: usize = 0,
     dispatch_order: [4]u32 = undefined,
@@ -22,6 +23,13 @@ const TestState = struct {
     async_stream_id: u32 = 0,
     wake_count: usize = 0,
     saw_dynamic_header: bool = false,
+
+    /// Binds the embedded router storage once the state address is stable.
+    fn init_router(self: *TestState) void {
+        if (self.router.node_count != 0) return;
+        // DefaultBundle capacities are comptime-validated, so init cannot fail.
+        self.router = radix.Router.init(self.router_bundle.storage()) catch unreachable;
+    }
 
     fn callbacks(self: *TestState) http2_server.Callbacks {
         return .{
@@ -410,6 +418,7 @@ test "http2 server: interleaved streams dispatch router and encode responses" {
     var session: TestSession = .{};
     try session.reset();
     var state = TestState{ .session = &session };
+    state.init_router();
     try state.router.use(&state, middleware);
     try state.router.route_context(.get, "/items/:id", &state, route_handler);
 
@@ -474,6 +483,7 @@ test "http2 server: invalid QUERY metadata bypasses middleware" {
     var session: TestSession = .{};
     try session.reset();
     var state = TestState{ .session = &session };
+    state.init_router();
     try state.router.use(&state, middleware);
 
     const request_headers = [_]u8{
@@ -506,6 +516,7 @@ test "http2 server: trailers preserve HPACK dynamic table synchronization" {
     var session: TestSession = .{};
     try session.reset();
     var state = TestState{ .session = &session };
+    state.init_router();
     try state.router.route_context(.get, "/trail", &state, trailer_route_handler);
 
     const request_headers = [_]u8{
@@ -746,6 +757,7 @@ test "http2 server: duplicate Host and authority mismatch are stream errors" {
     var session: TestSession = .{};
     try session.reset();
     var state = TestState{ .session = &session };
+    state.init_router();
 
     const duplicate_host = [_]u8{
         0x82, 0x86, 0x84,
@@ -797,6 +809,7 @@ test "http2 server: regular CONNECT receives an ordinary 501 response" {
     var session: TestSession = .{};
     try session.reset();
     var state = TestState{ .session = &session };
+    state.init_router();
 
     const connect_headers = [_]u8{
         0x02, 0x07, 'C', 'O', 'N', 'N', 'E', 'C', 'T',
@@ -831,6 +844,7 @@ test "http2 server: rejected CONNECT trailers never dispatch a stale stream" {
     var session: TestSession = .{};
     try session.reset();
     var state = TestState{ .session = &session };
+    state.init_router();
 
     const connect_headers = [_]u8{
         0x02, 0x07, 'C', 'O', 'N', 'N', 'E', 'C', 'T',
@@ -1184,6 +1198,7 @@ test "http2 server: first peer frame must be non-ack settings" {
     var session: TestSession = .{};
     try session.reset();
     var state = TestState{ .session = &session };
+    state.init_router();
     var input: [64]u8 = undefined;
     @memcpy(input[0..http2.client_preface.len], http2.client_preface);
     var input_length: usize = http2.client_preface.len;
@@ -1220,6 +1235,7 @@ test "http2 server: deferred response token retains one stream only" {
     var session: TestSession = .{};
     try session.reset();
     var state = TestState{ .session = &session };
+    state.init_router();
     try state.router.route_async_context(.get, "/async", &state, async_route_handler);
 
     const headers = [_]u8{
@@ -1285,6 +1301,7 @@ test "http2 server: peer reset expires a retained async response" {
     var session: TestSession = .{};
     try session.reset();
     var state = TestState{ .session = &session };
+    state.init_router();
     try state.router.route_async_context(.get, "/async", &state, async_route_handler);
 
     const headers = [_]u8{
@@ -1313,6 +1330,7 @@ test "http2 server: content length is unique numeric and exact" {
     var session: TestSession = .{};
     try session.reset();
     var state = TestState{ .session = &session };
+    state.init_router();
 
     const length_five = [_]u8{ 0x82, 0x86, 0x84, 0x0f, 0x0d, 0x01, '5' };
     const duplicate = [_]u8{
@@ -1350,6 +1368,7 @@ test "http2 server: configured body limit rejects oversized content length" {
     try session.reset();
     session.request_body_limit = 4;
     var state = TestState{ .session = &session };
+    state.init_router();
 
     const length_five = [_]u8{ 0x82, 0x86, 0x84, 0x0f, 0x0d, 0x01, '5' };
     var input: [96]u8 = undefined;
@@ -1372,6 +1391,7 @@ test "http2 server: configured body limit bounds streaming bodies" {
     try session.reset();
     session.request_body_limit = 3;
     var state = TestState{ .session = &session };
+    state.init_router();
 
     const headers = [_]u8{ 0x82, 0x86, 0x84 };
     var input: [128]u8 = undefined;
@@ -1395,6 +1415,7 @@ test "http2 server: extended CONNECT with :protocol websocket dispatches to hand
     var session: TestSession = .{};
     try session.reset();
     var state = TestState{ .session = &session };
+    state.init_router();
     try state.router.route_context(.connect, "/ws", &state, route_handler);
 
     const connect_ws_headers = [_]u8{
@@ -1545,7 +1566,8 @@ fn producer_request_headers() [11]u8 {
 }
 
 test "http2: producer that fits the write ring completes synchronously" {
-    var router = radix.Router.init();
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
     var producer = StreamProducerState{ .remaining_chunks = 1 };
     try router.route_context(.get, "/stream", &producer, stream_route_handler);
 
@@ -1592,7 +1614,8 @@ test "http2: begin_stream fails closed without an arm callback" {
 }
 
 test "http2: producer resumes when the write ring drains" {
-    var router = radix.Router.init();
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
     var producer = StreamProducerState{ .remaining_chunks = 32 };
     try router.route_context(.get, "/stream", &producer, stream_route_handler);
 
@@ -1634,7 +1657,8 @@ test "http2: producer resumes when the write ring drains" {
 }
 
 test "http2: producer failure resets the stream and clears the slot" {
-    var router = radix.Router.init();
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
     var producer = StreamProducerState{ .fail_immediately = true };
     try router.route_context(.get, "/stream", &producer, stream_route_handler);
 
@@ -1662,7 +1686,8 @@ test "http2: producer failure resets the stream and clears the slot" {
 }
 
 test "http2: pending producer keeps the dispatch from force-ending" {
-    var router = radix.Router.init();
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
     var producer = StreamProducerState{ .remaining_chunks = 2, .pending_once = true };
     try router.route_context(.get, "/stream", &producer, stream_route_handler);
 
@@ -1747,7 +1772,8 @@ fn prime_stream_connection(
 }
 
 test "http2: producer completes across flow-control window updates" {
-    var router = radix.Router.init();
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
     var producer = StreamProducerState{
         .chunk_length = 8192,
         .remaining_chunks = 12,
@@ -1799,7 +1825,8 @@ test "http2: producer completes across flow-control window updates" {
 }
 
 test "http2: write_chunk maps window exhaustion to WouldBlock" {
-    var router = radix.Router.init();
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
     var producer = StreamProducerState{
         .chunk_length = 8192,
         .remaining_chunks = 8,
@@ -1833,7 +1860,8 @@ test "http2: write_chunk maps window exhaustion to WouldBlock" {
 }
 
 test "http2: stalled producer runs once per pump" {
-    var router = radix.Router.init();
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
     var producer = StreamProducerState{ .remaining_chunks = 1, .stall = true };
     try router.route_context(.get, "/stream", &producer, stream_route_handler);
 

@@ -12,18 +12,19 @@ pub const PatternInfo = struct {
     has_wildcard: bool = false,
 };
 
-/// Reports whether a route path is absolute, in-bounds, and free of query,
-/// fragment, and control separators.
-pub fn valid_path(path: []const u8) bool {
-    if (path.len == 0 or path.len > max_route_path_size) return false;
+/// Reports whether a route path is absolute, within `max_path_size` bytes,
+/// and free of query, fragment, and control separators.
+pub fn valid_path(path: []const u8, max_path_size: usize) bool {
+    if (path.len == 0 or path.len > max_path_size) return false;
     if (path[0] != '/') return false;
     if (std.mem.indexOfAny(u8, path, "?#\r\n") != null) return false;
     return true;
 }
 
-/// Validates a route path and classifies its static and parameter segments.
-pub fn analyze_pattern(path: []const u8) !PatternInfo {
-    if (!valid_path(path)) return error.InvalidRoutePath;
+/// Validates a route path against `max_path_size` and classifies its static
+/// and parameter segments.
+pub fn analyze_pattern(path: []const u8, max_path_size: usize) !PatternInfo {
+    if (!valid_path(path, max_path_size)) return error.InvalidRoutePath;
 
     var info = PatternInfo{};
     var cursor: usize = 1;

@@ -15,6 +15,8 @@ const xdp_transport = @import("../xdp/transport.zig");
 const datagram_ring = @import("../quic/datagram_ring.zig");
 const metrics_module = @import("../observability/metrics.zig");
 const file_watch = @import("../observability/file_watch.zig");
+const radix = @import("radix.zig");
+const radix_pattern = @import("radix_pattern.zig");
 
 /// Request buffer stride alignment; keeps every body start SIMD-friendly.
 pub const request_buffer_alignment = 16;
@@ -40,6 +42,7 @@ pub const Error = error{
     InvalidBodyCapacity,
     InvalidRequestLineCapacity,
     InvalidHeaderCapacity,
+    InvalidRouterCapacity,
     InvalidIdleTimeout,
     InvalidDatagramCapacity,
     InvalidTransportConfiguration,
@@ -80,6 +83,24 @@ pub const ServerConfig = struct {
     /// arrays cannot shrink; larger values carve one name/value pair per extra
     /// header into the per-connection slab region.
     max_header_count: usize = request_module.max_headers,
+    /// Maximum radix routing nodes retained for the route table.
+    ///
+    /// One node stores one path segment; shared prefixes count once. Values
+    /// above `std.math.maxInt(u16)` are rejected because node indexes are u16.
+    max_route_nodes: usize = radix.default_max_nodes,
+    /// Maximum parameterized route patterns retained for matching.
+    max_pattern_routes: usize = radix.default_max_pattern_routes,
+    /// Maximum ordered global middleware callbacks.
+    max_middleware: usize = radix.default_max_middleware,
+    /// Maximum accepted route path length in bytes.
+    ///
+    /// Values above `std.math.maxInt(u16)` are rejected because segment
+    /// lengths are u16.
+    max_route_path_size: usize = radix_pattern.max_route_path_size,
+    /// Bytes reserved for the route paths retained for introspection.
+    ///
+    /// Must hold at least one `max_route_path_size` path.
+    max_route_registry_size: usize = 64 * 1024,
     /// Inactivity timeout in milliseconds; zero disables the sweeper.
     idle_timeout_ms: u64 = 120_000,
     /// Reserves per-connection RFC 7692 scratch inside the startup slab.
@@ -129,6 +150,16 @@ pub const ServerConfig = struct {
         max_header_size: ?usize = null,
         /// Replaces `max_header_count` when non-null.
         max_header_count: ?usize = null,
+        /// Replaces `max_route_nodes` when non-null.
+        max_route_nodes: ?usize = null,
+        /// Replaces `max_pattern_routes` when non-null.
+        max_pattern_routes: ?usize = null,
+        /// Replaces `max_middleware` when non-null.
+        max_middleware: ?usize = null,
+        /// Replaces `max_route_path_size` when non-null.
+        max_route_path_size: ?usize = null,
+        /// Replaces `max_route_registry_size` when non-null.
+        max_route_registry_size: ?usize = null,
         /// Replaces `idle_timeout_ms` when non-null.
         idle_timeout_ms: ?u64 = null,
         /// Replaces `compression` when non-null.
@@ -163,6 +194,11 @@ pub const ServerConfig = struct {
         if (overrides.max_request_line_size) |value| result.max_request_line_size = value;
         if (overrides.max_header_size) |value| result.max_header_size = value;
         if (overrides.max_header_count) |value| result.max_header_count = value;
+        if (overrides.max_route_nodes) |value| result.max_route_nodes = value;
+        if (overrides.max_pattern_routes) |value| result.max_pattern_routes = value;
+        if (overrides.max_middleware) |value| result.max_middleware = value;
+        if (overrides.max_route_path_size) |value| result.max_route_path_size = value;
+        if (overrides.max_route_registry_size) |value| result.max_route_registry_size = value;
         if (overrides.idle_timeout_ms) |value| result.idle_timeout_ms = value;
         if (overrides.compression) |value| result.compression = value;
         if (overrides.transport) |value| result.transport = value;
@@ -188,10 +224,16 @@ pub const ServerConfig = struct {
         if (self.max_header_count < request_module.max_headers) return error.InvalidHeaderCapacity;
         // Reject header counts whose per-connection pointer storage overflows.
         _ = try self.extra_header_stride();
+        // Reject router capacities the radix router cannot represent.
+        try self.validate_router();
         if (self.idle_timeout_ms > std.math.maxInt(i64)) return error.InvalidIdleTimeout;
         try self.validate_datagrams();
         try self.validate_transport();
         try self.validate_watch();
+    }
+
+    fn validate_router(self: ServerConfig) Error!void {
+        _ = try self.router_storage_bytes();
     }
 
     fn validate_datagrams(self: ServerConfig) Error!void {
@@ -316,6 +358,22 @@ pub const ServerConfig = struct {
         return (try layout_offsets(self)).total_bytes;
     }
 
+    /// Capacity set projected into the radix router's configuration.
+    pub fn router_capacities(self: ServerConfig) radix.Capacities {
+        return .{
+            .max_nodes = self.max_route_nodes,
+            .max_pattern_routes = self.max_pattern_routes,
+            .max_middleware = self.max_middleware,
+            .max_route_path_size = self.max_route_path_size,
+            .registry_storage_size = self.max_route_registry_size,
+        };
+    }
+
+    /// Bytes the router-storage region needs for this configuration.
+    pub fn router_storage_bytes(self: ServerConfig) Error!usize {
+        return self.router_capacities().storage_bytes() catch error.InvalidRouterCapacity;
+    }
+
     /// Fixed rejection policy rendered into transport error responses.
     pub fn rejection_policy(self: ServerConfig) rejection.RejectionPolicy {
         return .{
@@ -422,6 +480,8 @@ const LayoutOffsets = struct {
     xdp_transport_end: usize,
     metrics_start: usize,
     metrics_end: usize,
+    router_storage_start: usize,
+    router_storage_end: usize,
     total_bytes: usize,
 };
 
@@ -464,6 +524,8 @@ pub const SlabLayout = struct {
     xdp_transport_bytes: []u8,
     /// Cache-line-aligned metrics registry; null unless observability is on.
     metrics_registry: ?*metrics_module.Registry,
+    /// Router capacity storage carved exactly once per application.
+    router_storage: []u8,
     /// Byte distance between consecutive request buffers.
     request_buffer_stride: usize,
     /// Byte distance between consecutive header-extras pointer regions.
@@ -533,6 +595,7 @@ pub const SlabLayout = struct {
                 @ptrCast(@alignCast(slab[offsets.metrics_start..offsets.metrics_end].ptr))
             else
                 null,
+            .router_storage = slab[offsets.router_storage_start..offsets.router_storage_end],
             .request_buffer_stride = try config.request_buffer_stride(),
             .extra_header_stride = try config.extra_header_stride(),
             .compression_stride = if (config.compression) try config.compression_stride() else 0,
@@ -674,6 +737,15 @@ fn layout_offsets(config: ServerConfig) Error!LayoutOffsets {
         ) catch return error.SlabSizeOverflow;
     }
     offsets.metrics_end = cursor;
+
+    // Router storage is one per-application region, independent of the
+    // per-connection strides above; it trails the slab so raising a route
+    // capacity never shifts a connection's storage.
+    cursor = try align_checked(cursor, radix.storage_alignment);
+    offsets.router_storage_start = cursor;
+    cursor = std.math.add(usize, cursor, try config.router_storage_bytes()) catch
+        return error.SlabSizeOverflow;
+    offsets.router_storage_end = cursor;
 
     offsets.total_bytes = cursor;
     return offsets;

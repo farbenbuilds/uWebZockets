@@ -225,6 +225,174 @@ test "config: with merges request limit overrides" {
     );
 }
 
+test "config: default slab carries the router region at the end" {
+    const config = ServerConfig{};
+    const router_bytes = try config.router_storage_bytes();
+    try std.testing.expectEqual(@as(usize, 858_240), router_bytes);
+
+    const total = try config.slab_bytes();
+    try std.testing.expectEqual(@as(usize, 671_455_360), total);
+    // Part 1 kept the router arrays inline in the App; the default slab was
+    // 670_597_120 bytes. It already satisfied `radix.storage_alignment`, so the
+    // router region now extends it by exactly one region's bytes.
+    try std.testing.expectEqual(@as(usize, 670_597_120), total - router_bytes);
+}
+
+test "config: slab bytes grow with each router capacity knob" {
+    const base = ServerConfig{};
+    const base_bytes = try base.slab_bytes();
+    const base_router = try base.router_storage_bytes();
+    const overrides = [_]ServerConfig.Overrides{
+        .{ .max_route_nodes = base.max_route_nodes + 16 },
+        .{ .max_pattern_routes = base.max_pattern_routes + 4 },
+        .{ .max_middleware = base.max_middleware + 4 },
+        .{ .max_route_path_size = base.max_route_path_size + 64 },
+        .{ .max_route_registry_size = base.max_route_registry_size + 512 },
+    };
+    for (overrides) |override| {
+        const grown = base.with(override);
+        try std.testing.expect(try grown.router_storage_bytes() > base_router);
+        try std.testing.expect(try grown.slab_bytes() > base_bytes);
+    }
+}
+
+test "config: validate rejects out-of-range router capacities" {
+    const default_path_size = (ServerConfig{}).max_route_path_size;
+    const invalid = [_]ServerConfig{
+        .{ .max_route_nodes = 0 },
+        .{ .max_route_nodes = std.math.maxInt(u16) + 1 },
+        .{ .max_route_nodes = std.math.maxInt(usize) },
+        .{ .max_pattern_routes = std.math.maxInt(u8) + 1 },
+        .{ .max_middleware = std.math.maxInt(u8) + 1 },
+        .{ .max_route_path_size = 0 },
+        .{ .max_route_path_size = std.math.maxInt(u16) + 1 },
+        .{ .max_route_registry_size = default_path_size - 1 },
+    };
+    for (invalid) |config| {
+        try std.testing.expectError(error.InvalidRouterCapacity, config.validate());
+        try std.testing.expectError(
+            error.InvalidRouterCapacity,
+            config.router_storage_bytes(),
+        );
+    }
+
+    try (ServerConfig{ .max_route_nodes = 1 }).validate();
+    try (ServerConfig{
+        .max_route_path_size = std.math.maxInt(u16),
+        .max_route_registry_size = std.math.maxInt(u16),
+    }).validate();
+}
+
+test "config: with merges router capacity overrides" {
+    const derived = (ServerConfig{}).with(.{
+        .max_route_nodes = 300,
+        .max_pattern_routes = 8,
+        .max_middleware = 12,
+        .max_route_path_size = 1024,
+        .max_route_registry_size = 32 * 1024,
+    });
+    try std.testing.expectEqual(@as(usize, 300), derived.max_route_nodes);
+    try std.testing.expectEqual(@as(usize, 8), derived.max_pattern_routes);
+    try std.testing.expectEqual(@as(usize, 12), derived.max_middleware);
+    try std.testing.expectEqual(@as(usize, 1024), derived.max_route_path_size);
+    try std.testing.expectEqual(@as(usize, 32 * 1024), derived.max_route_registry_size);
+    try std.testing.expectEqual((ServerConfig{}).max_connections, derived.max_connections);
+    try std.testing.expectEqual(
+        (ServerConfig{}).max_route_nodes,
+        (ServerConfig{}).with(.{}).max_route_nodes,
+    );
+
+    const capacities = derived.router_capacities();
+    try std.testing.expectEqual(@as(usize, 300), capacities.max_nodes);
+    try std.testing.expectEqual(@as(usize, 8), capacities.max_pattern_routes);
+    try std.testing.expectEqual(@as(usize, 12), capacities.max_middleware);
+    try std.testing.expectEqual(@as(usize, 1024), capacities.max_route_path_size);
+    try std.testing.expectEqual(@as(usize, 32 * 1024), capacities.registry_storage_size);
+}
+
+test "config: router region is aligned, ends the slab, and carves" {
+    const config = ServerConfig{
+        .max_connections = 4,
+        .max_route_nodes = 32,
+        .max_pattern_routes = 8,
+        .max_middleware = 6,
+        .max_route_path_size = 512,
+        .max_route_registry_size = 4096,
+    };
+    const total = try config_module.required_bytes(config);
+    const slab = try std.testing.allocator.alignedAlloc(
+        u8,
+        std.mem.Alignment.fromByteUnits(config_module.slab_alignment),
+        total,
+    );
+    defer std.testing.allocator.free(slab);
+
+    const layout = try config_module.carve(slab, config);
+    try std.testing.expectEqual(total, layout.total_bytes);
+    try std.testing.expectEqual(try config.router_storage_bytes(), layout.router_storage.len);
+    try std.testing.expect(layout.router_storage.len >= config.max_route_registry_size);
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        @intFromPtr(layout.router_storage.ptr) % support.radix.storage_alignment,
+    );
+    const slab_start = @intFromPtr(slab.ptr);
+    const router_start = @intFromPtr(layout.router_storage.ptr);
+    try std.testing.expect(router_start >= slab_start);
+    try std.testing.expect(router_start + layout.router_storage.len <= slab_start + slab.len);
+    try std.testing.expectEqual(slab_start + total, router_start + layout.router_storage.len);
+
+    const storage = try support.radix.carve_storage(
+        layout.router_storage,
+        config.router_capacities(),
+    );
+    try std.testing.expectEqual(@as(usize, 32), storage.segment_offsets.len);
+    try std.testing.expectEqual(@as(usize, 8), storage.pattern_routes.len);
+    try std.testing.expectEqual(@as(usize, 6), storage.middleware.len);
+    try std.testing.expectEqual(@as(usize, 512), storage.max_route_path_size);
+    try std.testing.expectEqual(@as(usize, 4096), storage.registry_storage.len);
+}
+
+test "config: builder exposes router capacity knobs" {
+    const builder = builder_module.Server.builder(std.testing.io)
+        .with_max_clients(2)
+        .with_max_ws_message_size(1024)
+        .with_write_queue_size(4096)
+        .with_max_body_size(8192)
+        .with_idle_timeout_ms(0)
+        .with_max_route_nodes(300)
+        .with_max_pattern_routes(16)
+        .with_max_middleware(12)
+        .with_max_route_path_size(1024)
+        .with_max_route_registry_size(32 * 1024);
+
+    const configuration = builder.configuration();
+    try std.testing.expectEqual(@as(usize, 300), configuration.max_route_nodes);
+    try std.testing.expectEqual(@as(usize, 16), configuration.max_pattern_routes);
+    try std.testing.expectEqual(@as(usize, 12), configuration.max_middleware);
+    try std.testing.expectEqual(@as(usize, 1024), configuration.max_route_path_size);
+    try std.testing.expectEqual(@as(usize, 32 * 1024), configuration.max_route_registry_size);
+
+    var server = try builder.build(std.testing.allocator);
+    defer server.deinit();
+    try std.testing.expectEqual(@as(usize, 300), server.router_storage.segment_offsets.len);
+    try std.testing.expectEqual(@as(usize, 16), server.router_storage.pattern_routes.len);
+    try std.testing.expectEqual(@as(usize, 12), server.router_storage.middleware.len);
+    try std.testing.expectEqual(@as(usize, 1024), server.router_storage.max_route_path_size);
+    try std.testing.expectEqual(@as(usize, 32 * 1024), server.router_storage.registry_storage.len);
+    try std.testing.expect(
+        @intFromPtr(server.router_storage.route_storage.ptr) >= @intFromPtr(server.slab.ptr),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        @intFromPtr(server.router_storage.segment_offsets.ptr) % @alignOf(u32),
+    );
+    try std.testing.expect(!server.router_bound);
+    _ = try server.get("/health", dummy_handler);
+    try std.testing.expect(server.router_bound);
+    // Root plus the newly inserted "/health" segment.
+    try std.testing.expectEqual(@as(u16, 2), server.router.node_count);
+}
+
 test "config: carve partitions one slab into disjoint aligned regions" {
     const config = ServerConfig{
         .max_connections = 4,
