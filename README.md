@@ -112,9 +112,10 @@ try server.run();
 `with_max_request_line_size`, `with_max_header_size`, and `with_max_header_count`
 extend the HTTP/1 request limits; fields beyond the inline 64 get per-connection
 slab storage. `with_max_route_nodes`, `with_max_pattern_routes`,
-`with_max_middleware`, `with_max_route_path_size`, and
-`with_max_route_registry_size` size the slab-carved router. Oversized input gets
-a structured rejection instead of a dropped connection:
+`with_max_middleware`, `with_max_route_path_size`,
+`with_max_route_registry_size`, and `with_max_route_params` size the
+slab-carved router and its capture spill. Oversized input gets a structured
+rejection instead of a dropped connection:
 
 ```json
 {"error":{"code":"payload_too_large","message":"Request body exceeded the 64KB limit. Consider increasing 'max_body_size' in ServerConfig.","limit_bytes":65536}}

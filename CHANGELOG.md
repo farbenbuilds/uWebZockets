@@ -73,6 +73,11 @@ Fixed and Security. The C ABI version moves to 1.4.0 with no structural change.
   previous 256 nodes, 64 patterns, 32 callbacks, 2 KiB paths, and 64 KiB
   registry, and cluster workers now receive the full builder configuration
   instead of the type-level defaults.
+- Route captures beyond the inline 16 spill into per-connection capacity
+  slices sized by `ServerConfig.max_route_params` / `with_max_route_params` on
+  every transport (HTTP/1.1, HTTP/2, and HTTP/3); `UWZ_MAX_ROUTE_PARAMETERS`
+  is now a guaranteed minimum rather than a cap, and the C ABI
+  `uwz_request_parameter_count` reports the total.
 - `Response.begin_stream` pulls a chunked body from a `StreamProducer`
   callback as the transport drains. Producers park with `.pending` on
   `error.WouldBlock` and are re-invoked when output space frees, so a response

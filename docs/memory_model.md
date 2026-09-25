@@ -122,7 +122,7 @@ The defaults are deliberately finite:
 | Query and form pairs | 32 default; compile-time `query.QueryParamsOf` capacity |
 | HTTP request body | 16 KiB default; `ServerConfig.max_body_size` |
 | Routes | 256 radix nodes; `max_route_nodes` |
-| Parameterized routes | 64 patterns; `max_pattern_routes` (16 captures per request) |
+| Parameterized routes | `max_pattern_routes` patterns; `max_route_params` captures per request (16 inline) |
 | Middleware | 32 callbacks; `max_middleware` |
 | OpenAPI route registry | 320 entries, 64 KiB of paths |
 | JSON-RPC procedures | 64 by default |
