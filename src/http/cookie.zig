@@ -1,4 +1,5 @@
 const std = @import("std");
+const simd = @import("../core/simd.zig");
 
 const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
 const signature_length = HmacSha256.mac_length * 2;
@@ -147,6 +148,114 @@ pub const Iterator = struct {
 pub fn iterator(header: []const u8) Iterator {
     return .{ .header = header };
 }
+
+/// Builds the fixed-capacity cookie view behind `CookieJarOf`.
+fn cookie_jar_of(comptime capacity: usize) type {
+    return struct {
+        const Self = @This();
+
+        name_ptrs: [capacity][*]const u8 = undefined,
+        name_lens: [capacity]usize = undefined,
+        value_ptrs: [capacity][*]const u8 = undefined,
+        value_lens: [capacity]usize = undefined,
+        count: usize = 0,
+
+        /// Forward iterator over pairs borrowed from one parsed view.
+        pub const PairIterator = struct {
+            jar: *const Self,
+            index: usize = 0,
+
+            /// Returns the next pair, or null when the view is exhausted.
+            pub fn next(self: *PairIterator) ?Pair {
+                const pair = self.jar.at(self.index) orelse return null;
+                self.index += 1;
+                return pair;
+            }
+        };
+
+        /// Parses a raw Cookie field into borrowed name/value slices.
+        ///
+        /// Delimiters are located with a vectorized `=`/`;` scan over the
+        /// caller's bytes; nothing is copied or allocated. Malformed pairs are
+        /// skipped and pairs beyond `capacity` are ignored.
+        pub fn parse(header: []const u8) Self {
+            var result = Self{};
+            var rest = header;
+
+            while (rest.len != 0 and result.count < capacity) {
+                const boundary = simd.index_of_either_byte(rest, '=', ';') orelse rest.len;
+                if (boundary == rest.len) break;
+                if (rest[boundary] == ';') {
+                    rest = rest[boundary + 1 ..];
+                    continue;
+                }
+
+                const name = std.mem.trim(u8, rest[0..boundary], " \t");
+                const remainder = rest[boundary + 1 ..];
+                const value_end = simd.index_of_byte(remainder, ';') orelse remainder.len;
+                const value = std.mem.trim(u8, remainder[0..value_end], " \t");
+                rest = if (value_end == remainder.len) "" else remainder[value_end + 1 ..];
+                if (valid_name(name) and valid_value(value)) result.push(name, value);
+            }
+            return result;
+        }
+
+        /// Returns the pair at `index`, or null when out of range.
+        pub fn at(self: *const Self, index: usize) ?Pair {
+            // A zero-capacity view has no slots; returning before the index
+            // keeps the empty-array instantiation compiling.
+            if (comptime capacity == 0) return null;
+            if (index >= self.count) return null;
+            return .{
+                .name = self.name_ptrs[index][0..self.name_lens[index]],
+                .value = self.value_ptrs[index][0..self.value_lens[index]],
+            };
+        }
+
+        /// Returns the first borrowed value whose name matches `name`.
+        pub fn get(self: *const Self, name: []const u8) ?[]const u8 {
+            for (0..self.count) |index| {
+                const pair = self.at(index).?;
+                if (std.mem.eql(u8, pair.name, name)) return pair.value;
+            }
+            return null;
+        }
+
+        /// Reports whether any parsed pair has the exact `name`.
+        pub fn has(self: *const Self, name: []const u8) bool {
+            return self.get(name) != null;
+        }
+
+        /// Returns an iterator that borrows this view.
+        pub fn pairs(self: *const Self) PairIterator {
+            return .{ .jar = self };
+        }
+
+        fn push(self: *Self, name: []const u8, value: []const u8) void {
+            // `parse` bounds count by capacity first, so only the zero-capacity
+            // instantiation needs a guard to avoid indexing an empty array.
+            if (comptime capacity == 0) return;
+            self.name_ptrs[self.count] = name.ptr;
+            self.name_lens[self.count] = name.len;
+            self.value_ptrs[self.count] = value.ptr;
+            self.value_lens[self.count] = value.len;
+            self.count += 1;
+        }
+    };
+}
+
+/// Returns a cookie view type with `capacity` fixed pair slots.
+///
+/// The struct of arrays is stored inline and parsing never allocates; pairs
+/// beyond `capacity` are ignored. Zero capacity is legal and yields an empty
+/// view.
+pub const CookieJarOf = cookie_jar_of;
+
+/// Default pair capacity for `CookieJar`.
+pub const max_cookies = 32;
+
+/// Fixed-capacity view of the pairs in one Cookie field.
+pub const CookieJar = CookieJarOf(max_cookies);
 
 /// Formats one validated Set-Cookie response field into caller storage.
 ///

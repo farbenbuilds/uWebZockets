@@ -426,6 +426,146 @@ test "cookie: iterator on an empty header yields no pairs" {
     try std.testing.expect(blank.next() == null);
 }
 
+test "cookie: jar parses borrowed pairs and skips malformed ones" {
+    const header = "good=1; bad; =novalue; also_good=2; broken name=3; empty=; spaced = 4; ctl=1\x01";
+    const jar = cookie.CookieJar.parse(header);
+
+    try std.testing.expectEqual(@as(usize, 4), jar.count);
+    try std.testing.expectEqualStrings("1", jar.get("good").?);
+    try std.testing.expectEqualStrings("2", jar.get("also_good").?);
+    try std.testing.expectEqualStrings("", jar.get("empty").?);
+    try std.testing.expectEqualStrings("4", jar.get("spaced").?);
+    try std.testing.expect(jar.get("bad") == null);
+    try std.testing.expect(jar.get("name") == null);
+    try std.testing.expect(jar.get("ctl") == null);
+    try std.testing.expect(!jar.has("novalue"));
+}
+
+test "cookie: jar borrows the original header bytes" {
+    const header = "session=abc; theme=dark";
+    const jar = cookie.CookieJar.parse(header);
+
+    const header_start = @intFromPtr(header.ptr);
+    const header_end = header_start + header.len;
+    const session = jar.at(0).?;
+    try std.testing.expect(@intFromPtr(session.name.ptr) >= header_start);
+    try std.testing.expect(@intFromPtr(session.name.ptr) + session.name.len <= header_end);
+    try std.testing.expect(@intFromPtr(session.value.ptr) >= header_start);
+    try std.testing.expect(@intFromPtr(session.value.ptr) + session.value.len <= header_end);
+}
+
+test "cookie: jar keeps the first duplicate and rejects out-of-range positions" {
+    const jar = cookie.CookieJar.parse("a=1; a=2; trailing=3;");
+    try std.testing.expectEqual(@as(usize, 3), jar.count);
+    try std.testing.expectEqualStrings("1", jar.get("a").?);
+    try std.testing.expect(jar.has("trailing"));
+    try std.testing.expect(jar.at(jar.count) == null);
+}
+
+test "cookie: capacity one keeps only the first pair" {
+    const jar = cookie.CookieJarOf(1).parse("a=1; b=2");
+    try std.testing.expectEqual(@as(usize, 1), jar.count);
+    try std.testing.expectEqualStrings("1", jar.get("a").?);
+
+    var pairs = jar.pairs();
+    try std.testing.expectEqualStrings("a", pairs.next().?.name);
+    try std.testing.expect(pairs.next() == null);
+}
+
+test "cookie: jar agrees with the scalar iterator" {
+    const header = "one=1; two = 2 ; three; =x; four=; five=with=equals; six";
+    const jar = cookie.CookieJar.parse(header);
+    var pairs = cookie.iterator(header);
+
+    var index: usize = 0;
+    while (pairs.next()) |pair| : (index += 1) {
+        const stored = jar.at(index).?;
+        try std.testing.expectEqualStrings(pair.name, stored.name);
+        try std.testing.expectEqualStrings(pair.value, stored.value);
+    }
+    try std.testing.expectEqual(index, jar.count);
+}
+
+test "cookie: jar handles fields longer than one vector lane" {
+    const long_value = "0123456789" ** 8;
+    const header = "first=1; long=" ++ long_value[0..] ++ "; last=2";
+    const jar = cookie.CookieJar.parse(header);
+
+    try std.testing.expectEqual(@as(usize, 3), jar.count);
+    try std.testing.expectEqualStrings(long_value, jar.get("long").?);
+    try std.testing.expectEqualStrings("2", jar.get("last").?);
+}
+
+test "cookie: jar ignores pairs beyond capacity" {
+    var header_buffer: [512]u8 = undefined;
+    var length: usize = 0;
+    var index: usize = 0;
+    while (index < 40) : (index += 1) {
+        const separator = if (index == 0) "" else "; ";
+        const written = try std.fmt.bufPrint(
+            header_buffer[length..],
+            "{s}c{d}=v{d}",
+            .{ separator, index, index },
+        );
+        length += written.len;
+    }
+    const header = header_buffer[0..length];
+
+    const jar = cookie.CookieJar.parse(header);
+    try std.testing.expectEqual(cookie.max_cookies, jar.count);
+    try std.testing.expectEqualStrings("v0", jar.get("c0").?);
+    try std.testing.expectEqualStrings("v31", jar.get("c31").?);
+    try std.testing.expect(jar.get("c32") == null);
+
+    const raised = cookie.CookieJarOf(64).parse(header);
+    try std.testing.expectEqual(@as(usize, 40), raised.count);
+    try std.testing.expectEqualStrings("v39", raised.get("c39").?);
+}
+
+test "cookie: jar on empty and delimiter-only headers yields no pairs" {
+    try std.testing.expectEqual(@as(usize, 0), cookie.CookieJar.parse("").count);
+    try std.testing.expectEqual(@as(usize, 0), cookie.CookieJar.parse("   ").count);
+    try std.testing.expectEqual(@as(usize, 0), cookie.CookieJar.parse(";;;").count);
+    try std.testing.expectEqual(@as(usize, 0), cookie.CookieJar.parse("=").count);
+}
+
+test "cookie: zero-capacity jar stays empty" {
+    const jar = cookie.CookieJarOf(0).parse("a=1; b=2");
+    try std.testing.expectEqual(@as(usize, 0), jar.count);
+    try std.testing.expect(jar.at(0) == null);
+    try std.testing.expect(jar.get("a") == null);
+}
+
+test "cookie: jar iterator walks borrowed pairs" {
+    const jar = cookie.CookieJar.parse("a=1; b=2");
+    var pairs = jar.pairs();
+
+    try std.testing.expectEqualStrings("a", pairs.next().?.name);
+    try std.testing.expectEqualStrings("2", pairs.next().?.value);
+    try std.testing.expect(pairs.next() == null);
+}
+
+test "cookie: SIMD scan finds the first of two delimiters" {
+    const padded = "0123456789abcdefghij;kl=rest";
+    try std.testing.expectEqual(@as(?usize, 20), support.simd.index_of_either_byte(padded, '=', ';'));
+    try std.testing.expectEqual(@as(?usize, 20), support.simd.index_of_either_byte(padded, ';', '='));
+    try std.testing.expectEqual(@as(?usize, 2), support.simd.index_of_either_byte("ab;cd=ef", '=', ';'));
+    try std.testing.expect(support.simd.index_of_either_byte("no delimiter here", '=', ';') == null);
+    try std.testing.expectEqual(@as(?usize, 0), support.simd.index_of_either_byte(";", ';', '='));
+    try std.testing.expectEqual(@as(?usize, 3), support.simd.index_of_either_byte("abc=def", '=', '='));
+    try std.testing.expect(support.simd.index_of_either_byte("", '=', ';') == null);
+}
+
+test "cookie: SIMD scan crosses vector lane boundaries" {
+    // The scan must find delimiters in the final vector lane, across lane
+    // boundaries, in the scalar tail, and report exhaustion on clean input.
+    try std.testing.expectEqual(@as(?usize, 31), support.simd.index_of_either_byte("x" ** 31 ++ "=y", '=', ';'));
+    try std.testing.expectEqual(@as(?usize, 32), support.simd.index_of_either_byte("x" ** 32 ++ "=y", '=', ';'));
+    try std.testing.expectEqual(@as(?usize, 33), support.simd.index_of_either_byte("x" ** 33 ++ ";y", ';', '='));
+    try std.testing.expectEqual(@as(?usize, 44), support.simd.index_of_either_byte("a" ** 44 ++ "=b", '=', ';'));
+    try std.testing.expect(support.simd.index_of_either_byte("x" ** 64, '=', ';') == null);
+}
+
 test "cookie: versioned signing round trips and verifies with rotation keys" {
     const secret = "0123456789abcdef0123456789abcdef";
     const rotated_secret = "abcdef0123456789abcdef0123456789";

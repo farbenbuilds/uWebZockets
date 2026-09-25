@@ -3,6 +3,27 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.6.0] - 2026-09-26
+
+This release adds a vectorized, zero-copy parser for `Cookie` request fields.
+`cookie.CookieJar` materializes up to 32 pairs into a fixed struct-of-arrays
+view that borrows the original header bytes, so lookups run with no allocation
+and no copies on the request path. The existing scalar `cookie.iterator` and
+`cookie.find` helpers are unchanged.
+
+### Added
+
+- `cookie.CookieJar`, `cookie.CookieJarOf(capacity)`, and `cookie.max_cookies`:
+  parse a raw `Cookie` field with a one-pass `@Vector` scan for `=` and `;`
+  boundaries and store borrowed name/value slices in a fixed struct of arrays
+  (`at`, `get`, `has`, `pairs`). Malformed pairs are skipped and pairs beyond
+  the capacity are ignored instead of rejected.
+- `simd.index_of_either_byte`: vectorized first-occurrence scan for either of
+  two bytes, used by the cookie parser to find both delimiters in one pass.
+- `fuzz/cookie_parse.zig` OSS-Fuzz entrypoint plus deterministic Smith coverage
+  in `src/tests/fuzz_main.zig`: both assert that borrowed slices stay inside the
+  parsed input and that the jar agrees with the scalar iterator prefix.
+
 ## [1.5.0] - 2026-09-26
 
 This release makes local TLS setup a one-liner. When no certificate files are

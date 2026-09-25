@@ -1,4 +1,5 @@
 pub const http_parser = @import("http/parser.zig");
+pub const cookie = @import("http/cookie.zig");
 pub const negotiate = @import("http/negotiate.zig");
 pub const query = @import("http/query.zig");
 pub const quic_packet = @import("quic/packet.zig");

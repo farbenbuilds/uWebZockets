@@ -7,6 +7,7 @@ const ws_handshake = support.ws_handshake;
 const quic_validation = support.quic_validation;
 const json_rpc = support.json_rpc;
 const query = support.query;
+const cookie = support.cookie;
 const negotiate = support.negotiate;
 
 test "fuzz: protocol parsers preserve bounded state" {
@@ -23,6 +24,7 @@ test "fuzz: protocol parsers preserve bounded state" {
             "{\"jsonrpc\":\"2.0\",\"method\":\"echo\",\"id\":1}",
             "[{\"jsonrpc\":\"2.0\",\"method\":\"echo\"},17]",
             "[{\"jsonrpc\":\"2.0\",\"method\":\"echo\",\"id\":1},",
+            "session=abc; theme=dark; empty=; broken; =x",
         },
     });
 }
@@ -31,6 +33,7 @@ fn fuzz_protocol_parsers(_: void, smith: *std.testing.Smith) !void {
     @disableInstrumentation();
     try fuzz_http_parser(smith);
     try fuzz_http_query(smith);
+    try fuzz_cookie_jar(smith);
     try fuzz_zslay_receive(smith);
     fuzz_extension_negotiation(smith);
     fuzz_http3_validation(smith);
@@ -69,6 +72,46 @@ fn fuzz_http_query(smith: *std.testing.Smith) !void {
     const accept = negotiate.parse(bytes);
     try std.testing.expect(accept.count <= negotiate.max_entries);
     _ = negotiate.best(accept, &.{ "application/json", "text/html" });
+}
+
+fn fuzz_cookie_jar(smith: *std.testing.Smith) !void {
+    var input: [1024]u8 = undefined;
+    const input_len: usize = @intCast(smith.sliceWeightedBytes(&input, &.{
+        .rangeAtMost(u8, 0x20, 0x7e, 4),
+        .value(u8, ';', 8),
+        .value(u8, '=', 8),
+        .value(u8, ' ', 4),
+        .value(u8, 0x00, 1),
+    }));
+    const bytes = input[0..input_len];
+
+    const start = @intFromPtr(bytes.ptr);
+    const end = start + bytes.len;
+    const jar = cookie.CookieJar.parse(bytes);
+    try std.testing.expect(jar.count <= cookie.max_cookies);
+
+    var pair_count: usize = 0;
+    var pairs = jar.pairs();
+    while (pairs.next()) |pair| {
+        pair_count += 1;
+        try std.testing.expect(@intFromPtr(pair.name.ptr) >= start);
+        try std.testing.expect(@intFromPtr(pair.name.ptr) + pair.name.len <= end);
+        try std.testing.expect(@intFromPtr(pair.value.ptr) >= start);
+        try std.testing.expect(@intFromPtr(pair.value.ptr) + pair.value.len <= end);
+    }
+    try std.testing.expectEqual(jar.count, pair_count);
+    try std.testing.expect(jar.at(jar.count) == null);
+
+    // The jar must match the scalar reference for every pair it stores.
+    var scalar = cookie.iterator(bytes);
+    var index: usize = 0;
+    while (index < jar.count) : (index += 1) {
+        const expected = scalar.next().?;
+        const stored = jar.at(index).?;
+        try std.testing.expectEqualStrings(expected.name, stored.name);
+        try std.testing.expectEqualStrings(expected.value, stored.value);
+    }
+    if (jar.count < cookie.max_cookies) try std.testing.expect(scalar.next() == null);
 }
 
 fn rpc_echo(call: *json_rpc.Call) json_rpc.HandlerError!void {
