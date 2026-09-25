@@ -8,6 +8,7 @@ const radix = @import("radix.zig");
 const xev = @import("xev");
 const PubSubEngine = @import("../ws/pubsub.zig").PubSubEngine;
 const DeflateContext = @import("../ws/deflate.zig").Context;
+const ClientAuthConfig = @import("../crypto/tls.zig").ClientAuthConfig;
 const TlsContext = @import("../crypto/tls.zig").TlsContext;
 const quic = @import("../quic/engine.zig");
 const quic_stream = @import("../quic/stream.zig");
@@ -412,6 +413,24 @@ pub fn configured_app_with_route_params(
             var instance = try Self.init(io);
             errdefer instance.deinit();
             instance.tls_ctx = try TlsContext.init(cert_path, key_path);
+            return instance;
+        }
+
+        /// Initializes an HTTPS application that authenticates clients with
+        /// certificates issued by the CA bundle in `config.ca_path`.
+        ///
+        /// ALPN and 0-RTT policy match `init_https`. Client authentication is
+        /// TCP-only in 1.7.0; the HTTP/3 listener keeps its `init_http3`
+        /// policy, so use `init_http3` when QUIC is also required.
+        pub fn init_https_mtls(
+            io: std.Io,
+            cert_path: [:0]const u8,
+            key_path: [:0]const u8,
+            config: ClientAuthConfig,
+        ) !Self {
+            var instance = try Self.init(io);
+            errdefer instance.deinit();
+            instance.tls_ctx = try TlsContext.init_mtls(cert_path, key_path, config);
             return instance;
         }
 
