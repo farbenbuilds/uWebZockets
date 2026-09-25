@@ -1,4 +1,4 @@
-# µWebZockets 1.4.5 Examples
+# µWebZockets 1.5.0 Examples
 
 Build the supported examples with Zig 0.16.0:
 
@@ -6,8 +6,8 @@ Build the supported examples with Zig 0.16.0:
 zig build -Doptimize=ReleaseSafe
 ```
 
-The default install contains `hello_world`, `chat_server`, `rpc_server`,
-`http3_server`, `basic_microservice`, `custom_builder`,
+The default install contains `hello_world`, `https_server`, `chat_server`,
+`rpc_server`, `http3_server`, `basic_microservice`, `custom_builder`,
 `shared_nothing_cluster`, `h1spec`, and `autobahn_server` under `zig-out/bin`.
 
 These examples target the live `App` transports. The bounded HTTP/2/HPACK
@@ -86,6 +86,29 @@ The equivalent build-and-run step is:
 zig build hello_world -Doptimize=ReleaseSafe
 ```
 
+## HTTPS server
+
+`https_server` generates an ECDSA P-256 certificate in memory at startup, so
+it needs no certificate files and no `openssl` step:
+
+```sh
+zig build https_server -Doptimize=ReleaseSafe
+```
+
+In another terminal, disable verification because the generated certificate is
+not in any trust store:
+
+```sh
+curl -k -i https://127.0.0.1:3443/
+```
+
+The expected result is `HTTP/1.1 200 OK` and the body `hello from ephemeral
+TLS`. The server speaks TLS 1.3, negotiates HTTP/2 when the client offers
+`h2`, and embeds `localhost`, `127.0.0.1`, and `::1` in the certificate.
+Generation runs once at startup and nothing touches the disk.
+[docs/tls.md](../docs/tls.md) covers custom names, production PEM files, and
+the C ABI equivalents.
+
 ## WebSocket pub/sub server
 
 Start the server:
@@ -151,7 +174,7 @@ curl -i http://127.0.0.1:3000/
 ```
 
 The server prints the `µWEBZOCKETS` wordmark and a Vite-style ready summary
-(`µWebZockets v1.4.5  ready in 0.6 ms`, then the `→ Local:` line, with the
+(`µWebZockets v1.5.0  ready in 0.6 ms`, then the `→ Local:` line, with the
 elapsed time scaled from nanoseconds up) before the first accepting listener;
 a one-line `µWebZockets` mark fits narrow terminals. Each request then logs
 Vite-style as `HH:MM:SS | [METHOD] /path : STATUS` with a dim clock, cyan
@@ -214,8 +237,8 @@ are applied consistently.
 
 ## HTTP/3 server
 
-Place a PEM certificate and matching private key at `certs/cert.pem` and
-`certs/key.pem`, then build and start the bounded lsquic server:
+`http3_server` generates its certificate in memory with
+`init_http3_ephemeral`, so it also runs with no certificate files:
 
 ```sh
 zig build http3_server -Doptimize=ReleaseSafe
@@ -224,8 +247,10 @@ zig build http3_server -Doptimize=ReleaseSafe
 
 The server listens for QUIC on UDP port 8443 and routes `GET /` through the
 same `Request` and `Response` API as HTTP/1.1. A client with HTTP/3 support can
-request `https://127.0.0.1:8443/`; configure trust appropriately for a local
-self-signed certificate.
+request `https://127.0.0.1:8443/`, for example
+`curl --http3 -k https://127.0.0.1:8443/` when the installed curl was built
+with HTTP/3 support. The certificate is self-signed, so skip verification or
+configure trust for local development.
 
 The example uses a capacity of 128 connections/active streams. QPACK headers,
 request bodies, response metadata, response bodies, and outgoing UDP packets

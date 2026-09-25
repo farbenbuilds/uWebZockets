@@ -3,6 +3,47 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.5.0] - 2026-09-26
+
+This release makes local TLS setup a one-liner. When no certificate files are
+available, `App.init_https_ephemeral` and `App.init_http3_ephemeral` generate
+an ECDSA P-256 key and a self-signed localhost certificate in memory with
+BoringSSL, so development and test servers start over HTTPS with no `openssl`
+commands, no files, and no configuration. Production paths are unchanged and
+still load real PEM files through `init_https` and `init_http3`.
+
+### Added
+
+- In-memory ephemeral TLS credentials: `TlsContext.init_ephemeral` and
+  `TlsContext.init_http3_ephemeral` generate an ECDSA P-256 key and a
+  self-signed X.509 certificate covering `localhost`, `127.0.0.1`, and `::1`.
+  Nothing is written to disk.
+- `App.init_https_ephemeral` and `App.init_http3_ephemeral` start HTTPS and
+  dual HTTPS/HTTP/3 applications from those credentials with one call.
+- `tls.CertificateNames` overrides the common name, DNS names, and IP
+  addresses embedded in generated certificates.
+- C ABI: `uwz_app_create_tls_ephemeral` and `uwz_app_create_http3_ephemeral`
+  mirror the Zig entry points.
+- `https_server` example and a `tls_tests.zig` case that completes a full
+  TLS 1.3 handshake against a generated certificate over memory BIOs.
+
+### Changed
+
+- The `http3_server` example starts with ephemeral credentials, so it runs
+  with no `certs/` directory.
+- Generated credentials are created once during context construction and
+  released immediately afterwards (the SSL context keeps its own references).
+  Connection setup, handshakes, and the I/O loop stay allocation-free.
+
+### Security
+
+- Generated certificates are self-signed and intended for local development
+  only; the Zig doc comments and the C header both say so. Production
+  deployments keep using `init_https`/`init_http3` with real certificates.
+- Ephemeral contexts follow the existing protocol policy: TLS 1.3 only,
+  `h2`/`http/1.1` ALPN with the safe-method 0-RTT replay policy on TCP, and
+  `h3` ALPN with early data disabled for QUIC.
+
 ## [1.4.5] - 2026-09-25
 
 This release completes the capacity redesign: the last fixed per-stream HTTP/2

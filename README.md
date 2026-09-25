@@ -19,9 +19,9 @@ thread each, and reused without locking.
 - **Cross-platform:** Tier 1 Linux and macOS, with a `x86_64-windows-gnu`
   fallback for reuse-port and affinity behavior.
 
-[Quick start](#quick-start) | [Architecture](docs/architecture.md) |
-[Memory model](docs/memory_model.md) | [Protocols](docs/protocols.md) |
-[Operations](docs/operations.md)
+[Quick start](#quick-start) | [TLS](docs/tls.md) |
+[Architecture](docs/architecture.md) | [Memory model](docs/memory_model.md) |
+[Protocols](docs/protocols.md) | [Operations](docs/operations.md)
 
 ## Quick start
 
@@ -88,8 +88,9 @@ pub fn main(init: std.process.Init) !void {
 `zig build run` starts it and `curl http://127.0.0.1:3000/` prints the body.
 The same module carries the rest of the battery: `app.ws(...)` for WebSocket,
 `app.rpc(...)` for JSON-RPC, `app.static(...)` for assets,
-`build_cluster` for thread-per-core workers, and `listen_udp` plus
-`init_http3` for HTTP/3. `zig build lib` also installs
+`build_cluster` for thread-per-core workers, `init_https_ephemeral` for HTTPS
+with no certificate files, and `listen_udp` plus `init_http3` for HTTP/3.
+`zig build lib` also installs
 `zig-out/include/uWebZockets.h` for C and C++ consumers.
 
 Pin a tag or full commit rather than a moving branch so dependency resolution
@@ -218,7 +219,7 @@ request path.
 ## Terminal development log
 
 `with_dev_log(true)` prints the `µWEBZOCKETS` wordmark and a Vite-style ready
-summary before the first accepting listener: `µWebZockets v1.4.5  ready in
+summary before the first accepting listener: `µWebZockets v1.5.0  ready in
 0.6 ms` followed by the `→ Local:` line; the elapsed time scales
 through nanoseconds, microseconds, milliseconds, and seconds. The wordmark
 collapses to a one-line `µWebZockets` mark when the terminal is narrower than
@@ -255,17 +256,51 @@ every development-log write. `App.log_metrics` adds a snapshot of the
 bounded Prometheus registry, and `App.set_dev_log_file` redirects output from
 stderr. Every example shows the log when run in a terminal.
 
+## TLS without certificate files
+
+`init_https_ephemeral` generates an ECDSA P-256 key and a self-signed
+certificate in memory with BoringSSL, so a local HTTPS server needs no
+`openssl` step, no `.pem` files, and no configuration:
+
+```zig
+var server = try uz.App(128).init_https_ephemeral(init.io);
+defer server.deinit();
+
+_ = try server.get("/", hello);
+try server.listen("0.0.0.0", 3443);
+try server.run();
+```
+
+```sh
+curl -k https://127.0.0.1:3443/
+```
+
+The generated certificate covers `localhost`, `127.0.0.1`, and `::1`, and
+carries the `serverAuth` extended key usage browsers require. The context
+stays TLS 1.3 only with the usual `h2`/`http/1.1` ALPN policy. Generation
+happens once at startup; connection setup, handshakes, and the request path
+remain allocation-free, and nothing is written to disk. `zig build
+https_server` runs the example, and `zig build http3_server` starts HTTP/3 on
+UDP 8443 with the same in-memory credentials.
+
+Keep `init_https`/`init_http3` for real certificates. `tls.CertificateNames`
+customizes the names embedded in generated certificates, and the C ABI exposes
+`uwz_app_create_tls_ephemeral` and `uwz_app_create_http3_ephemeral` for the
+same workflow. [docs/tls.md](docs/tls.md) covers the certificate lifecycle and
+the production handoff.
+
 ## Examples
 
 | Step | Shows |
 | --- | --- |
 | `zig build hello_world` | Minimal HTTP/1.1 route on `App` |
+| `zig build https_server` | HTTPS on port 3443 with an in-memory certificate |
 | `zig build shared_nothing_cluster` | Four pinned workers, one slab each |
 | `zig build basic_microservice` | `Presets.microservice` with JSON helpers |
 | `zig build custom_builder` | Fluent overrides and the 50 MiB body path |
 | `zig build chat_server` | WebSocket pub/sub with bounded topics |
 | `zig build rpc_server` | Typed JSON-RPC procedures |
-| `zig build http3_server` | HTTP/3 over QUIC with TLS |
+| `zig build http3_server` | HTTP/3 over QUIC with an in-memory certificate |
 
 Every step appends `-Doptimize=ReleaseSafe` for production builds. Sources live
 in [`examples/`](examples/), with walkthroughs in
@@ -275,6 +310,7 @@ in [`examples/`](examples/), with walkthroughs in
 
 | Document | Contents |
 | --- | --- |
+| [TLS](docs/tls.md) | Ephemeral development certificates, PEM files, ALPN, HTTP/3, C ABI |
 | [Architecture](docs/architecture.md) | Shared-nothing workers, affinity, TCP tuning, transports, shutdown |
 | [Memory model](docs/memory_model.md) | Startup slab, SoA layouts, capacity limits, backpressure, rejections |
 | [Protocols](docs/protocols.md) | HTTP/1.1/2/3, WebSocket, JSON-RPC, compliance status |

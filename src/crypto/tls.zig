@@ -11,6 +11,13 @@ const AlpnCallback = *const fn (
     arg: ?*anyopaque,
 ) callconv(.c) c_int;
 
+/// Subject names embedded in a generated certificate.
+pub const CertificateNames = struct {
+    common_name: []const u8 = "localhost",
+    dns_names: []const []const u8 = &.{"localhost"},
+    ip_addresses: []const []const u8 = &.{ "127.0.0.1", "::1" },
+};
+
 /// Owning BoringSSL server context with a fixed ALPN policy.
 pub const TlsContext = struct {
     ctx: *c.SSL_CTX,
@@ -32,43 +39,50 @@ pub const TlsContext = struct {
         return init_with_alpn(cert_path, key_path, select_http3_alpn, false);
     }
 
+    /// Generates a self-signed P-256 certificate and key in memory, then
+    /// returns an HTTPS context advertising `h2` then `http/1.1`.
+    ///
+    /// BoringSSL allocates only while the credentials are generated here; the
+    /// handshake, record, and I/O paths add no allocation. TLS 1.3 0-RTT is
+    /// enabled with the safe-method replay policy of `init`.
+    pub fn init_ephemeral(names: CertificateNames) !TlsContext {
+        const ctx = try new_server_context(select_http_alpn, true);
+        errdefer c.SSL_CTX_free(ctx);
+        try install_ephemeral_credentials(ctx, names);
+        return TlsContext{ .ctx = ctx };
+    }
+
+    /// Generates a self-signed P-256 certificate and key in memory, then
+    /// returns an HTTP/3-only context advertising `h3`.
+    ///
+    /// BoringSSL allocates only while the credentials are generated here; the
+    /// handshake, record, and I/O paths add no allocation. Early data stays
+    /// disabled for the replay-protection reason documented on `init_http3`.
+    pub fn init_http3_ephemeral(names: CertificateNames) !TlsContext {
+        const ctx = try new_server_context(select_http3_alpn, false);
+        errdefer c.SSL_CTX_free(ctx);
+        try install_ephemeral_credentials(ctx, names);
+        return TlsContext{ .ctx = ctx };
+    }
+
     fn init_with_alpn(
         cert_path: [:0]const u8,
         key_path: [:0]const u8,
         callback: AlpnCallback,
         early_data: bool,
     ) !TlsContext {
-        c.CRYPTO_library_init();
-        c.SSL_load_error_strings();
-
-        const method = c.TLS_server_method();
-        const ctx = c.SSL_CTX_new(method) orelse {
-            return error.TlsContextCreationFailed;
-        };
+        const ctx = try new_server_context(callback, early_data);
         errdefer c.SSL_CTX_free(ctx);
-
-        if (c.SSL_CTX_set_min_proto_version(ctx, c.TLS1_3_VERSION) != 1) {
-            return error.ProtocolConfigurationFailed;
-        }
-        if (c.SSL_CTX_set_max_proto_version(ctx, c.TLS1_3_VERSION) != 1) {
-            return error.ProtocolConfigurationFailed;
-        }
-        c.SSL_CTX_set_alpn_select_cb(ctx, callback, null);
 
         if (c.SSL_CTX_use_certificate_chain_file(ctx, cert_path.ptr) != 1) {
             return error.CertificateLoadFailed;
         }
-
         if (c.SSL_CTX_use_PrivateKey_file(ctx, key_path.ptr, c.SSL_FILETYPE_PEM) != 1) {
             return error.PrivateKeyLoadFailed;
         }
-
         if (c.SSL_CTX_check_private_key(ctx) != 1) {
             return error.KeyMismatch;
         }
-
-        c.SSL_CTX_set_early_data_enabled(ctx, @intFromBool(early_data));
-
         return TlsContext{ .ctx = ctx };
     }
 
@@ -77,6 +91,184 @@ pub const TlsContext = struct {
         c.SSL_CTX_free(self.ctx);
     }
 };
+
+/// Creates a TLS 1.3-only server context with the given ALPN policy and
+/// early-data setting.
+fn new_server_context(callback: AlpnCallback, early_data: bool) !*c.SSL_CTX {
+    c.CRYPTO_library_init();
+    c.SSL_load_error_strings();
+
+    const ctx = c.SSL_CTX_new(c.TLS_server_method()) orelse {
+        return error.TlsContextCreationFailed;
+    };
+    errdefer c.SSL_CTX_free(ctx);
+
+    if (c.SSL_CTX_set_min_proto_version(ctx, c.TLS1_3_VERSION) != 1) {
+        return error.ProtocolConfigurationFailed;
+    }
+    if (c.SSL_CTX_set_max_proto_version(ctx, c.TLS1_3_VERSION) != 1) {
+        return error.ProtocolConfigurationFailed;
+    }
+    c.SSL_CTX_set_alpn_select_cb(ctx, callback, null);
+    c.SSL_CTX_set_early_data_enabled(ctx, @intFromBool(early_data));
+    return ctx;
+}
+
+/// Generates a P-256 key with a matching self-signed certificate and installs
+/// both on `ctx`. The context takes its own references; the local key and
+/// certificate are released before returning.
+fn install_ephemeral_credentials(ctx: *c.SSL_CTX, names: CertificateNames) !void {
+    const pkey = try generate_p256_key();
+    defer c.EVP_PKEY_free(pkey);
+
+    const certificate = try create_self_signed_certificate(pkey, names);
+    defer c.X509_free(certificate);
+
+    if (c.SSL_CTX_use_certificate(ctx, certificate) != 1) {
+        return error.EphemeralCertificateInstallFailed;
+    }
+    if (c.SSL_CTX_use_PrivateKey(ctx, pkey) != 1) {
+        return error.EphemeralCertificateInstallFailed;
+    }
+    if (c.SSL_CTX_check_private_key(ctx) != 1) {
+        return error.EphemeralCertificateInstallFailed;
+    }
+}
+
+fn generate_p256_key() !*c.EVP_PKEY {
+    const keygen = c.EVP_PKEY_CTX_new_id(c.EVP_PKEY_EC, null) orelse {
+        return error.EphemeralKeyGenerationFailed;
+    };
+    defer c.EVP_PKEY_CTX_free(keygen);
+
+    if (c.EVP_PKEY_keygen_init(keygen) != 1) {
+        return error.EphemeralKeyGenerationFailed;
+    }
+    if (c.EVP_PKEY_CTX_set_ec_paramgen_curve_nid(keygen, c.NID_X9_62_prime256v1) != 1) {
+        return error.EphemeralKeyGenerationFailed;
+    }
+
+    var pkey: ?*c.EVP_PKEY = null;
+    if (c.EVP_PKEY_keygen(keygen, &pkey) != 1) {
+        return error.EphemeralKeyGenerationFailed;
+    }
+    return pkey orelse error.EphemeralKeyGenerationFailed;
+}
+
+fn create_self_signed_certificate(pkey: *c.EVP_PKEY, names: CertificateNames) !*c.X509 {
+    const certificate = c.X509_new() orelse return error.EphemeralCertificateCreationFailed;
+    errdefer c.X509_free(certificate);
+
+    // Version 2 is X.509v3, the minimum version that carries extensions.
+    if (c.X509_set_version(certificate, 2) != 1) {
+        return error.EphemeralCertificateCreationFailed;
+    }
+    if (c.ASN1_INTEGER_set(c.X509_get_serialNumber(certificate), 1) != 1) {
+        return error.EphemeralCertificateCreationFailed;
+    }
+    // Backdate an hour for clock skew; expire after 90 days.
+    if (c.X509_gmtime_adj(c.X509_getm_notBefore(certificate), -3600) == null) {
+        return error.EphemeralCertificateCreationFailed;
+    }
+    if (c.X509_gmtime_adj(c.X509_getm_notAfter(certificate), 90 * 24 * 3600) == null) {
+        return error.EphemeralCertificateCreationFailed;
+    }
+
+    const subject = c.X509_get_subject_name(certificate) orelse {
+        return error.EphemeralCertificateCreationFailed;
+    };
+    // Explicit length: the caller slice is not guaranteed to be NUL-terminated.
+    if (c.X509_NAME_add_entry_by_txt(
+        subject,
+        "CN",
+        c.MBSTRING_UTF8,
+        names.common_name.ptr,
+        @intCast(names.common_name.len),
+        -1,
+        0,
+    ) != 1) {
+        return error.EphemeralCertificateCreationFailed;
+    }
+    // Self-signed: the issuer is the subject.
+    if (c.X509_set_issuer_name(certificate, subject) != 1) {
+        return error.EphemeralCertificateCreationFailed;
+    }
+    if (c.X509_set_pubkey(certificate, pkey) != 1) {
+        return error.EphemeralCertificateCreationFailed;
+    }
+
+    try add_certificate_extension(certificate, c.NID_basic_constraints, "critical,CA:FALSE");
+    try add_certificate_extension(certificate, c.NID_key_usage, "critical,digitalSignature");
+    try add_certificate_extension(certificate, c.NID_ext_key_usage, "serverAuth");
+    try add_subject_alt_name_extension(certificate, names);
+
+    if (c.X509_sign(certificate, pkey, c.EVP_sha256()) == 0) {
+        return error.EphemeralCertificateSigningFailed;
+    }
+    return certificate;
+}
+
+fn add_certificate_extension(certificate: *c.X509, nid: c_int, value: [*:0]const u8) !void {
+    // The decrepit X509V3_EXT_conf_nid wrapper is not compiled into the
+    // pinned BoringSSL; call the exported function it forwards to.
+    const extension = c.X509V3_EXT_nconf_nid(null, null, nid, value) orelse {
+        return error.EphemeralCertificateExtensionFailed;
+    };
+    defer c.X509_EXTENSION_free(extension);
+
+    if (c.X509_add_ext(certificate, extension, -1) != 1) {
+        return error.EphemeralCertificateExtensionFailed;
+    }
+}
+
+/// Returns the subjectAltName value length excluding the terminator, or null
+/// when no names are configured.
+fn subject_alt_name_length(names: CertificateNames) ?usize {
+    const count = names.dns_names.len + names.ip_addresses.len;
+    if (count == 0) return null;
+
+    var length = (count - 1) * ", ".len;
+    for (names.dns_names) |name| length += "DNS:".len + name.len;
+    for (names.ip_addresses) |address| length += "IP:".len + address.len;
+    return length;
+}
+
+fn write_subject_alt_name(buffer: []u8, names: CertificateNames) void {
+    var offset: usize = 0;
+    for (names.dns_names) |name| {
+        offset = append_subject_alt_name_entry(buffer, offset, "DNS:", name);
+    }
+    for (names.ip_addresses) |address| {
+        offset = append_subject_alt_name_entry(buffer, offset, "IP:", address);
+    }
+}
+
+fn append_subject_alt_name_entry(
+    buffer: []u8,
+    offset: usize,
+    prefix: []const u8,
+    value: []const u8,
+) usize {
+    var cursor = offset;
+    if (cursor != 0) {
+        @memcpy(buffer[cursor..][0..2], ", ");
+        cursor += 2;
+    }
+    @memcpy(buffer[cursor..][0..prefix.len], prefix);
+    cursor += prefix.len;
+    @memcpy(buffer[cursor..][0..value.len], value);
+    return cursor + value.len;
+}
+
+fn add_subject_alt_name_extension(certificate: *c.X509, names: CertificateNames) !void {
+    const value_length = subject_alt_name_length(names) orelse return;
+
+    const value = try std.heap.page_allocator.allocSentinel(u8, value_length, 0);
+    defer std.heap.page_allocator.free(value);
+
+    write_subject_alt_name(value, names);
+    try add_certificate_extension(certificate, c.NID_subject_alt_name, value.ptr);
+}
 
 /// Application protocol negotiated on the TLS TCP listener.
 pub const ApplicationProtocol = enum(u8) {

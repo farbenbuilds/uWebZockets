@@ -152,10 +152,11 @@ The registration-to-handler map for every native callback is in
 ### TCP, TLS, and HTTP/1.1
 
 Plaintext sockets detect the HTTP/2 prior-knowledge preface before parsing
-HTTP/1.1. TLS uses BoringSSL with ALPN preference `h2` then `http/1.1`.
-Request bytes accumulate in the connection's bounded request buffer, the strict
-parser proves completeness, and the router dispatches through middleware to a
-handler.
+HTTP/1.1. TLS uses BoringSSL with ALPN preference `h2` then `http/1.1`;
+[tls.md](tls.md) covers credential loading and ephemeral development
+certificates. Request bytes accumulate in the connection's bounded request
+buffer, the strict parser proves completeness, and the router dispatches
+through middleware to a handler.
 
 ### HTTP/2
 

@@ -10,6 +10,7 @@ const Example = struct {
 
 const examples = [_]Example{
     .{ .name = "hello_world", .source = "examples/hello_world.zig", .description = "Run the hello_world example" },
+    .{ .name = "https_server", .source = "examples/https_server.zig", .description = "Run the ephemeral HTTPS example server" },
     .{ .name = "chat_server", .source = "examples/chat_server.zig", .description = "Run the chat_server example" },
     .{ .name = "http3_server", .source = "examples/http3_server.zig", .description = "Run the HTTP/3 example server" },
     .{ .name = "rpc_server", .source = "examples/rpc_server.zig", .description = "Run the JSON-RPC example server" },

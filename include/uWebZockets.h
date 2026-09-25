@@ -10,8 +10,8 @@ extern "C" {
 #endif
 
 #define UWZ_VERSION_MAJOR 1
-#define UWZ_VERSION_MINOR 4
-#define UWZ_VERSION_PATCH 5
+#define UWZ_VERSION_MINOR 5
+#define UWZ_VERSION_PATCH 0
 
 /* Versioned fixed capacities of the C ABI. */
 #define UWZ_MAX_ROUTES 64
@@ -180,6 +180,17 @@ uwz_error uwz_app_create_http3(
     const char *private_key_path,
     uwz_app **out_app
 );
+/*
+ * Creates a TLS application with an in-memory self-signed localhost
+ * certificate for local development. No files are read from disk; do not
+ * use generated certificates in production.
+ */
+uwz_error uwz_app_create_tls_ephemeral(uwz_app **out_app);
+/*
+ * Creates a dual HTTP/1.1 and HTTP/3 application with in-memory self-signed
+ * localhost certificates for local development.
+ */
+uwz_error uwz_app_create_http3_ephemeral(uwz_app **out_app);
 /*
  * Stops listeners, drains completions, and invalidates outstanding async
  * tokens. From a callback this requests shutdown without re-entering the event
