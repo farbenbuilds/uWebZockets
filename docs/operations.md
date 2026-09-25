@@ -178,8 +178,10 @@ an explicit `App.set_dev_log_file` always records. `App.flush_dev_log` writes
 any pending bytes, and `App.log_metrics` records every counter of the bounded
 Prometheus registry. The `uwz_connections_accepted`, `uwz_connections_closed`,
 `uwz_http_requests`, and `uwz_ws_messages` counters advance when observability
-is enabled. HTTP/2 dispatch and QUIC callbacks do not emit records in this
-release.
+is enabled on TCP transports. HTTP/2 dispatch does not emit records in this
+release; HTTP/3 emits one `http_request` record per completed request/response
+through the owning thread's sink, while the QUIC path never advances the
+counter registry.
 
 ## Use as a Zig dependency
 

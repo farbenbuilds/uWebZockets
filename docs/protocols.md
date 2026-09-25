@@ -213,7 +213,9 @@ association, capsules, flow control, and error mapping. Those extension modules
 are not connected to the live lsquic listener: the pinned backend exposes raw
 datagrams but not the complete extended CONNECT, push, outgoing unidirectional
 stream, or reset-at interfaces they require. WebTransport therefore models
-draft-16 only and is not a claim of deployed interoperability.
+draft-16 only and is not a claim of deployed interoperability. See
+[adr/0001-http3-datagram-and-webtransport.md](adr/0001-http3-datagram-and-webtransport.md)
+for the pinned-backend blocker record and the capability-gated activation path.
 
 RFC 10008 defines the separate HTTP `QUERY` method, supported by both routing
 APIs. It rejects a missing or syntactically invalid `Content-Type`;

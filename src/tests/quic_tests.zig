@@ -842,6 +842,62 @@ test "quic: HTTP/3 write backpressure keeps the stream armed" {
     try std.testing.expectEqual(@as(usize, 1), fake.shutdowns);
 }
 
+test "quic: completed exchange emits one development-log request record" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const file = try tmp.dir.createFile(std.testing.io, "http3_dev_log.txt", .{});
+    const sink = support.dev_log.thread_sink();
+    const previous_sink = sink.*;
+    sink.* = .{};
+    sink.enable(std.testing.io, file);
+    defer sink.* = previous_sink;
+    defer file.close(std.testing.io);
+
+    var fake = FakeStream{};
+    var body_storage: [64]u8 = undefined;
+    var response_header_storage: [stream.response_header_capacity]u8 = undefined;
+    var quic = test_quic_stream(&fake, &body_storage, &response_header_storage);
+
+    const RequestOwner = struct {
+        fn release(_: *anyopaque, _: *HeaderSet) void {}
+    };
+    var owner: u8 = 0;
+    var request_storage: [stream.header_capacity]u8 = undefined;
+    var request_headers = HeaderSet{};
+    request_headers.reset(
+        &owner,
+        RequestOwner.release,
+        &request_storage,
+        &.{},
+        &.{},
+        stream.default_capacities,
+    );
+    try std.testing.expect(add_test_header(&request_headers, ":method", "GET"));
+    try std.testing.expect(add_test_header(&request_headers, ":scheme", "https"));
+    try std.testing.expect(add_test_header(&request_headers, ":authority", "localhost"));
+    try std.testing.expect(add_test_header(&request_headers, ":path", "/observed"));
+    try std.testing.expect(request_headers.process_header(null));
+    quic.attach_headers(&request_headers);
+
+    var response = Response{ .target = .{ .http3 = quic.target() } };
+    try response.end("204 No Content", "");
+    quic.on_write();
+    quic.on_write();
+
+    const written = try tmp.dir.readFileAlloc(
+        std.testing.io,
+        "http3_dev_log.txt",
+        std.testing.allocator,
+        .limited(support.dev_log.capacity),
+    );
+    defer std.testing.allocator.free(written);
+
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, written, "[GET]"));
+    try std.testing.expect(std.mem.find(u8, written, " /observed : ") != null);
+    try std.testing.expect(std.mem.find(u8, written, "204") != null);
+}
+
 test "quic: configured response header capacity accepts wide headers" {
     const WideStream = stream.stream_with(FakeStreamIo.table, stream.Capacities{
         .response_header_size = 8 * 1024,
