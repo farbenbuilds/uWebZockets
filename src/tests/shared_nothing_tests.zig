@@ -136,9 +136,20 @@ test "affinity: physical cores are discoverable and pinning is best effort" {
 
 test "cluster: workers own disjoint slabs and configure independently" {
     const TestApp = support.app.configured_app_with_timeout(2, 1024, 4096, 0);
+    const test_config = support.config.ServerConfig{
+        .max_connections = 2,
+        .max_ws_message_size = 1024,
+        .write_queue_size = 4096,
+        .idle_timeout_ms = 0,
+        .max_body_size = 8192,
+        .max_route_nodes = 8,
+        .max_pattern_routes = 4,
+        .max_middleware = 2,
+    };
     var group = try TestApp.cluster(2).init_with_options(
         std.testing.allocator,
         std.testing.io,
+        test_config,
         .{ .cpu_affinity = false },
     );
     defer group.deinit();
@@ -149,6 +160,9 @@ test "cluster: workers own disjoint slabs and configure independently" {
     try std.testing.expect(first.request_buffers.ptr != second.request_buffers.ptr);
     try std.testing.expect(first.write_queue_storage.ptr != second.write_queue_storage.ptr);
     try std.testing.expect(first.loop.get_xev_loop() != second.loop.get_xev_loop());
+    // Runtime config reaches every worker, not just the type-level capacities.
+    try std.testing.expectEqual(@as(usize, 8192), first.max_body_size);
+    try std.testing.expectEqual(@as(usize, 8192), second.max_body_size);
 
     try group.configure(struct {
         fn routes(worker: *TestApp, index: usize) !void {
@@ -156,6 +170,11 @@ test "cluster: workers own disjoint slabs and configure independently" {
             if (index == 1) _ = try worker.get("/second", dummy_handler);
         }
     }.routes);
+
+    // Configuring routes binds the slab-carved router with the configured capacities.
+    try std.testing.expectEqual(@as(usize, 8), first.router.segment_offsets.len);
+    try std.testing.expectEqual(@as(usize, 4), first.router.pattern_routes.len);
+    try std.testing.expectEqual(@as(usize, 2), first.router.middleware.len);
 
     try std.testing.expect(group.worker(2) == null);
 }

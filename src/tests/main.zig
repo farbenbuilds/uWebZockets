@@ -8,6 +8,7 @@ comptime {
     _ = @import("core_tests.zig");
     _ = @import("fuzz_main.zig");
     _ = @import("framework_tests.zig");
+    _ = @import("helpers_tests.zig");
     _ = @import("http_tests.zig");
     _ = @import("http2_tests.zig");
     _ = @import("http2_hpack_tests.zig");
@@ -16,8 +17,10 @@ comptime {
     _ = @import("observability_tests.zig");
     _ = @import("quic_tests.zig");
     _ = @import("quic_phase3_tests.zig");
+    _ = @import("query_tests.zig");
     _ = @import("rpc_tests.zig");
     _ = @import("router_tests.zig");
+    _ = @import("schema_cookie_tests.zig");
     _ = @import("shared_nothing_tests.zig");
     _ = @import("udp_tests.zig");
     _ = @import("watch_tests.zig");

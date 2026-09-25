@@ -18,7 +18,12 @@ describes the layout, the startup slab, and the capacity contract.
 
 `Request.clone(allocator)` and `req.json(T, allocator)` are the only explicitly
 allocating public request APIs. Everything else returns `error.WouldBlock` or a
-specific bounded error instead of growing memory.
+specific bounded error instead of growing memory. Query and form parsing
+(`Request.query_params`, `Request.form`), percent decoding, error documents,
+`Accept` scoring, ETag matching, and the cookie helpers all slice or format into
+caller-owned storage and never allocate. `Response.begin_json` streams JSON
+through a fixed stack buffer into chunked response parts, so body size is
+bounded by the configured write queue rather than by a rendering buffer.
 
 ## The startup slab
 
@@ -31,6 +36,8 @@ into these regions, in order:
 | Connection pool storage | `max_connections * sizeof(TcpConnection)` |
 | Pool freelist indices | `max_connections * sizeof(usize)` |
 | HTTP/1.1 request buffers | `max_connections * request_stride` |
+| Header extras beyond the inline 64 | `max_connections * (max_header_count - 64) * 2 slices` when configured |
+| Router storage (nodes, patterns, middleware, registry) | `max_route_nodes` / `max_pattern_routes` / `max_middleware` / `max_route_registry_size` |
 | Response write queues | `max_connections * write_queue_size` |
 | WebSocket message storage | `max_connections * max_ws_message_size` |
 | RFC 7692 compression scratch | `max_connections * 2 * worst_case_scratch` when enabled |
@@ -99,6 +106,10 @@ fields they need:
 - **JSON-RPC registry** (`src/rpc/json_rpc.zig`): procedure metadata in
   parallel arrays with an open-addressed index and contiguous copied method
   bytes.
+- **Query and form pairs** (`src/http/query.zig`): key and value pointers plus
+  their lengths live in four parallel fixed arrays (32 entries), so every slice
+  stays borrowed from the request target and `Request.query_params()` performs
+  no copy and no allocation.
 
 ## Capacity and protocol limits
 
@@ -106,12 +117,13 @@ The defaults are deliberately finite:
 
 | Resource | Limit |
 | --- | ---: |
-| Request line | 8 KiB |
-| HTTP headers | 16 KiB total, 64 fields |
+| Request line | 8 KiB default; `ServerConfig.max_request_line_size` |
+| HTTP headers | 16 KiB total and 64 inline fields by default; `max_header_size` and `max_header_count` |
+| Query and form pairs | 32 default; compile-time `query.QueryParamsOf` capacity |
 | HTTP request body | 16 KiB default; `ServerConfig.max_body_size` |
-| Routes | 256 radix nodes |
-| Parameterized routes | 64 patterns, 16 captures per request |
-| Middleware | 32 callbacks |
+| Routes | 256 radix nodes; `max_route_nodes` |
+| Parameterized routes | `max_pattern_routes` patterns; `max_route_params` captures per request (16 inline) |
+| Middleware | 32 callbacks; `max_middleware` |
 | OpenAPI route registry | 320 entries, 64 KiB of paths |
 | JSON-RPC procedures | 64 by default |
 | JSON-RPC method names | 4 KiB copied storage by default |
@@ -119,7 +131,7 @@ The defaults are deliberately finite:
 | Mounted static directories | 8 |
 | Static file body | configured write queue minus 4 KiB |
 | Cluster message queue | 64 messages per worker |
-| Route path | 2 KiB |
+| Route path | 2 KiB default; `max_route_path_size` |
 | WebSocket message | 16 KiB with `App` |
 | WebSocket control payload | 125 bytes |
 | HTTP/3 decoded headers | 16 KiB total, 64 fields |
@@ -144,7 +156,12 @@ creating a delayed-ACK wrap split. Producers observe `error.WouldBlock`
 instead of causing unbounded memory growth; WebSocket routes use the `drain`
 callback and `buffered_amount` to resume producers. Chunk headers, bodies, and
 terminators are copied into the same ring as parts, so chunked responses need no
-per-connection scratch.
+per-connection scratch. HTTP/1.1 heads are scatter-written the same way, so a
+response with thousands of header fields is bounded by the ring, not by a fixed
+header-formatting buffer; `with_write_queue_size` sizes that ring per server.
+`Response.begin_stream` bodies park on `error.WouldBlock` and are re-invoked
+when the ring drains, so the queue bounds one step of a response, never its
+total size.
 
 ## DX rejection documents
 

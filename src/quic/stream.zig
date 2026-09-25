@@ -21,8 +21,6 @@ const max_headers = 64;
 
 /// Returns a header set to the owner that lent it storage.
 const HeaderReleaseFn = *const fn (*anyopaque, *HeaderSet) void;
-/// Returns a stream to the owner that lent it storage.
-const StreamReleaseFn = *const fn (*anyopaque, *QuicStream) void;
 
 /// Bounded lsquic header decoder state for one HTTP/3 request.
 pub const HeaderSet = struct {
@@ -260,462 +258,645 @@ const RequestPhase = enum(u8) {
     complete,
 };
 
-/// Connection-owned, fixed-buffer HTTP/3 request stream state.
-pub const QuicStream = struct {
-    owner: *anyopaque = undefined,
-    release_fn: ?StreamReleaseFn = null,
-    stream: *c.lsquic_stream = undefined,
-    router: *const Router = undefined,
-    header_set: ?*HeaderSet = null,
-    body_storage: []u8 = &.{},
-    response_body_storage: []u8 = &.{},
-    response_header_storage: []u8 = &.{},
-    response_name_offsets: [max_headers]u16 = .{0} ** max_headers,
-    response_name_lengths: [max_headers]u16 = .{0} ** max_headers,
-    response_value_offsets: [max_headers]u16 = .{0} ** max_headers,
-    response_value_lengths: [max_headers]u16 = .{0} ** max_headers,
-    response_status: [10]u8 = undefined,
-    body_length: usize = 0,
-    response_body_length: usize = 0,
-    response_body_offset: usize = 0,
-    response_header_length: usize = 0,
-    response_header_count: usize = 0,
-    response_phase: ResponsePhase = .idle,
-    request_phase: RequestPhase = .waiting_headers,
-    headers_sent: bool = false,
-    suppress_body: bool = false,
-    dispatched: bool = false,
-    dispatch_suspended: bool = false,
-    async_response_state: http_response.AsyncResponseState = .{},
+/// lsquic stream entry points the response state machine calls.
+///
+/// Production binds `lsquic_stream_io`; tests substitute a fake so producer
+/// resumption and drain accounting run without a live QUIC connection.
+pub const StreamIo = struct {
+    wantread: *const fn (?*c.lsquic_stream, c_int) callconv(.c) c_int,
+    read: *const fn (?*c.lsquic_stream, ?*anyopaque, usize) callconv(.c) isize,
+    wantwrite: *const fn (?*c.lsquic_stream, c_int) callconv(.c) c_int,
+    write: *const fn (?*c.lsquic_stream, ?*const anyopaque, usize) callconv(.c) isize,
+    send_headers: *const fn (
+        ?*c.lsquic_stream,
+        [*c]const c.lsquic_http_headers_t,
+        c_int,
+    ) callconv(.c) c_int,
+    shutdown: *const fn (?*c.lsquic_stream, c_int) callconv(.c) c_int,
+    close: *const fn (?*c.lsquic_stream) callconv(.c) c_int,
+};
 
-    /// Reinitializes a pooled stream with borrowed transport and storage.
-    pub fn reset(
-        self: *QuicStream,
-        owner: *anyopaque,
-        release_fn: StreamReleaseFn,
-        stream: *c.lsquic_stream,
-        router: *const Router,
-        body_storage: []u8,
-        response_body_storage: []u8,
-        response_header_storage: []u8,
-    ) void {
-        var next_generation = self.async_response_state.generation +% 1;
-        if (next_generation == 0) next_generation = 1;
-        self.* = .{
-            .owner = owner,
-            .release_fn = release_fn,
-            .stream = stream,
-            .router = router,
-            .body_storage = body_storage,
-            .response_body_storage = response_body_storage,
-            .response_header_storage = response_header_storage,
-        };
-        self.async_response_state.generation = next_generation;
-        self.async_response_state.state = .cancelled;
-    }
+/// Production lsquic stream entry points for one HTTP/3 stream.
+pub const lsquic_stream_io: StreamIo = .{
+    .wantread = c.lsquic_stream_wantread,
+    .read = c.lsquic_stream_read,
+    .wantwrite = c.lsquic_stream_wantwrite,
+    .write = c.lsquic_stream_write,
+    .send_headers = c.lsquic_stream_send_headers,
+    .shutdown = c.lsquic_stream_shutdown,
+    .close = c.lsquic_stream_close,
+};
 
-    /// Claims a finished header set or closes on invalid ownership state.
-    pub fn attach_headers(self: *QuicStream, header_set: *HeaderSet) void {
-        if (!header_set.finished or header_set.claimed) {
-            header_set.release();
-            _ = c.lsquic_stream_close(self.stream);
-            return;
+/// Returns connection-owned, fixed-buffer HTTP/3 stream state bound to the
+/// given lsquic stream entry points.
+pub fn stream_with(comptime io: StreamIo) type {
+    return struct {
+        const Self = @This();
+        /// Returns a stream to the owner that lent it storage.
+        const StreamReleaseFn = *const fn (*anyopaque, *Self) void;
+
+        owner: *anyopaque = undefined,
+        release_fn: ?StreamReleaseFn = null,
+        stream: *c.lsquic_stream = undefined,
+        router: *const Router = undefined,
+        header_set: ?*HeaderSet = null,
+        body_storage: []u8 = &.{},
+        response_body_storage: []u8 = &.{},
+        response_header_storage: []u8 = &.{},
+        // Engine-owned capture capacity slices, reused by every request this
+        // stream dispatches; empty when captures stay inline.
+        extra_param_names: [][]const u8 = &.{},
+        extra_param_values: [][]const u8 = &.{},
+        response_name_offsets: [max_headers]u16 = .{0} ** max_headers,
+        response_name_lengths: [max_headers]u16 = .{0} ** max_headers,
+        response_value_offsets: [max_headers]u16 = .{0} ** max_headers,
+        response_value_lengths: [max_headers]u16 = .{0} ** max_headers,
+        response_status: [10]u8 = undefined,
+        body_length: usize = 0,
+        response_body_length: usize = 0,
+        response_body_offset: usize = 0,
+        response_header_length: usize = 0,
+        response_header_count: usize = 0,
+        response_phase: ResponsePhase = .idle,
+        request_phase: RequestPhase = .waiting_headers,
+        headers_sent: bool = false,
+        suppress_body: bool = false,
+        dispatched: bool = false,
+        dispatch_suspended: bool = false,
+        stream_producer_context: ?*anyopaque = null,
+        stream_producer: ?http_response.StreamProducer = null,
+        async_response_state: http_response.AsyncResponseState = .{},
+
+        /// Reinitializes a pooled stream with borrowed transport and storage.
+        ///
+        /// `extra_param_names` and `extra_param_values` are equal-length
+        /// caller-owned capture slices; pass empty slices when the inline
+        /// `Request` arrays cover every configured capture.
+        pub fn reset(
+            self: *Self,
+            owner: *anyopaque,
+            release_fn: StreamReleaseFn,
+            stream: *c.lsquic_stream,
+            router: *const Router,
+            body_storage: []u8,
+            response_body_storage: []u8,
+            response_header_storage: []u8,
+            extra_param_names: [][]const u8,
+            extra_param_values: [][]const u8,
+        ) void {
+            var next_generation = self.async_response_state.generation +% 1;
+            if (next_generation == 0) next_generation = 1;
+            self.* = .{
+                .owner = owner,
+                .release_fn = release_fn,
+                .stream = stream,
+                .router = router,
+                .body_storage = body_storage,
+                .response_body_storage = response_body_storage,
+                .response_header_storage = response_header_storage,
+                .extra_param_names = extra_param_names,
+                .extra_param_values = extra_param_values,
+            };
+            self.async_response_state.generation = next_generation;
+            self.async_response_state.state = .cancelled;
         }
 
-        if (header_set.is_trailer) {
-            if (self.header_set == null or self.request_phase != .body) {
+        /// Claims a finished header set or closes on invalid ownership state.
+        pub fn attach_headers(self: *Self, header_set: *HeaderSet) void {
+            if (!header_set.finished or header_set.claimed) {
                 header_set.release();
-                _ = c.lsquic_stream_close(self.stream);
+                _ = io.close(self.stream);
+                return;
+            }
+
+            if (header_set.is_trailer) {
+                if (self.header_set == null or self.request_phase != .body) {
+                    header_set.release();
+                    _ = io.close(self.stream);
+                    return;
+                }
+                header_set.claimed = true;
+                self.request_phase = .trailers;
+                header_set.release();
+                return;
+            }
+
+            if (self.header_set != null or self.request_phase != .waiting_headers) {
+                header_set.release();
+                _ = io.close(self.stream);
                 return;
             }
             header_set.claimed = true;
-            self.request_phase = .trailers;
-            header_set.release();
-            return;
+            self.header_set = header_set;
+            self.request_phase = .body;
         }
 
-        if (self.header_set != null or self.request_phase != .waiting_headers) {
-            header_set.release();
-            _ = c.lsquic_stream_close(self.stream);
-            return;
-        }
-        header_set.claimed = true;
-        self.header_set = header_set;
-        self.request_phase = .body;
-    }
+        /// Drains readable request bytes and dispatches a complete request.
+        pub fn on_read(self: *Self) void {
+            if (self.header_set == null or self.dispatched) {
+                _ = io.close(self.stream);
+                return;
+            }
 
-    /// Drains readable request bytes and dispatches a complete request.
-    pub fn on_read(self: *QuicStream) void {
-        if (self.header_set == null or self.dispatched) {
-            _ = c.lsquic_stream_close(self.stream);
-            return;
-        }
-
-        while (true) {
-            if (self.body_length == self.body_storage.len) {
-                var overflow_probe: [1]u8 = undefined;
-                const read_length = c.lsquic_stream_read(self.stream, &overflow_probe, overflow_probe.len);
-                if (read_length > 0) {
-                    self.queue_error("413 Payload Too Large", "Payload Too Large");
-                } else if (read_length == 0) {
-                    self.dispatch();
-                } else if (std.c.errno(read_length) != .AGAIN) {
-                    self.close_now();
+            while (true) {
+                if (self.body_length == self.body_storage.len) {
+                    var overflow_probe: [1]u8 = undefined;
+                    const read_length = io.read(self.stream, &overflow_probe, overflow_probe.len);
+                    if (read_length > 0) {
+                        self.queue_error("413 Payload Too Large", "Payload Too Large");
+                    } else if (read_length == 0) {
+                        self.dispatch();
+                    } else if (std.c.errno(read_length) != .AGAIN) {
+                        self.close_now();
+                    }
+                    return;
                 }
+
+                const destination = self.body_storage[self.body_length..];
+                const read_length = io.read(self.stream, destination.ptr, destination.len);
+                if (read_length < 0) {
+                    if (std.c.errno(read_length) != .AGAIN) self.close_now();
+                    return;
+                }
+                if (read_length == 0) {
+                    self.dispatch();
+                    return;
+                }
+                self.body_length += @intCast(read_length);
+
+                if (self.header_set.?.content_length) |expected| {
+                    if (self.body_length > expected) {
+                        self.queue_error("400 Bad Request", "Content-Length mismatch");
+                        return;
+                    }
+                }
+            }
+        }
+
+        /// Flushes queued response fields and body bytes without blocking.
+        ///
+        /// An armed producer is stepped at most once per write event plus the
+        /// drain loop, so a producer that returns `.pending` without yielding
+        /// bytes cannot spin. The stream stays armed until the producer finishes
+        /// and the final storage drains.
+        pub fn on_write(self: *Self) void {
+            if (!self.response_pumpable()) {
+                _ = io.wantwrite(self.stream, 0);
                 return;
             }
 
-            const destination = self.body_storage[self.body_length..];
-            const read_length = c.lsquic_stream_read(self.stream, destination.ptr, destination.len);
-            if (read_length < 0) {
-                if (std.c.errno(read_length) != .AGAIN) self.close_now();
-                return;
+            if (!self.headers_sent) {
+                if (!self.send_headers()) {
+                    _ = io.close(self.stream);
+                    return;
+                }
+                self.headers_sent = true;
+                // A producer keeps `.streaming` so its write_chunk calls stay
+                // valid until it calls end_chunks; a prepared body moves on.
+                if (self.stream_producer == null) self.response_phase = .sending;
             }
-            if (read_length == 0) {
-                self.dispatch();
-                return;
-            }
-            self.body_length += @intCast(read_length);
 
-            if (self.header_set.?.content_length) |expected| {
-                if (self.body_length > expected) {
+            if (!self.flush_response_body()) return;
+
+            if (self.stream_producer != null and self.response_phase == .streaming) {
+                self.response_body_offset = 0;
+                self.response_body_length = 0;
+                _ = self.step_stream_producer();
+                if (self.response_phase == .done) return;
+                if (!self.flush_response_body()) return;
+            }
+
+            if (self.stream_producer != null) return;
+
+            _ = io.wantwrite(self.stream, 0);
+            _ = io.shutdown(self.stream, 1);
+            self.response_phase = .done;
+        }
+
+        /// Reports whether the response state machine may advance on a write event.
+        fn response_pumpable(self: *const Self) bool {
+            return switch (self.response_phase) {
+                .ready, .sending => true,
+                .streaming => self.stream_producer != null,
+                .idle, .done => false,
+            };
+        }
+
+        /// Moves queued body bytes into the stream; false when closed or blocked.
+        fn flush_response_body(self: *Self) bool {
+            while (self.response_body_offset < self.response_body_length) {
+                const body = self.response_body_storage[self.response_body_offset..self.response_body_length];
+                const written = io.write(self.stream, body.ptr, body.len);
+                if (written < 0) {
+                    _ = io.close(self.stream);
+                    return false;
+                }
+                if (written == 0) return false;
+                self.response_body_offset += @intCast(written);
+            }
+            return true;
+        }
+
+        /// Advances the armed producer once into the bounded body storage.
+        ///
+        /// The producer writes through `write_response`, so a full storage region
+        /// surfaces as `error.WouldBlock`; the producer turns that into `.pending`
+        /// and the next write event retries it. A producer fault clears the state
+        /// and either queues a 500 while the head is still buffered or resets the
+        /// stream once the head is on the wire.
+        fn step_stream_producer(self: *Self) http_response.StreamStatus {
+            const producer = self.stream_producer orelse return .done;
+            const producer_context = self.stream_producer_context orelse {
+                self.clear_stream_producer();
+                return .done;
+            };
+
+            var response = Response{
+                .target = .{ .http3 = self.target() },
+                .state = .streaming,
+            };
+            const status = producer(producer_context, &response) catch {
+                self.fail_stream_producer();
+                return .done;
+            };
+            if (status == .done) {
+                self.clear_stream_producer();
+                // A producer that returns `.done` without end_chunks still
+                // terminates the body; finish_response arms the final drain.
+                if (self.response_phase == .streaming) {
+                    finish_response(self) catch self.close_now();
+                }
+                return .done;
+            }
+            // end_chunks moved the phase out of `.streaming`; a later `.pending`
+            // must not leave wantwrite armed forever.
+            if (self.response_phase != .streaming) {
+                self.clear_stream_producer();
+                return .done;
+            }
+            return status;
+        }
+
+        /// Reports a producer fault through the normal response error path.
+        fn fail_stream_producer(self: *Self) void {
+            self.clear_stream_producer();
+            if (self.headers_sent or self.response_phase != .streaming) {
+                self.close_now();
+                self.response_phase = .done;
+                return;
+            }
+            self.response_phase = .idle;
+            end_response(self, "500 Internal Server Error", "", "") catch self.close_now();
+        }
+
+        /// Disarms the response producer without altering the response phase.
+        fn clear_stream_producer(self: *Self) void {
+            self.stream_producer = null;
+            self.stream_producer_context = null;
+        }
+
+        /// Cancels deferred dispatch and returns pooled state to its owner.
+        pub fn on_close(self: *Self) void {
+            self.dispatch_suspended = false;
+            self.async_response_state.cancel();
+            self.clear_stream_producer();
+            if (self.header_set) |header_set| header_set.release();
+            self.header_set = null;
+
+            const callback = self.release_fn orelse return;
+            self.release_fn = null;
+            callback(self.owner, self);
+        }
+
+        fn dispatch(self: *Self) void {
+            if (self.dispatched) return;
+            self.dispatched = true;
+            self.request_phase = .complete;
+            _ = io.wantread(self.stream, 0);
+
+            const header_set = self.header_set.?;
+            if (header_set.content_length) |expected| {
+                if (expected != self.body_length) {
                     self.queue_error("400 Bad Request", "Content-Length mismatch");
                     return;
                 }
             }
-        }
-    }
+            header_set.request.body = self.body_storage[0..self.body_length];
 
-    /// Flushes queued response fields and body bytes without blocking.
-    pub fn on_write(self: *QuicStream) void {
-        if (self.response_phase != .ready and self.response_phase != .sending) {
-            _ = c.lsquic_stream_wantwrite(self.stream, 0);
-            return;
-        }
-
-        if (!self.headers_sent) {
-            if (!self.send_headers()) {
-                _ = c.lsquic_stream_close(self.stream);
+            const method = radix.HttpMethod.parse(header_set.request.method);
+            self.suppress_body = method == .head;
+            var response = Response{ .target = .{ .http3 = self.target() } };
+            if (std.mem.eql(u8, header_set.request.method, "CONNECT")) {
+                response.end("501 Not Implemented", "HTTP/3 CONNECT is not supported") catch
+                    self.close_now();
                 return;
             }
-            self.headers_sent = true;
-            self.response_phase = .sending;
-        }
-
-        while (self.response_body_offset < self.response_body_length) {
-            const body = self.response_body_storage[self.response_body_offset..self.response_body_length];
-            const written = c.lsquic_stream_write(self.stream, body.ptr, body.len);
-            if (written < 0) {
-                _ = c.lsquic_stream_close(self.stream);
+            if (!header_set.request.valid_query_content_type()) {
+                response.end("400 Bad Request", "QUERY requires a valid Content-Type") catch
+                    self.close_now();
                 return;
             }
-            if (written == 0) return;
-            self.response_body_offset += @intCast(written);
-        }
-
-        _ = c.lsquic_stream_wantwrite(self.stream, 0);
-        _ = c.lsquic_stream_shutdown(self.stream, 1);
-        self.response_phase = .done;
-    }
-
-    /// Cancels deferred dispatch and returns pooled state to its owner.
-    pub fn on_close(self: *QuicStream) void {
-        self.dispatch_suspended = false;
-        self.async_response_state.cancel();
-        if (self.header_set) |header_set| header_set.release();
-        self.header_set = null;
-
-        const callback = self.release_fn orelse return;
-        self.release_fn = null;
-        callback(self.owner, self);
-    }
-
-    fn dispatch(self: *QuicStream) void {
-        if (self.dispatched) return;
-        self.dispatched = true;
-        self.request_phase = .complete;
-        _ = c.lsquic_stream_wantread(self.stream, 0);
-
-        const header_set = self.header_set.?;
-        if (header_set.content_length) |expected| {
-            if (expected != self.body_length) {
-                self.queue_error("400 Bad Request", "Content-Length mismatch");
+            // The header set owns the request view; wire this stream's
+            // engine-owned capture slices before the capture pass so wide
+            // patterns can spill past the inline array.
+            header_set.request.extra_param_names = self.extra_param_names;
+            header_set.request.extra_param_values = self.extra_param_values;
+            header_set.request.extra_param_count = 0;
+            const route = self.router.match_request(&header_set.request, method);
+            if (self.router.run_middleware(&header_set.request, &response) == .stop) {
+                self.finish_sync_dispatch(&response);
                 return;
             }
-        }
-        header_set.request.body = self.body_storage[0..self.body_length];
 
-        const method = radix.HttpMethod.parse(header_set.request.method);
-        self.suppress_body = method == .head;
-        var response = Response{ .target = .{ .http3 = self.response_target() } };
-        if (std.mem.eql(u8, header_set.request.method, "CONNECT")) {
-            response.end("501 Not Implemented", "HTTP/3 CONNECT is not supported") catch
+            if (method == .options and std.mem.eql(u8, header_set.request.path, "*")) {
+                response.end("204 No Content", "") catch self.close_now();
+                return;
+            }
+
+            const matched_route = route orelse {
+                response.end("404 Not Found", "Route not found") catch self.close_now();
+                return;
+            };
+
+            if (matched_route.handler) |handler| {
+                self.invoke_handler(handler, &header_set.request, &response);
+                return;
+            }
+
+            if (method == .options) {
+                self.send_method_response(&response, matched_route.allowed_methods, "204 No Content", "");
+                return;
+            }
+            if (matched_route.ws_behavior != null and method == .get) {
+                response.end("426 Upgrade Required", "WebSocket over HTTP/3 is not supported") catch self.close_now();
+                return;
+            }
+            self.send_method_response(&response, matched_route.allowed_methods, "405 Method Not Allowed", "Method Not Allowed");
+        }
+
+        fn invoke_handler(
+            self: *Self,
+            handler: radix.RouteHandler,
+            request: *Request,
+            response: *Response,
+        ) void {
+            switch (handler) {
+                .synchronous => |callback| {
+                    callback(request, response);
+                    self.finish_sync_dispatch(response);
+                },
+                .contextual => |binding| {
+                    binding.callback(binding.context, request, response);
+                    self.finish_sync_dispatch(response);
+                },
+                .asynchronous => |callback| {
+                    const token = self.async_response_state.arm(self.async_target());
+                    callback(request, token);
+                    self.dispatch_suspended = token.is_pending();
+                },
+                .contextual_async => |binding| {
+                    const token = self.async_response_state.arm(self.async_target());
+                    binding.callback(binding.context, request, token);
+                    self.dispatch_suspended = token.is_pending();
+                },
+            }
+        }
+
+        fn finish_sync_dispatch(self: *Self, response: *Response) void {
+            if (response.is_complete()) return;
+            // A pending producer owns completion and resumes on write events.
+            if (self.stream_producer != null) return;
+            if (response.is_started()) {
                 self.close_now();
-            return;
-        }
-        if (!header_set.request.valid_query_content_type()) {
-            response.end("400 Bad Request", "QUERY requires a valid Content-Type") catch
+                return;
+            }
+            response.end("500 Internal Server Error", "Handler did not complete response") catch
                 self.close_now();
-            return;
-        }
-        const route = self.router.match_request(&header_set.request, method);
-        if (self.router.run_middleware(&header_set.request, &response) == .stop) {
-            self.finish_sync_dispatch(&response);
-            return;
         }
 
-        if (method == .options and std.mem.eql(u8, header_set.request.path, "*")) {
-            response.end("204 No Content", "") catch self.close_now();
-            return;
+        fn async_target(self: *Self) http_response.AsyncTarget {
+            return .{
+                .context = self,
+                .complete_fn = complete_async_response,
+                .wake_fn = wake_async_dispatch,
+            };
         }
 
-        const matched_route = route orelse {
-            response.end("404 Not Found", "Route not found") catch self.close_now();
-            return;
-        };
-
-        if (matched_route.handler) |handler| {
-            self.invoke_handler(handler, &header_set.request, &response);
-            return;
+        fn complete_async_response(
+            context: *anyopaque,
+            status: []const u8,
+            headers: []const u8,
+            body: []const u8,
+        ) !void {
+            const self: *Self = @ptrCast(@alignCast(context));
+            if (self.release_fn == null) return error.StreamClosed;
+            end_response(self, status, headers, body) catch |err| {
+                self.close_now();
+                return err;
+            };
         }
 
-        if (method == .options) {
-            self.send_method_response(&response, matched_route.allowed_methods, "204 No Content", "");
-            return;
+        fn wake_async_dispatch(context: *anyopaque) void {
+            const self: *Self = @ptrCast(@alignCast(context));
+            self.dispatch_suspended = false;
         }
-        if (matched_route.ws_behavior != null and method == .get) {
-            response.end("426 Upgrade Required", "WebSocket over HTTP/3 is not supported") catch self.close_now();
-            return;
+
+        fn send_method_response(
+            self: *Self,
+            response: *Response,
+            allowed_methods: u16,
+            status: []const u8,
+            body: []const u8,
+        ) void {
+            var allow_value_buffer: [64]u8 = undefined;
+            const allow_value = radix.format_allowed_methods(allowed_methods, &allow_value_buffer) catch {
+                self.close_now();
+                return;
+            };
+            var allow_header_buffer: [80]u8 = undefined;
+            const allow_header = std.fmt.bufPrint(
+                &allow_header_buffer,
+                "Allow: {s}\r\n",
+                .{allow_value},
+            ) catch {
+                self.close_now();
+                return;
+            };
+            response.end_with_headers(status, allow_header, body) catch self.close_now();
         }
-        self.send_method_response(&response, matched_route.allowed_methods, "405 Method Not Allowed", "Method Not Allowed");
-    }
 
-    fn invoke_handler(
-        self: *QuicStream,
-        handler: radix.RouteHandler,
-        request: *Request,
-        response: *Response,
-    ) void {
-        switch (handler) {
-            .synchronous => |callback| {
-                callback(request, response);
-                self.finish_sync_dispatch(response);
-            },
-            .contextual => |binding| {
-                binding.callback(binding.context, request, response);
-                self.finish_sync_dispatch(response);
-            },
-            .asynchronous => |callback| {
-                const token = self.async_response_state.arm(self.async_target());
-                callback(request, token);
-                self.dispatch_suspended = token.is_pending();
-            },
-            .contextual_async => |binding| {
-                const token = self.async_response_state.arm(self.async_target());
-                binding.callback(binding.context, request, token);
-                self.dispatch_suspended = token.is_pending();
-            },
+        /// Returns the response callbacks bound to this stream.
+        pub fn target(self: *Self) Http3Target {
+            return .{
+                .context = self,
+                .end_fn = end_response,
+                .begin_fn = begin_response,
+                .write_fn = write_response,
+                .finish_fn = finish_response,
+                .begin_stream_fn = begin_stream_response,
+            };
         }
-    }
 
-    fn finish_sync_dispatch(self: *QuicStream, response: *Response) void {
-        if (response.is_complete()) return;
-        if (response.is_started()) {
-            self.close_now();
-            return;
-        }
-        response.end("500 Internal Server Error", "Handler did not complete response") catch
-            self.close_now();
-    }
+        fn end_response(context: *anyopaque, status: []const u8, headers: []const u8, body: []const u8) !void {
+            const self: *Self = @ptrCast(@alignCast(context));
+            if (self.response_phase != .idle) return error.ResponseAlreadyStarted;
+            try self.prepare_response(status, headers);
 
-    fn async_target(self: *QuicStream) http_response.AsyncTarget {
-        return .{
-            .context = self,
-            .complete_fn = complete_async_response,
-            .wake_fn = wake_async_dispatch,
-        };
-    }
-
-    fn complete_async_response(
-        context: *anyopaque,
-        status: []const u8,
-        headers: []const u8,
-        body: []const u8,
-    ) !void {
-        const self: *QuicStream = @ptrCast(@alignCast(context));
-        if (self.release_fn == null) return error.StreamClosed;
-        end_response(self, status, headers, body) catch |err| {
-            self.close_now();
-            return err;
-        };
-    }
-
-    fn wake_async_dispatch(context: *anyopaque) void {
-        const self: *QuicStream = @ptrCast(@alignCast(context));
-        self.dispatch_suspended = false;
-    }
-
-    fn send_method_response(
-        self: *QuicStream,
-        response: *Response,
-        allowed_methods: u16,
-        status: []const u8,
-        body: []const u8,
-    ) void {
-        var allow_value_buffer: [64]u8 = undefined;
-        const allow_value = radix.format_allowed_methods(allowed_methods, &allow_value_buffer) catch {
-            self.close_now();
-            return;
-        };
-        var allow_header_buffer: [80]u8 = undefined;
-        const allow_header = std.fmt.bufPrint(
-            &allow_header_buffer,
-            "Allow: {s}\r\n",
-            .{allow_value},
-        ) catch {
-            self.close_now();
-            return;
-        };
-        response.end_with_headers(status, allow_header, body) catch self.close_now();
-    }
-
-    fn response_target(self: *QuicStream) Http3Target {
-        return .{
-            .context = self,
-            .end_fn = end_response,
-            .begin_fn = begin_response,
-            .write_fn = write_response,
-            .finish_fn = finish_response,
-        };
-    }
-
-    fn end_response(context: *anyopaque, status: []const u8, headers: []const u8, body: []const u8) !void {
-        const self: *QuicStream = @ptrCast(@alignCast(context));
-        if (self.response_phase != .idle) return error.ResponseAlreadyStarted;
-        try self.prepare_response(status, headers);
-
-        if (!self.suppress_body) {
-            if (body.len > self.response_body_storage.len) return error.WouldBlock;
-            @memcpy(self.response_body_storage[0..body.len], body);
-            self.response_body_length = body.len;
-        }
-        self.response_phase = .ready;
-        _ = c.lsquic_stream_wantwrite(self.stream, 1);
-    }
-
-    fn begin_response(context: *anyopaque, status: []const u8, headers: []const u8) !void {
-        const self: *QuicStream = @ptrCast(@alignCast(context));
-        if (self.response_phase != .idle) return error.ResponseAlreadyStarted;
-        if (self.suppress_body) return error.BodyNotAllowed;
-        try self.prepare_response(status, headers);
-        self.response_phase = .streaming;
-    }
-
-    fn write_response(context: *anyopaque, body: []const u8) !void {
-        const self: *QuicStream = @ptrCast(@alignCast(context));
-        if (self.response_phase != .streaming) return error.ResponseNotStreaming;
-        if (body.len > self.response_body_storage.len - self.response_body_length) {
-            return error.WouldBlock;
-        }
-        @memcpy(
-            self.response_body_storage[self.response_body_length .. self.response_body_length + body.len],
-            body,
-        );
-        self.response_body_length += body.len;
-    }
-
-    fn finish_response(context: *anyopaque) !void {
-        const self: *QuicStream = @ptrCast(@alignCast(context));
-        if (self.response_phase != .streaming) return error.ResponseNotStreaming;
-        self.response_phase = .ready;
-        _ = c.lsquic_stream_wantwrite(self.stream, 1);
-    }
-
-    fn prepare_response(self: *QuicStream, status: []const u8, headers: []const u8) !void {
-        @memcpy(self.response_status[0..7], ":status");
-        @memcpy(self.response_status[7..10], status[0..3]);
-        self.response_header_length = 0;
-        self.response_header_count = 0;
-
-        var lines = std.mem.splitSequence(u8, headers, "\r\n");
-        while (lines.next()) |line| {
-            if (line.len == 0) continue;
-            if (self.response_header_count >= max_headers) return error.BufferOverflow;
-            const colon = std.mem.indexOfScalar(u8, line, ':') orelse return error.InvalidHeaders;
-            const name = line[0..colon];
-            const value = std.mem.trim(u8, line[colon + 1 ..], " \t");
-            if (validation.connection_specific_header(name) or
-                std.ascii.eqlIgnoreCase(name, "te"))
-            {
-                return error.InvalidHeaders;
+            if (!self.suppress_body) {
+                if (body.len > self.response_body_storage.len) return error.WouldBlock;
+                @memcpy(self.response_body_storage[0..body.len], body);
+                self.response_body_length = body.len;
             }
+            self.response_phase = .ready;
+            _ = io.wantwrite(self.stream, 1);
+        }
 
-            const required = std.math.add(usize, name.len, value.len) catch return error.BufferOverflow;
-            if (required > self.response_header_storage.len - self.response_header_length) {
-                return error.BufferOverflow;
-            }
+        fn begin_response(context: *anyopaque, status: []const u8, headers: []const u8) !void {
+            const self: *Self = @ptrCast(@alignCast(context));
+            if (self.response_phase != .idle) return error.ResponseAlreadyStarted;
+            if (self.suppress_body) return error.BodyNotAllowed;
+            try self.prepare_response(status, headers);
+            self.response_phase = .streaming;
+        }
 
-            const index = self.response_header_count;
-            const name_offset = self.response_header_length;
-            for (name, 0..) |byte, offset| {
-                self.response_header_storage[name_offset + offset] = std.ascii.toLower(byte);
+        fn begin_stream_response(
+            context: *anyopaque,
+            status: []const u8,
+            headers: []const u8,
+            producer_context: *anyopaque,
+            producer: http_response.StreamProducer,
+        ) anyerror!bool {
+            const self: *Self = @ptrCast(@alignCast(context));
+            if (self.response_phase != .idle) return error.ResponseAlreadyStarted;
+            if (self.suppress_body) return error.BodyNotAllowed;
+
+            try self.prepare_response(status, headers);
+            self.response_phase = .streaming;
+            self.response_body_offset = 0;
+            self.response_body_length = 0;
+            self.stream_producer = producer;
+            self.stream_producer_context = producer_context;
+
+            if (self.step_stream_producer() != .done) {
+                _ = io.wantwrite(self.stream, 1);
+                return false;
             }
-            self.response_header_length += name.len;
-            const value_offset = self.response_header_length;
+            return true;
+        }
+
+        fn write_response(context: *anyopaque, body: []const u8) !void {
+            const self: *Self = @ptrCast(@alignCast(context));
+            if (self.response_phase != .streaming) return error.ResponseNotStreaming;
+            if (body.len > self.response_body_storage.len - self.response_body_length) {
+                return error.WouldBlock;
+            }
             @memcpy(
-                self.response_header_storage[value_offset .. value_offset + value.len],
-                value,
+                self.response_body_storage[self.response_body_length .. self.response_body_length + body.len],
+                body,
             );
-            self.response_header_length += value.len;
-
-            self.response_name_offsets[index] = @intCast(name_offset);
-            self.response_name_lengths[index] = @intCast(name.len);
-            self.response_value_offsets[index] = @intCast(value_offset);
-            self.response_value_lengths[index] = @intCast(value.len);
-            self.response_header_count += 1;
-        }
-    }
-
-    fn send_headers(self: *QuicStream) bool {
-        var header_array: [max_headers + 1]c.struct_uz_lsxpack_header = undefined;
-        set_xpack_header(&header_array[0], &self.response_status, 0, 7, 7, 3);
-
-        var index: usize = 0;
-        while (index < self.response_header_count) : (index += 1) {
-            set_xpack_header(
-                &header_array[index + 1],
-                self.response_header_storage,
-                self.response_name_offsets[index],
-                self.response_name_lengths[index],
-                self.response_value_offsets[index],
-                self.response_value_lengths[index],
-            );
+            self.response_body_length += body.len;
         }
 
-        var headers = c.lsquic_http_headers_t{
-            .count = @intCast(self.response_header_count + 1),
-            .headers = @ptrCast(&header_array[0]),
-        };
-        return c.lsquic_stream_send_headers(self.stream, &headers, 0) == 0;
-    }
-
-    fn queue_error(self: *QuicStream, status: []const u8, body: []const u8) void {
-        if (self.response_phase != .idle) {
-            self.close_now();
-            return;
+        fn finish_response(context: *anyopaque) !void {
+            const self: *Self = @ptrCast(@alignCast(context));
+            if (self.response_phase != .streaming) return error.ResponseNotStreaming;
+            // end_chunks is terminal for a producer-fed body: whether the
+            // producer or the application called it, nothing may re-arm.
+            self.clear_stream_producer();
+            self.response_phase = .ready;
+            _ = io.wantwrite(self.stream, 1);
         }
-        self.dispatched = true;
-        _ = c.lsquic_stream_wantread(self.stream, 0);
-        _ = c.lsquic_stream_shutdown(self.stream, 0);
-        end_response(self, status, "", body) catch self.close_now();
-    }
 
-    fn close_now(self: *QuicStream) void {
-        self.dispatch_suspended = false;
-        self.async_response_state.cancel();
-        _ = c.lsquic_stream_close(self.stream);
-    }
-};
+        fn prepare_response(self: *Self, status: []const u8, headers: []const u8) !void {
+            @memcpy(self.response_status[0..7], ":status");
+            @memcpy(self.response_status[7..10], status[0..3]);
+            self.response_header_length = 0;
+            self.response_header_count = 0;
+
+            var lines = std.mem.splitSequence(u8, headers, "\r\n");
+            while (lines.next()) |line| {
+                if (line.len == 0) continue;
+                if (self.response_header_count >= max_headers) return error.BufferOverflow;
+                const colon = std.mem.indexOfScalar(u8, line, ':') orelse return error.InvalidHeaders;
+                const name = line[0..colon];
+                const value = std.mem.trim(u8, line[colon + 1 ..], " \t");
+                if (validation.connection_specific_header(name) or
+                    std.ascii.eqlIgnoreCase(name, "te"))
+                {
+                    return error.InvalidHeaders;
+                }
+
+                const required = std.math.add(usize, name.len, value.len) catch return error.BufferOverflow;
+                if (required > self.response_header_storage.len - self.response_header_length) {
+                    return error.BufferOverflow;
+                }
+
+                const index = self.response_header_count;
+                const name_offset = self.response_header_length;
+                for (name, 0..) |byte, offset| {
+                    self.response_header_storage[name_offset + offset] = std.ascii.toLower(byte);
+                }
+                self.response_header_length += name.len;
+                const value_offset = self.response_header_length;
+                @memcpy(
+                    self.response_header_storage[value_offset .. value_offset + value.len],
+                    value,
+                );
+                self.response_header_length += value.len;
+
+                self.response_name_offsets[index] = @intCast(name_offset);
+                self.response_name_lengths[index] = @intCast(name.len);
+                self.response_value_offsets[index] = @intCast(value_offset);
+                self.response_value_lengths[index] = @intCast(value.len);
+                self.response_header_count += 1;
+            }
+        }
+
+        fn send_headers(self: *Self) bool {
+            var header_array: [max_headers + 1]c.struct_uz_lsxpack_header = undefined;
+            set_xpack_header(&header_array[0], &self.response_status, 0, 7, 7, 3);
+
+            var index: usize = 0;
+            while (index < self.response_header_count) : (index += 1) {
+                set_xpack_header(
+                    &header_array[index + 1],
+                    self.response_header_storage,
+                    self.response_name_offsets[index],
+                    self.response_name_lengths[index],
+                    self.response_value_offsets[index],
+                    self.response_value_lengths[index],
+                );
+            }
+
+            var headers = c.lsquic_http_headers_t{
+                .count = @intCast(self.response_header_count + 1),
+                .headers = @ptrCast(&header_array[0]),
+            };
+            return io.send_headers(self.stream, &headers, 0) == 0;
+        }
+
+        fn queue_error(self: *Self, status: []const u8, body: []const u8) void {
+            if (self.response_phase != .idle) {
+                self.close_now();
+                return;
+            }
+            self.dispatched = true;
+            _ = io.wantread(self.stream, 0);
+            _ = io.shutdown(self.stream, 0);
+            end_response(self, status, "", body) catch self.close_now();
+        }
+
+        fn close_now(self: *Self) void {
+            self.dispatch_suspended = false;
+            self.async_response_state.cancel();
+            self.clear_stream_producer();
+            _ = io.close(self.stream);
+        }
+    };
+}
+
+/// Production HTTP/3 stream state bound to the lsquic stream API.
+pub const QuicStream = stream_with(lsquic_stream_io);
 
 fn forbidden_trailer_field(name: []const u8) bool {
     return std.mem.eql(u8, name, "content-length") or

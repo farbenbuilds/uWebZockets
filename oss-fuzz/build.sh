@@ -19,7 +19,7 @@ zig build oss-fuzz-objects \
     -Doptimize=ReleaseSafe \
     --prefix "$install_dir"
 
-for target in http_framing ws_masking quic_packets; do
+for target in http_framing ws_masking quic_packets query_parse; do
     # OSS-Fuzz exposes compiler arguments as space-delimited strings.
     # shellcheck disable=SC2086
     "$CXX" $CXXFLAGS \

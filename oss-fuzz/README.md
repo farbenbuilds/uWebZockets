@@ -1,10 +1,11 @@
 # OSS-Fuzz-compatible integration
 
-The integration builds three independent libFuzzer entrypoints:
+The integration builds four independent libFuzzer entrypoints:
 
 - `http_framing` exercises fragmented HTTP/1 framing and parser bounds.
 - `ws_masking` compares whole-buffer and fragmented masking and checks reversibility.
 - `quic_packets` exercises QUIC varints plus WebTransport stream, datagram, and capsule boundaries.
+- `query_parse` exercises query slicing, percent/form decoding, and `Accept` negotiation, and asserts every borrowed slice stays inside the parsed input.
 
 Compile the sanitizer-coverage objects and run deterministic smoke inputs
 inside the repository Nix environment:
@@ -20,7 +21,7 @@ corpora, dictionaries, and runtime options under `$OUT`.
 
 The repository is not assumed to be enrolled in the hosted OSS-Fuzz service.
 `.clusterfuzzlite/` uses the same builder against the exact checked-out revision
-in CI. ClusterFuzzLite's bad-build check verifies that all three targets link
+in CI. ClusterFuzzLite's bad-build check verifies that all four targets link
 and start in the OSS-Fuzz runner, then a bounded batch run exercises each
 target.
 

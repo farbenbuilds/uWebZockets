@@ -3,8 +3,8 @@
 //! `Server.builder(io)` starts a fluent chain whose `with_*` methods each
 //! return a builder for a new `ServerConfig`. `build(allocator)` then performs
 //! exactly one allocation: the contiguous slab that backs every pool, request,
-//! message, queue, and optional compression region. Nothing on the runtime I/O
-//! path allocates.
+//! message, queue, router, and optional compression region. Nothing on the
+//! runtime I/O path allocates.
 
 const std = @import("std");
 const app_module = @import("app.zig");
@@ -58,11 +58,12 @@ pub fn configured_builder(comptime config: ServerConfig) type {
         const Self = @This();
 
         /// Application type generated for this configuration.
-        pub const AppType = app_module.configured_app_with_timeout(
+        pub const AppType = app_module.configured_app_with_route_params(
             config.max_connections,
             config.max_ws_message_size,
             config.write_queue_size,
             config.idle_timeout_ms,
+            config.max_route_params,
         );
 
         io: std.Io,
@@ -96,6 +97,78 @@ pub fn configured_builder(comptime config: ServerConfig) type {
             self: Self,
             comptime value: usize,
         ) configured_builder(config.with(.{ .max_body_size = value })) {
+            return .{ .io = self.io };
+        }
+
+        /// Overrides the largest accepted HTTP/1.1 request line.
+        pub fn with_max_request_line_size(
+            self: Self,
+            comptime value: usize,
+        ) configured_builder(config.with(.{ .max_request_line_size = value })) {
+            return .{ .io = self.io };
+        }
+
+        /// Overrides the largest accepted HTTP/1.1 header block.
+        pub fn with_max_header_size(
+            self: Self,
+            comptime value: usize,
+        ) configured_builder(config.with(.{ .max_header_size = value })) {
+            return .{ .io = self.io };
+        }
+
+        /// Overrides the maximum number of headers accepted on one request.
+        pub fn with_max_header_count(
+            self: Self,
+            comptime value: usize,
+        ) configured_builder(config.with(.{ .max_header_count = value })) {
+            return .{ .io = self.io };
+        }
+
+        /// Overrides the maximum number of retained radix routing nodes.
+        pub fn with_max_route_nodes(
+            self: Self,
+            comptime value: usize,
+        ) configured_builder(config.with(.{ .max_route_nodes = value })) {
+            return .{ .io = self.io };
+        }
+
+        /// Overrides the maximum number of parameterized route patterns.
+        pub fn with_max_pattern_routes(
+            self: Self,
+            comptime value: usize,
+        ) configured_builder(config.with(.{ .max_pattern_routes = value })) {
+            return .{ .io = self.io };
+        }
+
+        /// Overrides the maximum number of ordered middleware callbacks.
+        pub fn with_max_middleware(
+            self: Self,
+            comptime value: usize,
+        ) configured_builder(config.with(.{ .max_middleware = value })) {
+            return .{ .io = self.io };
+        }
+
+        /// Overrides the maximum accepted route path length.
+        pub fn with_max_route_path_size(
+            self: Self,
+            comptime value: usize,
+        ) configured_builder(config.with(.{ .max_route_path_size = value })) {
+            return .{ .io = self.io };
+        }
+
+        /// Overrides the maximum route captures accepted on one request.
+        pub fn with_max_route_params(
+            self: Self,
+            comptime value: usize,
+        ) configured_builder(config.with(.{ .max_route_params = value })) {
+            return .{ .io = self.io };
+        }
+
+        /// Overrides the bytes reserved for route paths kept for introspection.
+        pub fn with_max_route_registry_size(
+            self: Self,
+            comptime value: usize,
+        ) configured_builder(config.with(.{ .max_route_registry_size = value })) {
             return .{ .io = self.io };
         }
 
@@ -232,6 +305,7 @@ pub fn configured_builder(comptime config: ServerConfig) type {
             return AppType.cluster(worker_count).init_with_options(
                 allocator,
                 self.io,
+                config,
                 options,
             );
         }

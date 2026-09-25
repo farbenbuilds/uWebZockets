@@ -6,6 +6,8 @@ const zslay = @import("zslay");
 const ws_handshake = support.ws_handshake;
 const quic_validation = support.quic_validation;
 const json_rpc = support.json_rpc;
+const query = support.query;
+const negotiate = support.negotiate;
 
 test "fuzz: protocol parsers preserve bounded state" {
     try std.testing.fuzz({}, fuzz_protocol_parsers, .{
@@ -28,10 +30,45 @@ test "fuzz: protocol parsers preserve bounded state" {
 fn fuzz_protocol_parsers(_: void, smith: *std.testing.Smith) !void {
     @disableInstrumentation();
     try fuzz_http_parser(smith);
+    try fuzz_http_query(smith);
     try fuzz_zslay_receive(smith);
     fuzz_extension_negotiation(smith);
     fuzz_http3_validation(smith);
     try fuzz_json_rpc(smith);
+}
+
+fn fuzz_http_query(smith: *std.testing.Smith) !void {
+    var input: [1024]u8 = undefined;
+    const input_len: usize = @intCast(smith.sliceWeightedBytes(&input, &.{
+        .rangeAtMost(u8, 0x20, 0x7e, 4),
+        .value(u8, '?', 8),
+        .value(u8, '&', 8),
+        .value(u8, '=', 8),
+        .value(u8, '%', 8),
+        .value(u8, '+', 8),
+        .value(u8, 0xff, 1),
+    }));
+    const bytes = input[0..input_len];
+
+    const start = @intFromPtr(bytes.ptr);
+    const end = start + bytes.len;
+    const params = query.QueryParams.parse_link(bytes) catch return;
+    try std.testing.expect(params.count <= query.max_params);
+
+    var scratch: [1024]u8 = undefined;
+    var pairs = params.pairs();
+    while (pairs.next()) |pair| {
+        try std.testing.expect(@intFromPtr(pair.key.ptr) >= start);
+        try std.testing.expect(@intFromPtr(pair.key.ptr) + pair.key.len <= end);
+        try std.testing.expect(@intFromPtr(pair.value.ptr) >= start);
+        try std.testing.expect(@intFromPtr(pair.value.ptr) + pair.value.len <= end);
+        _ = query.percent_decode(pair.key, &scratch) catch {};
+        _ = query.form_decode(pair.value, &scratch) catch {};
+    }
+
+    const accept = negotiate.parse(bytes);
+    try std.testing.expect(accept.count <= negotiate.max_entries);
+    _ = negotiate.best(accept, &.{ "application/json", "text/html" });
 }
 
 fn rpc_echo(call: *json_rpc.Call) json_rpc.HandlerError!void {

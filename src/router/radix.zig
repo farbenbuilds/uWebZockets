@@ -193,20 +193,22 @@ pub const RouteMatch = struct {
     has_http: bool,
 };
 
-const max_nodes = 256;
-/// Maximum number of parameterized route patterns.
-pub const max_pattern_routes = 64;
-const max_route_storage_size = (max_nodes + max_pattern_routes) *
-    radix_pattern.max_route_path_size;
-/// Maximum number of ordered global middleware callbacks.
-pub const max_middleware = 32;
-/// Maximum number of routes retained for introspection.
-pub const max_registered_routes = max_nodes + max_pattern_routes;
-const max_registry_storage = 64 * 1024;
+/// Default maximum number of radix nodes per router.
+pub const default_max_nodes = 256;
+/// Default maximum number of parameterized route patterns.
+pub const default_max_pattern_routes = 64;
+/// Default maximum number of ordered global middleware callbacks.
+pub const default_max_middleware = 32;
+/// Compatibility alias for the default middleware capacity.
+pub const max_middleware = default_max_middleware;
+/// Compatibility alias for the default pattern-route capacity.
+pub const max_pattern_routes = default_max_pattern_routes;
+
 const null_node: u16 = std.math.maxInt(u16);
 const empty_handlers = [_]?RouteHandler{null} ** method_count;
 
-const PatternRoute = struct {
+/// Parameterized route pattern with its per-method callbacks.
+pub const PatternRoute = struct {
     handlers: [method_count]?RouteHandler = empty_handlers,
     ws_behavior: ?WsBehavior = null,
     static_bytes: u16 = 0,
@@ -214,7 +216,8 @@ const PatternRoute = struct {
     has_wildcard: bool = false,
 };
 
-const RouteRecord = struct {
+/// One route retained for introspection.
+pub const RouteRecord = struct {
     // u32 keeps the 64 KiB registry representable; u16 overflowed at 65536.
     offset: u32,
     length: u16,
@@ -222,22 +225,343 @@ const RouteRecord = struct {
     websocket: bool,
 };
 
-/// Allocation-free radix router with bounded patterns and middleware.
+/// Capacity configuration for one router instance.
+pub const Capacities = struct {
+    /// Maximum radix nodes, one per stored path segment.
+    max_nodes: usize = default_max_nodes,
+    /// Maximum parameterized route patterns.
+    max_pattern_routes: usize = default_max_pattern_routes,
+    /// Maximum ordered global middleware callbacks.
+    max_middleware: usize = default_max_middleware,
+    /// Maximum accepted route path length in bytes.
+    max_route_path_size: usize = radix_pattern.max_route_path_size,
+    /// Maximum route captures accepted on one request.
+    max_route_params: usize = request_module.max_route_params,
+    /// Bytes retained for the route paths kept for introspection.
+    registry_storage_size: usize = 64 * 1024,
+
+    /// Total bytes required for `carve_storage`, with every sub-array aligned.
+    pub fn storage_bytes(self: Capacities) error{InvalidRouterCapacity}!usize {
+        return (try plan_storage(self)).total;
+    }
+
+    /// Number of route records retained for introspection.
+    pub fn max_registered_routes(self: Capacities) usize {
+        return self.max_nodes + self.max_pattern_routes;
+    }
+};
+
+/// Borrowed typed storage for one router instance.
+///
+/// `carve_storage` and `Bundle.storage` produce aligned, non-overlapping
+/// slices; the router borrows them for its whole lifetime.
+pub const Storage = struct {
+    /// Route path bytes for node segments and parameterized patterns.
+    route_storage: []u8,
+    /// Largest accepted route path length for this router.
+    max_route_path_size: usize,
+    /// Maximum route captures accepted by this router's patterns.
+    max_route_params: usize,
+    /// Offset of each node's segment inside `route_storage`.
+    segment_offsets: []u32,
+    /// Byte length of each node's segment.
+    segment_lengths: []u16,
+    /// First child node index per node; `null_node` marks none.
+    first_child: []u16,
+    /// Next sibling node index per node; `null_node` marks none.
+    next_sibling: []u16,
+    /// Whether a node terminates at least one registered route.
+    has_route: []bool,
+    /// Per-node HTTP method callbacks.
+    http_handlers: [][method_count]?RouteHandler,
+    /// Per-node WebSocket behavior.
+    ws_behaviors: []?WsBehavior,
+    /// Parameterized route patterns.
+    pattern_routes: []PatternRoute,
+    /// Offset of each pattern path inside `route_storage`.
+    pattern_offsets: []u32,
+    /// Byte length of each pattern path.
+    pattern_lengths: []u16,
+    /// Ordered global middleware entries.
+    middleware: []MiddlewareEntry,
+    /// Route paths retained for introspection.
+    registry_storage: []u8,
+    /// Route records indexing into `registry_storage`.
+    route_records: []RouteRecord,
+};
+
+/// Alignment every carved region base must satisfy for `storage_bytes` to be
+/// the exact consumed size.
+pub const storage_alignment = @alignOf(Storage);
+
+/// Aligned byte span inside a carved router region.
+const Span = struct {
+    start: usize,
+    end: usize,
+};
+
+/// Byte span of every carved sub-array plus the total region size.
+const StoragePlan = struct {
+    route_storage: Span,
+    segment_offsets: Span,
+    segment_lengths: Span,
+    first_child: Span,
+    next_sibling: Span,
+    has_route: Span,
+    http_handlers: Span,
+    ws_behaviors: Span,
+    pattern_routes: Span,
+    pattern_offsets: Span,
+    pattern_lengths: Span,
+    middleware: Span,
+    registry_storage: Span,
+    route_records: Span,
+    total: usize,
+};
+
+/// Validates one capacity set; every rejection marks a configuration the
+/// router cannot represent or use.
+fn validate_capacities(capacities: Capacities) error{InvalidRouterCapacity}!void {
+    if (capacities.max_nodes == 0) return error.InvalidRouterCapacity;
+    if (capacities.max_nodes > std.math.maxInt(u16)) return error.InvalidRouterCapacity;
+    if (capacities.max_pattern_routes > std.math.maxInt(u8)) return error.InvalidRouterCapacity;
+    if (capacities.max_middleware > std.math.maxInt(u8)) return error.InvalidRouterCapacity;
+    if (capacities.max_route_path_size == 0) return error.InvalidRouterCapacity;
+    if (capacities.max_route_path_size > std.math.maxInt(u16)) return error.InvalidRouterCapacity;
+    // The registry must hold at least one maximum-length route path.
+    if (capacities.registry_storage_size < capacities.max_route_path_size) {
+        return error.InvalidRouterCapacity;
+    }
+    if (capacities.registry_storage_size > std.math.maxInt(u32)) {
+        return error.InvalidRouterCapacity;
+    }
+    const record_count = std.math.add(
+        usize,
+        capacities.max_nodes,
+        capacities.max_pattern_routes,
+    ) catch return error.InvalidRouterCapacity;
+    if (record_count > std.math.maxInt(u16)) return error.InvalidRouterCapacity;
+    const route_bytes = std.math.mul(
+        usize,
+        record_count,
+        capacities.max_route_path_size,
+    ) catch return error.InvalidRouterCapacity;
+    if (route_bytes > std.math.maxInt(u32)) return error.InvalidRouterCapacity;
+}
+
+/// Reserves `count` elements in a carved region; `element_bytes` is explicit
+/// so untyped byte ranges share the same checked arithmetic.
+fn reserve(
+    cursor: *usize,
+    count: usize,
+    element_bytes: usize,
+    alignment: usize,
+) error{InvalidRouterCapacity}!Span {
+    const bytes = std.math.mul(usize, count, element_bytes) catch {
+        return error.InvalidRouterCapacity;
+    };
+    const remainder = cursor.* % alignment;
+    const padding = if (remainder == 0) 0 else alignment - remainder;
+    const start = std.math.add(usize, cursor.*, padding) catch {
+        return error.InvalidRouterCapacity;
+    };
+    const end = std.math.add(usize, start, bytes) catch return error.InvalidRouterCapacity;
+    cursor.* = end;
+    return .{ .start = start, .end = end };
+}
+
+/// Plans the exact carve layout; `storage_bytes` and `carve_storage` both use
+/// this plan so region size and offsets cannot drift.
+fn plan_storage(capacities: Capacities) error{InvalidRouterCapacity}!StoragePlan {
+    try validate_capacities(capacities);
+    const record_count = capacities.max_registered_routes();
+
+    var cursor: usize = 0;
+    var plan: StoragePlan = undefined;
+    plan.route_storage = try reserve(&cursor, record_count, capacities.max_route_path_size, 1);
+    plan.segment_offsets = try reserve(&cursor, capacities.max_nodes, @sizeOf(u32), @alignOf(u32));
+    plan.segment_lengths = try reserve(&cursor, capacities.max_nodes, @sizeOf(u16), @alignOf(u16));
+    plan.first_child = try reserve(&cursor, capacities.max_nodes, @sizeOf(u16), @alignOf(u16));
+    plan.next_sibling = try reserve(&cursor, capacities.max_nodes, @sizeOf(u16), @alignOf(u16));
+    plan.has_route = try reserve(&cursor, capacities.max_nodes, @sizeOf(bool), @alignOf(bool));
+    plan.http_handlers = try reserve(
+        &cursor,
+        capacities.max_nodes,
+        @sizeOf([method_count]?RouteHandler),
+        @alignOf([method_count]?RouteHandler),
+    );
+    plan.ws_behaviors = try reserve(
+        &cursor,
+        capacities.max_nodes,
+        @sizeOf(?WsBehavior),
+        @alignOf(?WsBehavior),
+    );
+    plan.pattern_routes = try reserve(
+        &cursor,
+        capacities.max_pattern_routes,
+        @sizeOf(PatternRoute),
+        @alignOf(PatternRoute),
+    );
+    plan.pattern_offsets = try reserve(
+        &cursor,
+        capacities.max_pattern_routes,
+        @sizeOf(u32),
+        @alignOf(u32),
+    );
+    plan.pattern_lengths = try reserve(
+        &cursor,
+        capacities.max_pattern_routes,
+        @sizeOf(u16),
+        @alignOf(u16),
+    );
+    plan.middleware = try reserve(
+        &cursor,
+        capacities.max_middleware,
+        @sizeOf(MiddlewareEntry),
+        @alignOf(MiddlewareEntry),
+    );
+    plan.registry_storage = try reserve(&cursor, capacities.registry_storage_size, 1, 1);
+    plan.route_records = try reserve(
+        &cursor,
+        record_count,
+        @sizeOf(RouteRecord),
+        @alignOf(RouteRecord),
+    );
+    plan.total = cursor;
+    return plan;
+}
+
+/// Re-tags one planned byte span; `carve_storage` proved the pointer aligned.
+fn carved_slice(comptime T: type, region: []u8, prefix: usize, span: Span) []T {
+    const bytes = region[prefix + span.start .. prefix + span.end];
+    const aligned = @as([*]align(@alignOf(T)) u8, @alignCast(bytes.ptr));
+    const pointer: [*]T = @ptrCast(aligned);
+    return pointer[0 .. bytes.len / @sizeOf(T)];
+}
+
+/// Carves `region` into typed, aligned slices for `capacities`.
+///
+/// The carved layout consumes exactly `storage_bytes` bytes from the first
+/// address in `region` that satisfies `storage_alignment`; a misaligned base
+/// therefore needs up to `storage_alignment - 1` extra bytes.
+pub fn carve_storage(region: []u8, capacities: Capacities) error{InvalidRouterCapacity}!Storage {
+    const plan = try plan_storage(capacities);
+    const base = @intFromPtr(region.ptr);
+    const padded = std.math.add(usize, base, storage_alignment - 1) catch {
+        return error.InvalidRouterCapacity;
+    };
+    const start = padded - (padded % storage_alignment);
+    const prefix = start - base;
+    if (prefix > region.len) return error.InvalidRouterCapacity;
+    if (plan.total > region.len - prefix) return error.InvalidRouterCapacity;
+
+    return .{
+        .route_storage = carved_slice(u8, region, prefix, plan.route_storage),
+        .max_route_path_size = capacities.max_route_path_size,
+        .max_route_params = capacities.max_route_params,
+        .segment_offsets = carved_slice(u32, region, prefix, plan.segment_offsets),
+        .segment_lengths = carved_slice(u16, region, prefix, plan.segment_lengths),
+        .first_child = carved_slice(u16, region, prefix, plan.first_child),
+        .next_sibling = carved_slice(u16, region, prefix, plan.next_sibling),
+        .has_route = carved_slice(bool, region, prefix, plan.has_route),
+        .http_handlers = carved_slice(
+            [method_count]?RouteHandler,
+            region,
+            prefix,
+            plan.http_handlers,
+        ),
+        .ws_behaviors = carved_slice(?WsBehavior, region, prefix, plan.ws_behaviors),
+        .pattern_routes = carved_slice(PatternRoute, region, prefix, plan.pattern_routes),
+        .pattern_offsets = carved_slice(u32, region, prefix, plan.pattern_offsets),
+        .pattern_lengths = carved_slice(u16, region, prefix, plan.pattern_lengths),
+        .middleware = carved_slice(MiddlewareEntry, region, prefix, plan.middleware),
+        .registry_storage = carved_slice(u8, region, prefix, plan.registry_storage),
+        .route_records = carved_slice(RouteRecord, region, prefix, plan.route_records),
+    };
+}
+
+/// Inline storage for tests and stack callers; `storage()` yields the slices.
+/// Alias kept for the PascalCase public spelling.
+pub const Bundle = bundle;
+/// Inline storage for tests and stack callers; `storage()` yields the slices.
+pub fn bundle(comptime capacities: Capacities) type {
+    comptime {
+        _ = capacities.storage_bytes() catch @compileError("invalid router capacities");
+    }
+    return struct {
+        const Self = @This();
+
+        route_storage: [capacities.max_registered_routes() * capacities.max_route_path_size]u8 = undefined,
+        segment_offsets: [capacities.max_nodes]u32 = undefined,
+        segment_lengths: [capacities.max_nodes]u16 = undefined,
+        first_child: [capacities.max_nodes]u16 = undefined,
+        next_sibling: [capacities.max_nodes]u16 = undefined,
+        has_route: [capacities.max_nodes]bool = undefined,
+        http_handlers: [capacities.max_nodes][method_count]?RouteHandler = undefined,
+        ws_behaviors: [capacities.max_nodes]?WsBehavior = undefined,
+        pattern_routes: [capacities.max_pattern_routes]PatternRoute = undefined,
+        pattern_offsets: [capacities.max_pattern_routes]u32 = undefined,
+        pattern_lengths: [capacities.max_pattern_routes]u16 = undefined,
+        middleware: [capacities.max_middleware]MiddlewareEntry = undefined,
+        registry_storage: [capacities.registry_storage_size]u8 = undefined,
+        route_records: [capacities.max_registered_routes()]RouteRecord = undefined,
+
+        comptime {
+            // `storage_bytes` already rejected bad capacities at instantiation.
+            if (@sizeOf(Self) < (capacities.storage_bytes() catch unreachable)) {
+                @compileError("router bundle layout must cover carve_storage");
+            }
+        }
+
+        /// Borrows the bundle's inline arrays as router storage.
+        pub fn storage(self: *Self) Storage {
+            return .{
+                .route_storage = &self.route_storage,
+                .max_route_path_size = capacities.max_route_path_size,
+                .max_route_params = capacities.max_route_params,
+                .segment_offsets = &self.segment_offsets,
+                .segment_lengths = &self.segment_lengths,
+                .first_child = &self.first_child,
+                .next_sibling = &self.next_sibling,
+                .has_route = &self.has_route,
+                .http_handlers = &self.http_handlers,
+                .ws_behaviors = &self.ws_behaviors,
+                .pattern_routes = &self.pattern_routes,
+                .pattern_offsets = &self.pattern_offsets,
+                .pattern_lengths = &self.pattern_lengths,
+                .middleware = &self.middleware,
+                .registry_storage = &self.registry_storage,
+                .route_records = &self.route_records,
+            };
+        }
+    };
+}
+
+/// Default router capacity configuration.
+pub const default_capacities = Capacities{};
+/// Inline default-capacity bundle.
+pub const DefaultBundle = Bundle(default_capacities);
+
+/// Allocation-free radix router over caller-provided storage.
 pub const Router = struct {
-    route_storage: [max_route_storage_size]u8 = undefined,
-    segment_offsets: [max_nodes]u32 = .{0} ** max_nodes,
-    segment_lengths: [max_nodes]u16 = .{0} ** max_nodes,
-    first_child: [max_nodes]u16 = .{null_node} ** max_nodes,
-    next_sibling: [max_nodes]u16 = .{null_node} ** max_nodes,
-    has_route: [max_nodes]bool = .{false} ** max_nodes,
-    http_handlers: [max_nodes][method_count]?RouteHandler = .{empty_handlers} ** max_nodes,
-    ws_behaviors: [max_nodes]?WsBehavior = .{null} ** max_nodes,
-    pattern_routes: [max_pattern_routes]PatternRoute = .{PatternRoute{}} ** max_pattern_routes,
-    pattern_offsets: [max_pattern_routes]u32 = .{0} ** max_pattern_routes,
-    pattern_lengths: [max_pattern_routes]u16 = .{0} ** max_pattern_routes,
-    middleware: [max_middleware]MiddlewareEntry = undefined,
-    registry_storage: [max_registry_storage]u8 = undefined,
-    route_records: [max_registered_routes]RouteRecord = undefined,
+    route_storage: []u8 = &.{},
+    /// Largest accepted route path length, copied from `Storage`.
+    max_route_path_size: usize = radix_pattern.max_route_path_size,
+    /// Maximum route captures accepted by patterns, copied from `Storage`.
+    max_route_params: usize = request_module.max_route_params,
+    segment_offsets: []u32 = &.{},
+    segment_lengths: []u16 = &.{},
+    first_child: []u16 = &.{},
+    next_sibling: []u16 = &.{},
+    has_route: []bool = &.{},
+    http_handlers: [][method_count]?RouteHandler = &.{},
+    ws_behaviors: []?WsBehavior = &.{},
+    pattern_routes: []PatternRoute = &.{},
+    pattern_offsets: []u32 = &.{},
+    pattern_lengths: []u16 = &.{},
+    middleware: []MiddlewareEntry = &.{},
+    registry_storage: []u8 = &.{},
+    route_records: []RouteRecord = &.{},
 
     node_count: u16 = 0,
     root_idx: u16 = null_node,
@@ -247,9 +571,35 @@ pub const Router = struct {
     registry_storage_length: u32 = 0,
     route_record_count: u16 = 0,
 
-    /// Initializes an empty router with fixed inline storage.
-    pub fn init() Router {
-        var router = Router{};
+    /// Binds `storage` and initializes the root node.
+    pub fn init(storage: Storage) error{InvalidRouterCapacity}!Router {
+        try validate_capacities(.{
+            .max_nodes = storage.segment_offsets.len,
+            .max_pattern_routes = storage.pattern_routes.len,
+            .max_middleware = storage.middleware.len,
+            .max_route_path_size = storage.max_route_path_size,
+            .max_route_params = storage.max_route_params,
+            .registry_storage_size = storage.registry_storage.len,
+        });
+
+        var router = Router{
+            .route_storage = storage.route_storage,
+            .max_route_path_size = storage.max_route_path_size,
+            .max_route_params = storage.max_route_params,
+            .segment_offsets = storage.segment_offsets,
+            .segment_lengths = storage.segment_lengths,
+            .first_child = storage.first_child,
+            .next_sibling = storage.next_sibling,
+            .has_route = storage.has_route,
+            .http_handlers = storage.http_handlers,
+            .ws_behaviors = storage.ws_behaviors,
+            .pattern_routes = storage.pattern_routes,
+            .pattern_offsets = storage.pattern_offsets,
+            .pattern_lengths = storage.pattern_lengths,
+            .middleware = storage.middleware,
+            .registry_storage = storage.registry_storage,
+            .route_records = storage.route_records,
+        };
         router.root_idx = 0;
         router.node_count = 1;
         router.segment_lengths[0] = 0;
@@ -262,8 +612,10 @@ pub const Router = struct {
     }
 
     fn alloc_node(self: *Router, bytes: []const u8) !u16 {
-        if (self.node_count >= max_nodes) return error.RouteCapacityReached;
-        if (bytes.len > radix_pattern.max_route_path_size) return error.InvalidRoutePath;
+        if (@as(usize, self.node_count) >= self.segment_offsets.len) {
+            return error.RouteCapacityReached;
+        }
+        if (bytes.len > self.max_route_path_size) return error.InvalidRoutePath;
 
         const index = self.node_count;
         self.segment_offsets[index] = try self.store_path(bytes);
@@ -306,7 +658,9 @@ pub const Router = struct {
     }
 
     fn insert_path(self: *Router, path: []const u8) !u16 {
-        if (!radix_pattern.valid_path(path)) return error.InvalidRoutePath;
+        if (!radix_pattern.valid_path(path, self.max_route_path_size)) {
+            return error.InvalidRoutePath;
+        }
 
         var current = self.root_idx;
         var search = path;
@@ -335,10 +689,9 @@ pub const Router = struct {
 
             const child_segment = self.segment(best_child);
             if (best_prefix < child_segment.len) {
-                const required_nodes: u16 = if (best_prefix < search.len) 2 else 1;
-                if (required_nodes > max_nodes - self.node_count) {
-                    return error.RouteCapacityReached;
-                }
+                const required_nodes: usize = if (best_prefix < search.len) 2 else 1;
+                const nodes_left = self.segment_offsets.len - @as(usize, self.node_count);
+                if (required_nodes > nodes_left) return error.RouteCapacityReached;
 
                 const split_node = try self.alloc_node(child_segment[best_prefix..]);
                 self.first_child[split_node] = self.first_child[best_child];
@@ -370,7 +723,11 @@ pub const Router = struct {
         handler: RouteHandler,
     ) !void {
         try self.ensure_route_record(path);
-        const pattern = try radix_pattern.analyze_pattern(path);
+        const pattern = try radix_pattern.analyze_pattern(
+            path,
+            self.max_route_path_size,
+            self.max_route_params,
+        );
         if (pattern.dynamic) {
             const route = try self.get_or_add_pattern(path, pattern);
             const method_index = @intFromEnum(method);
@@ -478,7 +835,9 @@ pub const Router = struct {
         context: *anyopaque,
         callback: MiddlewareHandler,
     ) !void {
-        if (self.middleware_count == self.middleware.len) return error.MiddlewareCapacityReached;
+        if (@as(usize, self.middleware_count) == self.middleware.len) {
+            return error.MiddlewareCapacityReached;
+        }
         self.middleware[self.middleware_count] = .{
             .context = context,
             .callback = callback,
@@ -502,7 +861,11 @@ pub const Router = struct {
     /// Registers a WebSocket upgrade route.
     pub fn ws(self: *Router, path: []const u8, behavior: WsBehavior) !void {
         try self.ensure_route_record(path);
-        const pattern = try radix_pattern.analyze_pattern(path);
+        const pattern = try radix_pattern.analyze_pattern(
+            path,
+            self.max_route_path_size,
+            self.max_route_params,
+        );
         if (pattern.dynamic) {
             const route = try self.get_or_add_pattern(path, pattern);
             if (route.ws_behavior != null) return error.RouteAlreadyRegistered;
@@ -520,26 +883,65 @@ pub const Router = struct {
     }
 
     /// Writes OpenAPI 3.1 JSON for all successfully registered routes.
+    ///
+    /// The document is generated into the tail of `buffer`; the leading bytes
+    /// hold the bounded route snapshot and are not part of the result. Returns
+    /// `error.BufferTooSmall` when `buffer` cannot hold both.
     pub fn write_openapi(
         self: *const Router,
         buffer: []u8,
         spec_options: openapi.Options,
     ) ![]const u8 {
-        var routes: [max_registered_routes]openapi.Route = undefined;
-        for (self.route_records[0..self.route_record_count], 0..) |record, index| {
-            const start: usize = record.offset;
-            routes[index] = .{
-                .method = if (record.method == .any) "x-any" else lower_method(record.method),
-                .path = self.registry_storage[start .. start + record.length],
-                .websocket = record.websocket,
-            };
+        const record_count: usize = self.route_record_count;
+        const snapshot_bytes = std.math.mul(
+            usize,
+            record_count,
+            @sizeOf(openapi.Route),
+        ) catch return error.BufferTooSmall;
+        const base = @intFromPtr(buffer.ptr);
+        const padded = std.math.add(usize, base, @alignOf(openapi.Route) - 1) catch {
+            return error.BufferTooSmall;
+        };
+        const snapshot_start = padded - (padded % @alignOf(openapi.Route)) - base;
+        if (snapshot_start > buffer.len or snapshot_bytes > buffer.len - snapshot_start) {
+            return error.BufferTooSmall;
         }
-        return openapi.generate(buffer, routes[0..self.route_record_count], spec_options);
+
+        const snapshot_region = buffer[snapshot_start .. snapshot_start + snapshot_bytes];
+        const aligned = @as(
+            [*]align(@alignOf(openapi.Route)) u8,
+            @alignCast(snapshot_region.ptr),
+        );
+        const snapshot: []openapi.Route = @as(
+            [*]openapi.Route,
+            @ptrCast(aligned),
+        )[0..record_count];
+        for (self.route_records[0..record_count], snapshot) |record, *route| {
+            route.* = self.openapi_route(record);
+        }
+        return openapi.generate(
+            buffer[snapshot_start + snapshot_bytes ..],
+            snapshot,
+            spec_options,
+        );
+    }
+
+    fn openapi_route(self: *const Router, record: RouteRecord) openapi.Route {
+        const start: usize = record.offset;
+        return .{
+            .method = if (record.method == .any) "x-any" else lower_method(record.method),
+            .path = self.registry_storage[start .. start + record.length],
+            .websocket = record.websocket,
+        };
     }
 
     fn ensure_route_record(self: *const Router, path: []const u8) !void {
-        if (self.route_record_count == self.route_records.len) return error.RouteCapacityReached;
-        if (path.len > self.registry_storage.len - @as(usize, self.registry_storage_length)) {
+        if (@as(usize, self.route_record_count) == self.route_records.len) {
+            return error.RouteCapacityReached;
+        }
+        if (path.len > self.max_route_path_size) return error.InvalidRoutePath;
+        const written: usize = self.registry_storage_length;
+        if (path.len > self.registry_storage.len - written) {
             return error.RouteStorageCapacityReached;
         }
     }
@@ -679,7 +1081,9 @@ pub const Router = struct {
                 return &self.pattern_routes[index];
             }
         }
-        if (self.pattern_count == self.pattern_routes.len) return error.RouteCapacityReached;
+        if (@as(usize, self.pattern_count) == self.pattern_routes.len) {
+            return error.RouteCapacityReached;
+        }
 
         const index = self.pattern_count;
         self.pattern_offsets[index] = try self.store_path(path);

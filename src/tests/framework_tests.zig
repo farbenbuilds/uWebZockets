@@ -210,7 +210,8 @@ test "framework: OpenAPI reflects routes and path parameters" {
     const handler = struct {
         fn call(_: *Request, _: *Response) void {}
     }.call;
-    var router = support.radix.Router.init();
+    var bundle = support.radix.DefaultBundle{};
+    var router = try support.radix.Router.init(bundle.storage());
     try router.get("/users/:id", handler);
     try router.post("/users", handler);
     try router.ws("/events", .{});

@@ -2,7 +2,7 @@
 
 ## Scope
 
-µWebZockets 1.3.5 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
+µWebZockets 1.4.0 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
 server library with bounded HPACK protocol storage. It combines an
 event-driven cross-platform transport (POSIX and Windows IOCP), fixed-capacity
 protocol state, a data-oriented router, and C libraries for TLS, compression, and QUIC.
@@ -87,9 +87,9 @@ uWebZockets/
 │   ├── crypto/               # bounded BoringSSL TLS and Web Crypto
 │   ├── edge/                 # WinterCG-compatible edge surface
 │   ├── ffi/                  # bounded generation-checked shared memory
-│   ├── http/                 # strict HTTP/1.1 parser and response writer
+│   ├── http/                 # strict HTTP/1.1 parser, response writer, and request helpers
 │   ├── http2/                # bounded frames, stream slab, and HPACK
-│   ├── router/               # fixed-capacity radix router, App API, config, builder
+│   ├── router/               # slab-carved radix router, App API, config, builder
 │   ├── rpc/                  # bounded JSON-RPC registry and dispatcher
 │   ├── ws/                   # streams, pure backpressure, framing, pub/sub
 │   ├── observability/        # Prometheus registry, terminal dev log, and eBPF reader
@@ -396,7 +396,10 @@ library sanitizer matrix instruments the C/C++ graph with ASan/UBSan/MSan.
 
 The Zig surface exported from `src/root.zig` includes `App`, `ConfiguredApp`,
 `ConfiguredAppWithTimeout`, `Request`, `Response`, `WebSocket`, `WsBehavior`,
-`Opcode`, TLS configuration, chunked HTTP helpers, and WebSocket masking. The
+`Opcode`, TLS configuration, chunked HTTP helpers, zero-allocation query and
+form parsing, canonical status and typed JSON error helpers, `Accept`
+negotiation, ETag helpers, comptime schema validation, cookie helpers, and
+WebSocket masking. The
 surface also includes `WsCompression`, fixed-capacity `json_rpc`,
 completion-driven `udp`, bounded
 `http2`, `http2_hpack`, `http3_extensions`, `webtransport`, `http3_available`,

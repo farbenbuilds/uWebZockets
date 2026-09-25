@@ -29,6 +29,12 @@ pub const OwnedRequest = @import("http/request.zig").OwnedRequest;
 pub const Response = @import("http/response.zig").Response;
 /// Copyable, generation-checked one-shot asynchronous response token.
 pub const AsyncResponse = @import("http/response.zig").AsyncResponse;
+/// Drain-driven chunked response producer callback.
+pub const StreamProducer = @import("http/response.zig").StreamProducer;
+/// Outcome of one drain-driven producer invocation.
+pub const StreamStatus = @import("http/response.zig").StreamStatus;
+/// Streaming JSON body writer returned by `Response.begin_json`.
+pub const JsonStream = @import("http/response.zig").JsonStream;
 /// Connection-owned state backing asynchronous response tokens.
 pub const AsyncResponseState = @import("http/response.zig").AsyncResponseState;
 /// Lifecycle of a connection-owned asynchronous response slot.
@@ -45,12 +51,24 @@ pub const abort = @import("http/abort.zig");
 pub const compression_stream = @import("http/compression_stream.zig");
 /// Zero-allocation RFC 7578 multipart parsing primitives.
 pub const multipart = @import("http/multipart.zig");
+/// Zero-allocation query-string slicing and percent decoding.
+pub const query = @import("http/query.zig");
+/// Zero-allocation form-urlencoded body parsing.
+pub const form = @import("http/form.zig");
 /// RFC 6265 parsing, formatting, and HMAC-SHA256 signing helpers.
 pub const cookie = @import("http/cookie.zig");
 /// Fixed-state CORS and browser security-header middleware.
 pub const middleware = @import("http/middleware.zig");
 /// Comptime-tagged JSON schema validation.
 pub const schema = @import("http/schema.zig");
+/// Canonical HTTP status codes and status lines.
+pub const status = @import("http/status.zig");
+/// Typed JSON error responses for HTTP handlers.
+pub const errors = @import("http/errors.zig");
+/// Accept-header content negotiation over caller-supplied offers.
+pub const negotiate = @import("http/negotiate.zig");
+/// ETag and conditional-GET helpers for bounded responses.
+pub const cache = @import("http/cache.zig");
 pub const openapi = @import("http/openapi.zig");
 pub const static_files = @import("http/static_files.zig");
 /// Fixed-capacity JSON-RPC 2.0 services and procedure helpers.

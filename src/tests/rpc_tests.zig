@@ -164,8 +164,9 @@ test "rpc: registration rejects duplicates, reserved names, and capacity overflo
 
 test "rpc: application mount registers POST and seals procedures" {
     const TestApp = support.app.app(1);
+    var bundle = support.radix.DefaultBundle{};
     var application: TestApp = undefined;
-    application.router = support.radix.Router.init();
+    application.router = try support.radix.Router.init(bundle.storage());
     application.shutting_down = false;
     application.routes_locked = false;
     application.deinitialized = false;

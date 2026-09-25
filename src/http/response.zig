@@ -29,6 +29,45 @@ pub const AsyncCompleteFn = *const fn (*anyopaque, []const u8, []const u8, []con
 /// Wakes the suspended transport dispatch after deferred completion.
 pub const AsyncWakeFn = *const fn (*anyopaque) void;
 
+/// Outcome of one drain-driven producer invocation.
+pub const StreamStatus = enum {
+    /// The transport accepted all bytes it can hold; the producer runs again
+    /// when output space frees.
+    pending,
+    /// The producer called `end_chunks`; the response is complete.
+    done,
+};
+
+/// Pull-based chunked response body producer.
+///
+/// The callback writes through `response.write_chunk` as much as fits and
+/// returns `.pending` when the transport backpressures, or `.done` after it
+/// calls `response.end_chunks`. It is re-invoked on the owning event loop
+/// whenever output space frees, so arbitrarily large bodies need no queue
+/// sizing.
+pub const StreamProducer = *const fn (*anyopaque, *Response) anyerror!StreamStatus;
+
+/// HTTP/3 producer arming callback: context, status, headers, producer
+/// context, producer. Returns true when the producer already finished.
+pub const Http3StreamBeginFn = *const fn (
+    *anyopaque,
+    []const u8,
+    []const u8,
+    *anyopaque,
+    StreamProducer,
+) anyerror!bool;
+/// HTTP/2 producer arming callback: context, stream id, status, headers,
+/// producer context, producer. Returns true when the producer already
+/// finished.
+pub const Http2StreamBeginFn = *const fn (
+    *anyopaque,
+    u32,
+    []const u8,
+    []const u8,
+    *anyopaque,
+    StreamProducer,
+) anyerror!bool;
+
 /// HTTP/3 stream callbacks used by the transport-neutral response writer.
 pub const Http3Target = struct {
     context: *anyopaque,
@@ -36,6 +75,8 @@ pub const Http3Target = struct {
     begin_fn: Http3BeginFn,
     write_fn: Http3WriteFn,
     finish_fn: Http3FinishFn,
+    /// Optional drain-driven producer arming; null reports unsupported.
+    begin_stream_fn: ?Http3StreamBeginFn = null,
 };
 
 /// HTTP/2 stream callbacks backed by a connection-owned bounded session.
@@ -47,6 +88,8 @@ pub const Http2Target = struct {
     begin_fn: Http2BeginFn,
     write_fn: Http2WriteFn,
     finish_fn: Http2FinishFn,
+    /// Optional drain-driven producer arming; null reports unsupported.
+    begin_stream_fn: ?Http2StreamBeginFn = null,
 };
 
 /// Active transport receiving response bytes.
@@ -203,38 +246,40 @@ pub const Response = struct {
         const code = status_code(status) orelse return error.InvalidStatus;
         if (!valid_headers(headers)) return error.InvalidHeaders;
         if (status_forbids_body(code) and body.len != 0) return error.BodyNotAllowed;
-        var combined_buffer: [pending_header_capacity * 2]u8 = undefined;
-        const complete_headers = try self.combine_headers(headers, &combined_buffer);
 
         switch (self.target) {
             .tcp => |conn| {
-                const close_requested = headers_have_token(complete_headers, "Connection", "close");
-                var header_buffer: [pending_header_capacity * 2 + 128]u8 = undefined;
-                const formatted_headers = if (status_forbids_body(code))
-                    std.fmt.bufPrint(
-                        &header_buffer,
-                        "HTTP/1.1 {s}\r\n{s}\r\n",
-                        .{ status, complete_headers },
-                    ) catch return error.BufferOverflow
+                const pending = self.pending_headers[0..self.pending_header_length];
+                const close_requested = headers_have_token(pending, "Connection", "close") or
+                    headers_have_token(headers, "Connection", "close");
+                var framing_buffer: [128]u8 = undefined;
+                const framing = if (status_forbids_body(code))
+                    std.fmt.bufPrint(&framing_buffer, "HTTP/1.1 {s}\r\n", .{status}) catch return error.BufferOverflow
                 else
                     std.fmt.bufPrint(
-                        &header_buffer,
-                        "HTTP/1.1 {s}\r\nContent-Length: {d}\r\n{s}\r\n",
-                        .{ status, body.len, complete_headers },
+                        &framing_buffer,
+                        "HTTP/1.1 {s}\r\nContent-Length: {d}\r\n",
+                        .{ status, body.len },
                     ) catch return error.BufferOverflow;
 
+                // Write the head as scatter parts so header size is bounded by
+                // the write ring, not by a fixed concatenation buffer.
                 if (conn.suppress_response_body or status_forbids_body(code)) {
-                    try conn.write_data(formatted_headers);
+                    try tcp_file.write_data_parts(conn, &.{ framing, pending, headers, "\r\n" });
                 } else {
-                    try tcp_file.write_data_parts(conn, &.{ formatted_headers, body });
+                    try tcp_file.write_data_parts(conn, &.{ framing, pending, headers, "\r\n", body });
                 }
                 log_http_request(conn, code);
                 if (close_requested) tcp.close_after_flush(conn);
             },
             .http3 => |target| {
+                var combined_buffer: [pending_header_capacity * 2]u8 = undefined;
+                const complete_headers = try self.combine_headers(headers, &combined_buffer);
                 try target.end_fn(target.context, status, complete_headers, body);
             },
             .http2 => |target| {
+                var combined_buffer: [pending_header_capacity * 2]u8 = undefined;
+                const complete_headers = try self.combine_headers(headers, &combined_buffer);
                 try target.end_fn(target.context, target.stream_id, status, complete_headers, body);
             },
         }
@@ -259,15 +304,16 @@ pub const Response = struct {
         const code = status_code(status) orelse return error.InvalidStatus;
         if (!valid_headers(headers)) return error.InvalidHeaders;
         if (status_forbids_body(code)) return error.BodyNotAllowed;
-        var combined_buffer: [pending_header_capacity * 2]u8 = undefined;
-        const complete_headers = try self.combine_headers(headers, &combined_buffer);
 
         switch (self.target) {
             .tcp => |conn| {
-                const close_requested = headers_have_token(complete_headers, "Connection", "close");
+                const pending = self.pending_headers[0..self.pending_header_length];
+                const close_requested = headers_have_token(pending, "Connection", "close") or
+                    headers_have_token(headers, "Connection", "close");
                 try conn.begin_file_response(
                     status,
-                    complete_headers,
+                    pending,
+                    headers,
                     file,
                     offset,
                     length,
@@ -290,31 +336,81 @@ pub const Response = struct {
         const code = status_code(status) orelse return error.InvalidStatus;
         if (!valid_headers(headers)) return error.InvalidHeaders;
         if (status_forbids_body(code)) return error.BodyNotAllowed;
-        var combined_buffer: [pending_header_capacity * 2]u8 = undefined;
-        const complete_headers = try self.combine_headers(headers, &combined_buffer);
 
         switch (self.target) {
             .tcp => |conn| {
-                self.close_after_end = headers_have_token(complete_headers, "Connection", "close");
+                const pending = self.pending_headers[0..self.pending_header_length];
+                self.close_after_end = headers_have_token(pending, "Connection", "close") or
+                    headers_have_token(headers, "Connection", "close");
                 if (conn.suppress_response_body) return error.BodyNotAllowed;
 
-                var header_buffer: [pending_header_capacity * 2 + 128]u8 = undefined;
-                const formatted_headers = std.fmt.bufPrint(
-                    &header_buffer,
-                    "HTTP/1.1 {s}\r\nTransfer-Encoding: chunked\r\n{s}\r\n",
-                    .{ status, complete_headers },
+                var framing_buffer: [128]u8 = undefined;
+                const framing = std.fmt.bufPrint(
+                    &framing_buffer,
+                    "HTTP/1.1 {s}\r\nTransfer-Encoding: chunked\r\n",
+                    .{status},
                 ) catch return error.BufferOverflow;
-                try conn.write_data(formatted_headers);
+                try tcp_file.write_data_parts(conn, &.{ framing, pending, headers, "\r\n" });
                 log_http_request(conn, code);
             },
             .http3 => |target| {
+                var combined_buffer: [pending_header_capacity * 2]u8 = undefined;
+                const complete_headers = try self.combine_headers(headers, &combined_buffer);
                 try target.begin_fn(target.context, status, complete_headers);
             },
             .http2 => |target| {
+                var combined_buffer: [pending_header_capacity * 2]u8 = undefined;
+                const complete_headers = try self.combine_headers(headers, &combined_buffer);
                 try target.begin_fn(target.context, target.stream_id, status, complete_headers);
             },
         }
         self.state = .streaming;
+    }
+
+    /// Starts a chunked response fed by `producer` as the transport drains.
+    ///
+    /// The producer runs immediately and again whenever output space frees, so
+    /// arbitrarily large bodies never require sizing the write queue. Return
+    /// `.pending` whenever `write_chunk` backpressures and `.done` after
+    /// calling `end_chunks`. All transports resume producers; a target whose
+    /// callback is absent fails closed with `error.ProducerStreamingUnsupported`
+    /// before any bytes are written.
+    pub fn begin_stream(
+        self: *Response,
+        status: []const u8,
+        headers: []const u8,
+        context: *anyopaque,
+        producer: StreamProducer,
+    ) !void {
+        if (self.state != .idle) return error.ResponseAlreadyStarted;
+        const code = status_code(status) orelse return error.InvalidStatus;
+        if (!valid_headers(headers)) return error.InvalidHeaders;
+        if (status_forbids_body(code)) return error.BodyNotAllowed;
+
+        switch (self.target) {
+            .tcp => |conn| {
+                try self.begin_chunked(status, headers);
+                const finished = conn.start_stream(context, producer, self.close_after_end);
+                self.state = if (finished) .ended else .streaming;
+            },
+            .http2 => |target| {
+                const arm = target.begin_stream_fn orelse return error.ProducerStreamingUnsupported;
+                const finished = try arm(
+                    target.context,
+                    target.stream_id,
+                    status,
+                    headers,
+                    context,
+                    producer,
+                );
+                self.state = if (finished) .ended else .streaming;
+            },
+            .http3 => |target| {
+                const arm = target.begin_stream_fn orelse return error.ProducerStreamingUnsupported;
+                const finished = try arm(target.context, status, headers, context, producer);
+                self.state = if (finished) .ended else .streaming;
+            },
+        }
     }
 
     /// Appends one chunk to a streaming response.
@@ -353,9 +449,29 @@ pub const Response = struct {
         return self.state != .idle;
     }
 
+    /// Starts a `200 OK` chunked JSON response and returns a streaming writer.
+    ///
+    /// The stream coalesces into a fixed stack buffer and emits response
+    /// chunks, so arbitrary-size JSON needs no allocation. Through
+    /// `JsonStream.writer`/`stringify`, transport backpressure surfaces as
+    /// `std.Io.Writer`'s `error.WriteFailed`; `JsonStream.write_chunk`
+    /// propagates the real transport error. Call `JsonStream.end` to flush and
+    /// terminate the chunked body.
+    pub fn begin_json(self: *Response) !JsonStream {
+        try self.begin_chunked(
+            "200 OK",
+            "Content-Type: application/json; charset=utf-8\r\n",
+        );
+        return .{ .response = self };
+    }
+
     /// Queues one validated response field before the response starts.
     pub fn append_header(self: *Response, name: []const u8, value: []const u8) !void {
         if (self.state != .idle) return error.ResponseAlreadyStarted;
+        // `valid_headers` validates field syntax, but a CR/LF inside one value
+        // would parse as an extra well-formed field; reject the split here so
+        // every singular header helper stays injection-safe.
+        if (std.mem.indexOfAny(u8, value, "\r\n") != null) return error.InvalidHeaders;
         var line_buffer: [1024]u8 = undefined;
         const line = std.fmt.bufPrint(&line_buffer, "{s}: {s}\r\n", .{ name, value }) catch {
             return error.BufferOverflow;
@@ -426,16 +542,39 @@ pub const Response = struct {
     }
 
     /// Sends a 200 OK JSON response formatted using caller-owned buffer (zero-allocation).
+    ///
+    /// Polymorphic entry point: `value` is any type `std.json.Stringify`
+    /// supports, including `std.json.Value`. Callers that prefer a named type
+    /// use `json_value_buf`.
     pub fn json_buf(self: *Response, value: anytype, buffer: []u8) !void {
         const payload = std.fmt.bufPrint(buffer, "{f}", .{std.json.fmt(value, .{})}) catch return error.BufferOverflow;
         return self.end_with_headers("200 OK", "Content-Type: application/json; charset=utf-8\r\n", payload);
     }
 
     /// Sends a 200 OK JSON response formatted using an allocator (Web Standards Response.json).
+    ///
+    /// Polymorphic entry point with the same contract as `json_buf`; the
+    /// allocator only backs the temporary rendering, which is released before
+    /// the response returns. Callers that prefer a named type use `json_value`.
     pub fn json(self: *Response, value: anytype, allocator: std.mem.Allocator) !void {
         const payload = try std.fmt.allocPrint(allocator, "{f}", .{std.json.fmt(value, .{})});
         defer allocator.free(payload);
         return self.end_with_headers("200 OK", "Content-Type: application/json; charset=utf-8\r\n", payload);
+    }
+
+    /// Sends a 200 OK JSON response for a dynamic `std.json.Value`.
+    ///
+    /// Named-type alternative to `json_buf` for callers that assemble JSON at
+    /// runtime instead of through a Zig value.
+    pub fn json_value_buf(self: *Response, value: std.json.Value, buffer: []u8) !void {
+        return self.json_buf(value, buffer);
+    }
+
+    /// Sends a 200 OK JSON response for a dynamic `std.json.Value`.
+    ///
+    /// Named-type alternative to `json` with the same allocation contract.
+    pub fn json_value(self: *Response, value: std.json.Value, allocator: std.mem.Allocator) !void {
+        return self.json(value, allocator);
     }
 
     /// Sends a redirection response (Web Standards Response.redirect).
@@ -494,6 +633,95 @@ pub const Response = struct {
         @memcpy(buffer[0..self.pending_header_length], self.pending_headers[0..self.pending_header_length]);
         @memcpy(buffer[self.pending_header_length..total], headers);
         return buffer[0..total];
+    }
+};
+
+/// Fixed buffer used by `JsonStream` to coalesce small JSON writes into
+/// fewer response chunks.
+const json_stream_buffer_size = 4096;
+
+/// Streaming JSON body writer returned by `Response.begin_json`.
+///
+/// Writes pass through a fixed stack buffer and leave as chunked response
+/// parts, so no allocation is needed for any body size that the configured
+/// write queue can hold. Keep the value at a stable address while streaming;
+/// do not copy it after the first write.
+pub const JsonStream = struct {
+    response: *Response,
+    initialized: bool = false,
+    buffer: [json_stream_buffer_size]u8 = undefined,
+    sink: std.Io.Writer = undefined,
+
+    /// Returns the buffered writer accepted by `std.json.Stringify`/`std.fmt`.
+    pub fn writer(self: *JsonStream) *std.Io.Writer {
+        if (!self.initialized) {
+            self.sink = .{ .buffer = &self.buffer, .vtable = &stream_vtable };
+            self.initialized = true;
+        }
+        return &self.sink;
+    }
+
+    /// Returns a `std.json.Stringify` bound to this stream.
+    pub fn stringify(self: *JsonStream) std.json.Stringify {
+        return .{ .writer = self.writer() };
+    }
+
+    /// Writes raw JSON bytes through the coalescing buffer.
+    pub fn write(self: *JsonStream, bytes: []const u8) !void {
+        self.writer().writeAll(bytes) catch return error.WriteFailed;
+    }
+
+    /// Flushes buffered bytes as response chunks.
+    pub fn flush(self: *JsonStream) !void {
+        self.writer().flush() catch return error.WriteFailed;
+    }
+
+    /// Flushes the buffer, then writes one chunk with transport errors intact.
+    ///
+    /// Unlike the `std.Io.Writer` path, `error.WouldBlock` reaches the caller
+    /// so an application can size the write queue or abort deliberately.
+    pub fn write_chunk(self: *JsonStream, bytes: []const u8) !void {
+        const sink = self.writer();
+        if (sink.end != 0) {
+            try self.response.write_chunk(sink.buffered());
+            sink.end = 0;
+        }
+        return self.response.write_chunk(bytes);
+    }
+
+    /// Flushes and finishes the chunked response.
+    pub fn end(self: *JsonStream) !void {
+        try self.flush();
+        return self.response.end_chunks();
+    }
+
+    const stream_vtable = std.Io.Writer.VTable{ .drain = stream_drain };
+
+    fn stream_drain(
+        w: *std.Io.Writer,
+        data: []const []const u8,
+        splat: usize,
+    ) std.Io.Writer.Error!usize {
+        const self: *JsonStream = @alignCast(@fieldParentPtr("sink", w));
+        if (w.end != 0) {
+            self.response.write_chunk(w.buffered()) catch return error.WriteFailed;
+            w.end = 0;
+        }
+
+        var consumed: usize = 0;
+        for (data[0 .. data.len - 1]) |slice| {
+            if (slice.len == 0) continue;
+            self.response.write_chunk(slice) catch return error.WriteFailed;
+            consumed += slice.len;
+        }
+        const pattern = data[data.len - 1];
+        if (pattern.len != 0 and splat != 0) {
+            for (0..splat) |_| {
+                self.response.write_chunk(pattern) catch return error.WriteFailed;
+            }
+            consumed += pattern.len * splat;
+        }
+        return consumed;
     }
 };
 

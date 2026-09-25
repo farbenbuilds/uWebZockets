@@ -3,6 +3,134 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.4.0] - 2026-09-25
+
+This release hardens the application helper layer. Every addition is additive,
+so 1.3.x applications recompile unchanged apart from the fixes described under
+Fixed and Security. The C ABI version moves to 1.4.0 with no structural change.
+
+### Added
+
+- Zero-allocation query parsing: `query.QueryParams` slices `?key=value`
+  components out of the request target with SIMD byte scans into a fixed
+  struct-of-arrays view (32 pairs) and never copies. `Request.query_params()`
+  exposes it directly. `percent_decode` and `form_decode` materialize decoded
+  values into caller-owned scratch buffers, so escapes stay borrowed until the
+  application asks for them. More than 32 pairs fails closed with
+  `error.TooManyQueryParameters`.
+- `form` and `Request.form()` validate `application/x-www-form-urlencoded`
+  media types and parse the bounded request body with the same slicer.
+- `status.StatusCode` and `status.line` provide canonical, typo-proof status
+  lines. `errors.send`/`errors.send_buf` render typed JSON error documents
+  (`{"error":{"code":...,"message":...}}`) with JSON escaping and no
+  allocation, `errors.method_not_allowed` emits a validated `Allow` field, and
+  `errors.internal` never echoes internal detail.
+- `negotiate` parses `Accept` into a fixed 16-entry table with qvalue scoring
+  (`score`, `accepts`, `best`); `Request.accepts(media_type)` is the request
+  side entry point.
+- `cache` provides deterministic strong ETags (`cache.etag`), If-None-Match
+  matching over weak and list validators (`cache.is_not_modified`), and a 304
+  sender (`cache.not_modified`).
+- JSON schema validation now covers floats (`min_float`/`max_float`), arrays
+  and non-u8 slices (`min_items`/`max_items`), whole-string and enum
+  membership (`allowed`), and bounded nested validation (`max_nested_depth`).
+  `IssueKind` gains typed JSON parse-failure kinds (syntax, unexpected
+  end/token, invalid number, overflow, missing/duplicate/unknown field,
+  invalid enum tag, length mismatch, item counts) instead of a blanket
+  `malformed_json`.
+- `cookie` gains a zero-copy `Iterator` over a `Cookie` field, versioned HMAC
+  signing (`Key`, `sign_versioned`, `verify_versioned`) for key rotation,
+  opt-in `__Host-`/`__Secure-` prefix enforcement through
+  `Options.enforce_prefixes`, and pure RFC 9110 date formatting
+  (`format_http_date`, `HttpDateBuffer`) with an `Options.expires_unix` field
+  that emits `Expires` next to `Max-Age`.
+- `Response.json_value` and `json_value_buf` provide named-type alternatives
+  to the polymorphic `json`/`json_buf` for dynamic `std.json.Value` payloads.
+- The OSS-Fuzz integration adds a fourth target, `query_parse`, with a
+  deterministic `query_parse_smoke` executable, seed corpus, and runtime
+  options. It fuzzes query slicing, percent/form decoding, and `Accept`
+  negotiation, and asserts that every borrowed slice stays inside the parsed
+  input. The Smith harness in `zig build test` runs the same code paths.
+- `Response.begin_json` returns a `JsonStream` that coalesces JSON into a
+  fixed stack buffer and writes chunked response parts, so arbitrarily large
+  JSON costs no allocation. Use `stream.stringify()` with `std.json.Stringify`,
+  `stream.write`/`write_chunk` for raw bytes with transport errors intact, and
+  `stream.end()` to finish. Body size is bounded by the configured
+  `with_write_queue_size` ring, not by a rendering buffer.
+- Request limits are configurable: `ServerConfig.max_request_line_size`,
+  `max_header_size`, and `max_header_count` (with builder `with_*` methods)
+  replace the fixed 8 KiB request line, 16 KiB header block, and 64-header
+  inline cap. Headers beyond the inline arrays spill into per-connection slab
+  storage sized by `max_header_count`, and the 431 rejection document reports
+  the configured limit. Defaults keep the previous footprint byte-for-byte.
+- `query.QueryParams.get_int` parses the first matching raw value as a
+  base-10 integer in one call, and `examples/basic_microservice.zig` shows the
+  `GET /search?q=...&page=2` pattern end to end.
+- Router capacities are configurable: `ServerConfig.max_route_nodes`,
+  `max_pattern_routes`, `max_middleware`, `max_route_path_size`, and
+  `max_route_registry_size` (with builder knobs) size a slab-carved router
+  whose storage lives in the single startup allocation. Defaults keep the
+  previous 256 nodes, 64 patterns, 32 callbacks, 2 KiB paths, and 64 KiB
+  registry, and cluster workers now receive the full builder configuration
+  instead of the type-level defaults.
+- Route captures beyond the inline 16 spill into per-connection capacity
+  slices sized by `ServerConfig.max_route_params` / `with_max_route_params` on
+  every transport (HTTP/1.1, HTTP/2, and HTTP/3); `UWZ_MAX_ROUTE_PARAMETERS`
+  is now a guaranteed minimum rather than a cap, and the C ABI
+  `uwz_request_parameter_count` reports the total.
+- `Response.begin_stream` pulls a chunked body from a `StreamProducer`
+  callback as the transport drains. Producers park with `.pending` on
+  `error.WouldBlock` and are re-invoked when output space frees, so a response
+  body is not limited by the configured write queue. HTTP/1.1 resumes on write
+  completion, HTTP/2 on write completion and WINDOW_UPDATE (window exhaustion
+  is normalized to `WouldBlock`), and HTTP/3 on lsquic write drain. Targets
+  without a producer callback fail closed with
+  `error.ProducerStreamingUnsupported` before writing.
+- Query capacity is no longer fixed at 32: `query.QueryParamsOf(capacity)`,
+  `Request.query_params_of(capacity)`, and `form.parse_of(capacity, ...)`
+  specialize the fixed pair table at compile time; the existing default names
+  and overflow behavior are unchanged.
+
+### Changed
+
+- `Response.json_buf` and `Response.json` document their polymorphic contract
+  (`std.json.Stringify`-compatible values); their behavior is unchanged.
+- HTTP/1.1 response heads (status line, pending fields, explicit fields,
+  terminator, body) are written as scatter parts instead of concatenating into
+  a fixed buffer. Header size is now bounded by the per-connection write ring
+  rather than roughly 4 KiB; HTTP/2 and HTTP/3 keep their own bounded metadata
+  storage and limits.
+
+### Fixed
+
+- `errors.render` now writes `code` and `message` with a fixed-buffer JSON
+  string encoder. Invalid UTF-8 previously reached `std.json`, which encoded a
+  non-UTF-8 slice as a JSON number array, so the document no longer matched the
+  documented `"code": "..."` shape. Invalid sequences now become U+FFFD and the
+  document is always valid JSON for arbitrary bytes.
+- Query components without `=` (`?flag`) now point at the segment end instead
+  of a global empty literal, so every borrowed key and value slice lies inside
+  the caller's buffer. The fuzz bounds assertions enforce this for empty values
+  too.
+- The Smith HTTP/query harness no longer reports empty flag values as an
+  out-of-bounds failure; the stale `.zig-cache` crash artifact from that false
+  positive was removed and the case is covered by
+  `src/tests/query_tests.zig`.
+
+### Security
+
+- `Response.append_header` now rejects CR/LF inside a single value. The
+  previous validation accepted an embedded `\r\n` as an additional
+  well-formed field, so any singular-value helper forwarding untrusted data
+  could split the response. Regression coverage lives in
+  `src/tests/http_tests.zig`.
+- JSON schema parse failures now report a typed `IssueKind` while still
+  returning `error.MalformedJson`, so applications can distinguish a syntax
+  error from a type mismatch without new allocation.
+- Cookie `__Host-`/`__Secure-` prefix enforcement is available but off by
+  default, so existing formatters keep their exact bytes until an application
+  opts in.
+
 ## [1.3.5] - 2026-09-24
 
 This release refreshes every pinned dependency. zslay moves to 0.2.1, lsquic

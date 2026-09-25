@@ -42,7 +42,8 @@ const FakeEngine = struct {
 
 test "udp: QUIC engine starts only after transport reaches stable storage" {
     const Transport = support.udp.quic_transport(FakeEngine);
-    var router = Router.init();
+    var bundle = support.radix.DefaultBundle{};
+    var router = try Router.init(bundle.storage());
     const ssl_ctx: *c.SSL_CTX = @ptrFromInt(1);
     var transport = try Transport.init(ssl_ctx, &router, "127.0.0.1", 0);
     defer transport.deinit();

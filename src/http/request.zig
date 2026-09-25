@@ -3,6 +3,9 @@ const fetch = @import("fetch.zig");
 const multipart_module = @import("multipart.zig");
 const cookie_module = @import("cookie.zig");
 const schema_module = @import("schema.zig");
+const query_module = @import("query.zig");
+const form_module = @import("form.zig");
+const negotiate_module = @import("negotiate.zig");
 
 /// Maximum number of allocation-free route parameters on one request.
 pub const max_route_params = 16;
@@ -57,8 +60,12 @@ pub const Request = struct {
     route_param_values: [max_route_params][]const u8 = undefined,
     route_param_count: usize = 0,
 
-    extra_param_names: ?[]const []const u8 = null,
-    extra_param_values: ?[]const []const u8 = null,
+    /// Caller-provided capture slots beyond the inline arrays; transports
+    /// borrow one per connection and reuse it across requests.
+    extra_param_names: ?[][]const u8 = null,
+    extra_param_values: ?[][]const u8 = null,
+    /// Number of valid entries in `extra_param_names` and `extra_param_values`.
+    extra_param_count: usize = 0,
     extra_header_names: ?[]const []const u8 = null,
     extra_header_values: ?[]const []const u8 = null,
 
@@ -139,6 +146,36 @@ pub const Request = struct {
         };
         const boundary = try multipart_module.boundary_from_content_type(content_type);
         return multipart_module.Parser.init(self.body, boundary);
+    }
+
+    /// Parses the request-target query into a zero-copy borrowed view.
+    pub fn query_params(self: *const Request) !query_module.QueryParams {
+        return query_module.QueryParams.parse_link(self.target);
+    }
+
+    /// Parses the request-target query with a compile-time pair capacity.
+    pub fn query_params_of(
+        self: *const Request,
+        comptime capacity: usize,
+    ) !query_module.QueryParamsOf(capacity) {
+        return query_module.QueryParamsOf(capacity).parse_link(self.target);
+    }
+
+    /// Validates the media type and parses a form-urlencoded body.
+    pub fn form(self: *const Request) !query_module.QueryParams {
+        const content_type = self.get_unique_header("content-type") orelse {
+            return error.MissingContentType;
+        };
+        return form_module.parse(content_type, self.body);
+    }
+
+    /// Reports whether the first Accept field accepts `media_type`.
+    ///
+    /// A missing or unparsable Accept header accepts every media type, matching
+    /// RFC 9110's default of `*/*`.
+    pub fn accepts(self: *const Request, media_type: []const u8) bool {
+        const header = self.get_header("accept") orelse "";
+        return negotiate_module.accepts(negotiate_module.parse(header), media_type);
     }
 
     /// Returns a borrowed RFC 6265 cookie value from any Cookie field.
@@ -232,9 +269,11 @@ pub const Request = struct {
             result.route_param_names[index] = param_names[index];
             result.route_param_values[index] = param_values[index];
         }
-        if (param_count > max_route_params) {
-            result.extra_param_names = param_names[max_route_params..];
-            result.extra_param_values = param_values[max_route_params..];
+        const extra_count = param_count - result.route_param_count;
+        if (extra_count != 0) {
+            result.extra_param_names = param_names[result.route_param_count..];
+            result.extra_param_values = param_values[result.route_param_count..];
+            result.extra_param_count = extra_count;
         }
 
         return .{
@@ -326,25 +365,40 @@ pub const Request = struct {
         }
         const names = self.extra_param_names orelse return null;
         const values = self.extra_param_values orelse return null;
-        for (names[0..@min(names.len, values.len)], 0..) |param_name, index| {
+        const count = @min(self.extra_param_count, @min(names.len, values.len));
+        for (names[0..count], 0..) |param_name, index| {
             if (std.mem.eql(u8, param_name, name)) return values[index];
         }
         return null;
     }
 
     /// Clears route captures before a new router lookup.
+    ///
+    /// The extra capacity slices stay in place; transports set them once per
+    /// connection and reuse them, so only the valid counts reset.
     pub fn clear_params(self: *Request) void {
         self.route_param_count = 0;
-        self.extra_param_names = null;
-        self.extra_param_values = null;
+        self.extra_param_count = 0;
     }
 
-    /// Appends one borrowed route capture when fixed capacity remains.
+    /// Appends one borrowed route capture, spilling past the inline arrays
+    /// into the caller-provided capacity slices while room remains.
     pub fn add_param(self: *Request, name: []const u8, value: []const u8) !void {
-        if (self.route_param_count == max_route_params) return error.RouteParameterCapacityReached;
-        self.route_param_names[self.route_param_count] = name;
-        self.route_param_values[self.route_param_count] = value;
-        self.route_param_count += 1;
+        if (self.route_param_count < max_route_params) {
+            self.route_param_names[self.route_param_count] = name;
+            self.route_param_values[self.route_param_count] = value;
+            self.route_param_count += 1;
+            return;
+        }
+
+        const names = self.extra_param_names orelse return error.RouteParameterCapacityReached;
+        const values = self.extra_param_values orelse return error.RouteParameterCapacityReached;
+        if (self.extra_param_count >= @min(names.len, values.len)) {
+            return error.RouteParameterCapacityReached;
+        }
+        names[self.extra_param_count] = name;
+        values[self.extra_param_count] = value;
+        self.extra_param_count += 1;
     }
 
     fn total_header_count(self: *const Request) usize {
@@ -358,7 +412,8 @@ pub const Request = struct {
         const inline_count = @min(self.route_param_count, max_route_params);
         const extra_names = self.extra_param_names orelse return inline_count;
         const extra_values = self.extra_param_values orelse return inline_count;
-        return inline_count + @min(extra_names.len, extra_values.len);
+        const extra_count = @min(self.extra_param_count, @min(extra_names.len, extra_values.len));
+        return inline_count + extra_count;
     }
 
     fn header_name_at(self: *const Request, index: usize) []const u8 {

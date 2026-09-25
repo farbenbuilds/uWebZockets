@@ -3,12 +3,93 @@ const std = @import("std");
 const HmacSha256 = std.crypto.auth.hmac.sha2.HmacSha256;
 const signature_length = HmacSha256.mac_length * 2;
 
+/// SameSite attribute policy; `none` additionally requires `secure`.
 pub const SameSite = enum {
     strict,
     lax,
     none,
 };
 
+/// One RFC 9110 IMF-fixdate: 29 bytes, for example `Wed, 21 Oct 2015 07:28:00 GMT`.
+pub const HttpDateBuffer = [29]u8;
+
+const weekday_names = [_][]const u8{ "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+const month_names = [_][]const u8{
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+};
+
+/// Civil calendar date decomposed from a day count since the Unix epoch.
+const CivilDate = struct {
+    year: i64,
+    month: u8,
+    day: u8,
+};
+
+/// Formats `unix_seconds` as an IMF-fixdate into caller storage.
+///
+/// Pure integer math; callers own the clock. Seconds before the epoch and
+/// dates past year 9999 fail closed.
+pub fn format_http_date(buffer: *HttpDateBuffer, unix_seconds: i64) error{InvalidExpires}![]const u8 {
+    if (unix_seconds < 0) return error.InvalidExpires;
+    const days = @divFloor(unix_seconds, 86400);
+    const civil = civil_from_days(days);
+    if (civil.year > 9999) return error.InvalidExpires;
+
+    const seconds_of_day = @mod(unix_seconds, 86400);
+    @memcpy(buffer[0..3], weekday_names[@intCast(@mod(days + 4, 7))]);
+    buffer[3] = ',';
+    buffer[4] = ' ';
+    write_two_digits(buffer[5..7], civil.day);
+    buffer[7] = ' ';
+    @memcpy(buffer[8..11], month_names[civil.month - 1]);
+    buffer[11] = ' ';
+    write_four_digits(buffer[12..16], @intCast(civil.year));
+    buffer[16] = ' ';
+    write_two_digits(buffer[17..19], @intCast(@divFloor(seconds_of_day, 3600)));
+    buffer[19] = ':';
+    write_two_digits(buffer[20..22], @intCast(@divFloor(@mod(seconds_of_day, 3600), 60)));
+    buffer[22] = ':';
+    write_two_digits(buffer[23..25], @intCast(@mod(seconds_of_day, 60)));
+    buffer[25] = ' ';
+    @memcpy(buffer[26..29], "GMT");
+    return buffer[0..];
+}
+
+fn write_two_digits(buffer: []u8, value: u8) void {
+    buffer[0] = '0' + value / 10;
+    buffer[1] = '0' + value % 10;
+}
+
+fn write_four_digits(buffer: []u8, value: u16) void {
+    buffer[0] = '0' + @as(u8, @intCast(value / 1000));
+    buffer[1] = '0' + @as(u8, @intCast(value / 100 % 10));
+    buffer[2] = '0' + @as(u8, @intCast(value / 10 % 10));
+    buffer[3] = '0' + @as(u8, @intCast(value % 10));
+}
+
+/// Howard Hinnant's civil-from-days; the inverse of days-from-civil.
+fn civil_from_days(days: i64) CivilDate {
+    const shifted = days + 719468;
+    const era = @divFloor(shifted, 146097);
+    const day_of_era = shifted - era * 146097;
+    const year_of_era = @divTrunc(
+        day_of_era - @divTrunc(day_of_era, 1460) + @divTrunc(day_of_era, 36524) - @divTrunc(day_of_era, 146096),
+        365,
+    );
+    const year = year_of_era + era * 400;
+    const day_of_year = day_of_era - (365 * year_of_era + @divTrunc(year_of_era, 4) - @divTrunc(year_of_era, 100));
+    const month_prime = @divTrunc(5 * day_of_year + 2, 153);
+    const month = if (month_prime < 10) month_prime + 3 else month_prime - 9;
+    return .{
+        .year = year + @intFromBool(month <= 2),
+        .month = @intCast(month),
+        .day = @intCast(day_of_year - @divTrunc(153 * month_prime + 2, 5) + 1),
+    };
+}
+
+/// Set-Cookie attributes; `enforce_prefixes` enables the `__Host-`/`__Secure-`
+/// requirements that browsers apply (RFC 6265bis).
 pub const Options = struct {
     path: ?[]const u8 = "/",
     domain: ?[]const u8 = null,
@@ -16,6 +97,10 @@ pub const Options = struct {
     http_only: bool = false,
     secure: bool = false,
     same_site: ?SameSite = null,
+    /// Reject names whose `__Host-`/`__Secure-` prefix requirements are unmet.
+    enforce_prefixes: bool = false,
+    /// Absolute expiry as Unix seconds; emits `Expires` after `Max-Age`.
+    expires_unix: ?i64 = null,
 };
 
 /// Returns the first RFC 6265 cookie pair matching `name`.
@@ -33,7 +118,40 @@ pub fn find(header: []const u8, name: []const u8) ?[]const u8 {
     return null;
 }
 
+/// One raw cookie pair.
+pub const Pair = struct { name: []const u8, value: []const u8 };
+
+/// Iterator over the valid pairs of a single Cookie field.
+pub const Iterator = struct {
+    header: []const u8,
+    offset: usize = 0,
+
+    /// Advances to the next well-formed pair, skipping malformed ones.
+    pub fn next(self: *Iterator) ?Pair {
+        while (self.offset < self.header.len) {
+            const rest = self.header[self.offset..];
+            const separator = std.mem.indexOfScalar(u8, rest, ';') orelse rest.len;
+            self.offset += separator + 1;
+            const raw_pair = std.mem.trim(u8, rest[0..separator], " \t");
+            const equals = std.mem.indexOfScalar(u8, raw_pair, '=') orelse continue;
+            const name = std.mem.trim(u8, raw_pair[0..equals], " \t");
+            const value = std.mem.trim(u8, raw_pair[equals + 1 ..], " \t");
+            if (!valid_name(name) or !valid_value(value)) continue;
+            return .{ .name = name, .value = value };
+        }
+        return null;
+    }
+};
+
+/// Returns an iterator over `header`; malformed pairs are skipped.
+pub fn iterator(header: []const u8) Iterator {
+    return .{ .header = header };
+}
+
 /// Formats one validated Set-Cookie response field into caller storage.
+///
+/// With `options.enforce_prefixes`, `__Host-` requires Secure, an explicit
+/// `Path=/`, and no Domain; `__Secure-` requires Secure.
 pub fn format(
     buffer: []u8,
     name: []const u8,
@@ -43,6 +161,7 @@ pub fn format(
     if (!valid_name(name)) return error.InvalidCookieName;
     if (!valid_value(value)) return error.InvalidCookieValue;
     if (options.same_site == .none and !options.secure) return error.InsecureSameSiteNone;
+    if (options.enforce_prefixes) try enforce_prefix(name, options);
 
     var writer: std.Io.Writer = .fixed(buffer);
     try writer.print("Set-Cookie: {s}={s}", .{ name, value });
@@ -55,6 +174,10 @@ pub fn format(
         try writer.print("; Domain={s}", .{domain});
     }
     if (options.max_age) |max_age| try writer.print("; Max-Age={d}", .{max_age});
+    if (options.expires_unix) |expires| {
+        var date_buffer: HttpDateBuffer = undefined;
+        try writer.print("; Expires={s}", .{try format_http_date(&date_buffer, expires)});
+    }
     if (options.http_only) try writer.writeAll("; HttpOnly");
     if (options.secure) try writer.writeAll("; Secure");
     if (options.same_site) |same_site| {
@@ -67,6 +190,19 @@ pub fn format(
     }
     try writer.writeAll("\r\n");
     return writer.buffered();
+}
+
+fn enforce_prefix(name: []const u8, options: Options) !void {
+    if (std.mem.startsWith(u8, name, "__Host-")) {
+        if (!options.secure) return error.InsecureCookiePrefix;
+        if (options.domain != null) return error.InsecureCookiePrefix;
+        const path = options.path orelse return error.InsecureCookiePrefix;
+        if (!std.mem.eql(u8, path, "/")) return error.InsecureCookiePrefix;
+        return;
+    }
+    if (std.mem.startsWith(u8, name, "__Secure-") and !options.secure) {
+        return error.InsecureCookiePrefix;
+    }
 }
 
 /// Writes `value.hex(HMAC-SHA256(value, secret))` into caller storage.
@@ -100,6 +236,72 @@ pub fn verify_signed(value: []const u8, secret: []const u8) ![]const u8 {
         return error.InvalidCookieSignature;
     }
     return payload;
+}
+
+/// One rotation key: a public id and a >=32-byte secret.
+pub const Key = struct { id: []const u8, secret: []const u8 };
+
+/// Maximum accepted key-id length.
+pub const max_key_id_length = 32;
+
+/// Writes "id.payload.hex(HMAC-SHA256(id.payload, secret))" into caller storage.
+pub fn sign_versioned(buffer: []u8, value: []const u8, key: Key) ![]const u8 {
+    if (!valid_key_id(key.id)) return error.InvalidKeyId;
+    if (key.secret.len < 32) return error.CookieSecretTooShort;
+    if (!valid_value(value)) return error.InvalidCookieValue;
+
+    const payload_start = key.id.len + 1;
+    const signature_start = payload_start + value.len + 1;
+    const total = signature_start + signature_length;
+    if (buffer.len < total) return error.BufferTooSmall;
+
+    @memcpy(buffer[0..key.id.len], key.id);
+    buffer[key.id.len] = '.';
+    @memcpy(buffer[payload_start..][0..value.len], value);
+    buffer[payload_start + value.len] = '.';
+    var mac: [HmacSha256.mac_length]u8 = undefined;
+    var hmac = HmacSha256.init(key.secret);
+    hmac.update(key.id);
+    hmac.update(".");
+    hmac.update(value);
+    hmac.final(&mac);
+    encode_hex(buffer[signature_start..][0..signature_length], &mac);
+    return buffer[0..total];
+}
+
+/// Verifies a versioned value against any rotation key and returns the payload.
+pub fn verify_versioned(value: []const u8, keys: []const Key) ![]const u8 {
+    const id_end = std.mem.indexOfScalar(u8, value, '.') orelse return error.InvalidCookieSignature;
+    const signature_start = std.mem.lastIndexOfScalar(u8, value, '.') orelse return error.InvalidCookieSignature;
+    if (signature_start == id_end) return error.InvalidCookieSignature;
+
+    const id = value[0..id_end];
+    const payload = value[id_end + 1 .. signature_start];
+    const encoded = value[signature_start + 1 ..];
+
+    for (keys) |key| {
+        if (!std.mem.eql(u8, key.id, id)) continue;
+        if (key.secret.len < 32) return error.CookieSecretTooShort;
+        var supplied: [HmacSha256.mac_length]u8 = undefined;
+        decode_hex(&supplied, encoded) catch return error.InvalidCookieSignature;
+        var expected: [HmacSha256.mac_length]u8 = undefined;
+        var hmac = HmacSha256.init(key.secret);
+        hmac.update(id);
+        hmac.update(".");
+        hmac.update(payload);
+        hmac.final(&expected);
+        if (!std.crypto.timing_safe.eql([HmacSha256.mac_length]u8, expected, supplied)) {
+            return error.InvalidCookieSignature;
+        }
+        return payload;
+    }
+    return error.UnknownKeyId;
+}
+
+fn valid_key_id(id: []const u8) bool {
+    if (id.len == 0 or id.len > max_key_id_length) return false;
+    if (std.mem.indexOfScalar(u8, id, '.') != null) return false;
+    return valid_name(id);
 }
 
 fn valid_name(value: []const u8) bool {

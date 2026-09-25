@@ -11,7 +11,8 @@ const DeflateContext = @import("../ws/deflate.zig").Context;
 const TlsContext = @import("../crypto/tls.zig").TlsContext;
 const quic = @import("../quic/engine.zig");
 const udp = @import("../core/udp.zig");
-const Request = @import("../http/request.zig").Request;
+const request_module = @import("../http/request.zig");
+const Request = request_module.Request;
 const Response = @import("../http/response.zig").Response;
 const json_rpc_http = @import("../rpc/http.zig");
 const static_files_module = @import("../http/static_files.zig");
@@ -73,9 +74,32 @@ pub fn configured_app_with_timeout(
     comptime write_queue_size: usize,
     comptime idle_timeout_ms: u64,
 ) type {
+    return configured_app_with_route_params(
+        max_connections,
+        max_ws_message_size,
+        write_queue_size,
+        idle_timeout_ms,
+        request_module.max_route_params,
+    );
+}
+
+/// Returns an application type with an explicit route capture capacity.
+///
+/// `max_route_params` counts the captures a request may hold; values above the
+/// inline `Request.max_route_params` carve a per-connection extras region.
+pub fn configured_app_with_route_params(
+    comptime max_connections: usize,
+    comptime max_ws_message_size: usize,
+    comptime write_queue_size: usize,
+    comptime idle_timeout_ms: u64,
+    comptime max_route_params: usize,
+) type {
     if (max_connections == 0) @compileError("connection capacity must be greater than zero");
     if (max_ws_message_size == 0) @compileError("WebSocket message capacity must be greater than zero");
     if (write_queue_size == 0) @compileError("write queue capacity must be greater than zero");
+    if (max_route_params < request_module.max_route_params) {
+        @compileError("route parameter capacity must cover the inline Request arrays");
+    }
     if (max_connections > std.math.maxInt(usize) / max_ws_message_size) {
         @compileError("WebSocket message storage size overflows usize");
     }
@@ -83,10 +107,16 @@ pub fn configured_app_with_timeout(
         @compileError("write queue storage size overflows usize");
     }
 
+    const route_param_extra_capacity = max_route_params - request_module.max_route_params;
+
     return struct {
         const Self = @This();
         const Pool = core_pool.freelist_pool(core_tcp.TcpConnection, max_connections);
-        const QuicEngine = quic.quic_engine(max_connections, write_queue_size);
+        const QuicEngine = quic.quic_engine(
+            max_connections,
+            write_queue_size,
+            route_param_extra_capacity,
+        );
         const QuicTransport = udp.quic_transport(QuicEngine);
         const static_file_capacity = if (write_queue_size > 4096) write_queue_size - 4096 else write_queue_size;
         const StaticFiles = static_files_module.static_files(static_file_capacity);
@@ -105,12 +135,24 @@ pub fn configured_app_with_timeout(
         io: std.Io,
         loop: core_loop.Loop,
         pool: Pool,
-        // One contiguous startup slab backs the pool, request, message, and
-        // queue regions so deinit releases exactly one allocation.
+        // One contiguous startup slab backs the pool, request, message, queue,
+        // and router regions so deinit releases exactly one allocation.
         slab: []u8,
         slab_allocator: std.mem.Allocator,
         request_buffers: []u8,
         request_buffer_stride: usize,
+        // Per-request parser limits and the shared extra-header pointer region.
+        max_request_line_size: usize,
+        max_header_size: usize,
+        max_header_count: usize,
+        header_extras: []align(config_module.request_buffer_alignment) u8,
+        extra_header_capacity: usize,
+        extra_header_stride: usize,
+        // Per-connection route-capture pointer region beyond the inline
+        // `Request` arrays; paired with the header-extras region.
+        route_param_extras: []align(@alignOf([]const u8)) u8,
+        extra_route_param_capacity: usize,
+        extra_route_param_stride: usize,
         max_body_size: usize,
         reject_policy: http_rejection.RejectionPolicy = .{},
         ws_message_storage: []u8,
@@ -119,7 +161,11 @@ pub fn configured_app_with_timeout(
         ws_compression_owned: bool = false,
         ws_deflate: ?DeflateContext = null,
         write_queue_storage: []u8,
-        router: radix.Router,
+        // Router typed storage carved from the startup slab; the router binds
+        // it on first route work, when the App address is stable.
+        router_storage: radix.Storage = undefined,
+        router_bound: bool = false,
+        router: radix.Router = .{},
         // WebTransport datagram state. The metadata arrays are SoA and the
         // payload slab is one fixed stride per connection, all carved from the
         // startup slab so no datagram ever allocates.
@@ -174,8 +220,9 @@ pub fn configured_app_with_timeout(
 
         /// Allocates the whole startup slab once, then initializes from it.
         ///
-        /// Every pool, request, message, queue, and optional compression region
-        /// comes from this one allocation; the runtime I/O loop never allocates.
+        /// Every pool, request, message, queue, router, and optional compression
+        /// region comes from this one allocation; the runtime I/O loop never
+        /// allocates.
         pub fn init_configured(
             io: std.Io,
             allocator: std.mem.Allocator,
@@ -218,9 +265,18 @@ pub fn configured_app_with_timeout(
                 if (config.idle_timeout_ms != idle_timeout_ms) @compileError(
                     "ServerConfig.idle_timeout_ms must match the generated App timeout",
                 );
+                if (config.max_route_params != max_route_params) @compileError(
+                    "ServerConfig.max_route_params must match the generated App capacity",
+                );
             }
 
             const layout = try config_module.carve(slab, config);
+            const extra_header_capacity = try config.extra_header_capacity();
+            const extra_route_param_capacity = try config.extra_route_param_capacity();
+            const router_storage = try radix.carve_storage(
+                layout.router_storage,
+                config.router_capacities(),
+            );
 
             var loop = try core_loop.init();
             errdefer core_loop.deinit(&loop);
@@ -235,6 +291,15 @@ pub fn configured_app_with_timeout(
                 .slab_allocator = allocator,
                 .request_buffers = layout.request_buffers,
                 .request_buffer_stride = layout.request_buffer_stride,
+                .max_request_line_size = config.max_request_line_size,
+                .max_header_size = config.max_header_size,
+                .max_header_count = config.max_header_count,
+                .header_extras = @alignCast(layout.header_extras),
+                .extra_header_capacity = extra_header_capacity,
+                .extra_header_stride = layout.extra_header_stride,
+                .route_param_extras = @alignCast(layout.route_param_extras),
+                .extra_route_param_capacity = extra_route_param_capacity,
+                .extra_route_param_stride = layout.extra_route_param_stride,
                 .max_body_size = config.max_body_size,
                 .reject_policy = config.rejection_policy(),
                 .ws_message_storage = layout.ws_messages,
@@ -244,7 +309,7 @@ pub fn configured_app_with_timeout(
                 else
                     layout.compression_stride / 2,
                 .write_queue_storage = layout.write_queues,
-                .router = radix.Router.init(),
+                .router_storage = router_storage,
                 .datagram_session_ids = layout.datagram_session_ids,
                 .datagram_sequences = layout.datagram_sequences,
                 .datagram_payload_lengths = layout.datagram_payload_lengths,
@@ -758,9 +823,20 @@ pub fn configured_app_with_timeout(
             return &self.datagram_rings[connection_index];
         }
 
-        fn ensure_routes_mutable(self: *const Self) !void {
+        fn ensure_routes_mutable(self: *Self) !void {
             if (self.shutting_down or self.deinitialized) return error.ApplicationUnavailable;
             if (self.routes_locked) return error.RoutesLocked;
+            try self.ensure_router();
+        }
+
+        /// Binds the slab-backed router storage on first route work.
+        ///
+        /// A pre-bound router (an initialized `router` injected by tests or
+        /// callers) wins over lazy binding.
+        fn ensure_router(self: *Self) !void {
+            if (self.router_bound or self.router.node_count != 0) return;
+            self.router = try radix.Router.init(self.router_storage);
+            self.router_bound = true;
         }
 
         /// Installs the hidden metrics route once, before routes are locked.
@@ -805,6 +881,45 @@ pub fn configured_app_with_timeout(
             self.ws_deflate = context;
         }
 
+        /// Returns one connection's borrowed slices of the shared extra-header
+        /// pointer region; empty when the configuration matches inline capacity.
+        fn connection_header_extras(self: *Self, connection_index: usize) HeaderExtras {
+            if (self.extra_header_capacity == 0) return .{ .names = &.{}, .values = &.{} };
+
+            // A runtime slice cannot prove alignment; the layout aligned this
+            // region to the boundary, so re-assert it for the pointer reinterpret.
+            const start = connection_index * self.extra_header_stride;
+            const bytes: []align(config_module.request_buffer_alignment) u8 = @alignCast(
+                self.header_extras[start .. start + self.extra_header_stride],
+            );
+            const pointers = std.mem.bytesAsSlice([]const u8, bytes);
+            return .{
+                .names = pointers[0..self.extra_header_capacity],
+                .values = pointers[self.extra_header_capacity .. self.extra_header_capacity * 2],
+            };
+        }
+
+        /// Returns one connection's borrowed slices of the shared extra
+        /// route-capture pointer region; empty when the configuration matches
+        /// inline capacity.
+        fn connection_route_param_extras(self: *Self, connection_index: usize) RouteParamExtras {
+            if (self.extra_route_param_capacity == 0) {
+                return .{ .names = &.{}, .values = &.{} };
+            }
+
+            // A runtime slice cannot prove alignment; the layout aligned this
+            // region to the boundary, so re-assert it for the pointer reinterpret.
+            const start = connection_index * self.extra_route_param_stride;
+            const bytes: []align(@alignOf([]const u8)) u8 = @alignCast(
+                self.route_param_extras[start .. start + self.extra_route_param_stride],
+            );
+            const pointers = std.mem.bytesAsSlice([]const u8, bytes);
+            return .{
+                .names = pointers[0..self.extra_route_param_capacity],
+                .values = pointers[self.extra_route_param_capacity .. self.extra_route_param_capacity * 2],
+            };
+        }
+
         // callback triggered when the tcp server accepts a new socket.
         fn on_new_connection(socket: xev.TCP, user_data: ?*anyopaque) void {
             const self: *Self = @ptrCast(@alignCast(user_data));
@@ -818,8 +933,20 @@ pub fn configured_app_with_timeout(
                 return;
             };
 
+            // acquire only returns pointers into this pool's contiguous slab.
+            const connection_index = self.pool.index_of(conn) orelse unreachable;
+            const extras = self.connection_header_extras(connection_index);
+            const route_params = self.connection_route_param_extras(connection_index);
             conn.req = .{};
-            conn.parser = .{ .max_body_size = self.max_body_size };
+            conn.route_param_names = route_params.names;
+            conn.route_param_values = route_params.values;
+            conn.parser = .{
+                .max_body_size = self.max_body_size,
+                .max_request_line_bytes = self.max_request_line_size,
+                .max_header_bytes = self.max_header_size,
+                .extra_header_names = extras.names,
+                .extra_header_values = extras.values,
+            };
             conn.reset_protocol() catch {
                 _ = self.pool.release(conn);
                 close_socket_now(socket);
@@ -856,8 +983,6 @@ pub fn configured_app_with_timeout(
 
             conn.socket = socket;
             conn.loop = &self.loop.xev_loop;
-            // acquire only returns pointers into this pool's contiguous slab.
-            const connection_index = self.pool.index_of(conn) orelse unreachable;
             const request_start = connection_index * self.request_buffer_stride;
             conn.request_buffer = self.request_buffers[request_start .. request_start + self.request_buffer_stride];
             conn.reject_policy = &self.reject_policy;
@@ -930,6 +1055,7 @@ pub fn configured_app_with_timeout(
         pub fn listen(self: *Self, address: []const u8, port: u16) !void {
             if (self.shutting_down or self.deinitialized) return error.ApplicationUnavailable;
             if (self.server != null) return error.AlreadyListening;
+            try self.ensure_router();
 
             const server = try core_tcp.init_server(address, port, on_new_connection, self);
             errdefer close_socket_now(server.listener);
@@ -962,6 +1088,7 @@ pub fn configured_app_with_timeout(
             if (self.shutting_down or self.deinitialized) return error.ApplicationUnavailable;
             if (!self.http3_enabled or self.quic_tls_ctx == null) return error.Http3NotInitialized;
             if (self.quic_transport != null) return error.AlreadyListening;
+            try self.ensure_router();
 
             self.quic_transport = try QuicTransport.init(
                 self.quic_tls_ctx.?.ctx,
@@ -1115,14 +1242,15 @@ pub fn configured_app_with_timeout(
                 deinitialized: bool = false,
 
                 pub fn init(allocator: std.mem.Allocator, io: std.Io) !Cluster {
-                    return init_with_options(allocator, io, .{});
+                    return init_with_options(allocator, io, default_config, .{});
                 }
 
-                /// Builds every worker slab on this thread; each worker then owns
-                /// its slab exclusively for its whole lifetime.
+                /// Builds every worker slab on this thread with `config`; each
+                /// worker then owns its slab exclusively for its whole lifetime.
                 pub fn init_with_options(
                     allocator: std.mem.Allocator,
                     io: std.Io,
+                    comptime config: config_module.ServerConfig,
                     startup_options: ClusterOptions,
                 ) !Cluster {
                     const workers = try allocator.alloc(Self, worker_count);
@@ -1138,7 +1266,7 @@ pub fn configured_app_with_timeout(
                         for (workers[0..initialized]) |*app_worker| app_worker.deinit();
                     }
                     for (workers, 0..) |*app_worker, index| {
-                        app_worker.* = try Self.init(io);
+                        app_worker.* = try Self.init_configured(io, allocator, config);
                         initialized += 1;
                         try app_worker.attach_cluster_inbox(&inboxes[index]);
                     }
@@ -1261,6 +1389,7 @@ pub fn configured_app_with_timeout(
         fn listen_reuse_port(self: *Self, address: []const u8, port: u16) !void {
             if (self.shutting_down or self.deinitialized) return error.ApplicationUnavailable;
             if (self.server != null) return error.AlreadyListening;
+            try self.ensure_router();
 
             const server = try core_tcp.init_reuse_port_server(address, port, on_new_connection, self);
             errdefer close_socket_now(server.listener);
@@ -1372,7 +1501,8 @@ pub fn configured_app_with_timeout(
 
         fn serve_openapi(context: *anyopaque, _: *Request, response: *Response) void {
             const router: *const radix.Router = @ptrCast(@alignCast(context));
-            var buffer: [32 * 1024]u8 = undefined;
+            // The document shares the buffer with write_openapi's route snapshot.
+            var buffer: [64 * 1024]u8 = undefined;
             const document = router.write_openapi(&buffer, .{}) catch {
                 // The handler ABI cannot propagate a response write failure.
                 response.end("500 Internal Server Error", "OpenAPI document exceeds capacity") catch {};
@@ -1387,6 +1517,23 @@ pub fn configured_app_with_timeout(
         }
     };
 }
+
+/// One connection's borrowed slices of the shared extra-header pointer region.
+pub const HeaderExtras = struct {
+    /// Header-name slices beyond the inline `Request` arrays.
+    names: [][]const u8,
+    /// Header-value slices matching `names`.
+    values: [][]const u8,
+};
+
+/// One connection's borrowed slices of the shared extra route-capture pointer
+/// region; empty when the configuration matches inline capacity.
+pub const RouteParamExtras = struct {
+    /// Route-parameter-name slices beyond the inline `Request` arrays.
+    names: [][]const u8,
+    /// Route-parameter-value slices matching `names`.
+    values: [][]const u8,
+};
 
 /// Separate borrowed scratch slices for inbound and outbound compression.
 pub const CompressionBuffers = struct {

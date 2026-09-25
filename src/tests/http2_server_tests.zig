@@ -11,7 +11,8 @@ const SingleStreamSession = http2_server.server_session(1, 4096, 4096, 1024);
 
 const TestState = struct {
     session: *TestSession,
-    router: radix.Router = radix.Router.init(),
+    router_bundle: radix.DefaultBundle = .{},
+    router: radix.Router = .{},
     output: [8192]u8 = undefined,
     output_length: usize = 0,
     dispatch_order: [4]u32 = undefined,
@@ -22,6 +23,13 @@ const TestState = struct {
     async_stream_id: u32 = 0,
     wake_count: usize = 0,
     saw_dynamic_header: bool = false,
+
+    /// Binds the embedded router storage once the state address is stable.
+    fn init_router(self: *TestState) void {
+        if (self.router.node_count != 0) return;
+        // DefaultBundle capacities are comptime-validated, so init cannot fail.
+        self.router = radix.Router.init(self.router_bundle.storage()) catch unreachable;
+    }
 
     fn callbacks(self: *TestState) http2_server.Callbacks {
         return .{
@@ -410,6 +418,7 @@ test "http2 server: interleaved streams dispatch router and encode responses" {
     var session: TestSession = .{};
     try session.reset();
     var state = TestState{ .session = &session };
+    state.init_router();
     try state.router.use(&state, middleware);
     try state.router.route_context(.get, "/items/:id", &state, route_handler);
 
@@ -474,6 +483,7 @@ test "http2 server: invalid QUERY metadata bypasses middleware" {
     var session: TestSession = .{};
     try session.reset();
     var state = TestState{ .session = &session };
+    state.init_router();
     try state.router.use(&state, middleware);
 
     const request_headers = [_]u8{
@@ -506,6 +516,7 @@ test "http2 server: trailers preserve HPACK dynamic table synchronization" {
     var session: TestSession = .{};
     try session.reset();
     var state = TestState{ .session = &session };
+    state.init_router();
     try state.router.route_context(.get, "/trail", &state, trailer_route_handler);
 
     const request_headers = [_]u8{
@@ -746,6 +757,7 @@ test "http2 server: duplicate Host and authority mismatch are stream errors" {
     var session: TestSession = .{};
     try session.reset();
     var state = TestState{ .session = &session };
+    state.init_router();
 
     const duplicate_host = [_]u8{
         0x82, 0x86, 0x84,
@@ -797,6 +809,7 @@ test "http2 server: regular CONNECT receives an ordinary 501 response" {
     var session: TestSession = .{};
     try session.reset();
     var state = TestState{ .session = &session };
+    state.init_router();
 
     const connect_headers = [_]u8{
         0x02, 0x07, 'C', 'O', 'N', 'N', 'E', 'C', 'T',
@@ -831,6 +844,7 @@ test "http2 server: rejected CONNECT trailers never dispatch a stale stream" {
     var session: TestSession = .{};
     try session.reset();
     var state = TestState{ .session = &session };
+    state.init_router();
 
     const connect_headers = [_]u8{
         0x02, 0x07, 'C', 'O', 'N', 'N', 'E', 'C', 'T',
@@ -1184,6 +1198,7 @@ test "http2 server: first peer frame must be non-ack settings" {
     var session: TestSession = .{};
     try session.reset();
     var state = TestState{ .session = &session };
+    state.init_router();
     var input: [64]u8 = undefined;
     @memcpy(input[0..http2.client_preface.len], http2.client_preface);
     var input_length: usize = http2.client_preface.len;
@@ -1220,6 +1235,7 @@ test "http2 server: deferred response token retains one stream only" {
     var session: TestSession = .{};
     try session.reset();
     var state = TestState{ .session = &session };
+    state.init_router();
     try state.router.route_async_context(.get, "/async", &state, async_route_handler);
 
     const headers = [_]u8{
@@ -1285,6 +1301,7 @@ test "http2 server: peer reset expires a retained async response" {
     var session: TestSession = .{};
     try session.reset();
     var state = TestState{ .session = &session };
+    state.init_router();
     try state.router.route_async_context(.get, "/async", &state, async_route_handler);
 
     const headers = [_]u8{
@@ -1313,6 +1330,7 @@ test "http2 server: content length is unique numeric and exact" {
     var session: TestSession = .{};
     try session.reset();
     var state = TestState{ .session = &session };
+    state.init_router();
 
     const length_five = [_]u8{ 0x82, 0x86, 0x84, 0x0f, 0x0d, 0x01, '5' };
     const duplicate = [_]u8{
@@ -1350,6 +1368,7 @@ test "http2 server: configured body limit rejects oversized content length" {
     try session.reset();
     session.request_body_limit = 4;
     var state = TestState{ .session = &session };
+    state.init_router();
 
     const length_five = [_]u8{ 0x82, 0x86, 0x84, 0x0f, 0x0d, 0x01, '5' };
     var input: [96]u8 = undefined;
@@ -1372,6 +1391,7 @@ test "http2 server: configured body limit bounds streaming bodies" {
     try session.reset();
     session.request_body_limit = 3;
     var state = TestState{ .session = &session };
+    state.init_router();
 
     const headers = [_]u8{ 0x82, 0x86, 0x84 };
     var input: [128]u8 = undefined;
@@ -1395,6 +1415,7 @@ test "http2 server: extended CONNECT with :protocol websocket dispatches to hand
     var session: TestSession = .{};
     try session.reset();
     var state = TestState{ .session = &session };
+    state.init_router();
     try state.router.route_context(.connect, "/ws", &state, route_handler);
 
     const connect_ws_headers = [_]u8{
@@ -1468,4 +1489,405 @@ test "tls: ALPN prefers h2 and falls back to http 1.1" {
         support.tls.select_http_protocol("\x08http/1.1").?,
     );
     try std.testing.expect(support.tls.select_http_protocol("\x03h2") == null);
+}
+
+/// Drain-driven producer whose chunk schedule is controlled by the test.
+const StreamProducerState = struct {
+    chunk: [8192]u8 = undefined,
+    chunk_length: usize = 64,
+    remaining_chunks: usize = 0,
+    pending_once: bool = false,
+    stall: bool = false,
+    fail_immediately: bool = false,
+    calls: usize = 0,
+    would_block_count: usize = 0,
+    saw_non_would_block: bool = false,
+    begin_error: ?anyerror = null,
+
+    fn produce(
+        context: *anyopaque,
+        response: *Response,
+    ) anyerror!support.http_response.StreamStatus {
+        const self: *StreamProducerState = @ptrCast(@alignCast(context));
+        self.calls += 1;
+        if (self.fail_immediately) return error.ProducerFailure;
+        if (self.stall) return .pending;
+        if (self.pending_once) {
+            self.pending_once = false;
+            self.write_next(response) catch |err| return self.on_backpressure(err);
+            return .pending;
+        }
+        while (self.remaining_chunks != 0) {
+            self.write_next(response) catch |err| return self.on_backpressure(err);
+        }
+        response.end_chunks() catch |err| return self.on_backpressure(err);
+        return .done;
+    }
+
+    /// Records why the producer parked; only `WouldBlock` is recoverable.
+    fn on_backpressure(
+        self: *StreamProducerState,
+        err: anyerror,
+    ) anyerror!support.http_response.StreamStatus {
+        if (err == error.WouldBlock) {
+            self.would_block_count += 1;
+            return .pending;
+        }
+        self.saw_non_would_block = true;
+        return err;
+    }
+
+    fn write_next(self: *StreamProducerState, response: *Response) !void {
+        @memset(&self.chunk, 'a');
+        try response.write_chunk(self.chunk[0..self.chunk_length]);
+        self.remaining_chunks -= 1;
+    }
+};
+
+fn stream_route_handler(context: *anyopaque, _: *Request, response: *Response) void {
+    const producer: *StreamProducerState = @ptrCast(@alignCast(context));
+    response.begin_stream("200 OK", "", producer, StreamProducerState.produce) catch |err| {
+        producer.begin_error = err;
+    };
+}
+
+/// Connection with no live socket whose write ring is the only output sink.
+fn producer_connection(ring: []u8, router: *const radix.Router) support.tcp.TcpConnection {
+    return .{
+        .socket = undefined,
+        .router = router,
+        .write_queue = ring,
+        .is_writing = true,
+    };
+}
+
+fn producer_request_headers() [11]u8 {
+    return .{ 0x82, 0x86, 0x04, 0x07, '/', 's', 't', 'r', 'e', 'a', 'm' };
+}
+
+test "http2: producer that fits the write ring completes synchronously" {
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    var producer = StreamProducerState{ .remaining_chunks = 1 };
+    try router.route_context(.get, "/stream", &producer, stream_route_handler);
+
+    var ring: [1024]u8 = undefined;
+    var conn = producer_connection(&ring, &router);
+    try conn.h2.reset();
+
+    const request_headers = producer_request_headers();
+    var input: [128]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x5, 1, &request_headers);
+    try conn.h2.receive(input[0..input_length], conn.http2_callbacks());
+
+    try std.testing.expectEqual(@as(?anyerror, null), producer.begin_error);
+    try std.testing.expectEqual(@as(usize, 1), producer.calls);
+    try std.testing.expectEqual(@as(usize, 0), producer.remaining_chunks);
+    try std.testing.expect(conn.h2.connection.streams.find(1) == null);
+
+    var body: [128]u8 = undefined;
+    const frames = try collect_data_frames(ring[0..conn.write_len], 1, &body);
+    try std.testing.expectEqual(@as(usize, 64), frames.bytes_length);
+    try std.testing.expectEqual(@as(usize, 1), frames.end_stream_count);
+    try std.testing.expect(frames.final_end_stream);
+}
+
+test "http2: begin_stream fails closed without an arm callback" {
+    var context: u8 = 0;
+    var response = Response{ .target = .{ .http2 = .{
+        .context = &context,
+        .router = &context,
+        .stream_id = 1,
+        .end_fn = undefined,
+        .begin_fn = undefined,
+        .write_fn = undefined,
+        .finish_fn = undefined,
+    } } };
+    try std.testing.expectError(
+        error.ProducerStreamingUnsupported,
+        response.begin_stream("200 OK", "", &context, undefined),
+    );
+    try std.testing.expect(!response.is_started());
+}
+
+test "http2: producer resumes when the write ring drains" {
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    var producer = StreamProducerState{ .remaining_chunks = 32 };
+    try router.route_context(.get, "/stream", &producer, stream_route_handler);
+
+    var ring: [1024]u8 = undefined;
+    var conn = producer_connection(&ring, &router);
+    try conn.h2.reset();
+
+    const request_headers = producer_request_headers();
+    var input: [128]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x5, 1, &request_headers);
+    try conn.h2.receive(input[0..input_length], conn.http2_callbacks());
+
+    try std.testing.expectEqual(@as(?anyerror, null), producer.begin_error);
+    try std.testing.expect(producer.remaining_chunks != 0);
+    try std.testing.expect(conn.h2_stream_producers[0] != null);
+
+    var first_body: [2048]u8 = undefined;
+    const first = try collect_data_frames(ring[0..conn.write_len], 1, &first_body);
+    try std.testing.expectEqual(@as(usize, 0), first.end_stream_count);
+
+    var total_body: usize = first.bytes_length;
+    var iterations: usize = 0;
+    while (conn.h2_stream_producers[0] != null and iterations < 64) : (iterations += 1) {
+        conn.write_len = 0;
+        conn.write_head = 0;
+        conn.pump_http2_streams();
+        var drained_body: [2048]u8 = undefined;
+        const drained = try collect_data_frames(ring[0..conn.write_len], 1, &drained_body);
+        total_body += drained.bytes_length;
+    }
+
+    try std.testing.expectEqual(@as(usize, 32 * 64), total_body);
+    try std.testing.expectEqual(@as(usize, 0), producer.remaining_chunks);
+    try std.testing.expect(conn.h2_stream_producers[0] == null);
+    try std.testing.expect(conn.h2.connection.streams.find(1) == null);
+}
+
+test "http2: producer failure resets the stream and clears the slot" {
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    var producer = StreamProducerState{ .fail_immediately = true };
+    try router.route_context(.get, "/stream", &producer, stream_route_handler);
+
+    var ring: [1024]u8 = undefined;
+    var conn = producer_connection(&ring, &router);
+    try conn.h2.reset();
+
+    const request_headers = producer_request_headers();
+    var input: [128]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x5, 1, &request_headers);
+    try conn.h2.receive(input[0..input_length], conn.http2_callbacks());
+
+    try std.testing.expectEqual(@as(?anyerror, null), producer.begin_error);
+    try std.testing.expectEqual(@as(usize, 1), producer.calls);
+    try std.testing.expect(conn.h2_stream_producers[0] == null);
+    try std.testing.expect(!conn.closing);
+    try std.testing.expect(conn.h2.connection.streams.find(1) == null);
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        try reset_count(ring[0..conn.write_len], 1, .internal_error),
+    );
+}
+
+test "http2: pending producer keeps the dispatch from force-ending" {
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    var producer = StreamProducerState{ .remaining_chunks = 2, .pending_once = true };
+    try router.route_context(.get, "/stream", &producer, stream_route_handler);
+
+    var ring: [1024]u8 = undefined;
+    var conn = producer_connection(&ring, &router);
+    try conn.h2.reset();
+
+    const request_headers = producer_request_headers();
+    var input: [128]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x5, 1, &request_headers);
+    try conn.h2.receive(input[0..input_length], conn.http2_callbacks());
+
+    try std.testing.expectEqual(@as(?anyerror, null), producer.begin_error);
+    try std.testing.expect(conn.h2_stream_producers[0] != null);
+    try std.testing.expectEqual(@as(usize, 1), producer.remaining_chunks);
+
+    var first_body: [128]u8 = undefined;
+    const first = try collect_data_frames(ring[0..conn.write_len], 1, &first_body);
+    try std.testing.expectEqual(@as(usize, 64), first.bytes_length);
+    try std.testing.expectEqual(@as(usize, 0), first.end_stream_count);
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        try frame_count(ring[0..conn.write_len], .data, 1),
+    );
+
+    conn.write_len = 0;
+    conn.write_head = 0;
+    conn.pump_http2_streams();
+
+    try std.testing.expect(conn.h2_stream_producers[0] == null);
+    try std.testing.expect(conn.h2.connection.streams.find(1) == null);
+    var drained_body: [128]u8 = undefined;
+    const drained = try collect_data_frames(ring[0..conn.write_len], 1, &drained_body);
+    try std.testing.expectEqual(@as(usize, 64), drained.bytes_length);
+    try std.testing.expectEqual(@as(usize, 1), drained.end_stream_count);
+    try std.testing.expect(drained.final_end_stream);
+}
+
+test "http2: reset_protocol clears armed producer slots" {
+    var conn = support.tcp.TcpConnection{ .socket = undefined };
+    try conn.h2.reset();
+    conn.h2_stream_producers[0] = StreamProducerState.produce;
+    conn.h2_stream_producer_close[0] = true;
+
+    try conn.reset_protocol();
+
+    try std.testing.expect(conn.h2_stream_producers[0] == null);
+    try std.testing.expect(!conn.h2_stream_producer_close[0]);
+}
+
+/// Send credit granted per scope per flow-control test iteration.
+const producer_window_increment: u32 = 16 * 1024;
+
+fn append_window_update(
+    output: []u8,
+    offset: *usize,
+    stream_id: u32,
+    increment: u32,
+) !void {
+    var payload: [4]u8 = undefined;
+    std.mem.writeInt(u32, &payload, increment, .big);
+    try append_frame(output, offset, .window_update, 0, stream_id, &payload);
+}
+
+/// Primes a producer connection with the preface, client settings, and a GET.
+fn prime_stream_connection(
+    conn: *support.tcp.TcpConnection,
+    input: []u8,
+) !void {
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(input, &input_length, .settings, 0, 0, "");
+    const request_headers = producer_request_headers();
+    try append_frame(input, &input_length, .headers, 0x5, 1, &request_headers);
+    try conn.h2.receive(input[0..input_length], conn.http2_callbacks());
+    // Routing entry for later WINDOW_UPDATE delivery; the priming above keeps
+    // the harness conventions of the existing producer tests.
+    conn.protocol_state = .http2;
+}
+
+test "http2: producer completes across flow-control window updates" {
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    var producer = StreamProducerState{
+        .chunk_length = 8192,
+        .remaining_chunks = 12,
+    };
+    try router.route_context(.get, "/stream", &producer, stream_route_handler);
+
+    var ring: [128 * 1024]u8 = undefined;
+    var conn = producer_connection(&ring, &router);
+    try conn.h2.reset();
+
+    var input: [128]u8 = undefined;
+    try prime_stream_connection(&conn, &input);
+
+    try std.testing.expectEqual(@as(?anyerror, null), producer.begin_error);
+    try std.testing.expect(conn.h2_stream_producers[0] != null);
+    try std.testing.expectEqual(@as(usize, 5), producer.remaining_chunks);
+
+    // The default 65,535-byte window fits seven 8 KiB chunks plus 8,191 bytes.
+    var first_body: [128 * 1024]u8 = undefined;
+    const first = try collect_data_frames(ring[0..conn.write_len], 1, &first_body);
+    try std.testing.expectEqual(@as(usize, 7 * 8192), first.bytes_length);
+    try std.testing.expectEqual(@as(usize, 0), first.end_stream_count);
+
+    var total_body: usize = first.bytes_length;
+    var iterations: usize = 0;
+    while (conn.h2_stream_producers[0] != null and iterations < 16) : (iterations += 1) {
+        conn.write_len = 0;
+        conn.write_head = 0;
+        conn.pump_http2_streams();
+
+        // Production WINDOW_UPDATE entry: receive frees credit, then the
+        // transport pumps producers that parked on it.
+        var update: [32]u8 = undefined;
+        var update_length: usize = 0;
+        try append_window_update(&update, &update_length, 0, producer_window_increment);
+        try append_window_update(&update, &update_length, 1, producer_window_increment);
+        conn.route_decrypted_data(update[0..update_length]);
+
+        var drained_body: [128 * 1024]u8 = undefined;
+        const drained = try collect_data_frames(ring[0..conn.write_len], 1, &drained_body);
+        total_body += drained.bytes_length;
+    }
+
+    try std.testing.expectEqual(@as(usize, 96 * 1024), total_body);
+    try std.testing.expectEqual(@as(usize, 0), producer.remaining_chunks);
+    try std.testing.expect(!producer.saw_non_would_block);
+    try std.testing.expect(conn.h2_stream_producers[0] == null);
+    try std.testing.expect(conn.h2.connection.streams.find(1) == null);
+}
+
+test "http2: write_chunk maps window exhaustion to WouldBlock" {
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    var producer = StreamProducerState{
+        .chunk_length = 8192,
+        .remaining_chunks = 8,
+    };
+    try router.route_context(.get, "/stream", &producer, stream_route_handler);
+
+    var ring: [128 * 1024]u8 = undefined;
+    var conn = producer_connection(&ring, &router);
+    try conn.h2.reset();
+
+    var input: [128]u8 = undefined;
+    try prime_stream_connection(&conn, &input);
+
+    // Seven chunks consume 57,344 bytes of the 65,535-byte window; the eighth
+    // can only park on the window because the ring still has room.
+    try std.testing.expectEqual(@as(?anyerror, null), producer.begin_error);
+    try std.testing.expectEqual(@as(usize, 1), producer.remaining_chunks);
+    try std.testing.expectEqual(@as(usize, 1), producer.would_block_count);
+    try std.testing.expect(!producer.saw_non_would_block);
+    try std.testing.expect(conn.h2_stream_producers[0] != null);
+
+    // Ring room alone does not make progress while send credit is exhausted.
+    conn.write_len = 0;
+    conn.write_head = 0;
+    conn.pump_http2_streams();
+
+    try std.testing.expectEqual(@as(usize, 1), producer.remaining_chunks);
+    try std.testing.expectEqual(@as(usize, 2), producer.would_block_count);
+    try std.testing.expect(!producer.saw_non_would_block);
+    try std.testing.expect(conn.h2_stream_producers[0] != null);
+}
+
+test "http2: stalled producer runs once per pump" {
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    var producer = StreamProducerState{ .remaining_chunks = 1, .stall = true };
+    try router.route_context(.get, "/stream", &producer, stream_route_handler);
+
+    var ring: [1024]u8 = undefined;
+    var conn = producer_connection(&ring, &router);
+    try conn.h2.reset();
+
+    var input: [128]u8 = undefined;
+    try prime_stream_connection(&conn, &input);
+
+    try std.testing.expectEqual(@as(usize, 1), producer.calls);
+    try std.testing.expect(conn.h2_stream_producers[0] != null);
+
+    conn.pump_http2_streams();
+    try std.testing.expectEqual(@as(usize, 2), producer.calls);
+
+    // An unrelated inbound frame pumps the stalled producer exactly once.
+    var ping: [32]u8 = undefined;
+    var ping_length: usize = 0;
+    try append_frame(&ping, &ping_length, .ping, 0, 0, "12345678");
+    conn.route_decrypted_data(ping[0..ping_length]);
+    try std.testing.expectEqual(@as(usize, 3), producer.calls);
+
+    try std.testing.expect(conn.h2_stream_producers[0] != null);
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        try reset_count(ring[0..conn.write_len], 1, .internal_error),
+    );
 }

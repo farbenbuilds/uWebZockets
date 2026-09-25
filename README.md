@@ -109,7 +109,13 @@ try server.run();
 | `Presets.websocket_chat` | 512 | 32 KiB | 32 KiB | 4 KiB |
 | `Presets.file_server` | 128 | 4 KiB | 512 KiB | 8 KiB |
 
-Oversized input gets a structured rejection instead of a dropped connection:
+`with_max_request_line_size`, `with_max_header_size`, and `with_max_header_count`
+extend the HTTP/1 request limits; fields beyond the inline 64 get per-connection
+slab storage. `with_max_route_nodes`, `with_max_pattern_routes`,
+`with_max_middleware`, `with_max_route_path_size`,
+`with_max_route_registry_size`, and `with_max_route_params` size the
+slab-carved router and its capture spill. Oversized input gets a structured
+rejection instead of a dropped connection:
 
 ```json
 {"error":{"code":"payload_too_large","message":"Request body exceeded the 64KB limit. Consider increasing 'max_body_size' in ServerConfig.","limit_bytes":65536}}
@@ -118,10 +124,44 @@ Oversized input gets a structured rejection instead of a dropped connection:
 The full capacity table, slab layout, and backpressure model are in
 [docs/memory_model.md](docs/memory_model.md).
 
+## Request helpers
+
+`Request` and `Response` carry allocation-free helpers for the common API
+surface. Register routes on the path only (`/search`); the query string is
+already split off into `Request.query`. Then read pairs zero-copy:
+
+```zig
+fn search(req: *uz.Request, res: *uz.Response) void {
+    const params = req.query_params() catch return;
+    const page = (params.get_int(u32, "page") catch null) orelse 1;
+    var scratch: [96]u8 = undefined;
+    res.json_buf(.{ .query = params.get("q") orelse "", .page = page }, &scratch) catch {};
+}
+```
+
+`Request.query_params()` and `Request.form()` slice query and form
+pairs out of the bounded buffer with SIMD byte scans into a fixed
+struct-of-arrays view; `query.QueryParamsOf(capacity)` and
+`Request.query_params_of(capacity)` raise that capacity at compile time.
+`percent_decode` and `form_decode` decode escapes into caller-owned scratch.
+`Request.accepts()` scores the `Accept` field, `Response.json_value` writes
+dynamic `std.json.Value` payloads, `Response.begin_json()` returns a streaming
+chunk writer for arbitrarily large JSON without allocation, and
+`Response.begin_stream()` pulls a chunked body from an application callback as
+the transport drains, so response size never depends on the write-queue size.
+`errors.Problem` renders typed JSON error documents, `status.line` maps codes
+to canonical status lines, `cache.etag` and `cache.is_not_modified` implement
+conditional GET, `schema` validates decoded JSON against comptime rules, and
+`cookie` adds a zero-copy header iterator plus versioned signing for key
+rotation. HTTP/1.1 response heads are written as scatter parts, so header size
+is bounded by the configured write queue instead of a fixed formatting buffer.
+Every helper reuses the existing bounded buffers and stays off the heap on the
+request path.
+
 ## Terminal development log
 
 `with_dev_log(true)` prints the `µWEBZOCKETS` wordmark and a Vite-style ready
-summary before the first accepting listener: `µWebZockets v1.3.5  ready in
+summary before the first accepting listener: `µWebZockets v1.4.0  ready in
 0.6 ms` followed by the `→ Local:` line; the elapsed time scales
 through nanoseconds, microseconds, milliseconds, and seconds. The wordmark
 collapses to a one-line `µWebZockets` mark when the terminal is narrower than
