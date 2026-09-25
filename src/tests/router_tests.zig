@@ -400,6 +400,48 @@ test "router: route patterns fail closed when malformed or over capacity" {
     );
 }
 
+test "router: wide patterns register and match with configured captures" {
+    const wide_pattern = "/:p0/:p1/:p2/:p3/:p4/:p5/:p6/:p7/:p8/:p9/:p10/:p11/:p12/:p13/:p14/:p15/:p16/:p17/:p18/:p19";
+    const wide_path = "/a0/a1/a2/a3/a4/a5/a6/a7/a8/a9/a10/a11/a12/a13/a14/a15/a16/a17/a18/a19";
+
+    const capacities = radix.Capacities{ .max_route_params = 20 };
+    var bundle = radix.Bundle(capacities){};
+    var router = try radix.Router.init(bundle.storage());
+    try router.get(wide_pattern, dummy_handler);
+
+    var request = Request{ .path = wide_path };
+    var extra_names: [4][]const u8 = undefined;
+    var extra_values: [4][]const u8 = undefined;
+    request.extra_param_names = &extra_names;
+    request.extra_param_values = &extra_values;
+    try std.testing.expect(router.match_request(&request, .get) != null);
+    try std.testing.expectEqual(@as(usize, 16), request.route_param_count);
+    try std.testing.expectEqual(@as(usize, 4), request.extra_param_count);
+    for (0..20) |index| {
+        var name_buffer: [8]u8 = undefined;
+        var value_buffer: [8]u8 = undefined;
+        const name = try std.fmt.bufPrint(&name_buffer, "p{d}", .{index});
+        const value = try std.fmt.bufPrint(&value_buffer, "a{d}", .{index});
+        try std.testing.expectEqualStrings(value, request.get_param(name).?);
+    }
+
+    // The default router rejects the same pattern at registration.
+    var default_bundle = radix.DefaultBundle{};
+    var default_router = try radix.Router.init(default_bundle.storage());
+    try std.testing.expectError(
+        error.RouteParameterCapacityReached,
+        default_router.get(wide_pattern, dummy_handler),
+    );
+
+    // A second match after clearing must not leak the first match's captures.
+    try router.get("/:only", dummy_handler);
+    request.path = "/z";
+    try std.testing.expect(router.match_request(&request, .get) != null);
+    try std.testing.expectEqual(@as(usize, 0), request.extra_param_count);
+    try std.testing.expect(request.get_param("p19") == null);
+    try std.testing.expectEqualStrings("z", request.get_param("only").?);
+}
+
 test "router: middleware runs in order and stops after a response" {
     var bundle = radix.DefaultBundle{};
     var router = try radix.Router.init(bundle.storage());

@@ -74,9 +74,32 @@ pub fn configured_app_with_timeout(
     comptime write_queue_size: usize,
     comptime idle_timeout_ms: u64,
 ) type {
+    return configured_app_with_route_params(
+        max_connections,
+        max_ws_message_size,
+        write_queue_size,
+        idle_timeout_ms,
+        request_module.max_route_params,
+    );
+}
+
+/// Returns an application type with an explicit route capture capacity.
+///
+/// `max_route_params` counts the captures a request may hold; values above the
+/// inline `Request.max_route_params` carve a per-connection extras region.
+pub fn configured_app_with_route_params(
+    comptime max_connections: usize,
+    comptime max_ws_message_size: usize,
+    comptime write_queue_size: usize,
+    comptime idle_timeout_ms: u64,
+    comptime max_route_params: usize,
+) type {
     if (max_connections == 0) @compileError("connection capacity must be greater than zero");
     if (max_ws_message_size == 0) @compileError("WebSocket message capacity must be greater than zero");
     if (write_queue_size == 0) @compileError("write queue capacity must be greater than zero");
+    if (max_route_params < request_module.max_route_params) {
+        @compileError("route parameter capacity must cover the inline Request arrays");
+    }
     if (max_connections > std.math.maxInt(usize) / max_ws_message_size) {
         @compileError("WebSocket message storage size overflows usize");
     }
@@ -84,10 +107,16 @@ pub fn configured_app_with_timeout(
         @compileError("write queue storage size overflows usize");
     }
 
+    const route_param_extra_capacity = max_route_params - request_module.max_route_params;
+
     return struct {
         const Self = @This();
         const Pool = core_pool.freelist_pool(core_tcp.TcpConnection, max_connections);
-        const QuicEngine = quic.quic_engine(max_connections, write_queue_size);
+        const QuicEngine = quic.quic_engine(
+            max_connections,
+            write_queue_size,
+            route_param_extra_capacity,
+        );
         const QuicTransport = udp.quic_transport(QuicEngine);
         const static_file_capacity = if (write_queue_size > 4096) write_queue_size - 4096 else write_queue_size;
         const StaticFiles = static_files_module.static_files(static_file_capacity);
@@ -119,6 +148,11 @@ pub fn configured_app_with_timeout(
         header_extras: []align(config_module.request_buffer_alignment) u8,
         extra_header_capacity: usize,
         extra_header_stride: usize,
+        // Per-connection route-capture pointer region beyond the inline
+        // `Request` arrays; paired with the header-extras region.
+        route_param_extras: []align(@alignOf([]const u8)) u8,
+        extra_route_param_capacity: usize,
+        extra_route_param_stride: usize,
         max_body_size: usize,
         reject_policy: http_rejection.RejectionPolicy = .{},
         ws_message_storage: []u8,
@@ -231,10 +265,14 @@ pub fn configured_app_with_timeout(
                 if (config.idle_timeout_ms != idle_timeout_ms) @compileError(
                     "ServerConfig.idle_timeout_ms must match the generated App timeout",
                 );
+                if (config.max_route_params != max_route_params) @compileError(
+                    "ServerConfig.max_route_params must match the generated App capacity",
+                );
             }
 
             const layout = try config_module.carve(slab, config);
             const extra_header_capacity = try config.extra_header_capacity();
+            const extra_route_param_capacity = try config.extra_route_param_capacity();
             const router_storage = try radix.carve_storage(
                 layout.router_storage,
                 config.router_capacities(),
@@ -259,6 +297,9 @@ pub fn configured_app_with_timeout(
                 .header_extras = @alignCast(layout.header_extras),
                 .extra_header_capacity = extra_header_capacity,
                 .extra_header_stride = layout.extra_header_stride,
+                .route_param_extras = @alignCast(layout.route_param_extras),
+                .extra_route_param_capacity = extra_route_param_capacity,
+                .extra_route_param_stride = layout.extra_route_param_stride,
                 .max_body_size = config.max_body_size,
                 .reject_policy = config.rejection_policy(),
                 .ws_message_storage = layout.ws_messages,
@@ -858,6 +899,27 @@ pub fn configured_app_with_timeout(
             };
         }
 
+        /// Returns one connection's borrowed slices of the shared extra
+        /// route-capture pointer region; empty when the configuration matches
+        /// inline capacity.
+        fn connection_route_param_extras(self: *Self, connection_index: usize) RouteParamExtras {
+            if (self.extra_route_param_capacity == 0) {
+                return .{ .names = &.{}, .values = &.{} };
+            }
+
+            // A runtime slice cannot prove alignment; the layout aligned this
+            // region to the boundary, so re-assert it for the pointer reinterpret.
+            const start = connection_index * self.extra_route_param_stride;
+            const bytes: []align(@alignOf([]const u8)) u8 = @alignCast(
+                self.route_param_extras[start .. start + self.extra_route_param_stride],
+            );
+            const pointers = std.mem.bytesAsSlice([]const u8, bytes);
+            return .{
+                .names = pointers[0..self.extra_route_param_capacity],
+                .values = pointers[self.extra_route_param_capacity .. self.extra_route_param_capacity * 2],
+            };
+        }
+
         // callback triggered when the tcp server accepts a new socket.
         fn on_new_connection(socket: xev.TCP, user_data: ?*anyopaque) void {
             const self: *Self = @ptrCast(@alignCast(user_data));
@@ -874,7 +936,10 @@ pub fn configured_app_with_timeout(
             // acquire only returns pointers into this pool's contiguous slab.
             const connection_index = self.pool.index_of(conn) orelse unreachable;
             const extras = self.connection_header_extras(connection_index);
+            const route_params = self.connection_route_param_extras(connection_index);
             conn.req = .{};
+            conn.route_param_names = route_params.names;
+            conn.route_param_values = route_params.values;
             conn.parser = .{
                 .max_body_size = self.max_body_size,
                 .max_request_line_bytes = self.max_request_line_size,
@@ -1458,6 +1523,15 @@ pub const HeaderExtras = struct {
     /// Header-name slices beyond the inline `Request` arrays.
     names: [][]const u8,
     /// Header-value slices matching `names`.
+    values: [][]const u8,
+};
+
+/// One connection's borrowed slices of the shared extra route-capture pointer
+/// region; empty when the configuration matches inline capacity.
+pub const RouteParamExtras = struct {
+    /// Route-parameter-name slices beyond the inline `Request` arrays.
+    names: [][]const u8,
+    /// Route-parameter-value slices matching `names`.
     values: [][]const u8,
 };
 

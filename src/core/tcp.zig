@@ -155,6 +155,10 @@ pub const TcpConnection = struct {
     tls_write_buffer: [8192]u8 = undefined,
     protocol_probe: [@import("../http2/connection.zig").client_preface.len]u8 = undefined,
     write_queue: []u8 = &.{},
+    // Per-connection route-capture capacity slices, set once by the owning
+    // application and reused by every request dispatched on this connection.
+    route_param_names: [][]const u8 = &.{},
+    route_param_values: [][]const u8 = &.{},
 
     /// Resets protocol detection and bounded HTTP/2 state after pool acquire.
     pub fn reset_protocol(self: *TcpConnection) !void {
@@ -425,6 +429,11 @@ pub const TcpConnection = struct {
             try response.end("400 Bad Request", "QUERY requires a valid Content-Type");
             return;
         }
+        // Dispatch is serialized on this loop, so wiring the connection's
+        // reusable capture slices onto the request is race-free.
+        request.extra_param_names = self.route_param_names;
+        request.extra_param_values = self.route_param_values;
+        request.extra_param_count = 0;
         const route = self.router.match_request(request, method);
         if (self.router.run_middleware(request, &response) == .stop) {
             try self.finish_http2_dispatch(&response);
@@ -806,6 +815,9 @@ pub const TcpConnection = struct {
                 close_connection(self);
             return;
         }
+        self.req.extra_param_names = self.route_param_names;
+        self.req.extra_param_values = self.route_param_values;
+        self.req.extra_param_count = 0;
         const route = self.router.match_request(&self.req, method);
         if (self.router.run_middleware(&self.req, &response) == .stop) {
             self.finish_sync_dispatch(&response);

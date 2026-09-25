@@ -97,6 +97,12 @@ pub const ServerConfig = struct {
     /// Values above `std.math.maxInt(u16)` are rejected because segment
     /// lengths are u16.
     max_route_path_size: usize = radix_pattern.max_route_path_size,
+    /// Maximum route captures accepted on one request, including overflow.
+    ///
+    /// Values below `Request.max_route_params` are rejected because the inline
+    /// arrays cannot shrink; larger values carve one name/value pointer pair
+    /// per extra capture into the per-connection slab region.
+    max_route_params: usize = request_module.max_route_params,
     /// Bytes reserved for the route paths retained for introspection.
     ///
     /// Must hold at least one `max_route_path_size` path.
@@ -158,6 +164,8 @@ pub const ServerConfig = struct {
         max_middleware: ?usize = null,
         /// Replaces `max_route_path_size` when non-null.
         max_route_path_size: ?usize = null,
+        /// Replaces `max_route_params` when non-null.
+        max_route_params: ?usize = null,
         /// Replaces `max_route_registry_size` when non-null.
         max_route_registry_size: ?usize = null,
         /// Replaces `idle_timeout_ms` when non-null.
@@ -198,6 +206,7 @@ pub const ServerConfig = struct {
         if (overrides.max_pattern_routes) |value| result.max_pattern_routes = value;
         if (overrides.max_middleware) |value| result.max_middleware = value;
         if (overrides.max_route_path_size) |value| result.max_route_path_size = value;
+        if (overrides.max_route_params) |value| result.max_route_params = value;
         if (overrides.max_route_registry_size) |value| result.max_route_registry_size = value;
         if (overrides.idle_timeout_ms) |value| result.idle_timeout_ms = value;
         if (overrides.compression) |value| result.compression = value;
@@ -222,8 +231,12 @@ pub const ServerConfig = struct {
         if (self.max_request_line_size == 0) return error.InvalidRequestLineCapacity;
         if (self.max_header_size == 0) return error.InvalidHeaderCapacity;
         if (self.max_header_count < request_module.max_headers) return error.InvalidHeaderCapacity;
-        // Reject header counts whose per-connection pointer storage overflows.
+        if (self.max_route_params < request_module.max_route_params) {
+            return error.InvalidRouterCapacity;
+        }
+        // Reject header and route-param counts whose pointer storage overflows.
         _ = try self.extra_header_stride();
+        _ = try self.extra_route_param_stride();
         // Reject router capacities the radix router cannot represent.
         try self.validate_router();
         if (self.idle_timeout_ms > std.math.maxInt(i64)) return error.InvalidIdleTimeout;
@@ -342,6 +355,27 @@ pub const ServerConfig = struct {
         return align_checked(bytes, request_buffer_alignment);
     }
 
+    /// Route-capture slots reserved per connection beyond the inline arrays.
+    pub fn extra_route_param_capacity(self: ServerConfig) Error!usize {
+        if (self.max_route_params < request_module.max_route_params) {
+            return error.InvalidRouterCapacity;
+        }
+        return self.max_route_params - request_module.max_route_params;
+    }
+
+    /// Bytes reserved per connection for the extra route-capture pointers.
+    ///
+    /// Zero when `max_route_params` matches the inline `Request` capacity.
+    pub fn extra_route_param_stride(self: ServerConfig) Error!usize {
+        const capacity = try self.extra_route_param_capacity();
+        if (capacity == 0) return 0;
+        const pointers = std.math.mul(usize, capacity, 2) catch
+            return error.SlabSizeOverflow;
+        const bytes = std.math.mul(usize, pointers, @sizeOf([]const u8)) catch
+            return error.SlabSizeOverflow;
+        return align_checked(bytes, @alignOf([]const u8));
+    }
+
     /// Bytes reserved per connection for paired RFC 7692 scratch regions.
     pub fn compression_stride(self: ServerConfig) Error!usize {
         if (self.max_ws_message_size == 0) return error.InvalidWebSocketMessageCapacity;
@@ -365,6 +399,7 @@ pub const ServerConfig = struct {
             .max_pattern_routes = self.max_pattern_routes,
             .max_middleware = self.max_middleware,
             .max_route_path_size = self.max_route_path_size,
+            .max_route_params = self.max_route_params,
             .registry_storage_size = self.max_route_registry_size,
         };
     }
@@ -458,6 +493,8 @@ const LayoutOffsets = struct {
     request_end: usize,
     header_extras_start: usize,
     header_extras_end: usize,
+    route_param_extras_start: usize,
+    route_param_extras_end: usize,
     write_start: usize,
     write_end: usize,
     message_start: usize,
@@ -498,6 +535,9 @@ pub const SlabLayout = struct {
     /// Per-connection header name/value pointer storage beyond the inline
     /// `Request` arrays, `extra_header_stride` apart.
     header_extras: []u8,
+    /// Per-connection route-capture pointer storage beyond the inline
+    /// `Request` arrays, `extra_route_param_stride` apart.
+    route_param_extras: []u8,
     /// One bounded response ring per connection, `write_queue_size` apart.
     write_queues: []u8,
     /// One WebSocket message region per connection, `max_ws_message_size` apart.
@@ -530,6 +570,8 @@ pub const SlabLayout = struct {
     request_buffer_stride: usize,
     /// Byte distance between consecutive header-extras pointer regions.
     extra_header_stride: usize,
+    /// Byte distance between consecutive route-capture pointer regions.
+    extra_route_param_stride: usize,
     /// Byte distance between consecutive paired compression scratch regions.
     compression_stride: usize,
     /// Total bytes consumed inside `slab`.
@@ -557,6 +599,7 @@ pub const SlabLayout = struct {
             ),
             .request_buffers = slab[offsets.request_start..offsets.request_end],
             .header_extras = slab[offsets.header_extras_start..offsets.header_extras_end],
+            .route_param_extras = slab[offsets.route_param_extras_start..offsets.route_param_extras_end],
             .write_queues = slab[offsets.write_start..offsets.write_end],
             .ws_messages = slab[offsets.message_start..offsets.message_end],
             .compression_scratch = slab[offsets.compression_start..offsets.compression_end],
@@ -598,6 +641,7 @@ pub const SlabLayout = struct {
             .router_storage = slab[offsets.router_storage_start..offsets.router_storage_end],
             .request_buffer_stride = try config.request_buffer_stride(),
             .extra_header_stride = try config.extra_header_stride(),
+            .extra_route_param_stride = try config.extra_route_param_stride(),
             .compression_stride = if (config.compression) try config.compression_stride() else 0,
             .total_bytes = offsets.total_bytes,
             .alignment = config.required_alignment(),
@@ -620,6 +664,7 @@ fn layout_offsets(config: ServerConfig) Error!LayoutOffsets {
 
     const request_stride = try config.request_buffer_stride();
     const extra_header_stride = try config.extra_header_stride();
+    const extra_route_param_stride = try config.extra_route_param_stride();
     const compression_stride = if (config.compression) try config.compression_stride() else 0;
 
     var offsets: LayoutOffsets = undefined;
@@ -641,11 +686,18 @@ fn layout_offsets(config: ServerConfig) Error!LayoutOffsets {
     cursor = try add_product(cursor, request_stride, config.max_connections);
     offsets.request_end = cursor;
 
-    // Extra header pointers sit next to the request buffers that publish them.
+    // Extra header pointers sit next to the request buffers that publish them;
+    // route-capture pointers follow in the same region, before the write
+    // queues, so a request's direct pointer storage stays on adjacent pages.
     cursor = try align_checked(cursor, request_buffer_alignment);
     offsets.header_extras_start = cursor;
     cursor = try add_product(cursor, extra_header_stride, config.max_connections);
     offsets.header_extras_end = cursor;
+
+    cursor = try align_checked(cursor, @alignOf([]const u8));
+    offsets.route_param_extras_start = cursor;
+    cursor = try add_product(cursor, extra_route_param_stride, config.max_connections);
+    offsets.route_param_extras_end = cursor;
 
     cursor = try align_checked(cursor, write_queue_alignment);
     offsets.write_start = cursor;

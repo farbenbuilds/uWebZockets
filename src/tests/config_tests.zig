@@ -231,11 +231,14 @@ test "config: default slab carries the router region at the end" {
     try std.testing.expectEqual(@as(usize, 858_240), router_bytes);
 
     const total = try config.slab_bytes();
-    try std.testing.expectEqual(@as(usize, 671_455_360), total);
-    // Part 1 kept the router arrays inline in the App; the default slab was
-    // 670_597_120 bytes. It already satisfied `radix.storage_alignment`, so the
-    // router region now extends it by exactly one region's bytes.
-    try std.testing.expectEqual(@as(usize, 670_597_120), total - router_bytes);
+    // The connection slab dominates the default footprint; the inline route
+    // capture accessors added a pointer pair and a count to `TcpConnection`,
+    // moving the previous 671_455_360 to the current total.
+    try std.testing.expectEqual(@as(usize, 671_561_856), total);
+    // The default route-param extras stride is zero: the region extends the
+    // slab by exactly one router region's bytes.
+    try std.testing.expectEqual(@as(usize, 0), try config.extra_route_param_stride());
+    try std.testing.expectEqual(@as(usize, 670_703_616), total - router_bytes);
 }
 
 test "config: slab bytes grow with each router capacity knob" {
@@ -254,6 +257,50 @@ test "config: slab bytes grow with each router capacity knob" {
         try std.testing.expect(try grown.router_storage_bytes() > base_router);
         try std.testing.expect(try grown.slab_bytes() > base_bytes);
     }
+}
+
+test "config: route param capacity sizes the slab" {
+    const base = ServerConfig{ .max_connections = 2 };
+    const raised = base.with(.{ .max_route_params = 24 });
+    try raised.validate();
+
+    try std.testing.expectEqual(@as(usize, 0), try base.extra_route_param_stride());
+    try std.testing.expectEqual(@as(usize, 8), try raised.extra_route_param_capacity());
+    const stride = try raised.extra_route_param_stride();
+    try std.testing.expectEqual(@as(usize, 8 * 2 * @sizeOf([]const u8)), stride);
+    try std.testing.expect((try raised.slab_bytes()) > (try base.slab_bytes()));
+
+    try std.testing.expectError(
+        error.InvalidRouterCapacity,
+        (ServerConfig{
+            .max_route_params = support.http_request.max_route_params - 1,
+        }).validate(),
+    );
+    try (ServerConfig{
+        .max_route_params = support.http_request.max_route_params,
+    }).validate();
+    try std.testing.expectError(
+        error.SlabSizeOverflow,
+        (ServerConfig{ .max_route_params = std.math.maxInt(usize) }).validate(),
+    );
+
+    try std.testing.expectEqual(@as(usize, 24), raised.router_capacities().max_route_params);
+    try std.testing.expectEqual(
+        support.http_request.max_route_params,
+        (ServerConfig{}).router_capacities().max_route_params,
+    );
+
+    const total = try config_module.required_bytes(raised);
+    const slab = try std.testing.allocator.alignedAlloc(
+        u8,
+        std.mem.Alignment.fromByteUnits(config_module.slab_alignment),
+        total,
+    );
+    defer std.testing.allocator.free(slab);
+
+    const layout = try config_module.carve(slab, raised);
+    try std.testing.expectEqual(@as(usize, 2 * stride), layout.route_param_extras.len);
+    try std.testing.expectEqual(stride, layout.extra_route_param_stride);
 }
 
 test "config: validate rejects out-of-range router capacities" {
@@ -363,6 +410,7 @@ test "config: builder exposes router capacity knobs" {
         .with_max_pattern_routes(16)
         .with_max_middleware(12)
         .with_max_route_path_size(1024)
+        .with_max_route_params(24)
         .with_max_route_registry_size(32 * 1024);
 
     const configuration = builder.configuration();
@@ -370,6 +418,7 @@ test "config: builder exposes router capacity knobs" {
     try std.testing.expectEqual(@as(usize, 16), configuration.max_pattern_routes);
     try std.testing.expectEqual(@as(usize, 12), configuration.max_middleware);
     try std.testing.expectEqual(@as(usize, 1024), configuration.max_route_path_size);
+    try std.testing.expectEqual(@as(usize, 24), configuration.max_route_params);
     try std.testing.expectEqual(@as(usize, 32 * 1024), configuration.max_route_registry_size);
 
     var server = try builder.build(std.testing.allocator);
@@ -378,7 +427,13 @@ test "config: builder exposes router capacity knobs" {
     try std.testing.expectEqual(@as(usize, 16), server.router_storage.pattern_routes.len);
     try std.testing.expectEqual(@as(usize, 12), server.router_storage.middleware.len);
     try std.testing.expectEqual(@as(usize, 1024), server.router_storage.max_route_path_size);
+    try std.testing.expectEqual(@as(usize, 24), server.router_storage.max_route_params);
     try std.testing.expectEqual(@as(usize, 32 * 1024), server.router_storage.registry_storage.len);
+    try std.testing.expectEqual(@as(usize, 8), server.extra_route_param_capacity);
+    try std.testing.expectEqual(
+        @as(usize, 2 * server.extra_route_param_stride),
+        server.route_param_extras.len,
+    );
     try std.testing.expect(
         @intFromPtr(server.router_storage.route_storage.ptr) >= @intFromPtr(server.slab.ptr),
     );

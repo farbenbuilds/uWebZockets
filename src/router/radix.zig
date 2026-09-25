@@ -235,6 +235,8 @@ pub const Capacities = struct {
     max_middleware: usize = default_max_middleware,
     /// Maximum accepted route path length in bytes.
     max_route_path_size: usize = radix_pattern.max_route_path_size,
+    /// Maximum route captures accepted on one request.
+    max_route_params: usize = request_module.max_route_params,
     /// Bytes retained for the route paths kept for introspection.
     registry_storage_size: usize = 64 * 1024,
 
@@ -258,6 +260,8 @@ pub const Storage = struct {
     route_storage: []u8,
     /// Largest accepted route path length for this router.
     max_route_path_size: usize,
+    /// Maximum route captures accepted by this router's patterns.
+    max_route_params: usize,
     /// Offset of each node's segment inside `route_storage`.
     segment_offsets: []u32,
     /// Byte length of each node's segment.
@@ -454,6 +458,7 @@ pub fn carve_storage(region: []u8, capacities: Capacities) error{InvalidRouterCa
     return .{
         .route_storage = carved_slice(u8, region, prefix, plan.route_storage),
         .max_route_path_size = capacities.max_route_path_size,
+        .max_route_params = capacities.max_route_params,
         .segment_offsets = carved_slice(u32, region, prefix, plan.segment_offsets),
         .segment_lengths = carved_slice(u16, region, prefix, plan.segment_lengths),
         .first_child = carved_slice(u16, region, prefix, plan.first_child),
@@ -513,6 +518,7 @@ pub fn bundle(comptime capacities: Capacities) type {
             return .{
                 .route_storage = &self.route_storage,
                 .max_route_path_size = capacities.max_route_path_size,
+                .max_route_params = capacities.max_route_params,
                 .segment_offsets = &self.segment_offsets,
                 .segment_lengths = &self.segment_lengths,
                 .first_child = &self.first_child,
@@ -541,6 +547,8 @@ pub const Router = struct {
     route_storage: []u8 = &.{},
     /// Largest accepted route path length, copied from `Storage`.
     max_route_path_size: usize = radix_pattern.max_route_path_size,
+    /// Maximum route captures accepted by patterns, copied from `Storage`.
+    max_route_params: usize = request_module.max_route_params,
     segment_offsets: []u32 = &.{},
     segment_lengths: []u16 = &.{},
     first_child: []u16 = &.{},
@@ -570,12 +578,14 @@ pub const Router = struct {
             .max_pattern_routes = storage.pattern_routes.len,
             .max_middleware = storage.middleware.len,
             .max_route_path_size = storage.max_route_path_size,
+            .max_route_params = storage.max_route_params,
             .registry_storage_size = storage.registry_storage.len,
         });
 
         var router = Router{
             .route_storage = storage.route_storage,
             .max_route_path_size = storage.max_route_path_size,
+            .max_route_params = storage.max_route_params,
             .segment_offsets = storage.segment_offsets,
             .segment_lengths = storage.segment_lengths,
             .first_child = storage.first_child,
@@ -713,7 +723,11 @@ pub const Router = struct {
         handler: RouteHandler,
     ) !void {
         try self.ensure_route_record(path);
-        const pattern = try radix_pattern.analyze_pattern(path, self.max_route_path_size);
+        const pattern = try radix_pattern.analyze_pattern(
+            path,
+            self.max_route_path_size,
+            self.max_route_params,
+        );
         if (pattern.dynamic) {
             const route = try self.get_or_add_pattern(path, pattern);
             const method_index = @intFromEnum(method);
@@ -847,7 +861,11 @@ pub const Router = struct {
     /// Registers a WebSocket upgrade route.
     pub fn ws(self: *Router, path: []const u8, behavior: WsBehavior) !void {
         try self.ensure_route_record(path);
-        const pattern = try radix_pattern.analyze_pattern(path, self.max_route_path_size);
+        const pattern = try radix_pattern.analyze_pattern(
+            path,
+            self.max_route_path_size,
+            self.max_route_params,
+        );
         if (pattern.dynamic) {
             const route = try self.get_or_add_pattern(path, pattern);
             if (route.ws_behavior != null) return error.RouteAlreadyRegistered;

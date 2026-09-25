@@ -16,6 +16,8 @@ extern "C" {
 /* Versioned fixed capacities of the C ABI. */
 #define UWZ_MAX_ROUTES 64
 #define UWZ_MAX_MIDDLEWARE 32
+/* Inline captures always available; the count may exceed this when the
+   application raises ServerConfig.max_route_params. */
 #define UWZ_MAX_ROUTE_PARAMETERS 16
 #define UWZ_MAX_ROUTE_PATH_LENGTH 2048
 
@@ -254,7 +256,7 @@ uwz_slice uwz_request_header(const uwz_request *request, uwz_slice name);
 size_t uwz_request_header_count(const uwz_request *request, uwz_slice name);
 /* Returns a case-sensitive :name or terminal *name capture borrowed from request. */
 uwz_slice uwz_request_parameter(const uwz_request *request, uwz_slice name);
-/* Returns at most UWZ_MAX_ROUTE_PARAMETERS captures. */
+/* Returns the total route-capture count for this request. */
 size_t uwz_request_parameter_count(const uwz_request *request);
 
 uwz_error uwz_response_end(

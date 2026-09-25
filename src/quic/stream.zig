@@ -303,6 +303,10 @@ pub fn stream_with(comptime io: StreamIo) type {
         body_storage: []u8 = &.{},
         response_body_storage: []u8 = &.{},
         response_header_storage: []u8 = &.{},
+        // Engine-owned capture capacity slices, reused by every request this
+        // stream dispatches; empty when captures stay inline.
+        extra_param_names: [][]const u8 = &.{},
+        extra_param_values: [][]const u8 = &.{},
         response_name_offsets: [max_headers]u16 = .{0} ** max_headers,
         response_name_lengths: [max_headers]u16 = .{0} ** max_headers,
         response_value_offsets: [max_headers]u16 = .{0} ** max_headers,
@@ -324,6 +328,10 @@ pub fn stream_with(comptime io: StreamIo) type {
         async_response_state: http_response.AsyncResponseState = .{},
 
         /// Reinitializes a pooled stream with borrowed transport and storage.
+        ///
+        /// `extra_param_names` and `extra_param_values` are equal-length
+        /// caller-owned capture slices; pass empty slices when the inline
+        /// `Request` arrays cover every configured capture.
         pub fn reset(
             self: *Self,
             owner: *anyopaque,
@@ -333,6 +341,8 @@ pub fn stream_with(comptime io: StreamIo) type {
             body_storage: []u8,
             response_body_storage: []u8,
             response_header_storage: []u8,
+            extra_param_names: [][]const u8,
+            extra_param_values: [][]const u8,
         ) void {
             var next_generation = self.async_response_state.generation +% 1;
             if (next_generation == 0) next_generation = 1;
@@ -344,6 +354,8 @@ pub fn stream_with(comptime io: StreamIo) type {
                 .body_storage = body_storage,
                 .response_body_storage = response_body_storage,
                 .response_header_storage = response_header_storage,
+                .extra_param_names = extra_param_names,
+                .extra_param_values = extra_param_values,
             };
             self.async_response_state.generation = next_generation;
             self.async_response_state.state = .cancelled;
@@ -584,6 +596,12 @@ pub fn stream_with(comptime io: StreamIo) type {
                     self.close_now();
                 return;
             }
+            // The header set owns the request view; wire this stream's
+            // engine-owned capture slices before the capture pass so wide
+            // patterns can spill past the inline array.
+            header_set.request.extra_param_names = self.extra_param_names;
+            header_set.request.extra_param_values = self.extra_param_values;
+            header_set.request.extra_param_count = 0;
             const route = self.router.match_request(&header_set.request, method);
             if (self.router.run_middleware(&header_set.request, &response) == .stop) {
                 self.finish_sync_dispatch(&response);

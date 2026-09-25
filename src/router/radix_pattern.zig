@@ -1,5 +1,4 @@
 const std = @import("std");
-const request_module = @import("../http/request.zig");
 
 /// Maximum accepted route path length in bytes.
 pub const max_route_path_size = 2048;
@@ -21,9 +20,10 @@ pub fn valid_path(path: []const u8, max_path_size: usize) bool {
     return true;
 }
 
-/// Validates a route path against `max_path_size` and classifies its static
-/// and parameter segments.
-pub fn analyze_pattern(path: []const u8, max_path_size: usize) !PatternInfo {
+/// Validates a route path against `max_path_size`, classifies its static and
+/// parameter segments, and rejects patterns needing more than `max_params`
+/// captures so registration fails closed for the configured capacity.
+pub fn analyze_pattern(path: []const u8, max_path_size: usize, max_params: usize) !PatternInfo {
     if (!valid_path(path, max_path_size)) return error.InvalidRoutePath;
 
     var info = PatternInfo{};
@@ -36,7 +36,11 @@ pub fn analyze_pattern(path: []const u8, max_path_size: usize) !PatternInfo {
                 return error.InvalidRoutePattern;
             }
             info.dynamic = true;
-            if (info.parameter_count == request_module.max_route_params) {
+            // The 255 guard keeps the u8 counter from overflowing when a
+            // caller configures more captures than the counter can hold.
+            if (info.parameter_count == std.math.maxInt(u8) or
+                @as(usize, info.parameter_count) >= max_params)
+            {
                 return error.RouteParameterCapacityReached;
             }
             info.parameter_count += 1;

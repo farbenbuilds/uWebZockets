@@ -140,10 +140,11 @@ test "web standards: request helpers preserve borrowed fallback fields" {
     const extra_values = [_][]const u8{ "value", "upgrade" };
     request.extra_header_names = &extra_names;
     request.extra_header_values = &extra_values;
-    const param_names = [_][]const u8{"overflow"};
-    const param_values = [_][]const u8{"capture"};
+    var param_names = [_][]const u8{"overflow"};
+    var param_values = [_][]const u8{"capture"};
     request.extra_param_names = &param_names;
     request.extra_param_values = &param_values;
+    request.extra_param_count = 1;
 
     try std.testing.expectEqualStrings("value", request.get_header("x-extra").?);
     try std.testing.expectEqual(@as(usize, 2), request.count_headers("connection"));
@@ -155,6 +156,46 @@ test "web standards: request helpers preserve borrowed fallback fields" {
     try std.testing.expectEqualStrings("X-Extra", entries.next().?.name);
     try std.testing.expectEqualStrings("Connection", entries.next().?.name);
     try std.testing.expect(entries.next() == null);
+}
+
+test "request: add_param spills into capacity extras and fails closed" {
+    var request = Request{};
+    var names: [4][]const u8 = undefined;
+    var values: [4][]const u8 = undefined;
+    request.extra_param_names = &names;
+    request.extra_param_values = &values;
+
+    var name_storage: [20 * 8]u8 = undefined;
+    var value_storage: [20 * 8]u8 = undefined;
+    for (0..20) |index| {
+        const name = try std.fmt.bufPrint(name_storage[index * 8 ..][0..8], "p{d}", .{index});
+        const value = try std.fmt.bufPrint(value_storage[index * 8 ..][0..8], "v{d}", .{index});
+        try request.add_param(name, value);
+    }
+    try std.testing.expectEqual(@as(usize, 16), request.route_param_count);
+    try std.testing.expectEqual(@as(usize, 4), request.extra_param_count);
+    try std.testing.expectEqualStrings("v0", request.get_param("p0").?);
+    try std.testing.expectEqualStrings("v15", request.get_param("p15").?);
+    try std.testing.expectEqualStrings("v19", request.get_param("p19").?);
+    try std.testing.expectError(
+        error.RouteParameterCapacityReached,
+        request.add_param("p20", "v20"),
+    );
+
+    var owned = try request.clone(std.testing.allocator);
+    defer owned.deinit();
+    try std.testing.expectEqual(@as(usize, 16), owned.request.route_param_count);
+    try std.testing.expectEqual(@as(usize, 4), owned.request.extra_param_count);
+    try std.testing.expectEqualStrings("v19", owned.request.get_param("p19").?);
+
+    request.clear_params();
+    try std.testing.expectEqual(@as(usize, 0), request.route_param_count);
+    try std.testing.expectEqual(@as(usize, 0), request.extra_param_count);
+    try std.testing.expect(request.get_param("p0") == null);
+    try std.testing.expect(request.get_param("p19") == null);
+    // The capacity slices survive clearing so transports can reuse them.
+    try request.add_param("p20", "v20");
+    try std.testing.expectEqualStrings("v20", request.get_param("p20").?);
 }
 
 test "web standards: pipe rejects an invalid callback byte count" {

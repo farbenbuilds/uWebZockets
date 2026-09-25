@@ -7,6 +7,7 @@ const packet = support.quic_packet;
 const stream = support.quic_stream;
 const validation = support.quic_validation;
 const HeaderSet = stream.HeaderSet;
+const Request = support.http_request.Request;
 const Response = support.http_response.Response;
 const StreamStatus = support.http_response.StreamStatus;
 
@@ -66,7 +67,7 @@ test "quic: sockaddr conversion preserves address family and port" {
 }
 
 test "quic: engine policy pins BBR congestion control and pacing" {
-    const TestEngine = engine.quic_engine(2, 1024);
+    const TestEngine = engine.quic_engine(2, 1024, 0);
     var settings: c.lsquic_engine_settings = std.mem.zeroes(c.lsquic_engine_settings);
     TestEngine.apply_settings(&settings);
 
@@ -85,7 +86,7 @@ test "quic: engine policy pins BBR congestion control and pacing" {
 }
 
 test "quic: each live stream reserves independent request and trailer header slots" {
-    const TestEngine = engine.quic_engine(2, 64);
+    const TestEngine = engine.quic_engine(2, 64, 0);
     var quic_engine = try TestEngine.init();
     defer quic_engine.deinit();
 
@@ -723,6 +724,72 @@ test "quic: HTTP/3 non-producer streaming keeps the phase machine" {
         error.ResponseNotStreaming,
         guard_target.write_fn(guard_target.context, "late"),
     );
+}
+
+/// Records the route captures observed by a wide HTTP/3 handler.
+const WideCaptureSink = struct {
+    inline_count: usize = 0,
+    extra_count: usize = 0,
+    first: ?[]const u8 = null,
+    last: ?[]const u8 = null,
+
+    fn handle(context: *anyopaque, request: *Request, response: *Response) void {
+        const self: *WideCaptureSink = @ptrCast(@alignCast(context));
+        self.inline_count = request.route_param_count;
+        self.extra_count = request.extra_param_count;
+        self.first = request.get_param("p0");
+        self.last = request.get_param("p19");
+        response.end("200 OK", "") catch {};
+    }
+};
+
+test "quic: captures beyond 16 resolve from engine storage" {
+    const radix = support.radix;
+    const capacities = radix.Capacities{ .max_route_params = 20 };
+    var bundle = radix.Bundle(capacities){};
+    var router = try radix.Router.init(bundle.storage());
+    const pattern = "/:p0/:p1/:p2/:p3/:p4/:p5/:p6/:p7/:p8/:p9/:p10/:p11/:p12/:p13/:p14/:p15/:p16/:p17/:p18/:p19";
+    const path = "/a0/a1/a2/a3/a4/a5/a6/a7/a8/a9/a10/a11/a12/a13/a14/a15/a16/a17/a18/a19";
+    var sink = WideCaptureSink{};
+    try router.route_context(.get, pattern, &sink, WideCaptureSink.handle);
+
+    var fake = FakeStream{};
+    var body_storage: [64]u8 = undefined;
+    var response_header_storage: [stream.response_header_capacity]u8 = undefined;
+    var extra_names: [4][]const u8 = undefined;
+    var extra_values: [4][]const u8 = undefined;
+    var owner: u8 = 0;
+    var quic = TestQuicStream{};
+    quic.reset(
+        &owner,
+        TestRelease.release,
+        @ptrCast(&fake),
+        &router,
+        &body_storage,
+        &body_storage,
+        &response_header_storage,
+        &extra_names,
+        &extra_values,
+    );
+
+    const HeaderOwner = struct {
+        fn release(_: *anyopaque, _: *HeaderSet) void {}
+    };
+    var header_storage: [stream.header_capacity]u8 = undefined;
+    var header_set = HeaderSet{};
+    header_set.reset(&owner, HeaderOwner.release, &header_storage);
+    try std.testing.expect(add_test_header(&header_set, ":method", "GET"));
+    try std.testing.expect(add_test_header(&header_set, ":scheme", "https"));
+    try std.testing.expect(add_test_header(&header_set, ":authority", "localhost"));
+    try std.testing.expect(add_test_header(&header_set, ":path", path));
+    try std.testing.expect(header_set.process_header(null));
+    quic.attach_headers(&header_set);
+    quic.on_read();
+
+    try std.testing.expectEqual(@as(usize, 16), sink.inline_count);
+    try std.testing.expectEqual(@as(usize, 4), sink.extra_count);
+    try std.testing.expectEqualStrings("a0", sink.first.?);
+    try std.testing.expectEqualStrings("a19", sink.last.?);
 }
 
 test "quic: HTTP/3 write backpressure keeps the stream armed" {

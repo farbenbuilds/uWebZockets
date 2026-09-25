@@ -812,3 +812,67 @@ test "http: configured extras stride parses a max-size header block" {
     try std.testing.expectEqual(@as(usize, 160), req.get_header("X-Large-126").?.len);
     try std.testing.expectEqual(@as(usize, 160), req.get_header("X-Large-063").?.len);
 }
+
+/// Records the route captures observed by a wide HTTP/2 handler.
+const WideCaptureSink = struct {
+    inline_count: usize = 0,
+    extra_count: usize = 0,
+    first: ?[]const u8 = null,
+    last: ?[]const u8 = null,
+
+    fn handle(context: *anyopaque, request: *Request, res: *response.Response) void {
+        const self: *WideCaptureSink = @ptrCast(@alignCast(context));
+        self.inline_count = request.route_param_count;
+        self.extra_count = request.extra_param_count;
+        self.first = request.get_param("p0");
+        self.last = request.get_param("p19");
+        res.end("200 OK", "") catch {};
+    }
+};
+
+test "http2: captures beyond 16 resolve from the connection extras" {
+    const capacities = support.radix.Capacities{ .max_route_params = 20 };
+    var bundle = support.radix.Bundle(capacities){};
+    var router = try support.radix.Router.init(bundle.storage());
+    const pattern = "/:p0/:p1/:p2/:p3/:p4/:p5/:p6/:p7/:p8/:p9/:p10/:p11/:p12/:p13/:p14/:p15/:p16/:p17/:p18/:p19";
+    const path = "/a0/a1/a2/a3/a4/a5/a6/a7/a8/a9/a10/a11/a12/a13/a14/a15/a16/a17/a18/a19";
+    var sink = WideCaptureSink{};
+    try router.route_context(.get, pattern, &sink, WideCaptureSink.handle);
+
+    var ring: [4096]u8 = undefined;
+    var names: [4][]const u8 = undefined;
+    var values: [4][]const u8 = undefined;
+    var conn = test_connection(&ring);
+    conn.router = &router;
+    conn.route_param_names = &names;
+    conn.route_param_values = &values;
+    try conn.h2.reset();
+
+    // HPACK block: static GET, static https, then a raw literal :path.
+    var header_block: [96]u8 = undefined;
+    header_block[0] = 0x82;
+    header_block[1] = 0x86;
+    header_block[2] = 0x04;
+    header_block[3] = @intCast(path.len);
+    @memcpy(header_block[4 .. 4 + path.len], path);
+    const block_length = 4 + path.len;
+
+    var input: [256]u8 = undefined;
+    @memcpy(input[0..support.http2.client_preface.len], support.http2.client_preface);
+    var input_length: usize = support.http2.client_preface.len;
+    const settings = [_]u8{ 0, 0, 0, 4, 0, 0, 0, 0, 0 };
+    @memcpy(input[input_length..][0..settings.len], &settings);
+    input_length += settings.len;
+    var frame_header: [9]u8 = .{ 0, 0, 0, 1, 0x5, 0, 0, 0, 1 };
+    std.mem.writeInt(u24, frame_header[0..3], @intCast(block_length), .big);
+    @memcpy(input[input_length..][0..frame_header.len], &frame_header);
+    input_length += frame_header.len;
+    @memcpy(input[input_length..][0..block_length], header_block[0..block_length]);
+    input_length += block_length;
+
+    try conn.h2.receive(input[0..input_length], conn.http2_callbacks());
+    try std.testing.expectEqual(@as(usize, 16), sink.inline_count);
+    try std.testing.expectEqual(@as(usize, 4), sink.extra_count);
+    try std.testing.expectEqualStrings("a0", sink.first.?);
+    try std.testing.expectEqualStrings("a19", sink.last.?);
+}

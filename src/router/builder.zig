@@ -58,11 +58,12 @@ pub fn configured_builder(comptime config: ServerConfig) type {
         const Self = @This();
 
         /// Application type generated for this configuration.
-        pub const AppType = app_module.configured_app_with_timeout(
+        pub const AppType = app_module.configured_app_with_route_params(
             config.max_connections,
             config.max_ws_message_size,
             config.write_queue_size,
             config.idle_timeout_ms,
+            config.max_route_params,
         );
 
         io: std.Io,
@@ -152,6 +153,14 @@ pub fn configured_builder(comptime config: ServerConfig) type {
             self: Self,
             comptime value: usize,
         ) configured_builder(config.with(.{ .max_route_path_size = value })) {
+            return .{ .io = self.io };
+        }
+
+        /// Overrides the maximum route captures accepted on one request.
+        pub fn with_max_route_params(
+            self: Self,
+            comptime value: usize,
+        ) configured_builder(config.with(.{ .max_route_params = value })) {
             return .{ .io = self.io };
         }
 

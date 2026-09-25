@@ -21,13 +21,29 @@ pub const PacketSlot = struct {
 /// Returns a bounded QUIC server engine type.
 ///
 /// `capacity` bounds concurrent connections and request streams;
-/// `response_capacity` reserves response body bytes per stream during `init`.
-pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) type {
+/// `response_capacity` reserves response body bytes per stream during `init`;
+/// `route_param_extra_capacity` reserves capture slots per stream beyond the
+/// inline `Request` arrays (zero keeps every capture inline).
+pub fn quic_engine(
+    comptime capacity: usize,
+    comptime response_capacity: usize,
+    comptime route_param_extra_capacity: usize,
+) type {
     if (capacity == 0) @compileError("QUIC capacity must be greater than zero");
     if (capacity > std.math.maxInt(c_uint)) @compileError("QUIC capacity exceeds lsquic limits");
     if (response_capacity == 0) @compileError("HTTP/3 response capacity must be greater than zero");
     if (capacity > std.math.maxInt(usize) / 4) @compileError("QUIC packet capacity overflows usize");
     if (capacity > std.math.maxInt(usize) / 2) @compileError("HTTP/3 header slot count overflows usize");
+    if (route_param_extra_capacity > std.math.maxInt(usize) / 2) {
+        @compileError("HTTP/3 route parameter capacity overflows usize");
+    }
+    const route_param_pointer_count = route_param_extra_capacity * 2;
+    if (route_param_pointer_count != 0 and
+        capacity > std.math.maxInt(usize) / route_param_pointer_count)
+    {
+        @compileError("HTTP/3 route parameter storage size overflows usize");
+    }
+    const route_param_slot_count = capacity * route_param_pointer_count;
     const header_slot_count = capacity * 2;
     if (header_slot_count > std.math.maxInt(usize) / stream.header_capacity) {
         @compileError("HTTP/3 header storage size overflows usize");
@@ -71,6 +87,9 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
         request_body_storage: []u8,
         response_header_storage: []u8,
         response_body_storage: []u8,
+        /// Per-stream capture slots beyond the inline `Request` arrays;
+        /// empty when `route_param_extra_capacity` is zero.
+        route_param_storage: [][]const u8,
         active_connections: usize = 0,
         global_acquired: bool = false,
         /// Depth of active lsquic callbacks; cooldown must not re-enter them.
@@ -108,6 +127,13 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
                 capacity * response_capacity,
             );
             errdefer std.heap.page_allocator.free(response_body_storage);
+            // A zero slot count allocates nothing; the allocator returns an
+            // empty slice whose free is a no-op.
+            const route_param_storage = try std.heap.page_allocator.alloc(
+                []const u8,
+                route_param_slot_count,
+            );
+            errdefer std.heap.page_allocator.free(route_param_storage);
 
             return .{
                 .stream_pool = stream_pool,
@@ -117,6 +143,7 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
                 .request_body_storage = request_body_storage,
                 .response_header_storage = response_header_storage,
                 .response_body_storage = response_body_storage,
+                .route_param_storage = route_param_storage,
             };
         }
 
@@ -237,6 +264,7 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
             std.heap.page_allocator.free(self.response_header_storage);
             std.heap.page_allocator.free(self.request_body_storage);
             std.heap.page_allocator.free(self.header_storage);
+            std.heap.page_allocator.free(self.route_param_storage);
             self.packet_pool.deinit();
             self.header_pool.deinit();
             self.stream_pool.deinit();
@@ -340,6 +368,15 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
             const body_start = index * stream.request_body_capacity;
             const response_header_start = index * stream.response_header_capacity;
             const response_body_start = index * response_capacity;
+            const route_param_start = index * route_param_pointer_count;
+            const route_param_names: [][]const u8 = if (route_param_extra_capacity == 0)
+                &.{}
+            else
+                self.route_param_storage[route_param_start .. route_param_start + route_param_extra_capacity];
+            const route_param_values: [][]const u8 = if (route_param_extra_capacity == 0)
+                &.{}
+            else
+                self.route_param_storage[route_param_start + route_param_extra_capacity .. route_param_start + route_param_pointer_count];
             quic_stream.reset(
                 self,
                 release_stream,
@@ -348,6 +385,8 @@ pub fn quic_engine(comptime capacity: usize, comptime response_capacity: usize) 
                 self.request_body_storage[body_start .. body_start + stream.request_body_capacity],
                 self.response_body_storage[response_body_start .. response_body_start + response_capacity],
                 self.response_header_storage[response_header_start .. response_header_start + stream.response_header_capacity],
+                route_param_names,
+                route_param_values,
             );
             return quic_stream;
         }

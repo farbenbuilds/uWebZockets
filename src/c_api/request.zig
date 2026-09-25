@@ -73,8 +73,10 @@ pub export fn uwz_request_parameter(
     return errors.make_slice(request.get_param(parameter_name) orelse return types.empty_slice);
 }
 
-/// Returns the number of fixed-array route captures on this request.
+/// Returns the total number of route captures on this request, including
+/// captures beyond the inline `UWZ_MAX_ROUTE_PARAMETERS` supplied by the
+/// application's configured route-param capacity.
 pub export fn uwz_request_parameter_count(request_pointer: ?*const anyopaque) usize {
     const request = cast_request(request_pointer) orelse return 0;
-    return request.route_param_count;
+    return request.route_param_count + request.extra_param_count;
 }
