@@ -183,6 +183,36 @@ HTTP/1.1 and advances the `uwz_http_requests` counter; HTTP/3 emits one
 `http_request` record per completed request/response through the owning
 thread's sink, while the QUIC path never advances the counter registry.
 
+## Graceful shutdown
+
+Applications that should stop on SIGINT or SIGTERM arm the watcher before the
+loop starts:
+
+```zig
+var server = try uz.Server.builder(init.io)
+    .build(std.heap.page_allocator);
+defer server.deinit();
+
+try server.catch_shutdown_signals();
+try server.listen("127.0.0.1", 3000);
+try server.run();
+```
+
+`catch_shutdown_signals` moves the application into the same `begin_shutdown`
+path as an explicit `shutdown()` call: existing connections drain, recurring
+timers stop, and the loop exits. It must be called before `run`; once shutdown
+has started it returns `error.ApplicationUnavailable`. A second call returns
+`error.SignalWatcherAlreadyInstalled`, because the signal disposition and
+self-pipe are process-wide and only one watcher may own them.
+
+On POSIX, SIGINT and SIGTERM handlers write one byte into a non-blocking
+self-pipe that the event loop polls. Signals arriving before the loop drains
+coalesce into a single shutdown request, no handler allocates or logs, and
+`deinit` restores the previous dispositions. Windows installs a
+`SetConsoleCtrlHandler` routine for Ctrl+C, console close, and logoff/shutdown
+events; it records the request in a process flag and wakes the loop through a
+libxev async.
+
 ## Use as a Zig dependency
 
 ### Zig package manager

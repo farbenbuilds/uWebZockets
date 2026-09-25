@@ -4,6 +4,7 @@ const core_tcp = @import("../core/tcp.zig");
 const core_pool = @import("../core/pool.zig");
 const core_timer = @import("../core/timer.zig");
 const core_affinity = @import("../core/affinity.zig");
+const core_signal = @import("../core/signal.zig");
 const radix = @import("radix.zig");
 const xev = @import("xev");
 const PubSubEngine = @import("../ws/pubsub.zig").PubSubEngine;
@@ -214,6 +215,7 @@ pub fn configured_app_with_route_params(
         server: ?core_tcp.TcpServer = null,
         sweeper: ?core_timer.connection_sweeper(Pool, idle_timeout_ms) = null,
         watcher: ?file_watch_module.Watcher = null,
+        signal_watcher: ?core_signal.SignalWatcher = null,
         tls_ctx: ?TlsContext = null,
         quic_tls_ctx: ?TlsContext = null,
         quic_transport: ?QuicTransport = null,
@@ -488,6 +490,8 @@ pub fn configured_app_with_route_params(
             self.sweeper = null;
             if (self.watcher) |*watch| watch.deinit();
             self.watcher = null;
+            if (self.signal_watcher) |*watcher| watcher.deinit();
+            self.signal_watcher = null;
             self.server = null;
 
             if (self.quic_transport) |*transport| transport.deinit();
@@ -554,6 +558,7 @@ pub fn configured_app_with_route_params(
             if (self.cluster_wakeup) |*wakeup| wakeup.notify() catch {};
             if (self.sweeper) |*sw| sw.stop(&self.loop);
             if (self.watcher) |*watch| watch.stop(self.loop.get_xev_loop());
+            if (self.signal_watcher) |*watcher| watcher.stop();
             if (self.server) |*server| core_tcp.close_server(server, &self.loop);
             if (self.quic_transport) |*transport| transport.shutdown();
 
@@ -575,6 +580,9 @@ pub fn configured_app_with_route_params(
             if (self.pool.count_active() != 0) return error.ShutdownIncomplete;
             if (self.watcher) |*watch| {
                 if (!watch.is_drained()) return error.ShutdownIncomplete;
+            }
+            if (self.signal_watcher) |*watcher| {
+                if (!watcher.is_drained()) return error.ShutdownIncomplete;
             }
             if (self.server) |server| {
                 if (!server.close_complete) return error.ShutdownIncomplete;
@@ -1207,6 +1215,32 @@ pub fn configured_app_with_route_params(
             try core_loop.run(&self.loop);
             self.flush_dev_log();
             if (self.shutting_down) try self.verify_shutdown();
+        }
+
+        /// Arms graceful shutdown on SIGINT and SIGTERM for this application.
+        ///
+        /// Call before `run`; a received signal requests the same shutdown as
+        /// `App.shutdown`. Calling after shutdown starts or after `deinit`
+        /// returns `error.ApplicationUnavailable`; a second call returns
+        /// `error.SignalWatcherAlreadyInstalled`. `begin_shutdown` stops the
+        /// watcher, and `deinit` releases it after the loop has drained.
+        pub fn catch_shutdown_signals(self: *Self) !void {
+            if (self.shutting_down or self.deinitialized) {
+                return error.ApplicationUnavailable;
+            }
+            if (self.signal_watcher != null) return error.SignalWatcherAlreadyInstalled;
+            self.signal_watcher = try core_signal.SignalWatcher.init(
+                &self.loop,
+                on_shutdown_signal,
+                self,
+            );
+            self.signal_watcher.?.start();
+        }
+
+        /// Bridges a coalesced signal wakeup into the shared shutdown path.
+        fn on_shutdown_signal(context: *anyopaque) void {
+            const self: *Self = @ptrCast(@alignCast(context));
+            self.begin_shutdown();
         }
 
         /// Arms the recursive file watcher configured for the dev log.

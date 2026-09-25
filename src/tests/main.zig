@@ -24,6 +24,7 @@ comptime {
     _ = @import("router_tests.zig");
     _ = @import("schema_cookie_tests.zig");
     _ = @import("shared_nothing_tests.zig");
+    _ = @import("signal_tests.zig");
     _ = @import("tls_tests.zig");
     _ = @import("udp_tests.zig");
     _ = @import("watch_tests.zig");
