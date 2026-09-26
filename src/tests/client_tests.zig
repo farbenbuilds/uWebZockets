@@ -937,6 +937,127 @@ test "client: tls verification without a ca path returns the named error" {
     try std.testing.expect(!capture.completed);
 }
 
+test "client: tls verification rejects an untrusted trust anchor" {
+    // The ASan and MSan runtimes abort on this toolchain's thread teardown.
+    if (test_options.sanitize or test_options.memory_sanitize) return error.SkipZigTest;
+    var directory = std.testing.tmpDir(.{});
+    defer directory.cleanup();
+
+    const ca_path = try std.fs.path.joinZ(
+        std.testing.allocator,
+        &.{ ".zig-cache", "tmp", &directory.sub_path, "untrusted-ca.pem" },
+    );
+    defer std.testing.allocator.free(ca_path);
+
+    var serving_pki = try generate_test_pki();
+    defer serving_pki.deinit();
+    var untrusted_pki = try generate_test_pki();
+    defer untrusted_pki.deinit();
+    try std.testing.expect(write_certificate_pem(std.testing.io, untrusted_pki.ca_cert, ca_path));
+
+    const wire = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello";
+    var port_slot = PortSlot{};
+    var server = TlsServer{ .port_slot = &port_slot, .response = wire, .ca_path = null, .pki = &serving_pki };
+    const thread = try std.Thread.spawn(.{}, TlsServer.run, .{&server});
+    defer thread.join();
+
+    const port = port_slot.wait();
+    var storage = client.FetchStorage{};
+    const outcome = try client.fetch_blocking(
+        std.testing.io,
+        .{ .method = .get, .host = "127.0.0.1", .path = "/" },
+        .{
+            .port = port,
+            .tls = .{ .verify = true, .ca_path = ca_path, .server_name = "localhost" },
+            .read_timeout_ms = 5_000,
+        },
+        &storage,
+    );
+
+    switch (outcome) {
+        .failure => |failure| try std.testing.expectEqual(client.FailureKind.tls, failure.kind),
+        .response => return error.UnexpectedResponse,
+    }
+}
+
+test "client: tls verification rejects the wrong server name" {
+    // The ASan and MSan runtimes abort on this toolchain's thread teardown.
+    if (test_options.sanitize or test_options.memory_sanitize) return error.SkipZigTest;
+    var directory = std.testing.tmpDir(.{});
+    defer directory.cleanup();
+
+    const ca_path = try std.fs.path.joinZ(
+        std.testing.allocator,
+        &.{ ".zig-cache", "tmp", &directory.sub_path, "ca.pem" },
+    );
+    defer std.testing.allocator.free(ca_path);
+
+    var pki = try generate_test_pki();
+    defer pki.deinit();
+    try std.testing.expect(write_certificate_pem(std.testing.io, pki.ca_cert, ca_path));
+
+    const wire = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello";
+    var port_slot = PortSlot{};
+    var server = TlsServer{ .port_slot = &port_slot, .response = wire, .ca_path = null, .pki = &pki };
+    const thread = try std.Thread.spawn(.{}, TlsServer.run, .{&server});
+    defer thread.join();
+
+    const port = port_slot.wait();
+    var storage = client.FetchStorage{};
+    const outcome = try client.fetch_blocking(
+        std.testing.io,
+        .{ .method = .get, .host = "127.0.0.1", .path = "/" },
+        .{
+            .port = port,
+            .tls = .{ .verify = true, .ca_path = ca_path, .server_name = "not-localhost" },
+            .read_timeout_ms = 5_000,
+        },
+        &storage,
+    );
+
+    switch (outcome) {
+        .failure => |failure| try std.testing.expectEqual(client.FailureKind.tls, failure.kind),
+        .response => return error.UnexpectedResponse,
+    }
+}
+
+test "client: a failed fetch releases its slot for reuse" {
+    // The ASan and MSan runtimes abort on this toolchain's thread teardown.
+    if (test_options.sanitize or test_options.memory_sanitize) return error.SkipZigTest;
+    var instance = try client.client(1).init(std.testing.io);
+    defer instance.deinit();
+
+    var refused = OutcomeCapture{};
+    try instance.fetch(
+        .{ .method = .get, .host = "127.0.0.1", .path = "/" },
+        .{ .port = 1, .connect_timeout_ms = 200, .read_timeout_ms = 200 },
+        &refused,
+        OutcomeCapture.on_outcome,
+    );
+    try instance.run();
+    try std.testing.expect(refused.completed);
+    try std.testing.expectEqual(client.FailureKind.connect, refused.outcome.failure.kind);
+
+    // The same single-slot client must accept and complete a second request.
+    const wire = "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    var port_slot = PortSlot{};
+    var server = PlainServer{ .port_slot = &port_slot, .response = wire };
+    const thread = try std.Thread.spawn(.{}, PlainServer.run, .{&server});
+    defer thread.join();
+
+    const port = port_slot.wait();
+    var accepted = OutcomeCapture{};
+    try instance.fetch(
+        .{ .method = .get, .host = "127.0.0.1", .path = "/" },
+        .{ .port = port, .read_timeout_ms = 5_000 },
+        &accepted,
+        OutcomeCapture.on_outcome,
+    );
+    try instance.run();
+    try std.testing.expect(accepted.completed);
+    try std.testing.expectEqual(@as(u16, 204), accepted.outcome.response.status);
+}
+
 /// Records one outcome for callback-based tests.
 const OutcomeCapture = struct {
     outcome: client.FetchOutcome = .{ .failure = .{ .kind = .closed, .message = "pending" } },

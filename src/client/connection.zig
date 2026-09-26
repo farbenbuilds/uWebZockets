@@ -174,6 +174,21 @@ pub const ClientConnection = struct {
         return self.active;
     }
 
+    /// Force-releases an active slot without delivering an outcome.
+    ///
+    /// Only valid after a terminal event-loop failure: the loop will not run
+    /// again, so no completion can fire and no callback may be invoked. Closes
+    /// the socket directly and frees the TLS session.
+    pub fn abandon(self: *ClientConnection) void {
+        if (!self.active) return;
+        self.callback = null;
+        self.release_callback = null;
+        self.active = false;
+        self.phase = .idle;
+        tcp.close_socket(self.socket.fd);
+        self.session.deinit();
+    }
+
     fn fail(self: *ClientConnection, kind: FailureKind, message: []const u8) void {
         if (self.phase == .teardown) return;
         self.outcome = .{ .failure = .{ .kind = kind, .message = message } };

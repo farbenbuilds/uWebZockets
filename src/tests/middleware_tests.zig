@@ -296,6 +296,53 @@ test "rate limit: burst defaults to the rate, saturates, and zero rate never ref
     try std.testing.expect(!zero_rate_denied.allowed);
 }
 
+test "rate limit: extreme rates and idle gaps cannot overflow the refill math" {
+    // Regression: elapsed * rate and the baseline advance must not wrap u64.
+    const refilled = middleware.rate_limit_step(
+        4_000_000_000,
+        0,
+        0,
+        1_000_000_000,
+        6_000_000_000,
+    );
+    try std.testing.expect(refilled.allowed);
+    try std.testing.expectEqual(@as(u32, 3_999_999_999), refilled.tokens);
+
+    const clamped = middleware.rate_limit_step(
+        1_000_000,
+        4,
+        0,
+        0,
+        5_000_000_000,
+    );
+    try std.testing.expect(clamped.allowed);
+    try std.testing.expectEqual(@as(u32, 3), clamped.tokens);
+}
+
+test "rate limit: a zero rate omits Retry-After because no retry arrives" {
+    var buckets = [_]middleware.RateLimitBucket{.{}};
+    var limiter = middleware.rate_limit(std.testing.io, .{
+        .rate_per_second = 0,
+        .burst = 1,
+        .key_constant = 3,
+    }, &buckets);
+
+    var request = Request{};
+    var allowed_capture = ResponseCapture{};
+    try std.testing.expectEqual(
+        support.radix.MiddlewareResult.continue_dispatch,
+        try run_rate_limit(&limiter, &request, &allowed_capture),
+    );
+
+    var rejected_capture = ResponseCapture{};
+    try std.testing.expectEqual(
+        support.radix.MiddlewareResult.stop,
+        try run_rate_limit(&limiter, &request, &rejected_capture),
+    );
+    try std.testing.expectEqualStrings("429 Too Many Requests", rejected_capture.status_line());
+    try std.testing.expect(std.mem.indexOf(u8, rejected_capture.header_bytes(), "Retry-After") == null);
+}
+
 test "rate limit: handler allows the burst then rejects with Retry-After" {
     var buckets = [_]middleware.RateLimitBucket{.{}};
     var limiter = middleware.rate_limit(std.testing.io, .{
@@ -390,6 +437,16 @@ test "rate limit: a full table evicts the oldest bucket and stays bounded" {
     try std.testing.expectEqual(middleware.fnv1a_64("tenant-c"), buckets[0].key);
     try std.testing.expectEqual(@as(u64, 20), buckets[1].key);
     try std.testing.expectEqual(@as(usize, 2), buckets.len);
+
+    // The evicted key starts empty: rotating keys cannot reset a budget.
+    try std.testing.expectEqual(@as(u32, 0), buckets[0].tokens);
+    var rotating = header_request("x-tenant", "tenant-e");
+    var rotating_capture = ResponseCapture{};
+    try std.testing.expectEqual(
+        support.radix.MiddlewareResult.stop,
+        try run_rate_limit(&limiter, &rotating, &rotating_capture),
+    );
+    try std.testing.expectEqualStrings("429 Too Many Requests", rotating_capture.status_line());
 
     var free_buckets = [_]middleware.RateLimitBucket{
         .{ .key = 10, .tokens = 1, .last_refill_ns = 500 },

@@ -149,10 +149,27 @@ pub fn client(comptime max_inflight: usize) type {
         }
 
         /// Drives the loop until every in-flight request has completed.
+        ///
+        /// A loop failure is terminal: every remaining slot is abandoned so
+        /// `deinit` stays valid and no callback is delivered after the loop
+        /// has stopped.
         pub fn run(self: *Self) !void {
             while (self.inflight > 0) {
-                try core_loop.run(&self.loop);
+                core_loop.run(&self.loop) catch |err| {
+                    self.abandon_inflight();
+                    return err;
+                };
             }
+        }
+
+        /// Force-releases every active slot after a terminal loop failure.
+        fn abandon_inflight(self: *Self) void {
+            for (&self.slots) |*slot| {
+                if (slot.is_active()) slot.abandon();
+            }
+            self.inflight = 0;
+            self.free_count = max_inflight;
+            for (&self.free_indices, 0..) |*free_index, index| free_index.* = index;
         }
 
         fn acquire(self: *Self) ?usize {

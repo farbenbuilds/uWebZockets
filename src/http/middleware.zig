@@ -301,7 +301,9 @@ pub const RateLimitOptions = struct {
     rate_per_second: u32,
     /// Bucket capacity; zero uses `rate_per_second` with a minimum of one.
     burst: u32 = 0,
-    /// Request header hashed with FNV-1a when present.
+    /// Request header hashed with FNV-1a when present. Must be a
+    /// server-derived value (for example `x-forwarded-for` behind a trusted
+    /// proxy); an attacker-controlled header lets a client rotate keys.
     key_header: ?[]const u8 = null,
     /// Shared key used when no function or header value applies.
     key_constant: u64 = 0,
@@ -323,8 +325,9 @@ pub const RateLimitDecision = struct {
 /// monotonic clock (`.awake`, which is `CLOCK_MONOTONIC` on Linux). Mutating
 /// the caller-owned buckets and reading the clock is the documented purpose of
 /// this boundary handler; it performs no allocation and takes no locks. A full
-/// table evicts the bucket with the smallest `last_refill_ns`, and an empty
-/// table fails closed.
+/// table evicts the bucket with the smallest `last_refill_ns` and starts the
+/// evicted key empty, so rotating keys cannot reset a budget; an empty table
+/// fails closed.
 pub const RateLimit = struct {
     options: RateLimitOptions,
     buckets: []RateLimitBucket,
@@ -335,14 +338,18 @@ pub const RateLimit = struct {
         const now_ns = std.Io.Clock.now(.awake, self.io).nanoseconds;
         const key = rate_limit_key(self.options, request);
         const slot = locate_bucket(self.buckets, key) orelse {
-            reject_limited(response);
+            reject_limited(response, retry_after_seconds(self.options.rate_per_second));
             return .stop;
         };
         const bucket = &self.buckets[slot.index];
         if (!slot.matched) {
+            // An evicted slot starts empty: a client that rotates an
+            // attacker-controlled key must not reset its own budget. A free
+            // slot starts full so a new peer is not punished for table churn.
+            const seeded = if (slot.evicted) 0 else effective_burst(self.options.rate_per_second, self.options.burst);
             bucket.* = .{
                 .key = key,
-                .tokens = @intCast(effective_burst(self.options.rate_per_second, self.options.burst)),
+                .tokens = @intCast(seeded),
                 .last_refill_ns = now_ns,
             };
         }
@@ -356,7 +363,7 @@ pub const RateLimit = struct {
         bucket.tokens = decision.tokens;
         bucket.last_refill_ns = decision.last_refill_ns;
         if (!decision.allowed) {
-            reject_limited(response);
+            reject_limited(response, decision.retry_after_seconds);
             return .stop;
         }
         return .continue_dispatch;
@@ -393,13 +400,20 @@ pub fn rate_limit_step(
     } else if (rate_per_second != 0) {
         // A baseline outside the i128 range refills completely.
         const elapsed = std.math.sub(i128, now_ns, baseline) catch std.math.maxInt(i128);
-        const fill_ns: i128 = capacity * std.time.ns_per_s;
+        const fill_ns: i128 = @as(i128, capacity) * std.time.ns_per_s;
         if (elapsed >= fill_ns) {
             available = capacity;
             baseline = now_ns;
         } else {
-            const accrued: u64 = @intCast(@as(u128, @intCast(elapsed)) * rate_per_second / std.time.ns_per_s);
-            baseline += @intCast(accrued * std.time.ns_per_s / rate_per_second);
+            // Clamp before scaling so the baseline advance cannot overflow and
+            // a burst cannot over-refill past the missing tokens.
+            const missing = capacity - available;
+            const accrued_u128 = @min(
+                @as(u128, missing),
+                @as(u128, @intCast(elapsed)) * rate_per_second / std.time.ns_per_s,
+            );
+            const accrued: u64 = @intCast(accrued_u128);
+            baseline += @intCast(accrued_u128 * std.time.ns_per_s / rate_per_second);
             available = @min(capacity, available + accrued);
         }
     }
@@ -409,7 +423,7 @@ pub fn rate_limit_step(
             .allowed = false,
             .tokens = 0,
             .last_refill_ns = baseline,
-            .retry_after_seconds = retry_after_seconds(),
+            .retry_after_seconds = retry_after_seconds(rate_per_second),
         };
     }
     return .{
@@ -423,9 +437,10 @@ pub fn rate_limit_step(
 /// Returns the RFC 9110 Retry-After delay for an exhausted bucket.
 ///
 /// An integer rate of at least one token per second reaches its next token
-/// within one second, the header's resolution, and a zero rate never refills;
-/// both report the one-second minimum.
-fn retry_after_seconds() u64 {
+/// within one second, the header's resolution. A zero rate never refills, so
+/// there is no meaningful retry delay and the caller omits the header.
+fn retry_after_seconds(rate_per_second: u32) u64 {
+    if (rate_per_second == 0) return 0;
     return 1;
 }
 
@@ -439,6 +454,8 @@ fn effective_burst(rate_per_second: u32, burst: u32) u64 {
 const BucketSlot = struct {
     index: usize,
     matched: bool,
+    /// True when the slot was occupied and evicted for this key.
+    evicted: bool,
 };
 
 /// Finds `key`, else a free slot, else the oldest slot for eviction.
@@ -451,15 +468,15 @@ fn locate_bucket(buckets: []const RateLimitBucket, key: u64) ?BucketSlot {
             if (free == null) free = index;
             continue;
         }
-        if (bucket.key == key) return .{ .index = index, .matched = true };
+        if (bucket.key == key) return .{ .index = index, .matched = true, .evicted = false };
         if (bucket.last_refill_ns < oldest_ns) {
             oldest_ns = bucket.last_refill_ns;
             oldest_index = index;
         }
     }
-    if (free) |index| return .{ .index = index, .matched = false };
+    if (free) |index| return .{ .index = index, .matched = false, .evicted = false };
     if (buckets.len == 0) return null;
-    return .{ .index = oldest_index, .matched = false };
+    return .{ .index = oldest_index, .matched = false, .evicted = true };
 }
 
 /// Resolves the bucket key: custom function, hashed header, or constant.
@@ -480,16 +497,18 @@ pub fn fnv1a_64(bytes: []const u8) u64 {
     return hash;
 }
 
-fn reject_limited(response: *Response) void {
-    var buffer: [20]u8 = undefined;
-    const value = std.fmt.bufPrint(&buffer, "{d}", .{retry_after_seconds()}) catch {
-        fail_response(response);
-        return;
-    };
-    response.append_header("Retry-After", value) catch {
-        fail_response(response);
-        return;
-    };
+fn reject_limited(response: *Response, retry_after: u64) void {
+    if (retry_after != 0) {
+        var buffer: [20]u8 = undefined;
+        const value = std.fmt.bufPrint(&buffer, "{d}", .{retry_after}) catch {
+            fail_response(response);
+            return;
+        };
+        response.append_header("Retry-After", value) catch {
+            fail_response(response);
+            return;
+        };
+    }
     end_best_effort(response, "429 Too Many Requests");
 }
 

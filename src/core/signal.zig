@@ -118,11 +118,20 @@ pub const PosixWatcher = struct {
     /// lost. Returns `error.SignalWatcherAlreadyInstalled` while another
     /// watcher owns the process-wide handler state.
     pub fn init(loop: *Loop, callback: Callback, context: *anyopaque) !Self {
-        if (posix_pipe_write_fd.load(.acquire) >= 0) {
+        // Claim the process-wide slot before creating the pipe so two
+        // concurrent installs cannot both replace the dispositions. The zero
+        // placeholder is never observed by the handler: dispositions change
+        // only after the real write end is stored.
+        if (posix_pipe_write_fd.cmpxchgStrong(-1, 0, .acq_rel, .acquire) != null) {
             return error.SignalWatcherAlreadyInstalled;
         }
+        errdefer posix_pipe_write_fd.store(-1, .release);
 
         const fds = try std.Io.Threaded.pipe2(.{ .CLOEXEC = true, .NONBLOCK = true });
+        errdefer {
+            close_posix_fd(fds[0]);
+            close_posix_fd(fds[1]);
+        }
         var action = std.posix.Sigaction{
             .handler = .{ .handler = handle_posix_signal },
             .mask = std.posix.sigemptyset(),
@@ -185,6 +194,19 @@ pub const PosixWatcher = struct {
     /// Callers must first `stop`, drive the loop, and observe `is_drained`.
     pub fn deinit(self: *Self) void {
         std.debug.assert(self.is_drained());
+        self.release();
+    }
+
+    /// Releases without requiring a drained poll.
+    ///
+    /// Only valid when the owning loop will never run again, such as a cluster
+    /// worker whose thread has already exited; the loop must be deinitialized
+    /// afterwards without executing completions.
+    pub fn deinit_undrained(self: *Self) void {
+        self.release();
+    }
+
+    fn release(self: *Self) void {
         if (!self.installed) {
             self.* = undefined;
             return;
@@ -210,9 +232,11 @@ pub const PosixWatcher = struct {
         self.active = false;
         _ = result catch |err| {
             if (self.stopping or err == error.Canceled) return .disarm;
-            // The pipe is owned by this watcher, so an unexpected poll error
-            // means the watch is broken; stop rather than spin on it.
-            log.warn("signal pipe watch failed: {}", .{err});
+            // A broken watch would silently drop every later shutdown signal,
+            // so fail closed: log and request shutdown now instead of leaving
+            // the process unable to stop gracefully.
+            log.err("signal pipe watch failed, requesting shutdown: {}", .{err});
+            self.callback(self.context);
             return .disarm;
         };
         if (self.stopping) return .disarm;
@@ -380,6 +404,19 @@ pub const WindowsWatcher = struct {
     /// Callers must first `stop`, drive the loop, and observe `is_drained`.
     pub fn deinit(self: *Self) void {
         std.debug.assert(self.is_drained());
+        self.release();
+    }
+
+    /// Releases without requiring a drained wait.
+    ///
+    /// Only valid when the owning loop will never run again, such as a cluster
+    /// worker whose thread has already exited; the loop must be deinitialized
+    /// afterwards without executing completions.
+    pub fn deinit_undrained(self: *Self) void {
+        self.release();
+    }
+
+    fn release(self: *Self) void {
         if (!self.installed) {
             self.* = undefined;
             return;

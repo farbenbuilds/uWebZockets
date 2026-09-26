@@ -159,3 +159,27 @@ test "application signal requests the shared shutdown path" {
     try testing.expect(!server.is_running());
     try testing.expectError(error.ApplicationUnavailable, server.catch_shutdown_signals());
 }
+
+test "cluster signal watcher installs once and releases with the group" {
+    const TestApp = support.app.configured_app_with_timeout(2, 1024, 4096, 0);
+    const test_config = support.config.ServerConfig{
+        .max_connections = 2,
+        .max_ws_message_size = 1024,
+        .write_queue_size = 4096,
+        .idle_timeout_ms = 0,
+        .max_body_size = 8192,
+        .max_route_nodes = 8,
+        .max_pattern_routes = 4,
+        .max_middleware = 2,
+    };
+    var group = try TestApp.cluster(2).init_with_options(
+        std.testing.allocator,
+        std.testing.io,
+        test_config,
+        .{ .cpu_affinity = false },
+    );
+    defer group.deinit();
+
+    try group.catch_shutdown_signals();
+    try testing.expectError(error.SignalWatcherAlreadyInstalled, group.catch_shutdown_signals());
+}

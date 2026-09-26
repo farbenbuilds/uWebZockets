@@ -428,7 +428,7 @@ pub const TcpConnection = struct {
     }
 
     /// Records one completed HTTP/2 request/response cycle in the log.
-    fn log_http2_request(
+    pub fn log_request(
         self: *TcpConnection,
         method: []const u8,
         path: []const u8,
@@ -540,6 +540,7 @@ pub const TcpConnection = struct {
                     errdefer self.ws.deinit();
 
                     try response.begin_chunked("200 OK", "");
+                    self.log_request(request.method, request.path, 200);
                     if (self.ws.behavior.open) |callback| callback(&self.ws);
                     return;
                 }
@@ -603,7 +604,7 @@ pub const TcpConnection = struct {
         const target = self.http2_response_target(stream_id);
         const code = http_response.status_code(status) orelse return error.InvalidStatus;
         try self.h2.send_response(stream_id, status, headers, body, callbacks);
-        if (target) |view| log_http2_request(self, view.method, view.path, code);
+        if (target) |view| log_request(self, view.method, view.path, code);
     }
 
     fn begin_http2_response(
@@ -647,7 +648,7 @@ pub const TcpConnection = struct {
             else => |finish_error| return finish_error,
         };
         if (target) |view| {
-            if (view.status != 0) log_http2_request(self, view.method, view.path, view.status);
+            if (view.status != 0) log_request(self, view.method, view.path, view.status);
         }
     }
 
@@ -769,7 +770,7 @@ pub const TcpConnection = struct {
             ) catch close_connection(self);
             return err;
         };
-        if (target) |view| log_http2_request(self, view.method, view.path, code);
+        if (target) |view| log_request(self, view.method, view.path, code);
     }
 
     fn wake_http2_async_response(_: *anyopaque) void {

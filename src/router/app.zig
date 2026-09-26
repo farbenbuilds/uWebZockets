@@ -1356,6 +1356,7 @@ pub fn configured_app_with_route_params(
                 worker_failed: std.atomic.Value(bool) = .init(false),
                 startup_options: ClusterOptions = .{},
                 cores: core_affinity.CoreSelection = .{},
+                signal_watcher: ?core_signal.SignalWatcher = null,
                 deinitialized: bool = false,
 
                 pub fn init(allocator: std.mem.Allocator, io: std.Io) !Cluster {
@@ -1402,6 +1403,7 @@ pub fn configured_app_with_route_params(
                     if (self.thread_count != 0) {
                         std.debug.panic("cannot deinitialize a running cluster", .{});
                     }
+                    self.release_signal_watcher();
                     for (self.workers) |*app_worker| app_worker.deinit();
                     self.allocator.free(self.threads);
                     self.allocator.free(self.inboxes);
@@ -1472,12 +1474,56 @@ pub fn configured_app_with_route_params(
                     }
                     for (self.threads[0..self.thread_count]) |thread| thread.join();
                     self.thread_count = 0;
+                    self.release_signal_watcher();
                     if (self.worker_failed.load(.acquire)) return error.ClusterWorkerFailed;
                 }
 
                 /// Requests event-loop-confined shutdown for every worker.
                 pub fn request_shutdown(self: *Cluster) void {
                     for (self.workers) |*app_worker| app_worker.request_cluster_shutdown();
+                }
+
+                /// Installs one process-wide shutdown watcher on the first worker.
+                ///
+                /// The callback requests shutdown for every worker, so one
+                /// SIGINT or SIGTERM drains the whole group. Returns
+                /// `error.SignalWatcherAlreadyInstalled` while any watcher owns
+                /// the process-wide handler state.
+                pub fn catch_shutdown_signals(self: *Cluster) !void {
+                    if (self.signal_watcher != null) return error.SignalWatcherAlreadyInstalled;
+                    self.signal_watcher = try core_signal.SignalWatcher.init(
+                        &self.workers[0].loop,
+                        on_cluster_shutdown_signal,
+                        self,
+                    );
+                    self.signal_watcher.?.start();
+                }
+
+                /// Releases the cluster watcher after its owning loop stopped.
+                fn release_signal_watcher(self: *Cluster) void {
+                    const watcher = &(self.signal_watcher orelse return);
+                    watcher.stop();
+                    if (!watcher.is_drained()) {
+                        // Drive the first worker's loop until the stop wakeup
+                        // disarms the poll, so no completion references the
+                        // pipe descriptors this release closes.
+                        self.workers[0].loop.get_xev_loop().run(.until_done) catch {};
+                    }
+                    if (watcher.is_drained()) {
+                        watcher.deinit();
+                    } else {
+                        // The loop refused to drain; release the handlers and
+                        // pipe directly before the worker loop is destroyed.
+                        watcher.deinit_undrained();
+                    }
+                    self.signal_watcher = null;
+                }
+
+                fn on_cluster_shutdown_signal(context: *anyopaque) void {
+                    const self: *Cluster = @ptrCast(@alignCast(context));
+                    self.request_shutdown();
+                    // Disarm this watcher so the first worker's loop can drain.
+                    if (self.signal_watcher) |*watcher| watcher.stop();
                 }
 
                 fn worker_main(self: *Cluster, index: usize) void {
