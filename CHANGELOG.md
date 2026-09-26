@@ -5,27 +5,84 @@ uses Semantic Versioning.
 
 ## [1.7.0] - 2026-09-26
 
+This release closes the client/server and production-hardening boundaries. It
+adds a bounded HTTP/1.1 client, mutual TLS, authentication and rate-limiting
+middleware, graceful signal-driven shutdown, HTTP/2 and HTTP/3 observability,
+and a native Windows test run, and it restructures the developer documentation
+into per-protocol and per-task guides. Every change is additive: 1.6.x
+applications recompile and behave unchanged.
+
 ### Added
 
-- `middleware.Auth` and `middleware.auth`: Basic and Bearer request
-  authentication over caller-owned credential lists with a bounded stack
-  decode, constant-time comparison, duplicate `Authorization` rejection, and
+- Client: `uz.client` is a bounded HTTP/1.1 client over TCP and TLS.
+  `client(max_inflight)` owns a libxev loop and fixed request slots;
+  `fetch_blocking` runs one request on a temporary client and copies the
+  response into caller-owned `FetchStorage`. `Method`, `Header`, `Request`,
+  `TlsOptions`, `FetchOptions`, `ResponseView`, `Failure`, `FetchOutcome`, and
+  `FetchCallback` are the named public types. Plaintext steady state allocates
+  nothing; TLS allocates its BoringSSL session once per connection. Trust fails
+  closed: `verify = true` requires a CA path, SNI and hostname/IP verification
+  are enforced, and mixing trust policies on one client is rejected. Responses
+  support `Content-Length`, chunked coding with trailers, close-delimited
+  bodies, and bounded 1xx handling. HTTP/2 and HTTP/3 clients are deliberately
+  not provided.
+- mTLS: `tls.ClientAuth`, `tls.ClientAuthConfig`, `TlsContext.init_mtls`, and
+  `App.init_https_mtls` verify client certificates against a caller CA bundle.
+  `none`, `optional`, and `required` modes cover the three handshake policies;
+  `required` fails closed when a certificate is missing, and a bad bundle fails
+  context creation instead of degrading silently.
+- Authentication: `middleware.Auth` and `middleware.auth` validate Basic and
+  Bearer credentials over caller-owned lists with a bounded stack decode,
+  constant-time comparison, duplicate `Authorization` rejection, and
   `WWW-Authenticate` challenges listing only the configured schemes.
-- `middleware.RateLimit` and `middleware.rate_limit`: token-bucket rate
-  limiting over caller-owned buckets with custom, FNV-1a hashed-header, or
-  constant keys, continuous monotonic refill, oldest-bucket eviction, and
-  `Retry-After` on `429`.
-- `middleware.rate_limit_step`, `middleware.RateLimitDecision`, and
-  `middleware.fnv1a_64`: the pure token math and stable key hash behind the
-  limiter.
+- Rate limiting: `middleware.RateLimit` and `middleware.rate_limit` charge
+  caller-owned token buckets keyed by a custom function, an FNV-1a hashed
+  header, or a constant, refill continuously from the monotonic clock, and
+  answer an empty bucket with `429 Too Many Requests` and `Retry-After`.
+  `middleware.rate_limit_step`, `middleware.RateLimitDecision`, and
+  `middleware.fnv1a_64` expose the pure token math and key hash.
+- Shutdown: `App.catch_shutdown_signals` and `Cluster.catch_shutdown_signals`
+  install one process-wide SIGINT/SIGTERM watcher (a Windows console control
+  handler on Windows) that drains through the normal shutdown path. The
+  internal `src/core/signal.zig` uses a POSIX self-pipe or a Windows async
+  wakeup, coalesces repeated signals, and fails closed if the watch breaks.
+- Observability: HTTP/2 dispatch emits one `http_request` development-log
+  record per completed exchange and advances `uwz_http_requests`; HTTP/3 emits
+  one record per completed exchange through the owning thread's sink; WebSocket
+  upgrades record their `101` or HTTP/2 `200` response.
+- Documentation: new [getting started](docs/getting_started.md),
+  [API](docs/api.md), [deployment](docs/deployment.md),
+  [roadmap](docs/roadmap.md), [troubleshooting](docs/troubleshooting.md), and
+  [client](docs/client.md) guides; the protocol documentation is split into
+  [HTTP](docs/http.md), [HTTP/2](docs/http2.md), [HTTP/3](docs/quic.md),
+  [WebSocket](docs/websocket.md), and [JSON-RPC](docs/json_rpc.md) documents.
+- CI: the native Windows runner executes the Debug test graph instead of only
+  compiling it, and `scripts/check_docs.sh` validates every relative markdown
+  link in the lint job.
 
 ### Changed
 
--
+- `SECURITY.md` supported versions now track the latest released minor line
+  instead of a stale fixed version.
+- HTTP/3 request records and the HTTP/2 WebSocket tunnel record are additive
+  log output; no wire behavior changed.
+- `App.init_https_mtls` joins the existing `init_https` family without changing
+  any existing signature, default, or ALPN/0-RTT policy.
 
 ### Security
 
--
+- Rate limiting fails closed: an evicted bucket starts empty so rotating an
+  attacker-controlled key cannot reset a budget, refill math is clamped against
+  overflow at extreme rates and idle gaps, and a zero rate omits `Retry-After`
+  because no retry can arrive.
+- Client TLS verification cannot be silently bypassed: `verify = true` without
+  a trust store is an error, hostname and IP verification are applied per
+  session, and one client refuses to reuse a context under different trust
+  rules.
+- The graceful-shutdown watcher fails closed: an unexpected poll failure
+  requests shutdown rather than silently dropping later signals.
+- The client abandons in-flight slots after a terminal loop failure so
+  teardown never delivers a callback into a stopped loop.
 
 ## [1.6.0] - 2026-09-26
 

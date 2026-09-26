@@ -19,9 +19,11 @@ thread each, and reused without locking.
 - **Cross-platform:** Tier 1 Linux and macOS, with a `x86_64-windows-gnu`
   fallback for reuse-port and affinity behavior.
 
-[Quick start](#quick-start) | [TLS](docs/tls.md) |
-[Architecture](docs/architecture.md) | [Memory model](docs/memory_model.md) |
-[Protocols](docs/protocols.md) | [Operations](docs/operations.md)
+[Getting started](docs/getting_started.md) | [API guide](docs/api.md) |
+[TLS](docs/tls.md) | [Architecture](docs/architecture.md) |
+[Memory model](docs/memory_model.md) | [Protocols](docs/protocols.md) |
+[Client](docs/client.md) | [Deployment](docs/deployment.md) |
+[Operations](docs/operations.md) | [Roadmap](docs/roadmap.md)
 
 ## Quick start
 
@@ -216,6 +218,36 @@ is bounded by the configured write queue instead of a fixed formatting buffer.
 Every helper reuses the existing bounded buffers and stays off the heap on the
 request path.
 
+## Authentication, rate limiting, and shutdown
+
+`middleware.Auth` validates Basic and Bearer credentials with constant-time
+comparison; `middleware.RateLimit` charges caller-owned token buckets keyed by
+a custom function, a header your proxy sets, or a constant, and answers an
+empty bucket with `429 Too Many Requests` plus `Retry-After`. Both are
+allocation-free:
+
+```zig
+var credentials = uz.middleware.auth(.{
+    .realm = "ops",
+    .basic = &.{.{ .username = "admin", .password = "secret" }},
+});
+_ = try app.use(&credentials, uz.middleware.Auth.handler);
+
+var buckets: [256]uz.middleware.RateLimitBucket = @splat(.{});
+var limiter = uz.middleware.rate_limit(init.io, .{
+    .rate_per_second = 20,
+    .burst = 40,
+    .key_header = "x-api-key",
+}, &buckets);
+_ = try app.use(&limiter, uz.middleware.RateLimit.handler);
+```
+
+`try app.catch_shutdown_signals();` installs a process-wide SIGINT/SIGTERM
+watcher (Windows console control on Windows) that drains the server through the
+normal shutdown path; clusters use `Cluster.catch_shutdown_signals()`.
+[docs/http.md](docs/http.md#middleware) and
+[docs/api.md](docs/api.md#graceful-shutdown-signals) cover both.
+
 ## Terminal development log
 
 `with_dev_log(true)` prints the `µWEBZOCKETS` wordmark and a Vite-style ready
@@ -289,6 +321,47 @@ customizes the names embedded in generated certificates, and the C ABI exposes
 same workflow. [docs/tls.md](docs/tls.md) covers the certificate lifecycle and
 the production handoff.
 
+### Client certificates (mTLS)
+
+When the caller's identity must be proven before a request reaches a route,
+`init_https_mtls` verifies the client chain against a CA bundle you provide and
+fails the handshake closed before the HTTP parser sees a byte:
+
+```zig
+var server = try uz.App(128).init_https_mtls(
+    init.io,
+    "certs/fullchain.pem",
+    "certs/privkey.pem",
+    .{ .mode = .required, .ca_path = "certs/client-ca.pem" },
+);
+```
+
+`tls.ClientAuth` selects `none`, `optional`, or `required` verification.
+[docs/tls.md](docs/tls.md#client-certificates-mtls) covers modes, bundle
+format, and error names.
+
+## Outbound HTTP client
+
+The same library carries a bounded HTTP/1.1 client over TCP and TLS. One
+`client(N)` value owns `N` request slots and its own event loop; the plaintext
+path allocates nothing, and a TLS fetch allocates its BoringSSL session once
+per connection. HTTP/2 and HTTP/3 clients are deliberately not provided:
+
+```zig
+var storage: uz.client.FetchStorage = .{};
+const outcome = try uz.client.fetch_blocking(init.io, .{
+    .method = .get,
+    .host = "127.0.0.1",
+    .path = "/status",
+}, .{ .port = 8080 }, &storage);
+```
+
+Responses support `Content-Length`, chunked transfer coding with trailers, and
+close-delimited bodies; trust fails closed (`verify = true` requires a CA path,
+because BoringSSL ships no default trust store). The full contract, including
+timeouts, capacities, and failure kinds, is in
+[docs/client.md](docs/client.md).
+
 ## Examples
 
 | Step | Shows |
@@ -310,10 +383,20 @@ in [`examples/`](examples/), with walkthroughs in
 
 | Document | Contents |
 | --- | --- |
-| [TLS](docs/tls.md) | Ephemeral development certificates, PEM files, ALPN, HTTP/3, C ABI |
+| [Getting started](docs/getting_started.md) | Install, first server, first route, first WebSocket, examples |
+| [API guide](docs/api.md) | Application types, lifecycle, routing, middleware, ownership rules |
+| [HTTP](docs/http.md) | HTTP/1.1 parsing, routing, middleware, helpers, static files |
+| [HTTP/2](docs/http2.md) | Frames, HPACK, flow control, RFC 8441 tunnels |
+| [HTTP/3 and QUIC](docs/quic.md) | QPACK, WebTransport status, RFC 10008 `QUERY` |
+| [WebSocket](docs/websocket.md) | RFC 6455, RFC 7692 compression, pub/sub, heartbeats |
+| [JSON-RPC](docs/json_rpc.md) | Typed procedures, batches, capacities |
+| [TLS](docs/tls.md) | Ephemeral and production credentials, ALPN, 0-RTT, mTLS |
+| [Client](docs/client.md) | Outbound HTTP/1.1 client over TCP and TLS |
+| [Deployment](docs/deployment.md) | Credentials, capacity sizing, hardening, shutdown, platforms |
+| [Roadmap](docs/roadmap.md) | What 1.7.0 closed and which boundaries are deliberate |
+| [Troubleshooting](docs/troubleshooting.md) | Rejections, TLS and client failures, cluster and signal issues |
 | [Architecture](docs/architecture.md) | Shared-nothing workers, affinity, TCP tuning, transports, shutdown |
 | [Memory model](docs/memory_model.md) | Startup slab, SoA layouts, capacity limits, backpressure, rejections |
-| [Protocols](docs/protocols.md) | HTTP/1.1/2/3, WebSocket, JSON-RPC, compliance status |
 | [Operations](docs/operations.md) | Build, sanitizers, fuzzing, C ABI, dependency use, platform tiers |
 | [Codebase](CODEBASE.md) | File-by-file map of the implementation |
 | [CI pipeline](CI_CD_PIPELINE.md) | Workflow gates and verification matrix |
@@ -332,11 +415,14 @@ in [`examples/`](examples/), with walkthroughs in
 ## Project status
 
 The repository CI covers Zig builds and tests, RFC 6455 behavior, HTTP/3
-interop, HTTP/1.1 conformance, deterministic fuzz smoke tests, and an
-OSS-Fuzz/ClusterFuzzLite build. The throughput workflow compares the optimized
-`hello_world` server with the main branch on the same runner; it is a regression
-guard, not a universal performance claim. Released tags provide stable
-snapshots, and the current source tree may include unreleased changes.
+interop, HTTP/1.1 conformance, deterministic fuzz smoke tests, an
+OSS-Fuzz/ClusterFuzzLite build, a native Windows test run, and a markdown link
+gate over every developer document. The throughput workflow compares the
+optimized `hello_world` server with the main branch on the same runner; it is a
+regression guard, not a universal performance claim. Released tags provide
+stable snapshots, and the current source tree may include unreleased changes.
+[docs/roadmap.md](docs/roadmap.md) records what each release closes and which
+boundaries are deliberate.
 
 [![Test](https://github.com/farbenbuilds/uWebZockets/actions/workflows/test.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/test.yml)
 [![Windows Build](https://github.com/farbenbuilds/uWebZockets/actions/workflows/windows.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/windows.yml)

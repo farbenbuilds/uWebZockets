@@ -43,6 +43,22 @@ connection at eight streams. Raw QUIC engine, stream, packet, and QPACK
 callbacks under `src/quic` are internal and are not a supported consumer
 interface.
 
+The outbound client (`src/client`) is HTTP/1.1 only and is also part of the
+security surface: it verifies certificates when `verify` is enabled, requires a
+caller-supplied trust store because BoringSSL ships none, applies SNI and
+hostname or IP verification per session, and refuses to reuse one client with
+different trust rules. `verify = false` is a development-only mode. The client
+does not present a certificate, follow redirects, store cookies, use proxies,
+or retry; callers own those policies.
+
+Mutual TLS (`init_https_mtls`) verifies client chains against the caller's CA
+bundle and fails the handshake closed in `required` mode. Authentication and
+rate-limiting middleware compare credentials in constant time, fail closed on
+malformed or duplicate fields, and rely on caller-owned fixed storage.
+`App.catch_shutdown_signals` and `Cluster.catch_shutdown_signals` install one
+process-wide watcher; deployments that already manage signals must not install
+a second one.
+
 `http3_extensions` and `webtransport` provide bounded validators and wire
 helpers. They are not connected to the live lsquic listener, which rejects
 extended CONNECT; they do not establish WebTransport, server push, or

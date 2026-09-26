@@ -1,0 +1,158 @@
+# Deployment Guide
+
+This is the production checklist for a µWebZockets service: credentials,
+capacity sizing, observability, shutdown, platforms, and the security posture
+the framework expects you to configure.
+
+## 1. Credentials
+
+| Situation | API | Credentials |
+| --- | --- | --- |
+| Production | `init_https` / `init_http3` | PEM files you provide |
+| Mutual TLS | `init_https_mtls` | PEM server files plus a client CA bundle |
+| Local development | `init_https_ephemeral` / `init_http3_ephemeral` | Generated in memory |
+
+- The certificate argument is a PEM chain, leaf first. The key is a PEM private
+  key; `SSL_CTX_check_private_key` runs at startup so a mismatched pair fails
+  fast.
+- TLS is 1.3 only. HTTP/1.1 and HTTP/2 share one context advertising `h2` then
+  `http/1.1`; HTTP/3 uses a separate context advertising `h3`.
+- TCP enables 0-RTT early data and dispatches only safe methods (`GET`, `HEAD`,
+  `OPTIONS`) before the handshake confirms; anything else gets `425 Too Early`.
+  QUIC keeps early data disabled.
+- There is no hot certificate reload. Rotate by rolling a new process; keep the
+  old one draining until it exits. See [tls.md](tls.md).
+
+## 2. Size capacities for your traffic
+
+Every pool is fixed at startup. Sizing is the deployment's most important
+decision because exhaustion is explicit, not dynamic.
+
+| Preset | Connections | WebSocket message | Write queue | Request body |
+| --- | ---: | ---: | ---: | ---: |
+| `Presets.microservice` | 256 | 8 KiB | 16 KiB | 64 KiB |
+| `Presets.websocket_chat` | 512 | 32 KiB | 32 KiB | 4 KiB |
+| `Presets.file_server` | 128 | 4 KiB | 512 KiB | 8 KiB |
+
+- A plaintext connection with a `max_body_size` of 1 MiB costs roughly that
+  much request buffer per connection in the slab. Raise `max_body_size` only as
+  far as your largest legitimate upload.
+- WebSocket message capacity is per connection; chat servers need more than
+  microservices.
+- The write queue bounds response buffering. `begin_stream` lets responses
+  exceed it without raising it.
+- HTTP/2 and HTTP/3 have their own per-stream capacities
+  (`with_max_h2_*`, `with_max_h3_*`).
+- Oversized input gets a structured rejection (`413`, `431`) that names the
+  limit; see [memory_model.md](memory_model.md) for the slab layout and the
+  full capacity table.
+
+## 3. Harden the request path
+
+- Put authentication in front of sensitive routes with `middleware.Auth`.
+- Rate-limit by a server-derived key (`key_fn` or `key_constant`, or a header
+  your proxy sets). Client-controlled keys can rotate around the limiter.
+- Apply `middleware.SecurityHeaders` and `middleware.Cors` deliberately rather
+  than globally if you serve both browser and service traffic.
+- Keep the default idle timeout (120 s) or set one that matches your clients;
+  heartbeats close dead WebSocket peers.
+- Reject early data beyond safe methods: this is automatic, but keep
+  idempotency in mind for `GET` handlers that mutate state.
+- Prefer `with_dev_log(false)` in production unless you bind a log file; the
+  default stderr sink stays quiet when stderr is not a terminal.
+
+## 4. Observability
+
+```zig
+var server = try uz.Server.builder(init.io)
+    .with_observability(true)
+    .build(std.heap.page_allocator);
+```
+
+- The bounded Prometheus registry renders without allocating. Counters:
+  `uwz_connections_accepted`, `uwz_connections_closed`, `uwz_http_requests`,
+  `uwz_ws_messages`. HTTP/1.1 and HTTP/2 advance request counters; HTTP/3 emits
+  request records but does not advance the registry yet.
+- `App.log_metrics()` writes a registry snapshot through the development log.
+- The development log is allocation-free and per-worker; it never blocks the
+  loop on a slow terminal (failed or short writes are dropped and counted).
+- The optional eBPF latency histogram and AF_XDP redirect require Linux
+  network-administration privileges and fall back to the standard stack when
+  unavailable. See [operations.md](operations.md).
+
+## 5. Shutdown and draining
+
+```zig
+try app.catch_shutdown_signals();
+try app.run();
+```
+
+- A signal requests the same drain path as `App.shutdown`: stop accepting,
+  cancel completions, drain connections, release the slab.
+- `deinit` asserts drained state and panics if called from inside the loop.
+  Always `defer app.deinit()`.
+- Clusters install one watcher with `Cluster.catch_shutdown_signals()` and
+  request shutdown for every worker.
+- A supervisor should send SIGTERM and wait for exit; there is no in-flight
+  request deadline beyond the configured connection idle timeout.
+
+## 6. Platforms
+
+| Tier | Targets | Evidence |
+| --- | --- | --- |
+| Tier 1 | Linux and macOS on `x86_64` and `aarch64` | Built, tested, and published by CI |
+| Tier 2 | `x86_64-windows-gnu`, FreeBSD, NetBSD, OpenBSD, DragonFlyBSD | Windows compiles and runs the test graph on a native runner; BSDs share the build graph without dedicated CI |
+
+- Shared-nothing clustering is fully supported on Linux. Windows uses the
+  `SO_REUSEADDR` fallback with unspecified kernel distribution; macOS runs
+  unpinned because the platform exposes no hard-affinity API.
+- Windows QUIC uses IOCP receives and Winsock sends; runtime QUIC interop
+  remains a Tier 2 responsibility.
+- Sanitizer coverage is native Linux only. MemorySanitizer instruments the
+  pinned C/C++ dependencies, not Zig code; plan an independent review for
+  Zig-side memory questions.
+
+## 7. Dependencies and reproducibility
+
+- `build.zig.zon` pins zslay, libxev, BoringSSL, lsquic, ls-qpack, ls-hpack,
+  libdeflate, and zlib by immutable URL or commit plus a Zig package hash.
+- Pin a release tag or full commit in your own `build.zig.zon`; do not track a
+  branch.
+- The build needs only Zig 0.16.0; C/C++ dependencies compile with `zig cc` and
+  `zig c++` from pinned sources.
+- Release archives contain the static libraries and `uWebZockets.h` for C and
+  C++ consumers. Linking them directly also needs libc, the C++ runtime, and
+  the platform networking libraries listed in
+  [operations.md](operations.md#build).
+
+## 8. Verify before launch
+
+The repository's gates are the baseline; reproduce them for your revision:
+
+```sh
+zig build test --summary all
+zig build test -Dsanitize=true -Doptimize=ReleaseSafe --summary all
+zig build fuzz --fuzz=100K -Doptimize=ReleaseSafe
+```
+
+Plus the external gates: Autobahn (517/517 accepted), h1spec, and the HTTP/3
+cross-implementation gate. The benchmark contract is a relative regression
+guard (candidate median at least 90 percent of the baseline), not an absolute
+throughput claim. Run your own load test against your capacity choices before
+launching; see [CI_CD_PIPELINE.md](../CI_CD_PIPELINE.md).
+
+## 9. Security posture summary
+
+| Control | Where |
+| --- | --- |
+| TLS 1.3 only, ALPN policy, safe-method 0-RTT | [tls.md](tls.md) |
+| Client certificates (mTLS) | [tls.md](tls.md#client-certificates-mtls) |
+| Authentication, rate limiting, CORS, security headers | [http.md](http.md#middleware) |
+| Bounded parsing and structured rejections | [http.md](http.md), [memory_model.md](memory_model.md) |
+| WebSocket compression limits and heartbeats | [websocket.md](websocket.md) |
+| QUIC/HTTP/3 limits and early-data rejection | [quic.md](quic.md) |
+| Disclosure process and supported versions | [SECURITY.md](../SECURITY.md) |
+
+Report vulnerabilities privately as described in
+[SECURITY.md](../SECURITY.md); do not open a public issue with an undisclosed
+vulnerability.

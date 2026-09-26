@@ -223,5 +223,6 @@ generated credential cannot be created, the C layer reports
   startup slab.
 - [Architecture](architecture.md) for the TCP/QUIC transport and event-loop
   layout behind the handshake.
-- [Protocols](protocols.md) for ALPN selection and the HTTP/2, HTTP/3, and
-  WebSocket state machines that run after the handshake.
+- [HTTP/2](http2.md) and [HTTP/3](quic.md) for the state machines selected by
+  ALPN, and [WebSocket](websocket.md) for RFC 8441 tunnels.
+- [Deployment](deployment.md) for the production credential checklist.

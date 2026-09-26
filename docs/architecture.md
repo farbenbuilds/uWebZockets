@@ -177,7 +177,7 @@ QPACK response headers without converting through HTTP/1.1 text. QUIC
 connections, streams, header sets, packet buffers, and bodies come from
 startup-allocated contiguous pools. The QUIC listener keeps TLS 0-RTT
 disabled, so replayable requests never reach a handler; the TCP/TLS listener
-enables 0-RTT and admits safe methods only (see [protocols.md](protocols.md)).
+enables 0-RTT and admits safe methods only (see [tls.md](tls.md)).
 
 Congestion control is pinned to BBRv1 with per-connection pacing so throughput
 and tail latency hold up on lossy paths.
@@ -206,6 +206,16 @@ and tail latency hold up on lossy paths.
 - `src/quic/datagram_ring.zig` and `src/router/datagram.zig` route WebTransport
   datagrams by session path into per-connection SoA rings carved from the
   startup slab.
+
+### Client
+
+`src/client/` mirrors the server's design rather than reusing its connection
+type: one `client(N)` value owns its own libxev loop and `N` request slots,
+each with embedded connect, read, write, close, and timer completions. A slot
+returns to the free list only after every cancel and the socket close have
+drained, exactly like the server's `release_closed_connection` gate. The
+response parser is pure and allocation-free; TLS uses the same BoringSSL
+memory-BIO pattern as the server. See [client.md](client.md).
 
 ## Shutdown ordering
 
