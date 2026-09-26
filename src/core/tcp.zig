@@ -102,6 +102,10 @@ pub const TcpConnection = struct {
         .{null} ** max_http2_streams,
     h2_stream_producer_contexts: [max_http2_streams]*anyopaque = undefined,
     h2_stream_producer_close: [max_http2_streams]bool = .{false} ** max_http2_streams,
+    // Status of the streaming response head committed per stream slot; zero
+    // until `begin_response` succeeds. Completion logs read it before the
+    // terminal frame releases the slot.
+    h2_response_status: [max_http2_streams]u16 = .{0} ** max_http2_streams,
 
     last_active_ms: i64 = 0,
     request_len: usize = 0,
@@ -168,6 +172,7 @@ pub const TcpConnection = struct {
             context.* = .{ .connection = self };
         }
         for (0..max_http2_streams) |index| self.clear_http2_producer(@intCast(index));
+        @memset(&self.h2_response_status, 0);
     }
 
     /// Returns a cancellation signal scoped to the current pooled connection.
@@ -371,6 +376,7 @@ pub const TcpConnection = struct {
         const self: *TcpConnection = @ptrCast(@alignCast(context));
         if (self.ws.initialized and self.ws.h2_stream_id == stream_id) self.ws.deinit();
         if (index >= self.h2_async_states.len) return;
+        self.h2_response_status[index] = 0;
         // Producers have no stream-id mirror; a close notification is exact for
         // its slot, so the bounds check is the only guard the slot needs.
         self.clear_http2_producer(index);
@@ -399,12 +405,56 @@ pub const TcpConnection = struct {
         return true;
     }
 
+    /// Borrowed request identity and committed status for one HTTP/2 stream.
+    const Http2ResponseTarget = struct {
+        method: []const u8,
+        path: []const u8,
+        /// Zero when no response head is committed.
+        status: u16,
+    };
+
+    /// Returns the request identity of an active HTTP/2 stream; null once the
+    /// stream slot is released. The slices stay valid until the slot is reused.
+    fn http2_response_target(
+        self: *const TcpConnection,
+        stream_id: u32,
+    ) ?Http2ResponseTarget {
+        const index = self.h2.connection.streams.find(stream_id) orelse return null;
+        return .{
+            .method = self.h2.requests[index].method,
+            .path = self.h2.requests[index].path,
+            .status = self.h2_response_status[index],
+        };
+    }
+
+    /// Records one completed HTTP/2 request/response cycle in the log.
+    pub fn log_request(
+        self: *TcpConnection,
+        method: []const u8,
+        path: []const u8,
+        status: u16,
+    ) void {
+        const sink = self.dev_log orelse dev_log.thread_sink();
+        if (!sink.enabled) return;
+        sink.record(.{
+            .timestamp_ms = dev_log.now_ms(self.io),
+            .level = .info,
+            .direction = .data_out,
+            .event = .{ .http_request = .{
+                .method = method,
+                .path = path,
+                .status = status,
+            } },
+        });
+    }
+
     fn dispatch_http2_request(
         context: *anyopaque,
         request: *Request,
         stream_id: u32,
     ) !void {
         const self: *TcpConnection = @ptrCast(@alignCast(context));
+        if (self.metrics) |registry| registry.add(.http_requests, 1);
         var response = Response{ .target = .{ .http2 = .{
             .context = self,
             .router = self.router,
@@ -490,6 +540,7 @@ pub const TcpConnection = struct {
                     errdefer self.ws.deinit();
 
                     try response.begin_chunked("200 OK", "");
+                    self.log_request(request.method, request.path, 200);
                     if (self.ws.behavior.open) |callback| callback(&self.ws);
                     return;
                 }
@@ -550,7 +601,10 @@ pub const TcpConnection = struct {
     ) !void {
         const self: *TcpConnection = @ptrCast(@alignCast(context));
         const callbacks = self.http2_callbacks();
+        const target = self.http2_response_target(stream_id);
+        const code = http_response.status_code(status) orelse return error.InvalidStatus;
         try self.h2.send_response(stream_id, status, headers, body, callbacks);
+        if (target) |view| log_request(self, view.method, view.path, code);
     }
 
     fn begin_http2_response(
@@ -560,8 +614,12 @@ pub const TcpConnection = struct {
         headers: []const u8,
     ) !void {
         const self: *TcpConnection = @ptrCast(@alignCast(context));
+        const index = self.h2.connection.streams.find(stream_id) orelse
+            return error.StreamClosed;
+        const code = http_response.status_code(status) orelse return error.InvalidStatus;
         const callbacks = self.http2_callbacks();
         try self.h2.begin_response(stream_id, status, headers, callbacks);
+        self.h2_response_status[index] = code;
     }
 
     fn write_http2_response(
@@ -582,12 +640,16 @@ pub const TcpConnection = struct {
     fn finish_http2_response(context: *anyopaque, stream_id: u32) !void {
         const self: *TcpConnection = @ptrCast(@alignCast(context));
         const callbacks = self.http2_callbacks();
+        const target = self.http2_response_target(stream_id);
         self.h2.finish_response(stream_id, callbacks) catch |err| switch (err) {
             // The producer must retry its failed chunk before the terminal
             // frame can be written.
             error.ResponseWritePending => return error.WouldBlock,
             else => |finish_error| return finish_error,
         };
+        if (target) |view| {
+            if (view.status != 0) log_request(self, view.method, view.path, view.status);
+        }
     }
 
     /// Arms one drain-driven HTTP/2 body and runs its first producer step.
@@ -602,8 +664,10 @@ pub const TcpConnection = struct {
         const self: *TcpConnection = @ptrCast(@alignCast(context));
         const index = self.h2.connection.streams.find(stream_id) orelse
             return error.StreamClosed;
+        const code = http_response.status_code(status) orelse return error.InvalidStatus;
         const callbacks = self.http2_callbacks();
         try self.h2.begin_response(stream_id, status, headers, callbacks);
+        self.h2_response_status[index] = code;
         self.h2_stream_producers[index] = producer;
         self.h2_stream_producer_contexts[index] = producer_context;
         self.h2_stream_producer_close[index] = false;
@@ -690,6 +754,8 @@ pub const TcpConnection = struct {
         const self = async_context.connection;
         if (self.closing or self.close_complete) return error.ConnectionClosed;
         const callbacks = self.http2_callbacks();
+        const target = self.http2_response_target(async_context.stream_id);
+        const code = http_response.status_code(status) orelse return error.InvalidStatus;
         self.h2.send_response(
             async_context.stream_id,
             status,
@@ -704,6 +770,7 @@ pub const TcpConnection = struct {
             ) catch close_connection(self);
             return err;
         };
+        if (target) |view| log_request(self, view.method, view.path, code);
     }
 
     fn wake_http2_async_response(_: *anyopaque) void {

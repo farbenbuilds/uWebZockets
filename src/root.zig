@@ -43,6 +43,8 @@ pub const AsyncResponseStatus = @import("http/response.zig").AsyncState;
 pub const chunked = @import("http/chunked.zig");
 /// WHATWG Fetch Standard (https://fetch.spec.whatwg.org/) helper primitives.
 pub const fetch = @import("http/fetch.zig");
+/// Bounded HTTP/1.1 and WebSocket client over TCP and TLS.
+pub const client = @import("client/client.zig");
 /// WHATWG Streams Standard (https://streams.spec.whatwg.org/) primitives.
 pub const streams = @import("http/streams.zig");
 /// Cooperative WinterCG cancellation shared by transports and async work.

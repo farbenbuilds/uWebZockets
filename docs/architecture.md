@@ -177,7 +177,7 @@ QPACK response headers without converting through HTTP/1.1 text. QUIC
 connections, streams, header sets, packet buffers, and bodies come from
 startup-allocated contiguous pools. The QUIC listener keeps TLS 0-RTT
 disabled, so replayable requests never reach a handler; the TCP/TLS listener
-enables 0-RTT and admits safe methods only (see [protocols.md](protocols.md)).
+enables 0-RTT and admits safe methods only (see [tls.md](tls.md)).
 
 Congestion control is pinned to BBRv1 with per-connection pacing so throughput
 and tail latency hold up on lossy paths.
@@ -207,19 +207,39 @@ and tail latency hold up on lossy paths.
   datagrams by session path into per-connection SoA rings carved from the
   startup slab.
 
+### Client
+
+`src/client/` mirrors the server's design rather than reusing its connection
+type: one `client(N)` value owns its own libxev loop and `N` request slots,
+each with embedded connect, read, write, close, and timer completions. A slot
+returns to the free list only after every cancel and the socket close have
+drained, exactly like the server's `release_closed_connection` gate. The
+response parser is pure and allocation-free; TLS uses the same BoringSSL
+memory-BIO pattern as the server. See [client.md](client.md).
+
 ## Shutdown ordering
 
 Shutdown reverses the ownership graph deterministically:
 
 1. Reject new work and mark the application unavailable.
-2. Stop recurring timers, close the listener, and shut down the UDP/QUIC
-   transport.
+2. Stop recurring timers and the signal watcher, close the listener, and shut
+   down the UDP/QUIC transport.
 3. Cancel every connection completion and run the loop until all completions
    are disarmed.
 4. Verify drained state: no active pool slots, a completed listener close, and
    an empty QUIC transport.
 5. Release TLS state, QUIC state, the loop, and the slab through the original
    allocator.
+
+Applications opt into signal-driven shutdown with `App.catch_shutdown_signals()`
+before `run`. On POSIX the watcher installs SIGINT and SIGTERM handlers that
+write one byte into a non-blocking self-pipe; the read end is polled by a libxev
+file completion, so the callback runs on the loop thread and signals that
+arrive before the loop drains coalesce into one shutdown request. Windows
+installs a console control handler that sets a process flag and wakes a libxev
+async. `begin_shutdown` stops the watcher through the same arm the handler uses
+instead of canceling a completion, and `deinit` restores the previous
+dispositions and closes the pipe only after the loop has drained.
 
 `deinit` asserts drained state instead of guessing and panics if called from
 inside the event loop.

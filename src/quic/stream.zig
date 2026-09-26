@@ -8,6 +8,7 @@ const Http3Target = http_response.Http3Target;
 const Router = @import("../router/radix.zig").Router;
 const radix = @import("../router/radix.zig");
 const validation = @import("validation.zig");
+const dev_log_module = @import("../observability/dev_log.zig");
 
 /// Reports that HTTP/3 stream support is compiled in.
 pub const available = true;
@@ -366,6 +367,8 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
         response_value_offsets: [capacities.response_header_count]u16 = .{0} ** capacities.response_header_count,
         response_value_lengths: [capacities.response_header_count]u16 = .{0} ** capacities.response_header_count,
         response_status: [10]u8 = undefined,
+        /// Numeric status of the prepared response, recorded on completion.
+        response_status_code: u16 = 0,
         body_length: usize = 0,
         response_body_length: usize = 0,
         response_body_offset: usize = 0,
@@ -530,6 +533,7 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
             _ = io.wantwrite(self.stream, 0);
             _ = io.shutdown(self.stream, 1);
             self.response_phase = .done;
+            self.log_http_request();
         }
 
         /// Reports whether the response state machine may advance on a write event.
@@ -867,6 +871,8 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
         }
 
         fn prepare_response(self: *Self, status: []const u8, headers: []const u8) !void {
+            self.response_status_code = http_response.status_code(status) orelse
+                return error.InvalidStatus;
             @memcpy(self.response_status[0..7], ":status");
             @memcpy(self.response_status[7..10], status[0..3]);
             self.response_header_length = 0;
@@ -911,6 +917,28 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
                 self.response_value_lengths[index] = @intCast(value.len);
                 self.response_header_count += 1;
             }
+        }
+
+        /// Records one completed request/response cycle in this thread's log.
+        ///
+        /// The record borrows the attached header set's method and path, which
+        /// the stream keeps alive until `on_close`. Recording is best effort:
+        /// a silent sink is skipped before any clock read, and a full sink
+        /// counts the line as dropped.
+        fn log_http_request(self: *Self) void {
+            const sink = dev_log_module.thread_sink();
+            if (!sink.enabled) return;
+            const header_set = self.header_set orelse return;
+            sink.record(.{
+                .timestamp_ms = dev_log_module.now_ms(sink.io),
+                .level = .info,
+                .direction = .data_out,
+                .event = .{ .http_request = .{
+                    .method = header_set.request.method,
+                    .path = header_set.request.path,
+                    .status = self.response_status_code,
+                } },
+            });
         }
 
         fn send_headers(self: *Self) bool {

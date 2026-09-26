@@ -130,6 +130,8 @@ pub const WebSocket = struct {
             return;
         };
 
+        self.conn.log_request(req.method, req.path, 101);
+
         self.message_len = 0;
         self.compressed_len = 0;
         self.current_opcode = null;

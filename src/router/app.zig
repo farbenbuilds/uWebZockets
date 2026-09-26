@@ -4,10 +4,12 @@ const core_tcp = @import("../core/tcp.zig");
 const core_pool = @import("../core/pool.zig");
 const core_timer = @import("../core/timer.zig");
 const core_affinity = @import("../core/affinity.zig");
+const core_signal = @import("../core/signal.zig");
 const radix = @import("radix.zig");
 const xev = @import("xev");
 const PubSubEngine = @import("../ws/pubsub.zig").PubSubEngine;
 const DeflateContext = @import("../ws/deflate.zig").Context;
+const ClientAuthConfig = @import("../crypto/tls.zig").ClientAuthConfig;
 const TlsContext = @import("../crypto/tls.zig").TlsContext;
 const quic = @import("../quic/engine.zig");
 const quic_stream = @import("../quic/stream.zig");
@@ -213,6 +215,7 @@ pub fn configured_app_with_route_params(
         server: ?core_tcp.TcpServer = null,
         sweeper: ?core_timer.connection_sweeper(Pool, idle_timeout_ms) = null,
         watcher: ?file_watch_module.Watcher = null,
+        signal_watcher: ?core_signal.SignalWatcher = null,
         tls_ctx: ?TlsContext = null,
         quic_tls_ctx: ?TlsContext = null,
         quic_transport: ?QuicTransport = null,
@@ -415,6 +418,24 @@ pub fn configured_app_with_route_params(
             return instance;
         }
 
+        /// Initializes an HTTPS application that authenticates clients with
+        /// certificates issued by the CA bundle in `config.ca_path`.
+        ///
+        /// ALPN and 0-RTT policy match `init_https`. Client authentication is
+        /// TCP-only in 1.7.0; the HTTP/3 listener keeps its `init_http3`
+        /// policy, so use `init_http3` when QUIC is also required.
+        pub fn init_https_mtls(
+            io: std.Io,
+            cert_path: [:0]const u8,
+            key_path: [:0]const u8,
+            config: ClientAuthConfig,
+        ) !Self {
+            var instance = try Self.init(io);
+            errdefer instance.deinit();
+            instance.tls_ctx = try TlsContext.init_mtls(cert_path, key_path, config);
+            return instance;
+        }
+
         /// Initializes isolated TCP/TLS and HTTP/3/QUIC server contexts.
         ///
         /// Use `init_http3_ephemeral` for local development when no
@@ -469,6 +490,8 @@ pub fn configured_app_with_route_params(
             self.sweeper = null;
             if (self.watcher) |*watch| watch.deinit();
             self.watcher = null;
+            if (self.signal_watcher) |*watcher| watcher.deinit();
+            self.signal_watcher = null;
             self.server = null;
 
             if (self.quic_transport) |*transport| transport.deinit();
@@ -535,6 +558,7 @@ pub fn configured_app_with_route_params(
             if (self.cluster_wakeup) |*wakeup| wakeup.notify() catch {};
             if (self.sweeper) |*sw| sw.stop(&self.loop);
             if (self.watcher) |*watch| watch.stop(self.loop.get_xev_loop());
+            if (self.signal_watcher) |*watcher| watcher.stop();
             if (self.server) |*server| core_tcp.close_server(server, &self.loop);
             if (self.quic_transport) |*transport| transport.shutdown();
 
@@ -556,6 +580,9 @@ pub fn configured_app_with_route_params(
             if (self.pool.count_active() != 0) return error.ShutdownIncomplete;
             if (self.watcher) |*watch| {
                 if (!watch.is_drained()) return error.ShutdownIncomplete;
+            }
+            if (self.signal_watcher) |*watcher| {
+                if (!watcher.is_drained()) return error.ShutdownIncomplete;
             }
             if (self.server) |server| {
                 if (!server.close_complete) return error.ShutdownIncomplete;
@@ -1190,6 +1217,32 @@ pub fn configured_app_with_route_params(
             if (self.shutting_down) try self.verify_shutdown();
         }
 
+        /// Arms graceful shutdown on SIGINT and SIGTERM for this application.
+        ///
+        /// Call before `run`; a received signal requests the same shutdown as
+        /// `App.shutdown`. Calling after shutdown starts or after `deinit`
+        /// returns `error.ApplicationUnavailable`; a second call returns
+        /// `error.SignalWatcherAlreadyInstalled`. `begin_shutdown` stops the
+        /// watcher, and `deinit` releases it after the loop has drained.
+        pub fn catch_shutdown_signals(self: *Self) !void {
+            if (self.shutting_down or self.deinitialized) {
+                return error.ApplicationUnavailable;
+            }
+            if (self.signal_watcher != null) return error.SignalWatcherAlreadyInstalled;
+            self.signal_watcher = try core_signal.SignalWatcher.init(
+                &self.loop,
+                on_shutdown_signal,
+                self,
+            );
+            self.signal_watcher.?.start();
+        }
+
+        /// Bridges a coalesced signal wakeup into the shared shutdown path.
+        fn on_shutdown_signal(context: *anyopaque) void {
+            const self: *Self = @ptrCast(@alignCast(context));
+            self.begin_shutdown();
+        }
+
         /// Arms the recursive file watcher configured for the dev log.
         fn start_file_watch(self: *Self) !void {
             if (self.watch_paths.len == 0) return;
@@ -1303,6 +1356,7 @@ pub fn configured_app_with_route_params(
                 worker_failed: std.atomic.Value(bool) = .init(false),
                 startup_options: ClusterOptions = .{},
                 cores: core_affinity.CoreSelection = .{},
+                signal_watcher: ?core_signal.SignalWatcher = null,
                 deinitialized: bool = false,
 
                 pub fn init(allocator: std.mem.Allocator, io: std.Io) !Cluster {
@@ -1349,6 +1403,7 @@ pub fn configured_app_with_route_params(
                     if (self.thread_count != 0) {
                         std.debug.panic("cannot deinitialize a running cluster", .{});
                     }
+                    self.release_signal_watcher();
                     for (self.workers) |*app_worker| app_worker.deinit();
                     self.allocator.free(self.threads);
                     self.allocator.free(self.inboxes);
@@ -1419,12 +1474,56 @@ pub fn configured_app_with_route_params(
                     }
                     for (self.threads[0..self.thread_count]) |thread| thread.join();
                     self.thread_count = 0;
+                    self.release_signal_watcher();
                     if (self.worker_failed.load(.acquire)) return error.ClusterWorkerFailed;
                 }
 
                 /// Requests event-loop-confined shutdown for every worker.
                 pub fn request_shutdown(self: *Cluster) void {
                     for (self.workers) |*app_worker| app_worker.request_cluster_shutdown();
+                }
+
+                /// Installs one process-wide shutdown watcher on the first worker.
+                ///
+                /// The callback requests shutdown for every worker, so one
+                /// SIGINT or SIGTERM drains the whole group. Returns
+                /// `error.SignalWatcherAlreadyInstalled` while any watcher owns
+                /// the process-wide handler state.
+                pub fn catch_shutdown_signals(self: *Cluster) !void {
+                    if (self.signal_watcher != null) return error.SignalWatcherAlreadyInstalled;
+                    self.signal_watcher = try core_signal.SignalWatcher.init(
+                        &self.workers[0].loop,
+                        on_cluster_shutdown_signal,
+                        self,
+                    );
+                    self.signal_watcher.?.start();
+                }
+
+                /// Releases the cluster watcher after its owning loop stopped.
+                fn release_signal_watcher(self: *Cluster) void {
+                    const watcher = &(self.signal_watcher orelse return);
+                    watcher.stop();
+                    if (!watcher.is_drained()) {
+                        // Drive the first worker's loop until the stop wakeup
+                        // disarms the poll, so no completion references the
+                        // pipe descriptors this release closes.
+                        self.workers[0].loop.get_xev_loop().run(.until_done) catch {};
+                    }
+                    if (watcher.is_drained()) {
+                        watcher.deinit();
+                    } else {
+                        // The loop refused to drain; release the handlers and
+                        // pipe directly before the worker loop is destroyed.
+                        watcher.deinit_undrained();
+                    }
+                    self.signal_watcher = null;
+                }
+
+                fn on_cluster_shutdown_signal(context: *anyopaque) void {
+                    const self: *Cluster = @ptrCast(@alignCast(context));
+                    self.request_shutdown();
+                    // Disarm this watcher so the first worker's loop can drain.
+                    if (self.signal_watcher) |*watcher| watcher.stop();
                 }
 
                 fn worker_main(self: *Cluster, index: usize) void {

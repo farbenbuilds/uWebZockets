@@ -125,6 +125,393 @@ pub fn security_headers(options: SecurityHeadersOptions) SecurityHeaders {
     return .{ .options = options };
 }
 
+/// One plaintext Basic credential accepted by `auth`.
+pub const BasicCredential = struct {
+    username: []const u8,
+    password: []const u8,
+};
+
+/// One plaintext Bearer token accepted by `auth`.
+pub const BearerToken = struct {
+    token: []const u8,
+};
+
+/// Challenge realm and accepted credentials for `auth`.
+pub const AuthOptions = struct {
+    realm: []const u8 = "restricted",
+    basic: []const BasicCredential = &.{},
+    bearer: []const BearerToken = &.{},
+};
+
+/// Fixed-state Basic and Bearer authentication middleware.
+///
+/// Credentials are borrowed from the caller for the lifetime of the handler.
+/// Each request decodes at most one 512-byte Basic payload on the stack and
+/// compares credentials with a constant-time primitive. Missing, duplicate, or
+/// invalid credentials receive `401 Unauthorized` with a challenge that lists
+/// only the configured schemes.
+pub const Auth = struct {
+    options: AuthOptions,
+
+    pub fn handler(context: *anyopaque, request: *Request, response: *Response) radix.MiddlewareResult {
+        const self: *const Auth = @ptrCast(@alignCast(context));
+        if (request.get_unique_header("authorization")) |value| {
+            if (authorized(self.options, value)) return .continue_dispatch;
+        }
+        reject_auth(self.options, response);
+        return .stop;
+    }
+};
+
+/// Builds Basic and Bearer authentication over caller-owned credentials.
+pub fn auth(options: AuthOptions) Auth {
+    return .{ .options = options };
+}
+
+/// Maximum decoded credential bytes accepted from one Basic field.
+const max_credential_bytes = 512;
+
+/// Maximum formatted authentication challenge, including the realm.
+const max_challenge_bytes = 1024;
+
+/// Fixed block size used for constant-time credential comparison.
+const comparison_block_bytes = 64;
+
+fn authorized(options: AuthOptions, value: []const u8) bool {
+    if (scheme_remainder(value, "Basic")) |encoded| return authorized_basic(options.basic, encoded);
+    if (scheme_remainder(value, "Bearer")) |token| return authorized_bearer(options.bearer, token);
+    return false;
+}
+
+/// Splits `value` after the case-insensitive `scheme` and its whitespace.
+fn scheme_remainder(value: []const u8, scheme: []const u8) ?[]const u8 {
+    if (value.len <= scheme.len) return null;
+    if (!std.ascii.eqlIgnoreCase(value[0..scheme.len], scheme)) return null;
+    const separator = value[scheme.len];
+    if (separator != ' ' and separator != '\t') return null;
+    return std.mem.trimStart(u8, value[scheme.len..], " \t");
+}
+
+fn authorized_basic(credentials: []const BasicCredential, encoded: []const u8) bool {
+    var decoded_buffer: [max_credential_bytes]u8 = undefined;
+    const decoded = decode_basic(encoded, &decoded_buffer) orelse return false;
+    const separator = std.mem.indexOfScalar(u8, decoded, ':') orelse return false;
+    const username = decoded[0..separator];
+    const password = decoded[separator + 1 ..];
+
+    var matches: u1 = 0;
+    for (credentials) |credential| {
+        const username_equal: u1 = @intFromBool(constant_time_eql(username, credential.username));
+        const password_equal: u1 = @intFromBool(constant_time_eql(password, credential.password));
+        matches |= username_equal & password_equal;
+    }
+    return matches != 0;
+}
+
+fn authorized_bearer(tokens: []const BearerToken, token: []const u8) bool {
+    if (token.len == 0) return false;
+    var matches: u1 = 0;
+    for (tokens) |candidate| {
+        matches |= @intFromBool(constant_time_eql(token, candidate.token));
+    }
+    return matches != 0;
+}
+
+/// Decodes one RFC 4648 Basic payload into bounded caller storage.
+fn decode_basic(encoded: []const u8, buffer: []u8) ?[]const u8 {
+    const decoder = std.base64.standard.Decoder;
+    const size = decoder.calcSizeForSlice(encoded) catch return null;
+    if (size > buffer.len) return null;
+    decoder.decode(buffer[0..size], encoded) catch return null;
+    return buffer[0..size];
+}
+
+/// Compares equal-length byte strings through a constant-time primitive.
+///
+/// Length is public metadata, so unequal lengths return false immediately.
+/// Equal-length content is zero-padded into fixed blocks and compared with
+/// `std.crypto.timing_safe.eql`, which never exits early.
+fn constant_time_eql(a: []const u8, b: []const u8) bool {
+    if (a.len != b.len) return false;
+    var difference: u8 = 0;
+    var index: usize = 0;
+    while (index < a.len) : (index += comparison_block_bytes) {
+        const count = @min(comparison_block_bytes, a.len - index);
+        var left: [comparison_block_bytes]u8 = @splat(0);
+        var right: [comparison_block_bytes]u8 = @splat(0);
+        @memcpy(left[0..count], a[index..][0..count]);
+        @memcpy(right[0..count], b[index..][0..count]);
+        difference |= @intFromBool(!std.crypto.timing_safe.eql([comparison_block_bytes]u8, left, right));
+    }
+    return difference == 0;
+}
+
+fn reject_auth(options: AuthOptions, response: *Response) void {
+    var buffer: [max_challenge_bytes]u8 = undefined;
+    const challenge = format_challenge(&buffer, options) catch {
+        fail_response(response);
+        return;
+    };
+    if (challenge.len != 0) {
+        response.append_header("WWW-Authenticate", challenge) catch {
+            fail_response(response);
+            return;
+        };
+    }
+    end_best_effort(response, "401 Unauthorized");
+}
+
+/// Formats the challenge for the configured schemes without CR/LF or quotes
+/// leaking out of the realm.
+fn format_challenge(buffer: []u8, options: AuthOptions) ![]const u8 {
+    const has_basic = options.basic.len != 0;
+    const has_bearer = options.bearer.len != 0;
+    if (has_basic and has_bearer) {
+        try validate_realm(options.realm);
+        return std.fmt.bufPrint(buffer, "Basic realm=\"{s}\", Bearer", .{options.realm});
+    }
+    if (has_basic) {
+        try validate_realm(options.realm);
+        return std.fmt.bufPrint(buffer, "Basic realm=\"{s}\"", .{options.realm});
+    }
+    if (has_bearer) return "Bearer";
+    return "";
+}
+
+fn validate_realm(realm: []const u8) !void {
+    if (std.mem.indexOfAny(u8, realm, "\"\r\n") != null) return error.InvalidRealm;
+}
+
+/// One caller-owned token bucket slot.
+///
+/// `last_refill_ns == 0` marks a free slot; the handler stores the monotonic
+/// timestamp from `RateLimit.io` after every use.
+pub const RateLimitBucket = struct {
+    key: u64 = 0,
+    tokens: u32 = 0,
+    last_refill_ns: i128 = 0,
+};
+
+/// Derives the bucket key for one request.
+pub const RateLimitKeyFn = *const fn (request: *const Request) u64;
+
+/// Rate, burst, and key source for `rate_limit`.
+pub const RateLimitOptions = struct {
+    /// Tokens refilled per second; zero disables refill.
+    rate_per_second: u32,
+    /// Bucket capacity; zero uses `rate_per_second` with a minimum of one.
+    burst: u32 = 0,
+    /// Request header hashed with FNV-1a when present. Must be a
+    /// server-derived value (for example `x-forwarded-for` behind a trusted
+    /// proxy); an attacker-controlled header lets a client rotate keys.
+    key_header: ?[]const u8 = null,
+    /// Shared key used when no function or header value applies.
+    key_constant: u64 = 0,
+    /// Highest-precedence key source.
+    key_fn: ?RateLimitKeyFn = null,
+};
+
+/// Outcome of one token-bucket step.
+pub const RateLimitDecision = struct {
+    allowed: bool,
+    tokens: u32,
+    last_refill_ns: i128,
+    retry_after_seconds: u64,
+};
+
+/// Fixed-state token-bucket rate-limit middleware.
+///
+/// The caller owns the bucket table and the `std.Io` used to read the
+/// monotonic clock (`.awake`, which is `CLOCK_MONOTONIC` on Linux). Mutating
+/// the caller-owned buckets and reading the clock is the documented purpose of
+/// this boundary handler; it performs no allocation and takes no locks. A full
+/// table evicts the bucket with the smallest `last_refill_ns` and starts the
+/// evicted key empty, so rotating keys cannot reset a budget; an empty table
+/// fails closed.
+pub const RateLimit = struct {
+    options: RateLimitOptions,
+    buckets: []RateLimitBucket,
+    io: std.Io,
+
+    pub fn handler(context: *anyopaque, request: *Request, response: *Response) radix.MiddlewareResult {
+        const self: *const RateLimit = @ptrCast(@alignCast(context));
+        const now_ns = std.Io.Clock.now(.awake, self.io).nanoseconds;
+        const key = rate_limit_key(self.options, request);
+        const slot = locate_bucket(self.buckets, key) orelse {
+            reject_limited(response, retry_after_seconds(self.options.rate_per_second));
+            return .stop;
+        };
+        const bucket = &self.buckets[slot.index];
+        if (!slot.matched) {
+            // An evicted slot starts empty: a client that rotates an
+            // attacker-controlled key must not reset its own budget. A free
+            // slot starts full so a new peer is not punished for table churn.
+            const seeded = if (slot.evicted) 0 else effective_burst(self.options.rate_per_second, self.options.burst);
+            bucket.* = .{
+                .key = key,
+                .tokens = @intCast(seeded),
+                .last_refill_ns = now_ns,
+            };
+        }
+        const decision = rate_limit_step(
+            self.options.rate_per_second,
+            self.options.burst,
+            bucket.tokens,
+            bucket.last_refill_ns,
+            now_ns,
+        );
+        bucket.tokens = decision.tokens;
+        bucket.last_refill_ns = decision.last_refill_ns;
+        if (!decision.allowed) {
+            reject_limited(response, decision.retry_after_seconds);
+            return .stop;
+        }
+        return .continue_dispatch;
+    }
+};
+
+/// Builds caller-owned token-bucket rate limiting over the supplied clock.
+pub fn rate_limit(io: std.Io, options: RateLimitOptions, buckets: []RateLimitBucket) RateLimit {
+    return .{ .options = options, .buckets = buckets, .io = io };
+}
+
+/// Refills one token bucket from monotonic time and charges one token.
+///
+/// Pure: the handler passes caller-owned bucket fields and the current
+/// timestamp, so identical inputs produce identical decisions. `tokens` is
+/// clamped to the effective burst and `last_refill_ns` keeps sub-token
+/// remainder so refill stays continuous rather than windowed.
+pub fn rate_limit_step(
+    rate_per_second: u32,
+    burst: u32,
+    tokens: u32,
+    last_refill_ns: i128,
+    now_ns: i128,
+) RateLimitDecision {
+    const capacity = effective_burst(rate_per_second, burst);
+    var available: u64 = @min(@as(u64, tokens), capacity);
+    var baseline = last_refill_ns;
+
+    if (now_ns <= baseline) {
+        baseline = now_ns;
+    } else if (available >= capacity) {
+        // A full bucket does not bank idle time.
+        baseline = now_ns;
+    } else if (rate_per_second != 0) {
+        // A baseline outside the i128 range refills completely.
+        const elapsed = std.math.sub(i128, now_ns, baseline) catch std.math.maxInt(i128);
+        const fill_ns: i128 = @as(i128, capacity) * std.time.ns_per_s;
+        if (elapsed >= fill_ns) {
+            available = capacity;
+            baseline = now_ns;
+        } else {
+            // Clamp before scaling so the baseline advance cannot overflow and
+            // a burst cannot over-refill past the missing tokens.
+            const missing = capacity - available;
+            const accrued_u128 = @min(
+                @as(u128, missing),
+                @as(u128, @intCast(elapsed)) * rate_per_second / std.time.ns_per_s,
+            );
+            const accrued: u64 = @intCast(accrued_u128);
+            baseline += @intCast(accrued_u128 * std.time.ns_per_s / rate_per_second);
+            available = @min(capacity, available + accrued);
+        }
+    }
+
+    if (available == 0) {
+        return .{
+            .allowed = false,
+            .tokens = 0,
+            .last_refill_ns = baseline,
+            .retry_after_seconds = retry_after_seconds(rate_per_second),
+        };
+    }
+    return .{
+        .allowed = true,
+        .tokens = @intCast(available - 1),
+        .last_refill_ns = baseline,
+        .retry_after_seconds = 0,
+    };
+}
+
+/// Returns the RFC 9110 Retry-After delay for an exhausted bucket.
+///
+/// An integer rate of at least one token per second reaches its next token
+/// within one second, the header's resolution. A zero rate never refills, so
+/// there is no meaningful retry delay and the caller omits the header.
+fn retry_after_seconds(rate_per_second: u32) u64 {
+    if (rate_per_second == 0) return 0;
+    return 1;
+}
+
+/// Bucket capacity after the burst default and the one-token minimum.
+fn effective_burst(rate_per_second: u32, burst: u32) u64 {
+    const configured = if (burst == 0) rate_per_second else burst;
+    return @max(1, @as(u64, configured));
+}
+
+/// Location of a request key inside the caller-owned bucket table.
+const BucketSlot = struct {
+    index: usize,
+    matched: bool,
+    /// True when the slot was occupied and evicted for this key.
+    evicted: bool,
+};
+
+/// Finds `key`, else a free slot, else the oldest slot for eviction.
+fn locate_bucket(buckets: []const RateLimitBucket, key: u64) ?BucketSlot {
+    var free: ?usize = null;
+    var oldest_index: usize = 0;
+    var oldest_ns: i128 = std.math.maxInt(i128);
+    for (buckets, 0..) |bucket, index| {
+        if (bucket.last_refill_ns == 0) {
+            if (free == null) free = index;
+            continue;
+        }
+        if (bucket.key == key) return .{ .index = index, .matched = true, .evicted = false };
+        if (bucket.last_refill_ns < oldest_ns) {
+            oldest_ns = bucket.last_refill_ns;
+            oldest_index = index;
+        }
+    }
+    if (free) |index| return .{ .index = index, .matched = false, .evicted = false };
+    if (buckets.len == 0) return null;
+    return .{ .index = oldest_index, .matched = false, .evicted = true };
+}
+
+/// Resolves the bucket key: custom function, hashed header, or constant.
+fn rate_limit_key(options: RateLimitOptions, request: *const Request) u64 {
+    if (options.key_fn) |key_fn| return key_fn(request);
+    const header_name = options.key_header orelse return options.key_constant;
+    const value = request.get_header(header_name) orelse return options.key_constant;
+    return fnv1a_64(value);
+}
+
+/// Hashes bytes with 64-bit FNV-1a, the stable derivation for header keys.
+pub fn fnv1a_64(bytes: []const u8) u64 {
+    var hash: u64 = 0xcbf29ce484222325;
+    for (bytes) |byte| {
+        hash ^= byte;
+        hash *%= 0x100000001b3;
+    }
+    return hash;
+}
+
+fn reject_limited(response: *Response, retry_after: u64) void {
+    if (retry_after != 0) {
+        var buffer: [20]u8 = undefined;
+        const value = std.fmt.bufPrint(&buffer, "{d}", .{retry_after}) catch {
+            fail_response(response);
+            return;
+        };
+        response.append_header("Retry-After", value) catch {
+            fail_response(response);
+            return;
+        };
+    }
+    end_best_effort(response, "429 Too Many Requests");
+}
+
 fn requested_headers_allowed(request: *const Request, allowed: []const []const u8) bool {
     const value = request.get_unique_header("access-control-request-headers") orelse return true;
     var headers = std.mem.splitScalar(u8, value, ',');

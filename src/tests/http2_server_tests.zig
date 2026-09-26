@@ -1804,6 +1804,247 @@ test "http2: reset_protocol clears armed producer slots" {
     try std.testing.expect(!conn.h2_stream_producer_close[0]);
 }
 
+/// Development-log sink bound to a temporary file for HTTP/2 log tests.
+const HttpResponseLog = struct {
+    tmp: std.testing.TmpDir,
+    sink: support.dev_log.Sink = .{},
+    file: std.Io.File,
+
+    fn init(self: *HttpResponseLog) !void {
+        self.sink = .{};
+        self.tmp = std.testing.tmpDir(.{});
+        self.file = try self.tmp.dir.createFile(std.testing.io, "dev_log.txt", .{});
+        self.sink.enable(std.testing.io, self.file);
+    }
+
+    fn read(self: *HttpResponseLog) ![]u8 {
+        return self.tmp.dir.readFileAlloc(
+            std.testing.io,
+            "dev_log.txt",
+            std.testing.allocator,
+            .limited(support.dev_log.capacity),
+        );
+    }
+
+    fn deinit(self: *HttpResponseLog) void {
+        self.file.close(std.testing.io);
+        self.tmp.cleanup();
+    }
+};
+
+fn sync_log_handler(_: *Request, response: *Response) void {
+    response.end("200 OK", "hello") catch @panic("test fixture response failed");
+}
+
+/// Asserts exactly one rendered request line naming `method` and `path`.
+fn expect_single_request_line(contents: []const u8, method: []const u8, path: []const u8) !void {
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, contents, "\n"));
+    var expected_buffer: [support.dev_log.max_line_bytes]u8 = undefined;
+    const prefix = try std.fmt.bufPrint(
+        &expected_buffer,
+        "{s}[{s}]{s} {s} : ",
+        .{ support.dev_log.Ansi.cyan, method, support.dev_log.Ansi.reset, path },
+    );
+    try std.testing.expect(std.mem.find(u8, contents, prefix) != null);
+}
+
+test "http2: completed exchange emits one request record and counter" {
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    try router.get("/stream", sync_log_handler);
+
+    var ring: [1024]u8 = undefined;
+    var conn = producer_connection(&ring, &router);
+    conn.io = std.testing.io;
+    var capture: HttpResponseLog = undefined;
+    try capture.init();
+    defer capture.deinit();
+    conn.dev_log = &capture.sink;
+    var registry = support.metrics.Registry{};
+    conn.metrics = &registry;
+    var h2_bundle = support.tcp.Http2Session.Bundle(support.tcp.Http2Session.default_capacities){};
+    conn.h2 = try support.tcp.Http2Session.init(h2_bundle.storage());
+
+    const request_headers = producer_request_headers();
+    var input: [128]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x5, 1, &request_headers);
+    try conn.h2.receive(input[0..input_length], conn.http2_callbacks());
+
+    try std.testing.expectEqual(@as(u64, 1), registry.get(.http_requests));
+    const contents = try capture.read();
+    defer std.testing.allocator.free(contents);
+    try expect_single_request_line(contents, "GET", "/stream");
+    try std.testing.expect(std.mem.find(u8, contents, "200" ++ support.dev_log.Ansi.reset) != null);
+
+    // Frames after the exchange completes must not add records or counters.
+    input_length = 0;
+    try append_frame(&input, &input_length, .ping, 0, 0, "12345678");
+    try conn.h2.receive(input[0..input_length], conn.http2_callbacks());
+    try std.testing.expectEqual(@as(u64, 1), registry.get(.http_requests));
+    const after = try capture.read();
+    defer std.testing.allocator.free(after);
+    try expect_single_request_line(after, "GET", "/stream");
+}
+
+/// Deferred route context that retains the token for explicit completion.
+const AsyncLogState = struct {
+    pending: ?support.http_response.AsyncResponse = null,
+
+    fn handle(context: *anyopaque, _: *Request, response: support.http_response.AsyncResponse) void {
+        const self: *AsyncLogState = @ptrCast(@alignCast(context));
+        self.pending = response;
+    }
+};
+
+test "http2: async completion emits one request record" {
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    var state = AsyncLogState{};
+    try router.route_async_context(.get, "/stream", &state, AsyncLogState.handle);
+
+    var ring: [1024]u8 = undefined;
+    var conn = producer_connection(&ring, &router);
+    conn.io = std.testing.io;
+    var capture: HttpResponseLog = undefined;
+    try capture.init();
+    defer capture.deinit();
+    conn.dev_log = &capture.sink;
+    var registry = support.metrics.Registry{};
+    conn.metrics = &registry;
+    var h2_bundle = support.tcp.Http2Session.Bundle(support.tcp.Http2Session.default_capacities){};
+    conn.h2 = try support.tcp.Http2Session.init(h2_bundle.storage());
+
+    const request_headers = producer_request_headers();
+    var input: [128]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x5, 1, &request_headers);
+    try conn.h2.receive(input[0..input_length], conn.http2_callbacks());
+
+    try std.testing.expectEqual(@as(u64, 1), registry.get(.http_requests));
+    const before = try capture.read();
+    defer std.testing.allocator.free(before);
+    try std.testing.expectEqual(@as(usize, 0), before.len);
+
+    try state.pending.?.complete("200 OK", "async body");
+
+    const after = try capture.read();
+    defer std.testing.allocator.free(after);
+    try expect_single_request_line(after, "GET", "/stream");
+    try std.testing.expect(std.mem.find(u8, after, "200" ++ support.dev_log.Ansi.reset) != null);
+}
+
+test "http2: producer completion emits one request record" {
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    var producer = StreamProducerState{ .remaining_chunks = 1 };
+    try router.route_context(.get, "/stream", &producer, stream_route_handler);
+
+    var ring: [1024]u8 = undefined;
+    var conn = producer_connection(&ring, &router);
+    conn.io = std.testing.io;
+    var capture: HttpResponseLog = undefined;
+    try capture.init();
+    defer capture.deinit();
+    conn.dev_log = &capture.sink;
+    var registry = support.metrics.Registry{};
+    conn.metrics = &registry;
+    var h2_bundle = support.tcp.Http2Session.Bundle(support.tcp.Http2Session.default_capacities){};
+    conn.h2 = try support.tcp.Http2Session.init(h2_bundle.storage());
+
+    const request_headers = producer_request_headers();
+    var input: [128]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x5, 1, &request_headers);
+    try conn.h2.receive(input[0..input_length], conn.http2_callbacks());
+
+    try std.testing.expectEqual(@as(?anyerror, null), producer.begin_error);
+    try std.testing.expectEqual(@as(u64, 1), registry.get(.http_requests));
+    const contents = try capture.read();
+    defer std.testing.allocator.free(contents);
+    try expect_single_request_line(contents, "GET", "/stream");
+    try std.testing.expect(std.mem.find(u8, contents, "200" ++ support.dev_log.Ansi.reset) != null);
+}
+
+test "http2: stream reset before completion emits no request record" {
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    var producer = StreamProducerState{ .remaining_chunks = 1, .stall = true };
+    try router.route_context(.get, "/stream", &producer, stream_route_handler);
+
+    var ring: [1024]u8 = undefined;
+    var conn = producer_connection(&ring, &router);
+    conn.io = std.testing.io;
+    var capture: HttpResponseLog = undefined;
+    try capture.init();
+    defer capture.deinit();
+    conn.dev_log = &capture.sink;
+    var registry = support.metrics.Registry{};
+    conn.metrics = &registry;
+    var h2_bundle = support.tcp.Http2Session.Bundle(support.tcp.Http2Session.default_capacities){};
+    conn.h2 = try support.tcp.Http2Session.init(h2_bundle.storage());
+
+    const request_headers = producer_request_headers();
+    var input: [128]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x5, 1, &request_headers);
+    try conn.h2.receive(input[0..input_length], conn.http2_callbacks());
+    try std.testing.expect(conn.h2_stream_producers[0] != null);
+
+    var cancel: [4]u8 = undefined;
+    std.mem.writeInt(u32, &cancel, @intFromEnum(http2_server.ErrorCode.cancel), .big);
+    input_length = 0;
+    try append_frame(&input, &input_length, .rst_stream, 0, 1, &cancel);
+    try conn.h2.receive(input[0..input_length], conn.http2_callbacks());
+
+    try std.testing.expect(conn.h2_stream_producers[0] == null);
+    try std.testing.expectEqual(@as(u64, 1), registry.get(.http_requests));
+    const contents = try capture.read();
+    defer std.testing.allocator.free(contents);
+    try std.testing.expectEqual(@as(usize, 0), contents.len);
+}
+
+test "http2: thread sink receives records without a connection log field" {
+    var capture: HttpResponseLog = undefined;
+    try capture.init();
+    defer capture.deinit();
+    const previous_sink = support.dev_log.thread_sink().*;
+    support.dev_log.thread_sink().* = .{};
+    support.dev_log.thread_sink().enable(std.testing.io, capture.file);
+    defer support.dev_log.thread_sink().* = previous_sink;
+
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    try router.get("/stream", sync_log_handler);
+
+    var ring: [1024]u8 = undefined;
+    var conn = producer_connection(&ring, &router);
+    conn.io = std.testing.io;
+    conn.dev_log = null;
+    var h2_bundle = support.tcp.Http2Session.Bundle(support.tcp.Http2Session.default_capacities){};
+    conn.h2 = try support.tcp.Http2Session.init(h2_bundle.storage());
+
+    const request_headers = producer_request_headers();
+    var input: [128]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x5, 1, &request_headers);
+    try conn.h2.receive(input[0..input_length], conn.http2_callbacks());
+
+    const contents = try capture.read();
+    defer std.testing.allocator.free(contents);
+    try expect_single_request_line(contents, "GET", "/stream");
+}
+
 /// Send credit granted per scope per flow-control test iteration.
 const producer_window_increment: u32 = 16 * 1024;
 

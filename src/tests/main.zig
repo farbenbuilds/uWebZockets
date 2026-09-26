@@ -2,6 +2,7 @@ comptime {
     _ = @import("bleeding_edge_tests.zig");
     _ = @import("c_api_tests.zig");
     _ = @import("c_tests.zig");
+    _ = @import("client_tests.zig");
     _ = @import("config_tests.zig");
     _ = @import("datagram_ring_tests.zig");
     _ = @import("dev_log_tests.zig");
@@ -14,6 +15,7 @@ comptime {
     _ = @import("http2_hpack_tests.zig");
     _ = @import("http2_server_tests.zig");
     _ = @import("kernel_tests.zig");
+    _ = @import("middleware_tests.zig");
     _ = @import("observability_tests.zig");
     _ = @import("quic_tests.zig");
     _ = @import("quic_phase3_tests.zig");
@@ -22,6 +24,7 @@ comptime {
     _ = @import("router_tests.zig");
     _ = @import("schema_cookie_tests.zig");
     _ = @import("shared_nothing_tests.zig");
+    _ = @import("signal_tests.zig");
     _ = @import("tls_tests.zig");
     _ = @import("udp_tests.zig");
     _ = @import("watch_tests.zig");

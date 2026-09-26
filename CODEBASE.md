@@ -2,7 +2,7 @@
 
 ## Scope
 
-µWebZockets 1.6.0 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
+µWebZockets 1.7.0 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
 server library with bounded HPACK protocol storage. It combines an
 event-driven cross-platform transport (POSIX and Windows IOCP), fixed-capacity
 protocol state, a data-oriented router, and C libraries for TLS, compression, and QUIC.
@@ -74,15 +74,17 @@ uWebZockets/
 │       ├── wasm.zig           # freestanding and WASI edge graph
 │       └── ebpf.zig           # XDP redirect and latency histogram objects
 ├── flake.nix                 # native GNU/musl and macOS packages
-├── docs/                     # architecture, TLS, memory model, protocols, operations
+├── docs/                     # architecture, TLS, protocols, client, deployment, guides
 ├── include/uWebZockets.h     # versioned C ABI declarations
 ├── src/
 │   ├── root.zig              # supported public API
 │   ├── version.zig           # single Zig source of truth for the release version
 │   ├── c_api.zig             # exported C ABI facade (handlers in c_api/)
+│   ├── client/               # bounded HTTP/1.1 client (request builder, parser, transport)
 │   ├── core/                 # libxev I/O plus transport-neutral protocol core
 │   │   ├── affinity.zig      # physical-core selection and thread pinning
 │   │   ├── ktls.zig          # Linux kTLS and zero-copy file transfer
+│   │   ├── signal.zig        # graceful-shutdown signal watcher
 │   │   └── udp.zig           # completion-owned UDP/QUIC transport
 │   ├── crypto/               # bounded BoringSSL TLS, ephemeral certificates, Web Crypto
 │   ├── edge/                 # WinterCG-compatible edge surface
@@ -188,6 +190,36 @@ wrap split. Producers observe `error.WouldBlock` instead of causing unbounded
 memory growth. Chunk headers, bodies, and terminators are copied into that ring
 as parts, so no per-connection chunk scratch allocation or fixed 8 KiB chunk
 ceiling is needed.
+
+`src/http/middleware.zig` also carries the built-in `Auth` and `RateLimit`
+handlers. `Auth` compares Basic and Bearer credentials in constant time after
+decoding Basic into bounded stack storage, and fails closed on missing,
+duplicate, or malformed fields. `RateLimit` is a fixed-state token bucket over
+caller-owned storage: refill math is pure and clamped, a full table evicts the
+oldest key and starts it empty so key rotation cannot reset a budget, and the
+handler reads the monotonic clock at the middleware boundary.
+
+## Client
+
+`src/client/` is a bounded HTTP/1.1 client: `request.zig` builds the head,
+`http1.zig` is a pure response parser (content-length, chunked with trailers,
+close-delimited, 1xx handling), and `connection.zig` owns the libxev connect,
+read, write, timer, and cancel lifecycle per slot. `src/crypto/tls_client.zig`
+provides the BoringSSL client context with SNI and hostname verification.
+Storage lives entirely in the `client(N)` slab; the plaintext steady state
+allocates nothing, and a TLS fetch allocates its session once per connection.
+A terminal loop failure abandons in-flight slots so `deinit` stays valid.
+
+## Shutdown signals
+
+`src/core/signal.zig` installs a process-wide graceful-shutdown watcher. On
+POSIX a self-pipe is written by an async-signal-safe handler and watched through
+a libxev file poll; on Windows a console-control handler sets an atomic and
+wakes the loop through a libxev async. The self-pipe write descriptor and the
+Windows handler state are documented OS singletons, since signal handlers
+cannot capture context. `App.catch_shutdown_signals` and
+`Cluster.catch_shutdown_signals` bridge the watcher into the normal shutdown
+path.
 
 ## JSON-RPC
 
@@ -398,9 +430,9 @@ The Zig surface exported from `src/root.zig` includes `App`, `ConfiguredApp`,
 `ConfiguredAppWithTimeout`, `Request`, `Response`, `WebSocket`, `WsBehavior`,
 `Opcode`, TLS configuration, chunked HTTP helpers, zero-allocation query and
 form parsing, canonical status and typed JSON error helpers, `Accept`
-negotiation, ETag helpers, comptime schema validation, zero-copy cookie
-parsing and signing helpers, and
-WebSocket masking. The
+negotiation, ETag helpers, CORS, security-header, authentication, and
+rate-limit middleware, comptime schema validation, zero-copy cookie parsing
+and signing helpers, and WebSocket masking. The
 surface also includes `WsCompression`, fixed-capacity `json_rpc`,
 completion-driven `udp`, bounded
 `http2`, `http2_hpack`, `http3_extensions`, `webtransport`, `http3_available`,

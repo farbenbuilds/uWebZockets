@@ -11,7 +11,7 @@ it is not a proof that all memory or security defects are absent.
 | --- | --- | --- | --- |
 | `lint.yml` | pushes and pull requests to `main`, manual | `Linting` | Zig formatting and repository conventions |
 | `test.yml` | pushes and pull requests to `main`, manual | `Testing` | Parallel Debug, sanitizer, fuzz, ReleaseSafe, and ReleaseFast verification |
-| `windows.yml` | manual, reusable from tagged publishing | `Testing` | Native `x86_64-windows-gnu` test compilation and static-library build |
+| `windows.yml` | manual, reusable from tagged publishing | `Testing` | Native `x86_64-windows-gnu` Debug test execution, ReleaseSafe test compilation, and static-library build |
 | `oss_fuzz.yml` | pushes and pull requests to `main`, manual, reusable | `Testing` | OSS-Fuzz-compatible ASan/libFuzzer build and execution |
 | `autobahn_compliance.yml` | pushes and pull requests to `main`, manual | `autobahn Compliance` | RFC 6455 server compliance |
 | `h1spec_compliance.yml` | pushes and pull requests to `main`, manual | `h1spec Compliance` | HTTP/1.1 compliance |
@@ -39,13 +39,17 @@ development shell, and uses the runner's ripgrep for the convention scan
 zig fmt --check build.zig src examples tests fuzz
 sh scripts/check_conventions.sh
 sh scripts/check_release_version.sh
+sh scripts/check_docs.sh
 ```
 
 The convention scanner checks project source filenames, Zig function and
 variable names, and text files for prohibited emoji code points. Vendored
 sources are excluded because their upstream conventions are preserved. The
 release metadata check keeps the Zig package, Nix package, C ABI, tests,
-changelog, and versioned documentation synchronized.
+changelog, and versioned documentation synchronized. The documentation link
+check resolves every relative Markdown target in the top-level documents and
+`docs/**/*.md` against the checkout, ignoring external URLs, anchor-only
+targets, and fenced code blocks.
 
 ## Unit and build verification
 
@@ -161,13 +165,23 @@ publish matrix runs natively on these GitHub-hosted architectures:
 
 The reusable Windows workflow runs separately on `windows-2025` in the
 `Windows Publishing` deployment environment. It installs
-the exact Zig release, compiles the complete
-ReleaseSafe test and C ABI graph as Windows executables, builds ReleaseFast
-static libraries, and retains the packaged result as a 14-day workflow
-artifact. Tag publishing calls the same workflow and includes its archive as
-the seventh release asset. Runtime execution remains a Tier 2 deployment
-responsibility; QUIC receive completion uses IOCP and packet transmission uses
-Winsock `WSASendTo`.
+the exact Zig release, compiles the ReleaseSafe test and C ABI graph, builds
+ReleaseFast static libraries, and retains the packaged result as a 14-day
+workflow artifact. Tag publishing calls the same workflow and includes its
+archive as the seventh release asset.
+
+Runtime execution on Windows is currently blocked by two defects, both
+documented with evidence in [docs/roadmap.md](docs/roadmap.md#windows-runtime-blocker-details).
+First, the pinned libxev IOCP backend never clears its internal accept socket
+after a completed accept, so the re-armed accept calls `AcceptEx` on an
+already-connected socket and gets `WSAEINVAL (10022)`, after which libxev
+panics mapping the unmapped error code. Second, once that is patched, the
+Windows close path treats queued completions as active, so a canceled-before-
+submission write never delivers its callback and the connection slot never
+returns to the pool. Every server listener on Windows goes through that accept
+path, so a native runtime gate cannot pass until both are fixed. The workflow
+therefore remains compile-only, and Windows stays a Tier 2 target where runtime
+validation is the deployment's responsibility.
 
 The default build also compiles the bounded `http3_server` example. The HTTP/3
 gate drives it independently with pinned curl/ngtcp2/nghttp3 and aioquic,
@@ -213,8 +227,10 @@ A `v*` tag gates four release phases.
    smoke, compiles ReleaseSafe tests and all OSS-Fuzz objects, and builds the
    downstream package consumer from the exact tagged source. The reusable
    Autobahn, h1spec, HTTP/3, OSS-Fuzz compatibility, and native Windows
-   workflows run in parallel against that same tag. Release creation cannot
-   start until all six verification paths and the target builds pass.
+   workflows run in parallel against that same tag, and the Windows workflow
+   compiles the ReleaseSafe test and C ABI graph before producing the seventh
+   archive. Release creation cannot start until all six verification paths and
+   the target builds pass.
 2. Each matrix job enters the `Publish` environment and runs the shared release
    metadata check. The tag must be valid Semantic Versioning and match the Zig
    package, centralized Nix version, C ABI macros/string, C/C++ smoke tests,
@@ -234,7 +250,7 @@ replaces assets with the same names.
 ## Release checklist
 
 - Update all release surfaces and run `sh scripts/check_release_version.sh`.
-- Run formatting and convention checks.
+- Run formatting, convention, and documentation link checks.
 - Run Debug tests and ReleaseSafe/ReleaseFast build checks.
 - Run the native Linux ASan/UBSan/LeakSanitizer and MSan passes.
 - Run the ClusterFuzzLite bad-build check and bounded batch for all five
