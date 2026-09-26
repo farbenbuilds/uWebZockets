@@ -35,11 +35,43 @@ condition that would change it.
 | kTLS is a standalone helper, not an integrated offload | The pinned BoringSSL has no kernel-TLS support, so the connection path cannot hand keys to the kernel. `uz.ktls` remains available to applications that manage their own records |
 | MemorySanitizer does not instrument Zig code | Zig 0.16 emits no MSan instrumentation. The MSan gate covers the pinned C/C++ dependency boundary |
 | BSD targets have no runtime CI | No hosted GitHub runners exist for the BSDs; the shared build graph is compiled but not executed in CI |
-| Windows runtime validation is blocked upstream | The pinned libxev IOCP backend submits `AcceptEx` with a zero local-address length; `windows-2025` rejects it with `WSAEINVAL (10022)` on the first accept and libxev then panics mapping the unmapped error code. Every Windows listener uses that path. The workflow stays compile-only until libxev is fixed or a Windows accept fallback lands |
+| Windows runtime validation is blocked | Two defects block the first Windows accept loop; see [Windows runtime blocker details](#windows-runtime-blocker-details). The workflow stays compile-only until they are fixed |
 | macOS workers are unpinned | The platform exposes no hard-affinity API |
 | The client is HTTP/1.1 only | It is deliberately small: no DNS resolution (numeric addresses only), no redirects, no cookies, no proxy support, no connection pooling, no mTLS, and no HTTP/2 or HTTP/3 client |
 | The C ABI is a high-level subset | Opaque handles and fixed capacities target C/C++ consumers; the low-level HTTP/2, HPACK, HTTP/3-extension, WebTransport, UDP, and client modules are Zig-only |
 | Zig 0.16.0 is the only supported toolchain | It is the latest usable release without known breaking defects for this codebase. Pre-1.0 toolchains churn; pin the exact compiler |
+
+## Windows runtime blocker details
+
+A native Windows runtime gate was attempted on `windows-2025` and traced to two
+defects, in order of encounter.
+
+1. **libxev accept lifecycle (upstream).** After a successful `AcceptEx`, the
+   IOCP backend returns the accepted socket from the completion but never
+   clears `op.accept.internal_accept_socket`. A persistent accept loop re-arms
+   the completion, and `start_completion` calls `AcceptEx` again with the
+   already-connected socket, which returns `WSAEINVAL (10022)`; libxev then
+   panics while mapping that unmapped Winsock code to `Win32Error`. A
+   standalone probe confirmed the `AcceptEx` arguments are fine (a zero
+   local-address length returns `WSA_IO_PENDING` on `windows-2025`), and a
+   local patch that clears the field after taking the socket got the server
+   past the panic. The minimal upstream fix is to null the field on both the
+   success and error paths of the accept completion.
+2. **Queued completions on the Windows close path (this project).** With the
+   accept fix applied, `verify_shutdown` failed with `ShutdownIncomplete`
+   because a connection stayed in the pool with `is_writing = true`.
+   `Completion.state()` maps both `.adding` (queued, not yet submitted) and
+   `.active` to `.active`, so the Windows close branch never clears
+   `is_writing`/`read_active` for a completion that is canceled before
+   submission. libxev marks the unsubmitted target `.dead` and fires only the
+   cancel callback, so the write callback never runs and the slot is never
+   released. The fix direction is to distinguish queued from submitted
+   completions (submit them before canceling, or track submission explicitly)
+   and clear the flags for completions whose callback will never fire.
+
+The temporary probe branch was discarded; no dependency fork or vendored
+libxev change is carried in this release. Revisiting Windows runtime support
+starts from these two findings.
 
 ## Near-term direction
 

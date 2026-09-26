@@ -170,15 +170,18 @@ ReleaseFast static libraries, and retains the packaged result as a 14-day
 workflow artifact. Tag publishing calls the same workflow and includes its
 archive as the seventh release asset.
 
-Runtime execution on Windows is currently blocked upstream: the pinned libxev
-IOCP backend submits `AcceptEx` with a zero local-address length, and
-`windows-2025` rejects that with `WSAEINVAL (10022)` on the first accept
-(libxev then panics while mapping the unmapped error code). Every server
-listener on Windows goes through that accept path, so a native runtime gate
-cannot pass until libxev is fixed or the project adds a Windows accept
-fallback. The workflow therefore remains compile-only, and Windows stays a
-Tier 2 target where runtime validation is the deployment's responsibility.
-`docs/roadmap.md` records the blocker and the candidate workaround.
+Runtime execution on Windows is currently blocked by two defects, both
+documented with evidence in [docs/roadmap.md](docs/roadmap.md#windows-runtime-blocker-details).
+First, the pinned libxev IOCP backend never clears its internal accept socket
+after a completed accept, so the re-armed accept calls `AcceptEx` on an
+already-connected socket and gets `WSAEINVAL (10022)`, after which libxev
+panics mapping the unmapped error code. Second, once that is patched, the
+Windows close path treats queued completions as active, so a canceled-before-
+submission write never delivers its callback and the connection slot never
+returns to the pool. Every server listener on Windows goes through that accept
+path, so a native runtime gate cannot pass until both are fixed. The workflow
+therefore remains compile-only, and Windows stays a Tier 2 target where runtime
+validation is the deployment's responsibility.
 
 The default build also compiles the bounded `http3_server` example. The HTTP/3
 gate drives it independently with pinned curl/ngtcp2/nghttp3 and aioquic,

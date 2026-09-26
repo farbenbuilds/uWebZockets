@@ -58,8 +58,9 @@ applications recompile and behave unchanged.
   [WebSocket](docs/websocket.md), and [JSON-RPC](docs/json_rpc.md) documents.
 - CI: `scripts/check_docs.sh` validates every relative markdown link in the
   lint job. Windows remains a compile-verified Tier 2 target: a native runtime
-  gate is blocked by an upstream libxev IOCP accept defect on `windows-2025`,
-  recorded in [docs/roadmap.md](docs/roadmap.md).
+  gate is blocked by two accept-loop defects (one in the pinned libxev IOCP
+  backend, one in the Windows close path), recorded in
+  [docs/roadmap.md](docs/roadmap.md#windows-runtime-blocker-details).
 
 ### Changed
 
