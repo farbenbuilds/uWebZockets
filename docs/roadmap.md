@@ -13,7 +13,6 @@ is a defect, a scoped decision, or pending work.
 | No auth or rate limiting | `middleware.Auth` (Basic/Bearer, constant-time) and `middleware.RateLimit` (fixed token buckets, rotation-resistant) ([http.md](http.md#middleware)) |
 | No graceful shutdown helper | `App.catch_shutdown_signals()` and `Cluster.catch_shutdown_signals()` for SIGINT/SIGTERM and Windows console control |
 | HTTP/2 and HTTP/3 were invisible in the dev log | One `http_request` record per completed exchange on both, plus HTTP/2 counter increments |
-| Windows was compile-only in CI | The native Windows runner executes the Debug test graph |
 | Docs could drift | `scripts/check_docs.sh` validates every relative markdown link in CI |
 | Stale supported-version policy | [SECURITY.md](../SECURITY.md) tracks the latest released minor line |
 | Monolithic protocol documentation | Split into [http.md](http.md), [http2.md](http2.md), [quic.md](quic.md), [websocket.md](websocket.md), and [json_rpc.md](json_rpc.md) |
@@ -36,6 +35,7 @@ condition that would change it.
 | kTLS is a standalone helper, not an integrated offload | The pinned BoringSSL has no kernel-TLS support, so the connection path cannot hand keys to the kernel. `uz.ktls` remains available to applications that manage their own records |
 | MemorySanitizer does not instrument Zig code | Zig 0.16 emits no MSan instrumentation. The MSan gate covers the pinned C/C++ dependency boundary |
 | BSD targets have no runtime CI | No hosted GitHub runners exist for the BSDs; the shared build graph is compiled but not executed in CI |
+| Windows runtime validation is blocked upstream | The pinned libxev IOCP backend submits `AcceptEx` with a zero local-address length; `windows-2025` rejects it with `WSAEINVAL (10022)` on the first accept and libxev then panics mapping the unmapped error code. Every Windows listener uses that path. The workflow stays compile-only until libxev is fixed or a Windows accept fallback lands |
 | macOS workers are unpinned | The platform exposes no hard-affinity API |
 | The client is HTTP/1.1 only | It is deliberately small: no DNS resolution (numeric addresses only), no redirects, no cookies, no proxy support, no connection pooling, no mTLS, and no HTTP/2 or HTTP/3 client |
 | The C ABI is a high-level subset | Opaque handles and fixed capacities target C/C++ consumers; the low-level HTTP/2, HPACK, HTTP/3-extension, WebTransport, UDP, and client modules are Zig-only |

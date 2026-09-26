@@ -416,13 +416,13 @@ in [`examples/`](examples/), with walkthroughs in
 
 The repository CI covers Zig builds and tests, RFC 6455 behavior, HTTP/3
 interop, HTTP/1.1 conformance, deterministic fuzz smoke tests, an
-OSS-Fuzz/ClusterFuzzLite build, a native Windows test run, and a markdown link
-gate over every developer document. The throughput workflow compares the
-optimized `hello_world` server with the main branch on the same runner; it is a
-regression guard, not a universal performance claim. Released tags provide
-stable snapshots, and the current source tree may include unreleased changes.
+OSS-Fuzz/ClusterFuzzLite build, and a markdown link gate over every developer
+document. The throughput workflow compares the optimized `hello_world` server
+with the main branch on the same runner; it is a regression guard, not a
+universal performance claim. Released tags provide stable snapshots, and the
+current source tree may include unreleased changes.
 [docs/roadmap.md](docs/roadmap.md) records what each release closes and which
-boundaries are deliberate.
+boundaries are deliberate or blocked upstream.
 
 [![Test](https://github.com/farbenbuilds/uWebZockets/actions/workflows/test.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/test.yml)
 [![Windows Build](https://github.com/farbenbuilds/uWebZockets/actions/workflows/windows.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/windows.yml)

@@ -56,9 +56,10 @@ applications recompile and behave unchanged.
   [client](docs/client.md) guides; the protocol documentation is split into
   [HTTP](docs/http.md), [HTTP/2](docs/http2.md), [HTTP/3](docs/quic.md),
   [WebSocket](docs/websocket.md), and [JSON-RPC](docs/json_rpc.md) documents.
-- CI: the native Windows runner executes the Debug test graph instead of only
-  compiling it, and `scripts/check_docs.sh` validates every relative markdown
-  link in the lint job.
+- CI: `scripts/check_docs.sh` validates every relative markdown link in the
+  lint job. Windows remains a compile-verified Tier 2 target: a native runtime
+  gate is blocked by an upstream libxev IOCP accept defect on `windows-2025`,
+  recorded in [docs/roadmap.md](docs/roadmap.md).
 
 ### Changed
 

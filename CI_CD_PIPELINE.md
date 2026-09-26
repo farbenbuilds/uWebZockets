@@ -165,13 +165,20 @@ publish matrix runs natively on these GitHub-hosted architectures:
 
 The reusable Windows workflow runs separately on `windows-2025` in the
 `Windows Publishing` deployment environment. It installs
-the exact Zig release, runs the complete Debug test graph natively on the
-Windows runner, compiles the ReleaseSafe test and C ABI graph, builds
+the exact Zig release, compiles the ReleaseSafe test and C ABI graph, builds
 ReleaseFast static libraries, and retains the packaged result as a 14-day
 workflow artifact. Tag publishing calls the same workflow and includes its
-archive as the seventh release asset. The native run exercises Tier 2 behavior
-on its real OS; QUIC receive completion uses IOCP and packet transmission uses
-Winsock `WSASendTo`.
+archive as the seventh release asset.
+
+Runtime execution on Windows is currently blocked upstream: the pinned libxev
+IOCP backend submits `AcceptEx` with a zero local-address length, and
+`windows-2025` rejects that with `WSAEINVAL (10022)` on the first accept
+(libxev then panics while mapping the unmapped error code). Every server
+listener on Windows goes through that accept path, so a native runtime gate
+cannot pass until libxev is fixed or the project adds a Windows accept
+fallback. The workflow therefore remains compile-only, and Windows stays a
+Tier 2 target where runtime validation is the deployment's responsibility.
+`docs/roadmap.md` records the blocker and the candidate workaround.
 
 The default build also compiles the bounded `http3_server` example. The HTTP/3
 gate drives it independently with pinned curl/ngtcp2/nghttp3 and aioquic,
@@ -218,9 +225,9 @@ A `v*` tag gates four release phases.
    downstream package consumer from the exact tagged source. The reusable
    Autobahn, h1spec, HTTP/3, OSS-Fuzz compatibility, and native Windows
    workflows run in parallel against that same tag, and the Windows workflow
-   executes the Debug test graph on the Windows runner before producing the
-   seventh archive. Release creation cannot start until all six verification
-   paths and the target builds pass.
+   compiles the ReleaseSafe test and C ABI graph before producing the seventh
+   archive. Release creation cannot start until all six verification paths and
+   the target builds pass.
 2. Each matrix job enters the `Publish` environment and runs the shared release
    metadata check. The tag must be valid Semantic Versioning and match the Zig
    package, centralized Nix version, C ABI macros/string, C/C++ smoke tests,

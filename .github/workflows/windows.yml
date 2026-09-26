@@ -40,11 +40,6 @@ jobs:
           zig build test-compile -Dtarget=x86_64-windows-gnu `
             -Doptimize=ReleaseSafe --summary all
 
-      - name: Run Windows tests
-        shell: pwsh
-        run: |
-          zig build test -Dtarget=x86_64-windows-gnu --summary all
-
       - name: Build Windows static libraries
         shell: pwsh
         run: |

@@ -101,7 +101,7 @@ try app.run();
 | Tier | Targets | Evidence |
 | --- | --- | --- |
 | Tier 1 | Linux and macOS on `x86_64` and `aarch64` | Built, tested, and published by CI |
-| Tier 2 | `x86_64-windows-gnu`, FreeBSD, NetBSD, OpenBSD, DragonFlyBSD | Windows compiles and runs the test graph on a native runner; BSDs share the build graph without dedicated CI |
+| Tier 2 | `x86_64-windows-gnu`, FreeBSD, NetBSD, OpenBSD, DragonFlyBSD | Windows compiles the test and C ABI graph on a native runner; runtime validation is a Tier 2 responsibility because the pinned libxev IOCP accept path is blocked upstream (see [roadmap.md](roadmap.md)). BSDs share the build graph without dedicated CI |
 
 - Shared-nothing clustering is fully supported on Linux. Windows uses the
   `SO_REUSEADDR` fallback with unspecified kernel distribution; macOS runs
