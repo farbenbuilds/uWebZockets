@@ -218,3 +218,12 @@ builder adds brackets to the `Host` header.
   lifecycle the client shares with the server.
 - [memory_model.md](memory_model.md) for the fixed-capacity slab rules the
   client follows.
+
+## Verification
+
+The client suite covers the pure response parser (framing, trailers, 1xx,
+malformed input), request-builder validation, TLS trust failures, slot reuse
+after a failed fetch, and loopback end-to-end fetches over plaintext and TLS.
+The loopback tests spawn a peer thread and are skipped under the ASan and MSan
+runtimes, which abort on this toolchain's thread teardown; the parser, builder,
+and failure paths run in every mode.

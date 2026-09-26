@@ -2,6 +2,7 @@
 //! transport behavior, and TLS trust handling.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const c = @import("c");
 const support = @import("test_support");
 const test_options = @import("test_options");
@@ -420,7 +421,11 @@ fn read_request_head(io: std.Io, handle: net.Socket.Handle) bool {
 }
 
 /// Best-effort receive timeout so a failed test cannot block join forever.
+///
+/// Windows has no portable `timeval` socket option here; every test that
+/// spawns a peer connects before asserting, so the listener does not block.
 fn set_accept_timeout(handle: net.Socket.Handle) void {
+    if (builtin.os.tag == .windows) return;
     var timeout = std.posix.timeval{ .sec = 5, .usec = 0 };
     std.posix.setsockopt(
         handle,
