@@ -165,14 +165,11 @@
       in {
         formatter = pkgs.alejandra;
 
-        packages =
-          {
-            default = mkPackage pkgs nativeTarget;
-            release = mkPackage pkgs nativeTarget;
-          }
-          // lib.optionalAttrs isLinux {
-            musl = mkPackage pkgsMusl muslTarget;
-          };
+        # Source-only distribution: `nix build` produces a local native build,
+        # but no per-platform binary packages are published. Consumers fetch
+        # the tagged source with `zig fetch` and let the package manager build
+        # the pinned dependencies.
+        packages.default = mkPackage pkgs nativeTarget;
 
         checks =
           {

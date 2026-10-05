@@ -84,8 +84,10 @@ dependency migrations, and decisions.
    with origin tracking, disables BoringSSL assembly as upstream does, and
    runs only the dependency-boundary smoke; it does not instrument Zig code.
    Never claim more coverage than that.
-7. Cross-target policy: Linux and macOS are Tier 1; `x86_64-windows-gnu` and
-   the BSDs are Tier 2. The bundled zlib package builds for every selected
+7. Cross-target policy: Linux and macOS are supported; `x86_64-windows-gnu` is
+   compile-only and not officially supported because the pinned libxev IOCP
+   accept lifecycle blocks the Windows runtime; the BSDs share the build graph
+   without dedicated CI. The bundled zlib package builds for every selected
    target, so foreign builds need no external prefix. Windows links
    `ws2_32`, `mswsock`, `crypt32`, and `advapi32`.
 8. The installed static archive must contain only object members;

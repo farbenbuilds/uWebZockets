@@ -121,13 +121,15 @@ deterministic smoke seeds are retained. Autobahn, h1spec, and the pinned
 curl/ngtcp2 plus aioquic HTTP/3 gate add protocol coverage. Deployments should
 still perform workload-specific QUIC load testing.
 
-Cross-platform support covers Linux, macOS, Windows (`x86_64-windows-gnu` /
-MinGW ABI), FreeBSD, NetBSD, OpenBSD, and DragonFlyBSD. The configured publish
-matrix covers Linux and macOS. A dedicated native Windows job compiles the
-complete ReleaseSafe test/ABI graph without executing it, and tagged
-releases include its static libraries. Windows runtime verification remains a
-Tier 2 deployment responsibility. The additional BSD targets share the build
-graph without dedicated runtime CI coverage.
+Cross-platform support covers Linux and macOS on `x86_64` and `aarch64`;
+Windows (`x86_64-windows-gnu` / MinGW ABI), FreeBSD, NetBSD, OpenBSD, and
+DragonFlyBSD share the build graph but are not officially supported. A
+dedicated native Windows job compiles the complete ReleaseSafe test/ABI graph
+and the static libraries without executing them because the pinned libxev IOCP
+accept lifecycle blocks the runtime; no Windows binaries are published.
+The BSD targets have no dedicated runtime CI coverage. Treat unverified
+platforms as community builds and validate them against your own deployment
+requirements.
 
 ## Disclosure
 

@@ -7,8 +7,9 @@ the [README](../README.md) for the quick start and the other
 ## Requirements
 
 - Zig 0.16.0
-- A build target: Linux, macOS, FreeBSD, NetBSD, OpenBSD, DragonFlyBSD, or
-  Windows
+- A build target: Linux or macOS are supported; FreeBSD, NetBSD, OpenBSD,
+  DragonFlyBSD, and Windows are community or compile-only targets (see
+  [Platform support](#platform-support))
 - The `vendor/h1spec` submodule for the h1spec development suite
 
 Zig fetches and compiles BoringSSL, lsquic, ls-qpack, ls-hpack, libdeflate, and
@@ -120,7 +121,9 @@ zlib prefix. A musl cross build is one command:
 zig build -Dtarget=aarch64-linux-musl -Doptimize=ReleaseSafe
 ```
 
-Windows builds use the same package and require no MinGW zlib installation:
+Windows compilation checks use the same package and require no MinGW zlib
+installation. Windows is not officially supported; the commands document the
+compile-only path:
 
 ```powershell
 zig build test-compile -Dtarget=x86_64-windows-gnu `
@@ -307,19 +310,22 @@ toolchain cohorts.
 
 ## Platform support
 
-- Tier 1: Linux and macOS on `x86_64` and `aarch64`; these targets are built,
-  tested, and published by CI.
-- Tier 2: `x86_64-windows-gnu`, FreeBSD, NetBSD, OpenBSD, and DragonFlyBSD.
-  Windows libraries and the complete test/ABI graph are compiled on a native
-  Windows runner for tagged releases, with a manual pre-release trigger
-  available; the resulting archive is published. Windows runtime tests remain a
-  Tier 2 validation responsibility. Windows QUIC uses IOCP UDP receives and
-  Winsock `WSASendTo` sends. The BSD targets share the build graph without
-  dedicated CI.
+- Supported: Linux and macOS on `x86_64` and `aarch64`; these targets are built
+  and tested by CI.
+- Not officially supported: `x86_64-windows-gnu`. The pinned libxev IOCP accept
+  path is blocked upstream and the runtime is therefore not claimed. The
+  reusable Windows workflow compiles the test and C ABI graph and the
+  ReleaseFast libraries on a native runner; no Windows binaries are published.
+  Windows QUIC uses IOCP UDP receives and Winsock `WSASendTo` sends but is not
+  runtime-verified.
+- Community: FreeBSD, NetBSD, OpenBSD, and DragonFlyBSD share the build graph
+  without dedicated CI.
 
-Shared-nothing clustering is fully supported on Linux. Windows uses the
-`SO_REUSEADDR` fallback and native thread affinity; macOS runs workers without
-hard pinning because the platform exposes no affinity API. See
+Releases are source tags; no per-platform binary archives are built or
+uploaded, and developers fetch the tag with `zig fetch`.
+
+Shared-nothing clustering is fully supported on Linux. macOS runs workers
+without hard pinning because the platform exposes no affinity API. See
 [architecture.md](architecture.md#windows-fallback).
 
 Request fields, route captures, middleware, async tokens, and transport pools

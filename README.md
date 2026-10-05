@@ -16,8 +16,10 @@ thread each, and reused without locking.
   compile-time capacities that make exhaustion explicit.
 - **Readable types:** named callback, event, and override types instead of
   inline anonymous structs, reflection-driven shapes, or type gymnastics.
-- **Cross-platform:** Tier 1 Linux and macOS, with a `x86_64-windows-gnu`
-  fallback for reuse-port and affinity behavior.
+- **Cross-platform:** Linux and macOS (x86_64 and aarch64) are supported and
+  tested. Windows (`x86_64-windows-gnu`) is compile-checked only and is not
+  officially supported: the pinned libxev IOCP accept path is blocked
+  upstream.
 
 [Getting started](docs/getting_started.md) | [API guide](docs/api.md) |
 [TLS](docs/tls.md) | [Architecture](docs/architecture.md) |
@@ -52,6 +54,8 @@ package manager and caches them; later builds reuse the caches. The
 µWebZockets is a Zig package. Fetch a released tag (or a full commit) and
 import the module; nothing else needs to be installed, and the package
 manifest pulls BoringSSL, lsquic, and the other pinned dependencies itself.
+Releases are source tags: no per-platform binary archives are published, so
+`zig fetch` resolves the sources and the local toolchain builds them.
 
 ```sh
 zig fetch --save 'git+https://github.com/farbenbuilds/uWebZockets#<tag-or-commit>'
@@ -135,7 +139,8 @@ pub fn main(init: std.process.Init) !void {
 ```
 
 Workers share the port through `SO_REUSEPORT` (Linux/macOS) or `SO_REUSEADDR`
-(Windows fallback), are pinned to distinct physical cores where the platform
+(Windows fallback in code; Windows is not officially supported), are pinned to
+distinct physical cores where the platform
 allows it, and set `TCP_DEFER_ACCEPT` and `TCP_QUICKACK` to keep the loop
 asleep through handshakes and to avoid delayed-ACK stalls. Details and the
 platform matrix are in [docs/architecture.md](docs/architecture.md).
@@ -403,14 +408,16 @@ in [`examples/`](examples/), with walkthroughs in
 
 ## Platform support
 
-- Tier 1: Linux and macOS on `x86_64` and `aarch64`; built, tested, and
-  published by CI.
-- Tier 2: `x86_64-windows-gnu`, FreeBSD, NetBSD, OpenBSD, and DragonFlyBSD.
-  Windows libraries and the full test/ABI graph are compiled on a native
-  Windows runner; runtime validation is a Tier 2 responsibility.
-- Shared-nothing clustering is fully supported on Linux; Windows uses the
-  reuse-address fallback, and macOS runs unpinned because the platform exposes
-  no hard-affinity API.
+- Supported: Linux and macOS on `x86_64` and `aarch64`; built and tested by CI.
+- Not officially supported: `x86_64-windows-gnu`. The pinned libxev IOCP accept
+  path is blocked upstream (see
+  [roadmap.md](docs/roadmap.md#windows-runtime-blocker-details)), so Windows
+  remains compile-only: a native runner compiles the test and C ABI graph, but
+  no runtime behavior is claimed and no Windows binaries are published.
+- Community targets: FreeBSD, NetBSD, OpenBSD, and DragonFlyBSD share the
+  build graph without dedicated CI runtime coverage.
+- Shared-nothing clustering is fully supported on Linux; macOS runs unpinned
+  because the platform exposes no hard-affinity API.
 
 ## Project status
 
@@ -419,13 +426,13 @@ interop, HTTP/1.1 conformance, deterministic fuzz smoke tests, an
 OSS-Fuzz/ClusterFuzzLite build, and a markdown link gate over every developer
 document. The throughput workflow compares the optimized `hello_world` server
 with the main branch on the same runner; it is a regression guard, not a
-universal performance claim. Released tags provide stable snapshots, and the
-current source tree may include unreleased changes.
-[docs/roadmap.md](docs/roadmap.md) records what each release closes and which
-boundaries are deliberate or blocked upstream.
+universal performance claim. Releases are source tags: there are no
+per-platform binary archives, and consumers use `zig fetch` so the package
+manager builds the pinned dependencies. The current source tree may include
+unreleased changes, and [docs/roadmap.md](docs/roadmap.md) records what each
+release closes and which boundaries are deliberate or blocked upstream.
 
 [![Test](https://github.com/farbenbuilds/uWebZockets/actions/workflows/test.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/test.yml)
-[![Windows Build](https://github.com/farbenbuilds/uWebZockets/actions/workflows/windows.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/windows.yml)
 [![Autobahn Compliance](https://github.com/farbenbuilds/uWebZockets/actions/workflows/autobahn_compliance.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/autobahn_compliance.yml)
 [![h1spec Compliance](https://github.com/farbenbuilds/uWebZockets/actions/workflows/h1spec_compliance.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/h1spec_compliance.yml)
 [![Benchmark](https://github.com/farbenbuilds/uWebZockets/actions/workflows/benchmark.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/benchmark.yml)

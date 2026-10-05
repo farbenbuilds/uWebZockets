@@ -79,11 +79,13 @@ See [client.md](client.md) for the full contract.
 - Workers share the port through `SO_REUSEPORT` on Linux and macOS, and
   `SO_REUSEADDR` on Windows. On Windows the kernel distribution across
   listeners is unspecified; treat it as a graceful fallback, not a
-  load-balancing path.
+  load-balancing path. Windows is not officially supported because the pinned
+  libxev IOCP accept lifecycle blocks the runtime.
 - Affinity failures (restricted cpusets, macOS, other platforms) log once and
   leave workers unpinned instead of refusing startup.
-- `Cluster.request_shutdown` requests shutdown for every worker; a plain
-  `App.shutdown` stops only that worker.
+- `Cluster.request_shutdown` requests shutdown for every worker;
+  `App.request_shutdown` is the cross-thread-safe single-app entry, while
+  `App.shutdown` must run on the owning loop thread.
 
 ## HTTP/3
 

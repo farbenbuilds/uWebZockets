@@ -334,7 +334,8 @@ the selected route enforces resource-specific media-type and content rules.
 
 Windows QUIC datagrams are received through libxev IOCP UDP completions and
 sent with the Winsock `WSASendTo` adapter. The native Windows workflow compiles
-this path, while runtime interoperability remains Tier 2.
+this path, but Windows is not officially supported: the pinned libxev IOCP
+accept lifecycle blocks the runtime, so only compilation is claimed.
 
 ## Development log
 
@@ -404,9 +405,10 @@ deterministically, and defines native and musl compile checks. `build.zig.zon`
 pins zslay, libxev, BoringSSL, lsquic, ls-qpack, ls-hpack, libdeflate, and zlib
 by immutable URL or commit plus Zig package hash. A downstream project can pin
 an exact checkout at a local path without fetching the repository's
-`vendor/h1spec` compliance submodule. Release archives contain the µWebZockets, BoringSSL, lsquic,
-libdeflate, and zlib static libraries, `uWebZockets.h`, and their license
-texts. `tests/package_consumer` imports the public module from a pinned local
+`vendor/h1spec` compliance submodule. Releases are source tags: the repository
+publishes no per-platform binary archives, and consumers use `zig fetch` so the
+package manager resolves and builds the pinned dependency sources.
+`tests/package_consumer` imports the public module from a pinned local
 path in CI. That module carries native link metadata and a clean static-library
 edge that orders vendor builds without nesting dependency archives. The fixture
 catches package-root and exported-name drift.

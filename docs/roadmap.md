@@ -35,7 +35,7 @@ condition that would change it.
 | kTLS is a standalone helper, not an integrated offload | The pinned BoringSSL has no kernel-TLS support, so the connection path cannot hand keys to the kernel. `uz.ktls` remains available to applications that manage their own records |
 | MemorySanitizer does not instrument Zig code | Zig 0.16 emits no MSan instrumentation. The MSan gate covers the pinned C/C++ dependency boundary |
 | BSD targets have no runtime CI | No hosted GitHub runners exist for the BSDs; the shared build graph is compiled but not executed in CI |
-| Windows runtime validation is blocked | Two defects block the first Windows accept loop; see [Windows runtime blocker details](#windows-runtime-blocker-details). The workflow stays compile-only until they are fixed |
+| Windows is not officially supported | Two defects block the first Windows accept loop, so only compilation is claimed; see [Windows runtime blocker details](#windows-runtime-blocker-details). The reusable workflow stays compile-only and no Windows binaries are published |
 | macOS workers are unpinned | The platform exposes no hard-affinity API |
 | The client is HTTP/1.1 only | It is deliberately small: no DNS resolution (numeric addresses only), no redirects, no cookies, no proxy support, no connection pooling, no mTLS, and no HTTP/2 or HTTP/3 client |
 | The C ABI is a high-level subset | Opaque handles and fixed capacities target C/C++ consumers; the low-level HTTP/2, HPACK, HTTP/3-extension, WebTransport, UDP, and client modules are Zig-only |

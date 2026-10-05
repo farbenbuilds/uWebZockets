@@ -79,6 +79,17 @@ signature changes.
   response framing cannot size a multi-megabyte stack frame.
 - `AesGcmError` gains `SealFailed` for residual seal failures that the size
   prechecks cannot explain.
+- BoringSSL is re-pinned to `dd73e69a4e86fa178a4d19033c691e9b42cc1088`; zslay,
+  libxev, lsquic, ls-qpack, ls-hpack, libdeflate, and zlib already track their
+  latest published revisions. The Nix flake inputs (`nixpkgs`, `flake-parts`,
+  `zig-overlay`, and `zon2nix`) are updated and `build.zig.zon.nix`, `.json`,
+  and `.txt` are regenerated in lockstep.
+- Publishing no longer builds or uploads per-platform static-library archives.
+  A release is the tagged source: consumers use `zig fetch` and their own
+  toolchain builds the pinned dependencies.
+- Windows is documented as not officially supported. The reusable workflow
+  remains a compile-only check, and the pinned libxev IOCP accept lifecycle
+  remains the runtime blocker.
 - Docs: mTLS 0-RTT, CRL enforcement, the TLS 1.3 client pin, the App write
   queue default, the RFC 8441 key rule, and the AF_XDP status now match the
   implementation.

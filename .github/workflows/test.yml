@@ -150,7 +150,7 @@ jobs:
         run: nix develop "path:." -c zig build fuzz --fuzz=100K -Doptimize=ReleaseSafe
 
   artifacts:
-    name: Release artifacts
+    name: Cross-target compile checks
     runs-on: ubuntu-24.04
     environment: Testing
     timeout-minutes: 30

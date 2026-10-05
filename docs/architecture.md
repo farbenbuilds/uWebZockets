@@ -93,8 +93,11 @@ Listeners and accepted sockets are tuned per platform:
 
 ### Windows fallback
 
-Windows IOCP already multiplexes completions across threads and has no
-`SO_REUSEPORT`. In cluster mode every worker binds the shared address with
+Windows is not officially supported. The pinned libxev IOCP accept lifecycle
+blocks the first accept loop (see [roadmap.md](roadmap.md#windows-runtime-blocker-details)),
+so the paths below are kept compiling and reviewed for portability, not claimed
+at runtime. Windows IOCP already multiplexes completions across threads and has
+no `SO_REUSEPORT`. In cluster mode every worker binds the shared address with
 `SO_REUSEADDR` instead. Each accepted connection still lands wholly inside the
 accepting worker's slab, so routing stays safe; kernel distribution across
 listeners is unspecified and the Windows cluster is documented as a graceful
