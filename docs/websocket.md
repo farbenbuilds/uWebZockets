@@ -39,10 +39,13 @@ Compression is opt-in per route through `.compression = .permessage_deflate`.
 Negotiation always selects `server_no_context_takeover` and
 `client_no_context_takeover`, accepts window sizes 9 through 15 for server
 output and 8 through 15 for client input, and rejects compressed expansion
-beyond `max_message_size`. Enabling compression allocates paired receive and
-send scratch per connection during route registration; message processing does
-not allocate. Set `ServerConfig.compression = true` to reserve that scratch
-inside the startup slab instead.
+beyond `max_message_size`. A message whose compressed form would exceed
+`max_frame_size` is sent uncompressed when the raw payload fits; when neither
+form fits, `send` fails with `error.PayloadTooLarge`. Enabling compression
+allocates paired receive and send scratch per connection during route
+registration; message processing does not allocate. Set
+`ServerConfig.compression = true` to reserve that scratch inside the startup
+slab instead.
 
 ## Heartbeats and idle peers
 
@@ -65,7 +68,13 @@ to every worker. See [architecture.md](architecture.md) for the ring design.
 RFC 8441 extended CONNECT is supported on HTTP/2. Because parsing and message
 storage are connection-owned, each connection permits one active tunnel and
 additional tunnels receive `503 Service Unavailable` without disturbing the
-active one. See [http2.md](http2.md).
+active one. A CONNECT request must carry exactly one `Sec-WebSocket-Version:
+13`; a missing, duplicated, or unsupported version is answered with `426
+Upgrade Required` and `Sec-WebSocket-Version: 13`. Per RFC 8441 Section 5,
+`Sec-WebSocket-Key` processing is superseded by the `:protocol` pseudo-header,
+so the key is neither required nor inspected.
+Per-message deflate is negotiated on HTTP/1.1 upgrades only; RFC 8441 tunnels
+carry uncompressed frames. See [http2.md](http2.md).
 
 ## Compliance
 

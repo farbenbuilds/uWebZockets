@@ -76,9 +76,11 @@ var server = try uz.Server.builder(init.io)
 - `App.log_metrics()` writes a registry snapshot through the development log.
 - The development log is allocation-free and per-worker; it never blocks the
   loop on a slow terminal (failed or short writes are dropped and counted).
-- The optional eBPF latency histogram and AF_XDP redirect require Linux
-  network-administration privileges and fall back to the standard stack when
-  unavailable. See [operations.md](operations.md).
+- The optional eBPF latency histogram is read when its map is pinned. The
+  server data path always serves through the standard network stack; a
+  `ServerConfig.transport = .kernel_bypass` request reports reason
+  `.data_path_unwired`, and the AF_XDP transport module stays available to
+  callers that drive it directly. See [operations.md](operations.md).
 
 ## 5. Shutdown and draining
 

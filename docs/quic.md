@@ -31,6 +31,10 @@ bodies come from startup-allocated contiguous pools.
 - Congestion control is pinned to BBRv1 with per-connection pacing.
 - The engine enforces decoded header limits, request bodies, packet buffers,
   connections, and active streams through `ServerConfig`.
+- Request validation is strict: pseudo-fields must precede regular fields and
+  stay unique, `:protocol` is accepted only on CONNECT requests that carry
+  `:authority`, and connection-specific fields are rejected as malformed with
+  a stream-scoped `H3_MESSAGE_ERROR`.
 
 ## Observability
 
@@ -69,5 +73,9 @@ The cross-implementation gate uses pinned curl/ngtcp2 and aioquic clients to
 verify the normal request path, a valid trailing field section, and malformed
 pseudo-header/connection-field rejection with `H3_MESSAGE_ERROR`. Malformed and
 healthy sibling streams share one connection so connection-wide aborts fail the
-gate. The gate retains server logs, traces, versions, results, and qlogs; see
-[operations.md](operations.md) and [CI_CD_PIPELINE.md](../CI_CD_PIPELINE.md).
+gate. The gate then soaks more malformed requests than the engine's full header
+pool (`2 * connection capacity`), requires a healthy request on a fresh
+connection, and requires the server to exit cleanly so `deinit` can assert that
+every pool was drained. The gate retains server logs, traces, versions, results,
+and qlogs; see [operations.md](operations.md) and
+[CI_CD_PIPELINE.md](../CI_CD_PIPELINE.md).

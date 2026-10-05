@@ -4,6 +4,39 @@ const support = @import("test_support");
 
 const tls = support.tls;
 
+test "tls: client-auth modes disable early data" {
+    try std.testing.expect(tls.early_data_enabled(.none));
+    try std.testing.expect(!tls.early_data_enabled(.optional));
+    try std.testing.expect(!tls.early_data_enabled(.required));
+}
+
+test "crypto: hmac verification uses the full digest" {
+    const mac = support.crypto_subtle.sign_hmac_sha256("key", "message");
+    try std.testing.expect(support.crypto_subtle.verify_hmac_sha256("key", "message", &mac));
+
+    var tampered = mac;
+    tampered[0] ^= 1;
+    try std.testing.expect(!support.crypto_subtle.verify_hmac_sha256("key", "message", &tampered));
+}
+
+test "crypto: aes-gcm checks output size before sealing" {
+    const key = [_]u8{0x11} ** 16;
+    const nonce = [_]u8{0x22} ** support.crypto_subtle.aes_gcm_nonce_length;
+
+    var short_output: [8]u8 = undefined;
+    try std.testing.expectError(
+        error.BufferTooSmall,
+        support.crypto_subtle.encrypt_aes_gcm(&key, &nonce, "plaintext", "", &short_output),
+    );
+
+    var short_plaintext: [4]u8 = undefined;
+    const ciphertext = [_]u8{0} ** (support.crypto_subtle.aes_gcm_tag_length + 8);
+    try std.testing.expectError(
+        error.BufferTooSmall,
+        support.crypto_subtle.decrypt_aes_gcm(&key, &nonce, &ciphertext, "", &short_plaintext),
+    );
+}
+
 /// One SSL endpoint plus the memory BIOs that carry its handshake records.
 /// The SSL owns the BIOs after `SSL_set_bio`; this struct holds aliases.
 const MemorySsl = struct {

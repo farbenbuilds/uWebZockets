@@ -1071,14 +1071,24 @@ pub const Router = struct {
         };
     }
 
+    /// Returns the pattern route for `path`, rejecting a shape that differs
+    /// only in capture names so no registered route is silently shadowed.
     fn get_or_add_pattern(
         self: *Router,
         path: []const u8,
         info: radix_pattern.PatternInfo,
     ) !*PatternRoute {
         for (0..self.pattern_count) |index| {
-            if (std.mem.eql(u8, self.pattern_path(@intCast(index)), path)) {
-                return &self.pattern_routes[index];
+            const existing_path = self.pattern_path(@intCast(index));
+            if (std.mem.eql(u8, existing_path, path)) return &self.pattern_routes[index];
+
+            const existing = self.pattern_routes[index];
+            if (info.static_bytes == existing.static_bytes and
+                info.has_wildcard == existing.has_wildcard and
+                info.parameter_count == existing.parameter_count and
+                same_pattern_skeleton(existing_path, path))
+            {
+                return error.RoutePatternConflicts;
             }
         }
         if (@as(usize, self.pattern_count) == self.pattern_routes.len) {
@@ -1199,6 +1209,51 @@ fn allowed_handler_mask(
     }
     if (has_websocket) mask |= method_bit(.get);
     return mask;
+}
+
+/// Segment shape used when comparing parameterized patterns.
+const SegmentKind = enum {
+    literal,
+    capture,
+    wildcard,
+};
+
+/// Classifies one validated pattern segment.
+fn segment_kind(segment: []const u8) SegmentKind {
+    if (segment.len == 0) return .literal;
+    return switch (segment[0]) {
+        ':' => .capture,
+        '*' => .wildcard,
+        else => .literal,
+    };
+}
+
+/// Reports whether two parameterized patterns capture the same path shape:
+/// equal segment counts, equal literal segments, and matching dynamic kinds.
+///
+/// Patterns that differ only in capture names would otherwise be silently
+/// shadowed because one pattern is selected for every matching path.
+fn same_pattern_skeleton(first: []const u8, second: []const u8) bool {
+    var first_cursor: usize = 1;
+    var second_cursor: usize = 1;
+
+    while (true) {
+        const first_end = std.mem.indexOfScalarPos(u8, first, first_cursor, '/') orelse first.len;
+        const second_end = std.mem.indexOfScalarPos(u8, second, second_cursor, '/') orelse second.len;
+        const first_segment = first[first_cursor..first_end];
+        const second_segment = second[second_cursor..second_end];
+        const first_kind = segment_kind(first_segment);
+        const second_kind = segment_kind(second_segment);
+        if (first_kind != second_kind) return false;
+        if (first_kind == .literal and !std.mem.eql(u8, first_segment, second_segment)) {
+            return false;
+        }
+        if (first_end == first.len or second_end == second.len) {
+            return first_end == first.len and second_end == second.len;
+        }
+        first_cursor = first_end + 1;
+        second_cursor = second_end + 1;
+    }
 }
 
 fn pattern_matches(pattern: []const u8, path: []const u8) bool {

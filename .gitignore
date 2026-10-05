@@ -24,6 +24,10 @@ tests/autobahn/reports/
 .cache/
 compile_flags.txt
 
+# python bytecode
+__pycache__/
+*.pyc
+
 # certificates
 certs/
 

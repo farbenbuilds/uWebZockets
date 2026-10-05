@@ -35,7 +35,7 @@ pub const ClientContext = struct {
     ctx: *c.SSL_CTX,
     verify: bool,
 
-    /// Creates a client context.
+    /// Creates a client context pinned to TLS 1.3.
     ///
     /// BoringSSL ships no default trust store, so `verify = true` with a null
     /// `ca_path` fails closed with `error.CaPathRequired`. `verify = false`
@@ -50,6 +50,15 @@ pub const ClientContext = struct {
             return error.TlsContextCreationFailed;
         };
         errdefer c.SSL_CTX_free(ctx);
+
+        // The client speaks TLS 1.3 only, matching the server contexts; a peer
+        // that cannot negotiate it fails the handshake instead of falling back.
+        if (c.SSL_CTX_set_min_proto_version(ctx, c.TLS1_3_VERSION) != 1) {
+            return error.TlsContextCreationFailed;
+        }
+        if (c.SSL_CTX_set_max_proto_version(ctx, c.TLS1_3_VERSION) != 1) {
+            return error.TlsContextCreationFailed;
+        }
 
         if (options.verify) {
             if (c.SSL_CTX_load_verify_locations(ctx, options.ca_path.?.ptr, null) != 1) {

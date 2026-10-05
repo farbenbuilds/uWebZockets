@@ -50,7 +50,12 @@ release it exactly once. The eBPF step emits
 `zig-out/share/uwebzockets/uwz_latency.o` for the per-CPU packet-length
 histogram served by the hidden `/metrics` endpoint when the map is pinned at
 `/sys/fs/bpf/uwz_latency`. Attaching the redirect, pinning the histogram, and
-populating the XSK map require Linux network-administration privileges.
+populating the XSK map require Linux network-administration privileges. The
+server data path never attaches the XSK redirect: requesting
+`ServerConfig.transport = .kernel_bypass` reports `.standard` with reason
+`.data_path_unwired`. Applications that want AF_XDP drive `uz.xdp_transport`
+and `uz.xdp` directly. The hidden `/metrics` endpoint still reads the pinned
+latency histogram.
 
 ### Sanitizers
 
@@ -93,12 +98,14 @@ zig build oss-fuzz-objects -Doptimize=ReleaseSafe
 zig build oss-fuzz-smoke -Doptimize=ReleaseSafe
 ```
 
-The Smith harness retains HTTP, query/Accept, zslay, extension-negotiation, and
-HTTP/3 validation coverage. The OSS-Fuzz objects export
+The Smith harness retains HTTP, query/Accept, zslay, extension-negotiation,
+HPACK, multipart, and HTTP/3 validation coverage. The OSS-Fuzz objects export
 `LLVMFuzzerTestOneInput` for HTTP framing, WebSocket masking, query parsing,
-and QUIC/WebTransport packet boundaries; `oss-fuzz-smoke` runs deterministic
-seeds without libFuzzer. A reusable ClusterFuzzLite workflow links and executes
-all four targets with the OSS-Fuzz ASan/libFuzzer environment on the exact
+cookie parsing, and QUIC/WebTransport packet boundaries. `zig build
+oss-fuzz-objects` fails when an object lacks the trace-pc-guard symbols
+libFuzzer needs for feedback, and `oss-fuzz-smoke` runs deterministic seeds
+without libFuzzer. A reusable ClusterFuzzLite workflow links and executes
+all five targets with the OSS-Fuzz ASan/libFuzzer environment on the exact
 revision under test. This is an OSS-Fuzz compatibility gate, not a claim of
 enrollment in the hosted service; `oss-fuzz/README.md` documents the Zig
 sanitizer boundary.

@@ -18,6 +18,7 @@ artifact_dir="$(cd -- "${artifact_dir}" && pwd)"
 cleanup() {
   exit_code=$?
   trap - EXIT
+  server_exit=""
   if [[ -n "${server_pid}" ]] && kill -0 "${server_pid}" 2>/dev/null; then
     kill -TERM "${server_pid}" 2>/dev/null || true
     for _ in $(seq 1 50); do
@@ -27,11 +28,18 @@ cleanup() {
       sleep 0.1
     done
     if kill -0 "${server_pid}" 2>/dev/null; then
+      printf '%s\n' "HTTP/3 server did not exit after SIGTERM; killing" >&2
       kill -KILL "${server_pid}" 2>/dev/null || true
     fi
   fi
   if [[ -n "${server_pid}" ]]; then
-    wait "${server_pid}" 2>/dev/null || true
+    server_exit=0
+    wait "${server_pid}" 2>/dev/null || server_exit=$?
+  fi
+  # A clean request path is not enough: deinit must drain every engine pool.
+  if [[ -n "${server_exit}" && "${server_exit}" -ne 0 && "${exit_code}" -eq 0 ]]; then
+    printf 'HTTP/3 server exited uncleanly with status %s\n' "${server_exit}" >&2
+    exit_code="${server_exit}"
   fi
   if [[ -n "${runtime_dir}" && -d "${runtime_dir}" ]]; then
     rm -rf -- "${runtime_dir}"
@@ -60,7 +68,9 @@ openssl x509 -in "${runtime_dir}/certs/cert.pem" \
   >"${artifact_dir}/test_certificate.log"
 
 server_command=("${server_binary}")
-if [[ -n "${server_dynamic_linker}" ]]; then
+# A glob in the linker override means the Nix shell exports a mutable loader
+# path; the artifact runs directly, matching the build's fallback.
+if [[ -n "${server_dynamic_linker}" && "${server_dynamic_linker}" != *"*"* ]]; then
   test -x "${server_dynamic_linker}"
   test -n "${server_library_path}"
   server_command=(
@@ -131,12 +141,18 @@ kill -0 "${server_pid}"
 jq -e '.trailers.outcome == "response" and .trailers.status == 200' \
   "${artifact_dir}/aioquic_results.json" >/dev/null
 malformed_count="$(jq '.malformed_cases | length' "${expectations}")"
+# The example server uses App(128); the soak sends more than its 2*128 header
+# pool slots and a fresh connection must still be served.
 jq -e --argjson count "${malformed_count}" \
   '(.malformed | length) == $count and
    (.malformed_siblings | length) == $count and
    ([.malformed_siblings[] |
       .outcome == "response" and .status == 200] | all) and
    (.post_malformed_health.outcome == "response") and
-   (.post_malformed_health.status == 200)' \
+   (.post_malformed_health.status == 200) and
+   (.soak.requests > 0) and
+   (.soak.rejected == .soak.requests) and
+   (.soak_fresh_connection.outcome == "response") and
+   (.soak_fresh_connection.status == 200)' \
   "${artifact_dir}/aioquic_results.json" >/dev/null
 printf '%s\n' "HTTP/3 cross-implementation compliance passed"

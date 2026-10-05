@@ -3,6 +3,86 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.7.1] - 2026-10-06
+
+This release fixes the defects found by a full-tree audit of 1.7.0. It closes a
+remote HTTP/3 resource-exhaustion vector, several lifetime and error-path bugs,
+RFC compliance gaps in HTTP/1.1, HTTP/2, and RFC 8441 WebSockets, and TLS
+policy issues. Every behavior change is a fail-closed correction or a truthful
+capability report; no default capacity, wire format, or exported function
+signature changes.
+
+### Fixed
+
+- HTTP/3: a field-level header rejection leaked one engine header set and one
+  lsquic hblock context per malformed request; after `2 * capacity` malformed
+  requests the listener aborted every subsequent connection, including new
+  ones. The decoder now releases the in-flight set before resetting the
+  stream, and header-pool exhaustion resets only the affected stream with
+  `H3_REQUEST_REJECTED` instead of aborting the connection.
+- WebSocket over HTTP/2: a failed send could escalate into tearing down the
+  whole HTTP/2 connection, because `terminate` stopped recognizing the tunnel
+  after deinit and fell through to the TCP close path. Termination is now
+  idempotent and the transport is captured before any callback can deinit the
+  socket. A tunnel also becomes live only after the `200` commits, so a failed
+  setup cannot fire `close` without a preceding `open`.
+- TLS: `init_mtls` in `optional` and `required` modes now disables TLS 1.3
+  early data; the client certificate is not verified until the second flight,
+  so early data could reach a route under a revoked or missing certificate.
+- Client: the outbound TLS context pins TLS 1.3 as both the minimum and maximum
+  protocol version instead of inheriting BoringSSL's TLS 1.2-1.3 default.
+- App lifecycle: a failed observability install no longer leaks the idle
+  sweeper timer from `listen`, `listen_udp` no longer deinits a started QUIC
+  transport on a later failure, and cluster workers install the metrics route.
+- HTTP/1.1: `OPTIONS *` (asterisk-form) and `http`/`https` absolute-form
+  request targets are accepted per RFC 9112; a `Transfer-Encoding` /
+  `Content-Length` conflict reports `400` even when the Content-Length exceeds
+  the body limit; `HttpParser.consume` reports a stable consumed prefix when a
+  completed request is re-entered.
+- HTTP/2: a HEADERS frame that opens an id below the peer high-water mark it
+  never opened is a connection `PROTOCOL_ERROR` (h2spec 5.1.1) instead of a
+  stream reset; PRIORITY self-dependency is a stream error; SETTINGS advertises
+  the configured HPACK dynamic-table capacity; control bytes are rejected in
+  field values and `:path`; `Response.begin_stream` carries pending headers on
+  HTTP/2 and HTTP/3.
+- WebSocket compression: an outgoing compressed message whose compressed form
+  exceeds the frame limit falls back to an uncompressed frame when the raw
+  payload fits (RFC 7692 allows this), instead of failing a legal message.
+- Requests: `schema` validation fails closed at the nesting-depth cap instead
+  of silently skipping deeper rules; multipart accepts an RFC 2046 preamble and
+  epilogue; static files honor `If-None-Match` lists, weak validators, and
+  `*`, and require a matching `If-Range` validator before serving a range.
+- Crypto: a failed HMAC call is caught by a written unreachable proof instead
+  of silently hashing an uninitialized digest, and AES-GCM seal failures after
+  exhaustive size checks report `error.SealFailed` instead of mislabeling an
+  internal BoringSSL failure as a caller sizing mistake.
+- XDP: a `kernel_bypass` request reports `.standard` with reason
+  `.data_path_unwired` and increments the fallback counter instead of claiming
+  an active bypass the server data path never uses.
+- Datagram ring: non-power-of-two capacities stay correct across the u32
+  cursor ceiling by rebasing both cursors by one capacity before wrap, with a
+  proof that such cursors never wrap a second time.
+- OSS-Fuzz: libFuzzer objects carry trace-pc-guard coverage and the build fails
+  when the instrumentation symbols are missing; HPACK and multipart parsing
+  gained deterministic fuzz coverage; WASM and eBPF artifacts are compiled in
+  CI.
+
+### Changed
+
+- Route registration rejects parameterized patterns whose segment skeleton
+  differs only in capture names with `error.RoutePatternConflicts`; previously
+  the later pattern was silently unreachable.
+- Cross-thread shutdown uses the new `App.request_shutdown`; `App.shutdown` is
+  documented loop-thread only. `App.run` owns a wakeup async on every target so
+  the request reaches the owning loop.
+- `ServerConfig.max_h3_response_header_count` is capped at 4096 so QUIC
+  response framing cannot size a multi-megabyte stack frame.
+- `AesGcmError` gains `SealFailed` for residual seal failures that the size
+  prechecks cannot explain.
+- Docs: mTLS 0-RTT, CRL enforcement, the TLS 1.3 client pin, the App write
+  queue default, the RFC 8441 key rule, and the AF_XDP status now match the
+  implementation.
+
 ## [1.7.0] - 2026-09-26
 
 This release closes the client/server and production-hardening boundaries. It

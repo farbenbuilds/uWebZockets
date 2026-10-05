@@ -255,7 +255,7 @@ test "schema: nested validation reports the leaf field name" {
     try std.testing.expectEqual(@as(u8, 7), parsed.value.fixed[0].quantity);
 }
 
-test "schema: nested validation stops at max_nested_depth" {
+test "schema: nested validation fails closed at max_nested_depth" {
     const Leaf = struct {
         score: u8,
 
@@ -297,9 +297,22 @@ test "schema: nested validation stops at max_nested_depth" {
 
     const deep = Level5{ .child = .{ .child = .{ .child = .{ .child = .{ .leaf = .{ .score = 0 } } } } } };
     issue = .{};
-    try schema.validate(Level5, deep, &issue);
-    try std.testing.expectEqualStrings("", issue.field);
-    try std.testing.expectEqual(schema.IssueKind.malformed_json, issue.kind);
+    try std.testing.expectError(error.ConstraintViolation, schema.validate(Level5, deep, &issue));
+    try std.testing.expectEqualStrings("child", issue.field);
+    try std.testing.expectEqual(schema.IssueKind.too_deep, issue.kind);
+
+    // The same payload must not validate through the JSON entry point either.
+    issue = .{};
+    try std.testing.expectError(
+        error.ConstraintViolation,
+        schema.validate_json_detailed(
+            Level5,
+            std.testing.allocator,
+            "{\"child\":{\"child\":{\"child\":{\"child\":{\"leaf\":{\"score\":0}}}}}}",
+            &issue,
+        ),
+    );
+    try std.testing.expectEqual(schema.IssueKind.too_deep, issue.kind);
 
     // A self-referential pointer must not be chased by the walker.
     const Node = struct {

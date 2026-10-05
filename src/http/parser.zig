@@ -56,6 +56,73 @@ fn is_hexadecimal(value: []const u8) bool {
     return true;
 }
 
+/// Routeable path and query derived from one request target.
+const TargetView = struct {
+    path: []const u8,
+    query: []const u8,
+};
+
+/// Maps one RFC 9112 request-target to its routeable path and query.
+///
+/// Origin-form and absolute-form carry a path; asterisk-form is legal only
+/// for OPTIONS and routes as the literal `*`. Authority-form (CONNECT),
+/// unknown schemes, fragments, and userinfo fail closed because the router
+/// has no authority view to match against.
+fn parse_request_target(method: []const u8, target: []const u8) ?TargetView {
+    if (target.len == 0) return null;
+    for (target) |c| {
+        if (c < 32 or c == 127) return null;
+    }
+    if (target[0] == '/') return split_target_query(target);
+    if (std.mem.eql(u8, target, "*")) {
+        if (!std.mem.eql(u8, method, "OPTIONS")) return null;
+        return .{ .path = target, .query = "" };
+    }
+    return parse_absolute_target(target);
+}
+
+/// Splits an origin-form path at its first `?` and rejects fragments.
+fn split_target_query(path: []const u8) ?TargetView {
+    if (std.mem.indexOfScalar(u8, path, '#') != null) return null;
+    if (std.mem.indexOfScalar(u8, path, '?')) |query_start| {
+        return .{
+            .path = path[0..query_start],
+            .query = path[query_start + 1 ..],
+        };
+    }
+    return .{ .path = path, .query = "" };
+}
+
+/// Parses an absolute-form `http`/`https` target into path and query.
+///
+/// RFC 9112 section 3.2.2 requires servers to accept absolute-form; the
+/// authority must be present because the router only sees the path. An
+/// empty URI path routes as `/`.
+fn parse_absolute_target(target: []const u8) ?TargetView {
+    if (std.mem.indexOfScalar(u8, target, '#') != null) return null;
+
+    const scheme_end = std.mem.indexOf(u8, target, "://") orelse return null;
+    const scheme = target[0..scheme_end];
+    if (!std.ascii.eqlIgnoreCase(scheme, "http") and
+        !std.ascii.eqlIgnoreCase(scheme, "https"))
+    {
+        return null;
+    }
+
+    const authority_start = scheme_end + "://".len;
+    const boundary = std.mem.indexOfAnyPos(u8, target, authority_start, "/?") orelse
+        target.len;
+    const authority = target[authority_start..boundary];
+    if (authority.len == 0 or std.mem.indexOfScalar(u8, authority, '@') != null) {
+        return null;
+    }
+    if (boundary == target.len) return .{ .path = "/", .query = "" };
+    if (target[boundary] == '?') {
+        return .{ .path = "/", .query = target[boundary + 1 ..] };
+    }
+    return split_target_query(target[boundary..]);
+}
+
 /// Allocation-free incremental HTTP/1.1 parser state.
 pub const HttpParser = struct {
     state: ParserState = .method,
@@ -124,29 +191,18 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
             .path => {
                 if (std.mem.indexOfScalar(u8, buffer[i..], ' ')) |space_idx| {
                     const abs_space = i + space_idx;
-                    const path = buffer[parser.mark..abs_space];
+                    const target = buffer[parser.mark..abs_space];
                     if (abs_space > parser.max_request_line_bytes) {
                         parser.state = .error_headers_too_large;
                         return buffer.len;
                     }
-                    if (path.len == 0 or path[0] != '/' or std.mem.indexOfScalar(u8, path, '#') != null) {
+                    const view = parse_request_target(req.method, target) orelse {
                         parser.state = .error_invalid;
                         return buffer.len;
-                    }
-                    for (path) |c| {
-                        if (c < 32 or c == 127) {
-                            parser.state = .error_invalid;
-                            return buffer.len;
-                        }
-                    }
-                    req.target = path;
-                    if (std.mem.indexOfScalar(u8, path, '?')) |query_start| {
-                        req.path = path[0..query_start];
-                        req.query = path[query_start + 1 ..];
-                    } else {
-                        req.path = path;
-                        req.query = "";
-                    }
+                    };
+                    req.target = target;
+                    req.path = view.path;
+                    req.query = view.query;
                     parser.mark = abs_space + 1;
                     parser.state = .protocol;
                     i = abs_space + 1;
@@ -203,6 +259,7 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                     var has_host = false;
                     var has_cl = false;
                     var has_te = false;
+                    var cl_too_large = false;
 
                     while (lines.next()) |line| {
                         if (line.len == 0) continue;
@@ -264,10 +321,10 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                                 }
                                 if (std.fmt.parseInt(usize, value, 10)) |len| {
                                     if (len > parser.max_body_size) {
-                                        parser.state = .error_too_large;
-                                        return buffer.len;
+                                        cl_too_large = true;
+                                    } else {
+                                        parser.content_length = len;
                                     }
-                                    parser.content_length = len;
                                 } else |_| {
                                     parser.state = .error_invalid;
                                     return buffer.len;
@@ -298,8 +355,15 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                         return buffer.len;
                     }
 
+                    // The framing conflict is invalid regardless of the
+                    // declared length, so it wins over the body-limit check.
                     if (has_te and has_cl) {
                         parser.state = .error_invalid;
+                        return buffer.len;
+                    }
+
+                    if (cl_too_large) {
+                        parser.state = .error_too_large;
                         return buffer.len;
                     }
 
@@ -324,7 +388,8 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                     }
 
                     parser.state = .done;
-                    return end + 4;
+                    parser.mark = end + 4;
+                    return parser.mark;
                 } else {
                     if (buffer.len - parser.mark > parser.max_header_bytes) {
                         parser.state = .error_headers_too_large;
@@ -336,8 +401,9 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                 const remaining = buffer.len - parser.mark;
                 if (remaining >= parser.content_length) {
                     req.body = buffer[parser.mark .. parser.mark + parser.content_length];
+                    parser.mark += parser.content_length;
                     parser.state = .done;
-                    return parser.mark + parser.content_length;
+                    return parser.mark;
                 } else {
                     return buffer.len;
                 }
@@ -445,8 +511,9 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                 if (buffer.len - parser.mark >= 2) {
                     if (buffer[parser.mark] == '\r' and buffer[parser.mark + 1] == '\n') {
                         req.body = buffer[parser.body_start .. parser.body_start + parser.body_length];
+                        parser.mark += 2;
                         parser.state = .done;
-                        return parser.mark + 2;
+                        return parser.mark;
                     }
                     if (simd.index_of_header_end(buffer[parser.mark..])) |relative_end| {
                         const end_idx = parser.mark + relative_end;
@@ -455,8 +522,9 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
                             return buffer.len;
                         }
                         req.body = buffer[parser.body_start .. parser.body_start + parser.body_length];
+                        parser.mark = end_idx + 4;
                         parser.state = .done;
-                        return end_idx + 4;
+                        return parser.mark;
                     }
                 }
                 return buffer.len;

@@ -119,6 +119,9 @@ proven before a request reaches a route: service-to-service APIs, internal
 admin surfaces, or device fleets that already hold certificates from a private
 CA. The server verifies the client chain against a CA bundle you provide, and
 the TLS layer fails the handshake closed before any HTTP parser sees a byte.
+Client-certificate modes therefore keep TLS 1.3 early data disabled: the
+certificate is only checked in the second flight, after early data has already
+reached the server.
 
 ```zig
 var server = try uz.App(128).init_https_mtls(
@@ -132,9 +135,12 @@ defer server.deinit();
 
 `tls.TlsContext.init_mtls(cert_path, key_path, config)` is the context-level
 entry point and `App.init_https_mtls` is the application-level one. Both keep
-the `init`/`init_https` ALPN policy (`h2`, then `http/1.1`) and the safe-method
-0-RTT replay policy. `ClientAuthConfig.ca_path` accepts a NUL-terminated
-(`[:0]const u8`) path and defaults to empty.
+the `init`/`init_https` ALPN policy (`h2`, then `http/1.1`). For `.optional`
+and `.required`, TLS 1.3 early data is disabled because the client certificate
+is not verified until the second flight: the handshake fails closed before any
+request is parsed. `.none` keeps the `init`/`init_https` safe-method 0-RTT
+policy. `ClientAuthConfig.ca_path` accepts a NUL-terminated (`[:0]const u8`)
+path and defaults to empty.
 
 ### Modes
 
@@ -158,8 +164,12 @@ configured trust store.
 
 `ca_path` points at a PEM file of trust anchors for client chains. One file
 may hold a single CA certificate or several concatenated in any order;
-BoringSSL loads them all, along with any CRLs in the file. The bundle is read
-once when the context is created, so replacing it requires a restart.
+BoringSSL loads them all. CRLs in the file are loaded into the trust store but
+revocation is not enforced, so a revoked certificate still validates until it
+expires. Applications that require revocation must check it themselves, for
+example against a CRL or an OCSP responder, before trusting the connection.
+The bundle is read once when the context is created, so replacing it requires
+a restart.
 
 ### HTTP/3
 
@@ -175,7 +185,9 @@ future work.
   `ApplicationProtocol` and `select_http_protocol` expose the negotiation
   result.
 - HTTP/3 uses a separate context advertising `h3`.
-- 0-RTT early data is enabled on the TCP context. The HTTP dispatcher admits
+- 0-RTT early data is enabled on the TCP context unless client-certificate
+  authentication is configured, in which case it is disabled (see
+  [Client certificates](#client-certificates-mtls)). The HTTP dispatcher admits
   only safe methods until the handshake is confirmed, because early data is
   replayable by a network attacker. QUIC keeps early data disabled until
   lsquic's replay policy is wired end to end. Ephemeral contexts inherit both

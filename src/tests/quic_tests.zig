@@ -6,6 +6,7 @@ const engine = support.quic_engine;
 const packet = support.quic_packet;
 const stream = support.quic_stream;
 const validation = support.quic_validation;
+const datagram_ring = support.datagram_ring;
 const HeaderSet = stream.HeaderSet;
 const Request = support.http_request.Request;
 const Response = support.http_response.Response;
@@ -83,6 +84,15 @@ test "quic: engine policy pins BBR congestion control and pacing" {
     try std.testing.expectEqual(@as(c_uint, 2), settings.es_cc_algo);
     try std.testing.expectEqual(@as(c_int, 1), settings.es_pace_packets);
     try std.testing.expectEqual(@as(c_uint, 2), settings.es_max_streams_in);
+}
+
+test "quic: idle engine service delay is capped at one second" {
+    const TestEngine = engine.quic_engine(2, 64, 0, stream.default_capacities);
+    var quic_engine = try TestEngine.init();
+    defer quic_engine.deinit();
+
+    // An unstarted engine has no advance tick; the timer must not poll at 50 ms.
+    try std.testing.expectEqual(@as(u64, 1000), quic_engine.next_timeout_ms());
 }
 
 test "quic: each live stream reserves independent request and trailer header slots" {
@@ -209,6 +219,85 @@ test "quic: HTTP/3 regular CONNECT requires authority and omits scheme and path"
     try std.testing.expect(header_set.process_header(null));
     try std.testing.expectEqualStrings("/tunnel", header_set.request.target);
     try std.testing.expectEqualStrings("websocket", header_set.protocol.?);
+}
+
+test "quic: HTTP/3 rejects :protocol outside extended CONNECT" {
+    var storage: [stream.header_capacity]u8 = undefined;
+    var header_set = HeaderSet{};
+    const Owner = struct {
+        fn release(_: *anyopaque, _: *HeaderSet) void {}
+    };
+    var owner: u8 = 0;
+
+    // A regular request carrying :protocol is malformed (RFC 9220).
+    header_set.reset(&owner, Owner.release, &storage, &.{}, &.{}, stream.default_capacities);
+    try std.testing.expect(add_test_header(&header_set, ":method", "GET"));
+    try std.testing.expect(add_test_header(&header_set, ":scheme", "https"));
+    try std.testing.expect(add_test_header(&header_set, ":authority", "localhost"));
+    try std.testing.expect(add_test_header(&header_set, ":path", "/"));
+    try std.testing.expect(add_test_header(&header_set, ":protocol", "websocket"));
+    try std.testing.expect(!header_set.process_header(null));
+
+    // Extended CONNECT requires :authority as well as :scheme and :path.
+    header_set.reset(&owner, Owner.release, &storage, &.{}, &.{}, stream.default_capacities);
+    try std.testing.expect(add_test_header(&header_set, ":method", "CONNECT"));
+    try std.testing.expect(add_test_header(&header_set, ":protocol", "websocket"));
+    try std.testing.expect(add_test_header(&header_set, ":scheme", "https"));
+    try std.testing.expect(add_test_header(&header_set, ":path", "/tunnel"));
+    try std.testing.expect(!header_set.process_header(null));
+
+    // A complete extended CONNECT passes the pseudo-header stage.
+    header_set.reset(&owner, Owner.release, &storage, &.{}, &.{}, stream.default_capacities);
+    try std.testing.expect(add_test_header(&header_set, ":method", "CONNECT"));
+    try std.testing.expect(add_test_header(&header_set, ":protocol", "websocket"));
+    try std.testing.expect(add_test_header(&header_set, ":scheme", "https"));
+    try std.testing.expect(add_test_header(&header_set, ":authority", "localhost:443"));
+    try std.testing.expect(add_test_header(&header_set, ":path", "/tunnel"));
+    try std.testing.expect(header_set.process_header(null));
+    try std.testing.expectEqualStrings("/tunnel", header_set.request.target);
+}
+
+test "quic: datagram ring rebases non-power-of-two cursors below the u32 ceiling" {
+    const capacity = 3;
+    const stride = 2;
+    var session_ids: [capacity]u64 = undefined;
+    var sequence_numbers: [capacity]u64 = undefined;
+    var payload_lengths: [capacity]u32 = undefined;
+    var payload_storage: [capacity * stride]u8 = undefined;
+
+    var ring = try datagram_ring.DatagramRing.init(
+        &session_ids,
+        &sequence_numbers,
+        &payload_lengths,
+        &payload_storage,
+        stride,
+    );
+    // Position an empty ring two slots below the cursor limit.
+    ring.head = std.math.maxInt(u32) - 1;
+    ring.tail = std.math.maxInt(u32) - 1;
+
+    try ring.push(.{ .session_id = 0, .sequence_number = 0, .payload = "aa" });
+    try ring.push(.{ .session_id = 1, .sequence_number = 1, .payload = "bb" });
+    try ring.push(.{ .session_id = 2, .sequence_number = 2, .payload = "cc" });
+    try std.testing.expect(ring.is_full());
+    // The third push rebased both cursors by one capacity instead of wrapping.
+    try std.testing.expectEqual(std.math.maxInt(u32) - 1, ring.tail);
+    try std.testing.expect(ring.head < ring.tail);
+
+    const first = ring.pop().?;
+    try std.testing.expectEqual(@as(u64, 0), first.sequence_number);
+    try std.testing.expectEqualStrings("aa", first.payload);
+    const second = ring.pop().?;
+    try std.testing.expectEqual(@as(u64, 1), second.sequence_number);
+    try std.testing.expectEqualStrings("bb", second.payload);
+    const third = ring.pop().?;
+    try std.testing.expectEqual(@as(u64, 2), third.sequence_number);
+    try std.testing.expectEqualStrings("cc", third.payload);
+    try std.testing.expect(ring.is_empty());
+
+    // The rebased ring keeps serving after the wrap point.
+    try ring.push(.{ .session_id = 3, .sequence_number = 3, .payload = "dd" });
+    try std.testing.expectEqualStrings("dd", ring.pop().?.payload);
 }
 
 test "quic: HTTP/3 trailers reject pseudo and framing fields" {

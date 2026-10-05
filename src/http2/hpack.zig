@@ -708,7 +708,11 @@ fn validate_value(value: []const u8) Error!void {
         }
     }
     for (value) |byte| {
-        if (byte == 0 or byte == '\r' or byte == '\n') return error.InvalidHeaderValue;
+        // RFC 9110 field-vchar: control bytes other than HTAB and DEL are
+        // invalid, so they can never reach routing, logging, or storage.
+        if ((byte < 0x20 and byte != '\t') or byte == 0x7f) {
+            return error.InvalidHeaderValue;
+        }
     }
 }
 
@@ -761,8 +765,16 @@ fn validate_authority(authority: []const u8) Error!void {
 
 fn validate_path(method: []const u8, path: []const u8) Error!void {
     if (path.len == 0) return error.InvalidPath;
-    if (std.mem.eql(u8, method, "OPTIONS") and std.mem.eql(u8, path, "*")) return;
+    if (std.mem.eql(u8, path, "*")) {
+        if (!std.mem.eql(u8, method, "OPTIONS")) return error.InvalidPath;
+        return;
+    }
     if (path[0] != '/') return error.InvalidPath;
+    // Origin-form carries no CTL, SP, DEL, or fragment delimiter; HTTP/1
+    // rejects the same bytes in its request target.
+    for (path) |byte| {
+        if (byte <= ' ' or byte == 0x7f or byte == '#') return error.InvalidPath;
+    }
 }
 
 fn is_alpha(byte: u8) bool {

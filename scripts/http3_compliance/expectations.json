@@ -22,6 +22,9 @@
     "connection_specific_header",
     "pseudo_header_after_regular"
   ],
+  "soak": {
+    "malformed_requests": 300
+  },
   "accepted_rejections": [
     "stream_reset"
   ],

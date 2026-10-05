@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const xev = @import("xev");
 const support = @import("test_support");
 const app = support.app;
@@ -15,6 +16,20 @@ fn dummy_handler(req: *Request, res: *Response) void {
 }
 
 fn exact_handler(_: *Request, _: *Response) void {}
+
+/// Counts open descriptors through /proc; null when the platform has no procfs.
+fn open_fd_count() ?usize {
+    var dir = std.Io.Dir.openDirAbsolute(
+        std.testing.io,
+        "/proc/self/fd",
+        .{ .iterate = true },
+    ) catch return null;
+    defer dir.close(std.testing.io);
+    var iterator = dir.iterate();
+    var count: usize = 0;
+    while (iterator.next(std.testing.io) catch return null) |_| count += 1;
+    return count;
+}
 
 const ResponseSink = struct {
     end_count: usize = 0,
@@ -361,6 +376,120 @@ test "router: callback shutdown is drained by the active outer run" {
     try std.testing.expect(!server.is_running());
 }
 
+test "router: request_shutdown wakes a foreign-thread run" {
+    const TestApp = app.configured_app_with_timeout(1, 1024, 4096, 0);
+    var server = try TestApp.init(std.testing.io);
+    defer server.deinit();
+
+    const Latch = struct {
+        fired: std.atomic.Value(bool) = .init(false),
+        error_code: ?anyerror = null,
+
+        fn timer(
+            user_data: ?*@This(),
+            _: *xev.Loop,
+            _: *xev.Completion,
+            result: anyerror!void,
+        ) xev.CallbackAction {
+            _ = result catch return .disarm;
+            user_data.?.fired.store(true, .release);
+            return .disarm;
+        }
+
+        fn run(self: *@This(), application: *TestApp) void {
+            application.run() catch |err| {
+                self.error_code = err;
+            };
+        }
+    };
+
+    var latch = Latch{};
+    var timer = try xev.Timer.init();
+    defer timer.deinit();
+    var completion: xev.Completion = .{};
+    timer.run(
+        server.loop.get_xev_loop(),
+        &completion,
+        1,
+        Latch,
+        &latch,
+        Latch.timer,
+    );
+
+    const thread = try std.Thread.spawn(.{}, Latch.run, .{ &latch, &server });
+    var spins: usize = 0;
+    while (!latch.fired.load(.acquire) and spins < 5_000) : (spins += 1) {
+        try std.Io.sleep(std.testing.io, .{ .nanoseconds = std.time.ns_per_ms }, .awake);
+    }
+
+    server.request_shutdown();
+    thread.join();
+
+    try std.testing.expect(latch.fired.load(.acquire));
+    try std.testing.expect(latch.error_code == null);
+    try std.testing.expect(server.shutting_down);
+    try std.testing.expect(!server.is_running());
+}
+
+test "router: failed metrics install leaves no listener resources" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+
+    const TestApp = app.configured_app_with_timeout(1, 1024, 4096, 120_000);
+    const metrics_config = comptime config_module.default_config.with(.{
+        .max_connections = 1,
+        .max_ws_message_size = 1024,
+        .write_queue_size = 4096,
+        .idle_timeout_ms = 120_000,
+        .observability = true,
+        .enable_dev_log = false,
+    });
+    var server = try TestApp.init_configured(std.testing.io, std.testing.allocator, metrics_config);
+    defer server.deinit();
+
+    _ = try server.get("/metrics", dummy_handler);
+    const before = open_fd_count() orelse return error.SkipZigTest;
+    for (0..16) |_| {
+        try std.testing.expectError(
+            error.RouteAlreadyRegistered,
+            server.listen("127.0.0.1", 0),
+        );
+    }
+    const after = open_fd_count() orelse return error.SkipZigTest;
+
+    // The failed install must not strand the listener or sweeper timer.
+    try std.testing.expectEqual(before, after);
+    try std.testing.expect(server.server == null);
+    try std.testing.expect(server.sweeper == null);
+    try std.testing.expect(!server.routes_locked);
+}
+
+test "router: cluster workers install the observability route" {
+    const TestApp = app.configured_app_with_timeout(2, 1024, 4096, 0);
+    const cluster_config = comptime config_module.default_config.with(.{
+        .max_connections = 2,
+        .max_ws_message_size = 1024,
+        .write_queue_size = 4096,
+        .idle_timeout_ms = 0,
+        .observability = true,
+        .enable_dev_log = false,
+    });
+    var group = try TestApp.cluster(2).init_with_options(
+        std.testing.allocator,
+        std.testing.io,
+        cluster_config,
+        .{ .cpu_affinity = false },
+    );
+    defer group.deinit();
+
+    try group.listen("127.0.0.1", 0);
+    for (0..2) |index| {
+        const worker = group.worker(index) orelse return error.TestUnexpectedResult;
+        try std.testing.expect(worker.metrics() != null);
+        try std.testing.expect(worker.metrics_installed);
+        try std.testing.expect(worker.router.match("/metrics", .get) != null);
+    }
+}
+
 test "router: exact route wins before bounded parameter patterns" {
     var bundle = radix.DefaultBundle{};
     var router = try radix.Router.init(bundle.storage());
@@ -405,6 +534,27 @@ test "router: route patterns fail closed when malformed or over capacity" {
             dummy_handler,
         ),
     );
+}
+
+test "router: conflicting parameterized patterns fail registration" {
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    try router.get("/users/:id", dummy_handler);
+    try std.testing.expectError(
+        error.RoutePatternConflicts,
+        router.post("/users/:name", dummy_handler),
+    );
+    // The original pattern stays reachable and still accepts new methods.
+    try router.post("/users/:id", dummy_handler);
+    var request = Request{ .path = "/users/42" };
+    const match = router.match_request(&request, .post) orelse
+        return error.TestUnexpectedResult;
+    try std.testing.expect(match.http_handler != null);
+
+    // Shapes that differ at any literal position remain distinct.
+    try router.get("/a/:x/b", dummy_handler);
+    try router.get("/a/b/:x", dummy_handler);
+    try std.testing.expectEqual(@as(u8, 3), router.pattern_count);
 }
 
 test "router: wide patterns register and match with configured captures" {

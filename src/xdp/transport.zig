@@ -21,6 +21,9 @@ pub const FallbackReason = enum {
     kernel_unavailable,
     permission_denied,
     invalid_configuration,
+    /// The transport is available to direct callers, but no application data
+    /// path dispatches through it.
+    data_path_unwired,
 };
 
 /// Result of an AF_XDP availability probe.

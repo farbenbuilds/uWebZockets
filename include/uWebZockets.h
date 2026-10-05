@@ -11,7 +11,7 @@ extern "C" {
 
 #define UWZ_VERSION_MAJOR 1
 #define UWZ_VERSION_MINOR 7
-#define UWZ_VERSION_PATCH 0
+#define UWZ_VERSION_PATCH 1
 
 /* Versioned fixed capacities of the C ABI. */
 #define UWZ_MAX_ROUTES 64
@@ -154,6 +154,11 @@ typedef void (*uwz_ws_message_handler)(
 
 typedef void (*uwz_ws_event_handler)(uwz_websocket *socket, void *user_data);
 
+/*
+ * Frozen for ABI version 1.x: field order, field types, and size must not
+ * change. New behavior knobs are exposed through new entry points rather than
+ * added fields, so a caller compiled against an older header stays safe.
+ */
 typedef struct uwz_ws_behavior {
     uwz_ws_upgrade_handler upgrade;
     uwz_ws_open_handler open;
@@ -169,6 +174,11 @@ typedef struct uwz_ws_behavior {
 const char *uwz_version(void);
 const char *uwz_error_name(uwz_error code);
 
+/*
+ * Application creation. Every entry point requires *out_app to be NULL before
+ * the call; a non-NULL value is rejected with UWZ_ERROR_INVALID_ARGUMENT so a
+ * live handle is never overwritten.
+ */
 uwz_error uwz_app_create(uwz_app **out_app);
 uwz_error uwz_app_create_tls(
     const char *certificate_path,

@@ -1,5 +1,5 @@
 diff --git a/src/liblsquic/lsquic_qdec_hdl.c b/src/liblsquic/lsquic_qdec_hdl.c
-index 17edc37..eb213e0 100644
+index 17edc37..9baab0f 100644
 --- a/src/liblsquic/lsquic_qdec_hdl.c
 +++ b/src/liblsquic/lsquic_qdec_hdl.c
 @@ -581,7 +581,9 @@ qdh_hsi_process_wrapper (struct qpack_dec_hdl *qdh, void *hset,
@@ -28,7 +28,7 @@ index 17edc37..eb213e0 100644
      }
      else if ((qdh->qdh_flags & QDH_SERVER) &&
              /* If PRIORITY_UPDATE has been used (SMBF_HPRIO_SET), then the
-@@ -658,6 +658,23 @@ qdh_maybe_destroy_hblock_ctx (struct qpack_dec_hdl *qdh,
+@@ -658,6 +658,35 @@ qdh_maybe_destroy_hblock_ctx (struct qpack_dec_hdl *qdh,
  }
  
  
@@ -40,11 +40,23 @@ index 17edc37..eb213e0 100644
 +}
 +
 +
++/* A resource shortage is stream-scoped: the request can be retried later
++ * and must not take the connection down with it.
++ */
++static void
++qdh_reset_resource_error_stream (struct qpack_dec_hdl *qdh,
++                                                struct lsquic_stream *stream)
++{
++    lsquic_stream_maybe_reset(stream, HEC_REQUEST_REJECTED, 1);
++}
++
++
 +int
 +lsquic_qdh_take_hsi_error (struct qpack_dec_hdl *qdh)
 +{
-+    const int had_error = !!(qdh->qdh_flags & QDH_HSI_HEADER_ERROR);
-+    qdh->qdh_flags &= ~QDH_HSI_HEADER_ERROR;
++    const int had_error = !!(qdh->qdh_flags & (QDH_HSI_HEADER_ERROR
++                                            | QDH_HSI_RESOURCE_ERROR));
++    qdh->qdh_flags &= ~(QDH_HSI_HEADER_ERROR|QDH_HSI_RESOURCE_ERROR);
 +    return had_error;
 +}
 +
@@ -52,7 +64,7 @@ index 17edc37..eb213e0 100644
  static enum lsqpack_read_header_status
  qdh_header_read_results (struct qpack_dec_hdl *qdh,
          struct lsquic_stream *stream, enum lsqpack_read_header_status rhs,
-@@ -699,6 +716,8 @@ qdh_header_read_results (struct qpack_dec_hdl *qdh,
+@@ -699,6 +728,8 @@ qdh_header_read_results (struct qpack_dec_hdl *qdh,
                  LSQ_DEBUG("finishing hset failed");
                  free(uh);
                  qdh->qdh_enpub->enp_hsi_if->hsi_discard_header_set(hset);
@@ -61,31 +73,59 @@ index 17edc37..eb213e0 100644
                  return LQRHS_ERROR;
              }
              uh->uh_hset = hset;
-@@ -727,6 +746,11 @@ qdh_header_read_results (struct qpack_dec_hdl *qdh,
+@@ -727,6 +758,20 @@ qdh_header_read_results (struct qpack_dec_hdl *qdh,
      }
      else if (rhs == LQRHS_ERROR)
      {
-+        if (qdh->qdh_flags & QDH_HSI_HEADER_ERROR)
++        if (qdh->qdh_flags & (QDH_HSI_HEADER_ERROR | QDH_HSI_RESOURCE_ERROR))
 +        {
-+            qdh_reset_header_error_stream(qdh, stream);
++            /* Return the in-flight header set before resetting: the reset
++             * path only discards through lsquic_qdh_cancel_stream(), which
++             * depends on SMQF_QPACK_DEC having been armed by an earlier
++             * LQRHS_NEED/LQRHS_BLOCKED and is not set for a one-shot error.
++             */
++            qdh_maybe_destroy_hblock_ctx(qdh, stream);
++            if (qdh->qdh_flags & QDH_HSI_RESOURCE_ERROR)
++                qdh_reset_resource_error_stream(qdh, stream);
++            else
++                qdh_reset_header_error_stream(qdh, stream);
 +            return rhs;
 +        }
          qdh_maybe_destroy_hblock_ctx(qdh, stream);
          qerr = lsqpack_dec_get_err_info(&qdh->qdh_decoder);
          QDH_ABORT_CONN_ONCE(qdh, 1,
+@@ -763,6 +808,8 @@ lsquic_qdh_header_in_begin (struct qpack_dec_hdl *qdh,
+     if (!u)
+     {
+         LSQ_INFO("cannot allocate hblock_ctx");
++        qdh->qdh_flags |= QDH_HSI_RESOURCE_ERROR;
++        qdh_reset_resource_error_stream(qdh, stream);
+         return LQRHS_ERROR;
+     }
+ 
+@@ -773,6 +820,8 @@ lsquic_qdh_header_in_begin (struct qpack_dec_hdl *qdh,
+     {
+         free(u);
+         LSQ_DEBUG("hsi_create_header_set failure");
++        qdh->qdh_flags |= QDH_HSI_RESOURCE_ERROR;
++        qdh_reset_resource_error_stream(qdh, stream);
+         return LQRHS_ERROR;
+     }
+ 
 diff --git a/src/liblsquic/lsquic_qdec_hdl.h b/src/liblsquic/lsquic_qdec_hdl.h
-index 68e3ebd..ea5c2a3 100644
+index 68e3ebd..d82ae08 100644
 --- a/src/liblsquic/lsquic_qdec_hdl.h
 +++ b/src/liblsquic/lsquic_qdec_hdl.h
-@@ -25,6 +25,7 @@ struct qpack_dec_hdl
+@@ -25,6 +25,8 @@ struct qpack_dec_hdl
          QDH_CONN_ABORTED    = 1 << 1,
          QDH_SAVE_UA         = 1 << 2,
          QDH_SERVER          = 1 << 3,
 +        QDH_HSI_HEADER_ERROR = 1 << 4,
++        QDH_HSI_RESOURCE_ERROR = 1 << 5,
      }                        qdh_flags;
      struct lsqpack_dec       qdh_decoder;
      struct lsquic_stream    *qdh_enc_sm_in;
-@@ -71,6 +72,9 @@ enum lsqpack_read_header_status
+@@ -71,6 +73,9 @@ enum lsqpack_read_header_status
  lsquic_qdh_header_in_continue (struct qpack_dec_hdl *, struct lsquic_stream *,
                                  const unsigned char **, size_t);
  
@@ -96,10 +136,10 @@ index 68e3ebd..ea5c2a3 100644
  lsquic_qdh_cancel_stream (struct qpack_dec_hdl *,
                                                  struct lsquic_stream *);
 diff --git a/src/liblsquic/lsquic_stream.c b/src/liblsquic/lsquic_stream.c
-index debc58c..fa2439b 100644
+index 19e9bef..75dcabf 100644
 --- a/src/liblsquic/lsquic_stream.c
 +++ b/src/liblsquic/lsquic_stream.c
-@@ -5061,6 +5061,13 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
+@@ -5082,6 +5082,13 @@ hq_read (void *ctx, const unsigned char *buf, size_t sz, int fin)
                      assert(LQRHS_ERROR == rhs);
                      stream->sm_qflags &= ~SMQF_QPACK_DEC;
                      filter->hqfi_flags |= HQFI_FLAG_ERROR;

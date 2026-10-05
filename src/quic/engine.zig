@@ -6,6 +6,8 @@ const api = @import("lsquic_api.zig");
 const stream = @import("stream.zig");
 const HeaderSet = stream.HeaderSet;
 
+const log = std.log.scoped(.quic);
+
 /// Reports that the build includes the lsquic-backed QUIC engine.
 pub const available = true;
 
@@ -334,7 +336,7 @@ pub fn quic_engine(
             defer self.leave_callback();
 
             const peer_address = api.Sockaddr.init(peer);
-            if (c.lsquic_engine_packet_in(
+            const result = c.lsquic_engine_packet_in(
                 engine,
                 data.ptr,
                 data.len,
@@ -342,7 +344,11 @@ pub fn quic_engine(
                 peer_address.ptr(),
                 self,
                 0,
-            ) < 0) return;
+            );
+            if (result < 0) {
+                log.warn("packet_in failed for {d}-byte datagram; dropping", .{data.len});
+                return;
+            }
             self.process();
         }
 
@@ -390,13 +396,17 @@ pub fn quic_engine(
         }
 
         /// Returns a bounded delay until the next engine service call.
+        ///
+        /// lsquic's earliest-advance tick still pulls the timer back in when
+        /// work is pending; the one-second ceiling only keeps an idle listener
+        /// from waking twenty times per second.
         pub fn next_timeout_ms(self: *Self) u64 {
-            const engine = self.engine orelse return 50;
+            const engine = self.engine orelse return 1000;
             var microseconds: c_int = 0;
-            if (c.lsquic_engine_earliest_adv_tick(engine, &microseconds) == 0) return 50;
+            if (c.lsquic_engine_earliest_adv_tick(engine, &microseconds) == 0) return 1000;
             if (microseconds <= 0) return 1;
             const rounded: u64 = @divTrunc(@as(u64, @intCast(microseconds)) + 999, 1000);
-            return std.math.clamp(rounded, 1, 50);
+            return std.math.clamp(rounded, 1, 1000);
         }
 
         fn acquire_header_set(

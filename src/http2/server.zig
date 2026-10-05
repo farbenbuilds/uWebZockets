@@ -603,7 +603,7 @@ pub fn server_session(comptime max_streams: usize) type {
             self.dynamic_table = try hpack.DynamicTable.init(
                 self.dynamic_entries,
                 self.dynamic_bytes,
-                self.dynamic_bytes.len,
+                self.advertised_table_size(),
             );
             self.header_block_length = 0;
             self.header_stream_index = null;
@@ -1389,17 +1389,27 @@ pub fn server_session(comptime max_streams: usize) type {
             return storage[start..end];
         }
 
+        /// Dynamic-table byte capacity advertised in SETTINGS_HEADER_TABLE_SIZE.
+        ///
+        /// The decoder allowance is bound to the same value so a peer that
+        /// legally sizes its encoder up to the advertised maximum is never
+        /// rejected for exceeding an undisclosed limit.
+        fn advertised_table_size(self: *const Self) u32 {
+            return @intCast(@min(self.dynamic_bytes.len, std.math.maxInt(u32)));
+        }
+
         fn send_settings(self: *Self, callbacks: Callbacks) !void {
             if (self.settings_sent) return;
-            var payload: [24]u8 = undefined;
-            write_setting(payload[0..6], 0x2, 0);
-            write_setting(payload[6..12], 0x3, @intCast(max_streams));
+            var payload: [30]u8 = undefined;
+            write_setting(payload[0..6], 0x1, self.advertised_table_size());
+            write_setting(payload[6..12], 0x2, 0);
+            write_setting(payload[12..18], 0x3, @intCast(max_streams));
             write_setting(
-                payload[12..18],
+                payload[18..24],
                 0x6,
                 @intCast(@min(self.request_header_stride, std.math.maxInt(u32))),
             );
-            write_setting(payload[18..24], 0x8, 1);
+            write_setting(payload[24..30], 0x8, 1);
             try self.send_frame(.settings, 0, 0, &payload, callbacks);
             self.settings_sent = true;
         }
@@ -1613,7 +1623,9 @@ pub fn server_session(comptime max_streams: usize) type {
             callbacks: Callbacks,
         ) !void {
             switch (err) {
-                error.IdleStream => try self.send_goaway(.protocol_error, callbacks),
+                error.IdleStream,
+                error.UnexpectedStreamId,
+                => try self.send_goaway(.protocol_error, callbacks),
                 error.StreamCapacityReached => try self.send_reset(
                     stream_id,
                     .refused_stream,
@@ -1625,11 +1637,9 @@ pub fn server_session(comptime max_streams: usize) type {
                     .flow_control_error,
                     callbacks,
                 ),
-                error.StreamProtocolError => try self.send_reset(
-                    stream_id,
-                    .protocol_error,
-                    callbacks,
-                ),
+                error.StreamProtocolError,
+                error.StreamDependsOnItself,
+                => try self.send_reset(stream_id, .protocol_error, callbacks),
                 error.FlowControlError,
                 error.ConnectionFlowControlError,
                 => try self.send_goaway(.flow_control_error, callbacks),

@@ -26,6 +26,7 @@ struct qpack_dec_hdl
         QDH_SAVE_UA         = 1 << 2,
         QDH_SERVER          = 1 << 3,
         QDH_HSI_HEADER_ERROR = 1 << 4,
+        QDH_HSI_RESOURCE_ERROR = 1 << 5,
     }                        qdh_flags;
     struct lsqpack_dec       qdh_decoder;
     struct lsquic_stream    *qdh_enc_sm_in;

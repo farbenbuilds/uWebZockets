@@ -11,6 +11,7 @@ pub const AesGcmError = error{
     ContextCreationFailed,
     InvalidKeyLength,
     InvalidNonceLength,
+    SealFailed,
 };
 
 /// Hardware-accelerated SHA-256 through BoringSSL.
@@ -22,12 +23,19 @@ pub fn digest_sha256(input: []const u8) [sha256_length]u8 {
 }
 
 /// Hardware-accelerated HMAC-SHA-256 through BoringSSL.
+///
+/// BoringSSL reports failure by returning null and leaving the digest
+/// unwritten. The pinned revision uses a stack HMAC context and a constant
+/// SHA-256 digest, so neither the context nor the digest can fail and the
+/// digest length is always 32; the null check is a written proof that guards
+/// against an impossible result instead of silently comparing an
+/// uninitialized MAC.
 pub fn sign_hmac_sha256(key: []const u8, input: []const u8) [sha256_length]u8 {
     var digest: [sha256_length]u8 = undefined;
     var digest_length: c_uint = 0;
     const key_ptr = if (key.len == 0) empty_ptr() else key.ptr;
     const input_ptr = if (input.len == 0) empty_ptr() else input.ptr;
-    _ = c.HMAC(
+    const result = c.HMAC(
         c.EVP_sha256(),
         key_ptr,
         key.len,
@@ -36,6 +44,7 @@ pub fn sign_hmac_sha256(key: []const u8, input: []const u8) [sha256_length]u8 {
         &digest,
         &digest_length,
     );
+    if (result == null or digest_length != sha256_length) unreachable;
     return digest;
 }
 
@@ -73,6 +82,8 @@ pub fn encrypt_aes_gcm(
     var output_length: usize = 0;
     const ad_ptr = if (additional_data.len == 0) empty_ptr() else additional_data.ptr;
     const input_ptr = if (plaintext.len == 0) empty_ptr() else plaintext.ptr;
+    // The size checks above are exhaustive for this AEAD, so a residual failure
+    // here is an internal BoringSSL error rather than a caller sizing mistake.
     if (c.EVP_AEAD_CTX_seal(
         context,
         output.ptr,
@@ -84,7 +95,7 @@ pub fn encrypt_aes_gcm(
         plaintext.len,
         ad_ptr,
         additional_data.len,
-    ) != 1) return error.BufferTooSmall;
+    ) != 1) return error.SealFailed;
     return output[0..output_length];
 }
 

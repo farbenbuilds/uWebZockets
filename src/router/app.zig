@@ -370,34 +370,18 @@ pub fn configured_app_with_route_params(
                 }
             }
 
-            // The bypass is requested at compile time but confirmed at runtime;
-            // a refused probe or a failed ring setup leaves the standard
-            // transport active and records why.
+            // The bypass is requested at compile time but the server data path
+            // never dispatches through it; reporting a live bypass would be a
+            // false claim. The transport stays available to callers that drive
+            // it themselves, so only the availability report and the fallback
+            // counter change here.
             if (comptime config.transport == .kernel_bypass) {
-                instance.transport_availability = xdp_transport_module.probe();
-                if (instance.transport_availability.mode == .kernel_bypass) {
-                    const storage: *XdpTransport = @ptrCast(
-                        @alignCast(layout.xdp_transport_bytes.ptr),
-                    );
-                    if (XdpTransport.init(layout.xdp_umem, .{
-                        .chunk_size = @intCast(config.xdp_frame_size),
-                        .frame_count = @intCast(config.xdp_frame_count),
-                    })) |transport| {
-                        storage.* = transport;
-                        instance.xdp_transport = storage;
-                    } else |err| {
-                        instance.transport_availability = .{
-                            .mode = .standard,
-                            .reason = map_xdp_error(err),
-                        };
-                    }
-                }
+                instance.transport_availability = .{
+                    .mode = .standard,
+                    .reason = .data_path_unwired,
+                };
                 if (instance.metrics_registry) |registry| {
-                    if (instance.xdp_transport == null) {
-                        registry.set(.xdp_kernel_bypass_fallbacks, 1);
-                    } else {
-                        registry.set(.kernel_bypass_active, 1);
-                    }
+                    registry.set(.xdp_kernel_bypass_fallbacks, 1);
                 }
             }
 
@@ -421,9 +405,12 @@ pub fn configured_app_with_route_params(
         /// Initializes an HTTPS application that authenticates clients with
         /// certificates issued by the CA bundle in `config.ca_path`.
         ///
-        /// ALPN and 0-RTT policy match `init_https`. Client authentication is
-        /// TCP-only in 1.7.0; the HTTP/3 listener keeps its `init_http3`
-        /// policy, so use `init_http3` when QUIC is also required.
+        /// ALPN matches `init_https`, but every client-authentication mode
+        /// disables TLS 1.3 0-RTT: the client certificate is not verified
+        /// until the second flight, so early data cannot be admitted under
+        /// mTLS. Client authentication is TCP-only in 1.7.0; the HTTP/3
+        /// listener keeps its `init_http3` policy, so use `init_http3` when
+        /// QUIC is also required.
         pub fn init_https_mtls(
             io: std.Io,
             cert_path: [:0]const u8,
@@ -534,7 +521,13 @@ pub fn configured_app_with_route_params(
             self.deinitialized = true;
         }
 
-        /// Stops recurring work and drains completions that borrow application slabs.
+        /// Stops recurring work and drains completions that borrow application
+        /// slabs.
+        ///
+        /// Loop-thread only: from a callback it begins shutdown and lets the
+        /// active run drain; from outside a run it drives the loop itself.
+        /// Cross-thread callers must use `request_shutdown`, which marshals the
+        /// request onto the owning loop instead of touching its completions.
         pub fn shutdown(self: *Self) !void {
             if (self.deinitialized) return error.ApplicationDeinitialized;
 
@@ -542,6 +535,15 @@ pub fn configured_app_with_route_params(
             if (self.running) return;
 
             try self.drive_shutdown();
+        }
+
+        /// Requests shutdown from any thread without touching loop state.
+        ///
+        /// Stores the cross-thread stop flag and wakes the run's async
+        /// completion; the owning loop then runs `begin_shutdown` and drains.
+        pub fn request_shutdown(self: *Self) void {
+            self.cluster_stop_requested.store(true, .release);
+            self.notify_cluster();
         }
 
         /// Reports whether this application currently owns an active loop run.
@@ -1147,6 +1149,9 @@ pub fn configured_app_with_route_params(
             if (self.shutting_down or self.deinitialized) return error.ApplicationUnavailable;
             if (self.server != null) return error.AlreadyListening;
             try self.ensure_router();
+            // Register the metrics route before any fallible resource is
+            // allocated so a failure cannot strand a socket or timer.
+            try self.install_observability();
 
             const server = try core_tcp.init_server(address, port, on_new_connection, self);
             errdefer close_socket_now(server.listener);
@@ -1155,8 +1160,10 @@ pub fn configured_app_with_route_params(
             if (idle_timeout_ms != 0 or self.router.has_ws_heartbeats()) {
                 sweeper = try core_timer.connection_sweeper(Pool, idle_timeout_ms).init(self.io, &self.pool);
             }
+            errdefer {
+                if (sweeper) |*sw| sw.deinit();
+            }
 
-            try self.install_observability();
             self.routes_locked = true;
             self.server = server;
             self.sweeper = sweeper;
@@ -1180,6 +1187,9 @@ pub fn configured_app_with_route_params(
             if (!self.http3_enabled or self.quic_tls_ctx == null) return error.Http3NotInitialized;
             if (self.quic_transport != null) return error.AlreadyListening;
             try self.ensure_router();
+            // Register the metrics route before the transport exists, so an
+            // install failure can never strand a started transport.
+            try self.install_observability();
 
             self.quic_transport = try QuicTransport.init(
                 self.quic_tls_ctx.?.ctx,
@@ -1187,13 +1197,13 @@ pub fn configured_app_with_route_params(
                 address,
                 port,
             );
+            // A failed start leaves the transport unstarted, so deinit is safe.
             errdefer {
                 if (self.quic_transport) |*transport| transport.deinit();
                 self.quic_transport = null;
             }
             try self.quic_transport.?.start(self.loop.get_xev_loop());
 
-            try self.install_observability();
             self.routes_locked = true;
 
             if (!self.write_ready_summary("https", address, port)) {
@@ -1211,7 +1221,14 @@ pub fn configured_app_with_route_params(
             // Apps that never call a listen function still get the wordmark.
             self.write_startup_banner();
             try self.start_file_watch();
+            // Every run owns a wakeup so request_shutdown works from any thread,
+            // not only for cluster members.
+            if (self.cluster_wakeup == null) {
+                self.cluster_wakeup = try xev.Async.init();
+            }
             self.arm_cluster_wakeup();
+            // A request that raced the arm must not block the loop forever.
+            if (self.cluster_stop_requested.load(.acquire)) self.begin_shutdown();
             try core_loop.run(&self.loop);
             self.flush_dev_log();
             if (self.shutting_down) try self.verify_shutdown();
@@ -1480,7 +1497,7 @@ pub fn configured_app_with_route_params(
 
                 /// Requests event-loop-confined shutdown for every worker.
                 pub fn request_shutdown(self: *Cluster) void {
-                    for (self.workers) |*app_worker| app_worker.request_cluster_shutdown();
+                    for (self.workers) |*app_worker| app_worker.request_shutdown();
                 }
 
                 /// Installs one process-wide shutdown watcher on the first worker.
@@ -1553,12 +1570,16 @@ pub fn configured_app_with_route_params(
             if (self.shutting_down or self.deinitialized) return error.ApplicationUnavailable;
             if (self.server != null) return error.AlreadyListening;
             try self.ensure_router();
+            try self.install_observability();
 
             const server = try core_tcp.init_reuse_port_server(address, port, on_new_connection, self);
             errdefer close_socket_now(server.listener);
             var sweeper: ?core_timer.connection_sweeper(Pool, idle_timeout_ms) = null;
             if (idle_timeout_ms != 0 or self.router.has_ws_heartbeats()) {
                 sweeper = try core_timer.connection_sweeper(Pool, idle_timeout_ms).init(self.io, &self.pool);
+            }
+            errdefer {
+                if (sweeper) |*sw| sw.deinit();
             }
             self.routes_locked = true;
             self.server = server;
@@ -1591,11 +1612,6 @@ pub fn configured_app_with_route_params(
             if (self.cluster_wakeup) |*wakeup| wakeup.notify() catch {};
         }
 
-        fn request_cluster_shutdown(self: *Self) void {
-            self.cluster_stop_requested.store(true, .release);
-            self.notify_cluster();
-        }
-
         fn on_cluster_wakeup(
             user_data: ?*Self,
             _: *xev.Loop,
@@ -1613,13 +1629,15 @@ pub fn configured_app_with_route_params(
                 return .disarm;
             }
 
-            const inbox = self.cluster_inbox orelse {
-                self.cluster_wakeup_active = false;
-                return .disarm;
-            };
+            // Non-cluster apps keep the wakeup armed: it is their only
+            // request_shutdown delivery path.
+            const inbox = self.cluster_inbox orelse return .rearm;
             var topic_buffer: [@import("../ws/pubsub.zig").max_topic_length]u8 = undefined;
-            var message_buffer: [max_ws_message_size]u8 = undefined;
-            while (inbox.pop_copy(&topic_buffer, &message_buffer)) |message| {
+            // Borrow the first connection's message region instead of sizing a
+            // stack frame by the configured capacity; callbacks on one loop
+            // never interleave, so no connection is using the region here.
+            const message_buffer = self.ws_message_storage[0..max_ws_message_size];
+            while (inbox.pop_copy(&topic_buffer, message_buffer)) |message| {
                 _ = self.pubsub.publish(message.topic, message.payload, message.is_text);
             }
             return .rearm;
@@ -1727,15 +1745,6 @@ pub fn compression_buffers(
 
 /// bpffs path where the latency histogram map is pinned by the loader.
 const ebpf_map_path = "/sys/fs/bpf/uwz_latency";
-
-/// Narrows a bypass startup error into the reported fallback reason.
-fn map_xdp_error(err: anyerror) xdp_transport_module.FallbackReason {
-    return switch (err) {
-        error.PermissionDenied => .permission_denied,
-        error.InvalidConfiguration, error.InvalidArgument => .invalid_configuration,
-        else => .kernel_unavailable,
-    };
-}
 
 fn close_socket_now(socket: xev.TCP) void {
     core_tcp.close_socket(socket.fd);

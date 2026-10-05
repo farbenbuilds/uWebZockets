@@ -81,17 +81,16 @@ pub const Parser = struct {
     }
 
     fn consume_boundary(self: *Parser) !void {
-        if (self.cursor != 0) {
-            if (!std.mem.startsWith(u8, self.body[self.cursor..], "--")) {
+        // The first delimiter may be preceded by an RFC 2046 preamble; only
+        // the delimiter line itself is structural.
+        if (self.cursor == 0) {
+            self.cursor = first_delimiter_offset(self.body, self.boundary) orelse
                 return error.InvalidMultipartBoundary;
-            }
-            self.cursor += 2;
-        } else {
-            if (!std.mem.startsWith(u8, self.body, "--")) {
-                return error.InvalidMultipartBoundary;
-            }
-            self.cursor = 2;
         }
+        if (!std.mem.startsWith(u8, self.body[self.cursor..], "--")) {
+            return error.InvalidMultipartBoundary;
+        }
+        self.cursor += 2;
 
         if (!std.mem.startsWith(u8, self.body[self.cursor..], self.boundary)) {
             return error.InvalidMultipartBoundary;
@@ -99,11 +98,8 @@ pub const Parser = struct {
         self.cursor += self.boundary.len;
         if (std.mem.startsWith(u8, self.body[self.cursor..], "--")) {
             self.cursor += 2;
-            if (self.cursor < self.body.len and
-                !std.mem.eql(u8, self.body[self.cursor..], "\r\n"))
-            {
-                return error.InvalidMultipartEpilogue;
-            }
+            // RFC 2046 allows an epilogue after the close delimiter; it is
+            // ignored instead of scanned.
             self.finished = true;
             return;
         }
@@ -113,6 +109,23 @@ pub const Parser = struct {
         self.cursor += 2;
     }
 };
+
+/// Returns the offset of the first `--boundary` that starts a body line.
+fn first_delimiter_offset(body: []const u8, boundary: []const u8) ?usize {
+    var offset: usize = 0;
+    while (simd.index_of(body[offset..], "--")) |relative| {
+        const candidate = offset + relative;
+        const at_line_start = candidate == 0 or body[candidate - 1] == '\n';
+        if (at_line_start and
+            std.mem.startsWith(u8, body[candidate + 2 ..], boundary))
+        {
+            return candidate;
+        }
+        offset = candidate + 2;
+        if (offset >= body.len) return null;
+    }
+    return null;
+}
 
 /// Extracts and validates a multipart boundary from Content-Type.
 pub fn boundary_from_content_type(value: []const u8) ![]const u8 {

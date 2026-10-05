@@ -195,9 +195,13 @@ and tail latency hold up on lossy paths.
   transfer opens a temporary nonblocking window over the (blocking) io_uring
   socket and closes it before any completion is queued; stalled bytes fall back
   to a bounded dribble that reuses the idle TLS staging buffer.
-- `src/xdp/socket.zig` implements AF_XDP UMEM ownership rings and the TX path;
-  `src/xdp/transport.zig` selects the bypass opportunistically and falls back
-  to the standard stack when the probe or ring setup is refused.
+- `src/xdp/socket.zig` implements AF_XDP UMEM ownership rings and the TX path,
+  and `src/xdp/transport.zig` exposes the bypass transport to callers that
+  drive it directly. The server data path always serves through the standard
+  stack: a `ServerConfig.transport = .kernel_bypass` request reports
+  `.standard` with reason `.data_path_unwired` and increments
+  `xdp_kernel_bypass_fallbacks` instead of claiming a bypass no accept/read
+  path uses.
 - `src/observability/metrics.zig` renders a fixed-capacity registry into
   Prometheus text without allocating, `src/observability/ebpf.zig` reads the
   pinned per-CPU histogram, and the `ebpf` build step emits the XDP redirect

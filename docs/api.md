@@ -16,7 +16,7 @@ map; each linked protocol document has the wire-level detail.
 
 | Type | Connections | Message size | Write queue | Idle timeout |
 | --- | ---: | ---: | ---: | ---: |
-| `App(N)` | `N` | 16 KiB | 16 KiB | 120 s |
+| `App(N)` | `N` | 16 KiB | 64 KiB | 120 s |
 | `ConfiguredApp(N, message, queue)` | `N` | compile-time | compile-time | 120 s |
 | `ConfiguredAppWithTimeout(N, message, queue, timeout_ms)` | `N` | compile-time | compile-time | compile-time |
 | `Server.builder(io)` | runtime config | runtime config | runtime config | runtime config |
@@ -54,7 +54,8 @@ try app.run();                             // blocks until shutdown drains
 | Route registration | Before the first `listen`; later calls return `error.RoutesLocked` |
 | `listen` / `listen_udp` | Bind and start accepting; the `App` must stay at a stable address |
 | `run` | Drives the loop until shutdown completes; `error.ApplicationAlreadyRunning` if re-entered |
-| `shutdown` | Safe from another thread or a callback; drains completions before returning |
+| `request_shutdown` | Safe from any thread or a callback; stores the request and wakes the owning loop, then returns |
+| `shutdown` | Loop-thread only: from a callback it begins shutdown, otherwise it drives the loop and drains before returning |
 | `deinit` | Panics if called from inside the event loop; always pair with `defer` |
 
 ### Graceful shutdown signals
@@ -176,7 +177,7 @@ var server = try uz.Server.builder(init.io)
 | WebSocket `message` slice | Callback return |
 | `ResponseView` from the client | Callback return, or `FetchStorage` lifetime |
 | `AsyncResponse` token | Completed exactly once; copyable |
-| `App` value | Must not move after `listen` or `listen_udp` |
+| `App` value | Must not move after `listen`/`listen_udp`, nor after any context-capturing registration: `openapi`, `datagram`, or the observability install performed by `listen` |
 
 Slices always borrow connection storage. Copy into bounded application storage
 or use `clone` for work that outlives the callback.

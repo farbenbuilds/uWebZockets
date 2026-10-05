@@ -9,6 +9,8 @@ const json_rpc = support.json_rpc;
 const query = support.query;
 const cookie = support.cookie;
 const negotiate = support.negotiate;
+const hpack = support.http2_hpack;
+const multipart = support.multipart;
 
 test "fuzz: protocol parsers preserve bounded state" {
     try std.testing.fuzz({}, fuzz_protocol_parsers, .{
@@ -25,6 +27,19 @@ test "fuzz: protocol parsers preserve bounded state" {
             "[{\"jsonrpc\":\"2.0\",\"method\":\"echo\"},17]",
             "[{\"jsonrpc\":\"2.0\",\"method\":\"echo\",\"id\":1},",
             "session=abc; theme=dark; empty=; broken; =x",
+            // HPACK: RFC 7541 C.3 and C.4 request vectors, a table-size update,
+            // a truncated literal, and a dynamic insert followed by an index.
+            "\x82\x86\x84\x41\x0fwww.example.com",
+            "\x82\x86\x84\x41\x8c\xf1\xe3\xc2\xe5\xf2\x3a\x6b\xa0\xab\x90\xf4\xff",
+            "\x3f\xe1\x1f",
+            "\x00\x05\x01",
+            "\x40\x0acustom-key\x05value\xbe",
+            // Multipart: valid part, preamble and epilogue, truncated body,
+            // and nested-looking boundary text inside part data.
+            "multipart/form-data; boundary=abc\r\n--abc\r\nContent-Disposition: form-data; name=\"x\"\r\n\r\ndata\r\n--abc--\r\n",
+            "multipart/form-data; boundary=abc\r\npreamble\r\n--abc\r\nContent-Disposition: form-data; name=\"a\"; filename=\"f.txt\"\r\nContent-Type: text/plain\r\n\r\naaaa\r\n--abc\r\nContent-Disposition: form-data; name=\"b\"\r\n\r\nbbbb\r\n--abc--\r\nepilogue",
+            "multipart/form-data; boundary=abc\r\n--abc\r\nContent-Disposition: form-data; name=\"x\"\r\n\r\ntruncated",
+            "multipart/form-data; boundary=abc\r\n--abc\r\nContent-Disposition: form-data; name=\"x\"\r\n\r\nnested--abc inside\r\n--abc--",
         },
     });
 }
@@ -38,6 +53,8 @@ fn fuzz_protocol_parsers(_: void, smith: *std.testing.Smith) !void {
     fuzz_extension_negotiation(smith);
     fuzz_http3_validation(smith);
     try fuzz_json_rpc(smith);
+    try fuzz_hpack_decode(smith);
+    try fuzz_multipart_parse(smith);
 }
 
 fn fuzz_http_query(smith: *std.testing.Smith) !void {
@@ -197,6 +214,93 @@ fn parser_is_terminal(state: parser.ParserState) bool {
         .done, .error_invalid, .error_headers_too_large, .error_too_large => true,
         else => false,
     };
+}
+
+fn fuzz_hpack_decode(smith: *std.testing.Smith) !void {
+    var input: [4096]u8 = undefined;
+    const input_len: usize = @intCast(smith.sliceWeightedBytes(&input, &.{
+        .rangeAtMost(u8, 0x00, 0xff, 1),
+        .value(u8, 0x80, 8),
+        .value(u8, 0x40, 8),
+        .value(u8, 0x20, 4),
+    }));
+    const block = input[0..input_len];
+
+    var entries: [32]hpack.DynamicEntry = undefined;
+    var table_storage: [1024]u8 = undefined;
+    var table = try hpack.DynamicTable.init(&entries, &table_storage, 256);
+    var decoder = hpack.Decoder.init(&table, 4096);
+
+    var headers: [16]hpack.Header = undefined;
+    var header_storage: [4096]u8 = undefined;
+    const decoded = decoder.decode_fields(block, &headers, &header_storage) catch return;
+    try std.testing.expect(decoded.len <= headers.len);
+    for (decoded) |header| {
+        try std.testing.expect(slice_within_buffer(&header_storage, header.name));
+        try std.testing.expect(slice_within_buffer(&header_storage, header.value));
+    }
+
+    // A fresh table keeps request validation independent of the mutations
+    // applied above.
+    var request_entries: [32]hpack.DynamicEntry = undefined;
+    var request_table_storage: [1024]u8 = undefined;
+    var request_table = try hpack.DynamicTable.init(&request_entries, &request_table_storage, 256);
+    var request_decoder = hpack.Decoder.init(&request_table, 4096);
+    var request_storage: [4096]u8 = undefined;
+    const request = request_decoder.decode_request(block, &headers, &request_storage) catch return;
+    try std.testing.expect(request.headers.len <= headers.len);
+    for (request.headers) |header| {
+        try std.testing.expect(slice_within_buffer(&request_storage, header.name));
+        try std.testing.expect(slice_within_buffer(&request_storage, header.value));
+    }
+}
+
+fn fuzz_multipart_parse(smith: *std.testing.Smith) !void {
+    var input: [4096]u8 = undefined;
+    const input_len: usize = @intCast(smith.sliceWeightedBytes(&input, &.{
+        .rangeAtMost(u8, 0x20, 0x7e, 4),
+        .value(u8, '\r', 8),
+        .value(u8, '\n', 8),
+        .value(u8, '-', 8),
+        .value(u8, ';', 4),
+        .value(u8, '=', 4),
+        .value(u8, '"', 2),
+        .value(u8, 0x00, 1),
+    }));
+    const bytes = input[0..input_len];
+    const split = smith.index(input_len + 1);
+    const content_type = bytes[0..split];
+    const body = bytes[split..];
+
+    const boundary = multipart.boundary_from_content_type(content_type) catch return;
+    var multipart_parser = try multipart.Parser.init(body, boundary);
+
+    var part_count: usize = 0;
+    while (part_count < 64) : (part_count += 1) {
+        const next = multipart_parser.next_part() catch return;
+        const part = next orelse break;
+        try std.testing.expect(slice_within_buffer(body, part.headers));
+        try std.testing.expect(slice_within_buffer(body, part.name));
+        try std.testing.expect(slice_within_buffer(body, part.data));
+        if (part.filename) |filename| {
+            try std.testing.expect(slice_within_buffer(body, filename));
+        }
+        if (part.content_type) |value| {
+            try std.testing.expect(slice_within_buffer(body, value));
+        }
+
+        var chunks = part.chunks(7);
+        while (chunks.next()) |chunk| {
+            try std.testing.expect(slice_within_buffer(part.data, chunk));
+        }
+    }
+}
+
+fn slice_within_buffer(buffer: []const u8, slice: []const u8) bool {
+    const start = @intFromPtr(buffer.ptr);
+    const end = start + buffer.len;
+    const slice_start = @intFromPtr(slice.ptr);
+    return slice_start >= start and slice_start + slice.len <= end;
 }
 
 fn fuzz_zslay_receive(smith: *std.testing.Smith) !void {
