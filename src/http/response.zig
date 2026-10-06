@@ -3,6 +3,7 @@ const tcp = @import("../core/tcp.zig");
 const tcp_file = @import("../core/tcp_file.zig");
 const streams = @import("streams.zig");
 const cookie_module = @import("cookie.zig");
+const http_status = @import("status.zig");
 const dev_log = @import("../observability/dev_log.zig");
 const TcpConnection = tcp.TcpConnection;
 
@@ -253,14 +254,11 @@ pub const Response = struct {
                 const close_requested = headers_have_token(pending, "Connection", "close") or
                     headers_have_token(headers, "Connection", "close");
                 var framing_buffer: [128]u8 = undefined;
-                const framing = if (status_forbids_body(code))
-                    std.fmt.bufPrint(&framing_buffer, "HTTP/1.1 {s}\r\n", .{status}) catch return error.BufferOverflow
-                else
-                    std.fmt.bufPrint(
-                        &framing_buffer,
-                        "HTTP/1.1 {s}\r\nContent-Length: {d}\r\n",
-                        .{ status, body.len },
-                    ) catch return error.BufferOverflow;
+                const framing = try http_status.format_http1_framing(
+                    &framing_buffer,
+                    status,
+                    if (status_forbids_body(code)) null else body.len,
+                );
 
                 // Write the head as scatter parts so header size is bounded by
                 // the write ring, not by a fixed concatenation buffer.
@@ -345,11 +343,7 @@ pub const Response = struct {
                 if (conn.suppress_response_body) return error.BodyNotAllowed;
 
                 var framing_buffer: [128]u8 = undefined;
-                const framing = std.fmt.bufPrint(
-                    &framing_buffer,
-                    "HTTP/1.1 {s}\r\nTransfer-Encoding: chunked\r\n",
-                    .{status},
-                ) catch return error.BufferOverflow;
+                const framing = try http_status.format_http1_chunked_framing(&framing_buffer, status);
                 try tcp_file.write_data_parts(conn, &.{ framing, pending, headers, "\r\n" });
                 log_http_request(conn, code);
             },
@@ -477,9 +471,15 @@ pub const Response = struct {
         // every singular header helper stays injection-safe.
         if (std.mem.indexOfAny(u8, value, "\r\n") != null) return error.InvalidHeaders;
         var line_buffer: [1024]u8 = undefined;
-        const line = std.fmt.bufPrint(&line_buffer, "{s}: {s}\r\n", .{ name, value }) catch {
-            return error.BufferOverflow;
-        };
+        // Bound each slice first so the concatenated length cannot wrap.
+        if (name.len > line_buffer.len or value.len > line_buffer.len) return error.BufferOverflow;
+        const line_length = name.len + ": ".len + value.len + "\r\n".len;
+        if (line_length > line_buffer.len) return error.BufferOverflow;
+        @memcpy(line_buffer[0..name.len], name);
+        @memcpy(line_buffer[name.len..][0..": ".len], ": ");
+        @memcpy(line_buffer[name.len + ": ".len ..][0..value.len], value);
+        @memcpy(line_buffer[line_length - "\r\n".len ..][0.."\r\n".len], "\r\n");
+        const line = line_buffer[0..line_length];
         if (!valid_headers(line)) return error.InvalidHeaders;
         if (line.len > self.pending_headers.len - self.pending_header_length) {
             return error.BufferOverflow;
@@ -595,8 +595,14 @@ pub const Response = struct {
             else => "302 Found",
         };
         var buf: [512]u8 = undefined;
-        const headers = std.fmt.bufPrint(&buf, "Location: {s}\r\n", .{location}) catch return error.BufferOverflow;
-        return self.end_with_headers(status_str, headers, "");
+        // Bound the slice first so the concatenated length cannot wrap.
+        if (location.len > buf.len) return error.BufferOverflow;
+        const required = "Location: ".len + location.len + "\r\n".len;
+        if (required > buf.len) return error.BufferOverflow;
+        @memcpy(buf[0.."Location: ".len], "Location: ");
+        @memcpy(buf["Location: ".len..][0..location.len], location);
+        @memcpy(buf[required - "\r\n".len ..][0.."\r\n".len], "\r\n");
+        return self.end_with_headers(status_str, buf[0..required], "");
     }
 
     const StreamWriterAdapter = struct {

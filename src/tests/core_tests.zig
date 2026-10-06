@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const support = @import("test_support");
 const context = support.context;
 const loop = support.loop;
@@ -59,7 +60,7 @@ fn dummy_accept(socket: @import("xev").TCP, user_data: ?*anyopaque) void {
 test "core: tcp server init" {
     // bind to ephemeral port 0 to prevent port collisions during tests.
     const server = try tcp.init_server("127.0.0.1", 0, dummy_accept, null);
-    defer tcp.close_socket(server.listener.fd);
+    defer tcp.close_socket(@import("xev").tcp_fd(server.listener));
 }
 
 // dummy callback for timer test.
@@ -103,6 +104,77 @@ test "tcp: drained write ring normalizes its head" {
     try std.testing.expectEqual(@as(usize, 0), tcp.advance_write_head(65_504, 32, 0, 65_536));
     try std.testing.expectEqual(@as(usize, 0), tcp.advance_write_head(65_504, 32, 57, 65_536));
     try std.testing.expectEqual(@as(usize, 25), tcp.advance_write_head(10, 15, 20, 65_536));
+}
+
+test "tcp: suffix ring copy skips bytes a direct send accepted" {
+    var buffer = [_]u8{0} ** 8;
+    const tail = tcp.copy_parts_suffix_to_ring(&buffer, 6, &.{ "ab", "cde" }, 3);
+
+    try std.testing.expectEqual(@as(usize, 0), tail);
+    try std.testing.expectEqualStrings("de", buffer[6..8]);
+}
+
+test "tcp: empty-ring write takes the direct sendmsg path" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+
+    var pair: [2]std.posix.fd_t = undefined;
+    if (std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &pair) != 0) {
+        return error.SkipZigTest;
+    }
+    defer {
+        _ = std.posix.system.close(pair[0]);
+        _ = std.posix.system.close(pair[1]);
+    }
+
+    var ring: [256]u8 = undefined;
+    var conn = tcp.TcpConnection{
+        .socket = @import("xev").TCP.initFd(pair[0]),
+        .io = std.testing.io,
+        .write_queue = &ring,
+    };
+
+    const payload = "direct sendmsg payload";
+    try conn.write_data(payload);
+
+    // The fast path must leave the ring empty and arm no write completion;
+    // a fallback would have queued every byte and started a write.
+    try std.testing.expectEqual(@as(usize, 0), conn.write_len);
+    try std.testing.expect(!conn.is_writing);
+
+    var received: [payload.len]u8 = undefined;
+    var received_len: usize = 0;
+    while (received_len < received.len) {
+        const read = try std.posix.read(pair[1], received[received_len..]);
+        if (read == 0) break;
+        received_len += read;
+    }
+    try std.testing.expectEqualStrings(payload, received[0..received_len]);
+}
+
+test "tcp: set_nodelay enables TCP_NODELAY on a socket" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+
+    const fd = std.c.socket(
+        std.posix.AF.INET,
+        std.posix.SOCK.STREAM | std.posix.SOCK.CLOEXEC,
+        0,
+    );
+    if (fd < 0) return error.SkipZigTest;
+    defer _ = std.c.close(fd);
+
+    tcp.set_nodelay(fd);
+
+    var value: c_int = 0;
+    var length: std.posix.socklen_t = @sizeOf(c_int);
+    const rc = std.c.getsockopt(
+        fd,
+        std.posix.IPPROTO.TCP,
+        std.posix.TCP.NODELAY,
+        @ptrCast(&value),
+        &length,
+    );
+    try std.testing.expectEqual(@as(c_int, 0), rc);
+    try std.testing.expectEqual(@as(c_int, 1), value);
 }
 
 test "core: kernel sendfile streams a regular file into a socket" {
@@ -239,7 +311,7 @@ test "tcp: closed connection waits for active completions" {
 test "tcp: server close drains an outstanding accept" {
     const Accept = struct {
         fn callback(socket: @import("xev").TCP, _: ?*anyopaque) void {
-            tcp.close_socket(socket.fd);
+            tcp.close_socket(@import("xev").tcp_fd(socket));
         }
     };
 
@@ -290,9 +362,9 @@ test "timer: stop from inside the tick callback terminates the timer" {
     Stop.ticks = 0;
 
     timer.start_timer(&stopping_timer, &event_loop);
-    // A single tick is enough: the callback stops the timer and the tick must
-    // not re-arm it, otherwise an until_done run would never return.
-    try event_loop.xev_loop.run(.once);
+    // The callback stops the timer, so an until_done run must return after
+    // exactly one tick; a re-arm would hang this test instead of failing it.
+    try event_loop.xev_loop.run(.until_done);
     try std.testing.expectEqual(@as(usize, 1), Stop.ticks);
     try std.testing.expect(!stopping_timer.active);
     try std.testing.expect(stopping_timer.stopping);

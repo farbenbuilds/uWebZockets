@@ -6,6 +6,7 @@ const Loop = @import("loop.zig").Loop;
 const core_loop = @import("loop.zig");
 const http_parser = @import("../http/parser.zig");
 const HttpParser = http_parser.HttpParser;
+const http_status = @import("../http/status.zig");
 const Request = @import("../http/request.zig").Request;
 const http_response = @import("../http/response.zig");
 const Response = http_response.Response;
@@ -1332,11 +1333,7 @@ pub const TcpConnection = struct {
         if (self.file_body != null) return error.FileBodyAlreadyActive;
 
         var framing_buffer: [128]u8 = undefined;
-        const framing = std.fmt.bufPrint(
-            &framing_buffer,
-            "HTTP/1.1 {s}\r\nContent-Length: {d}\r\n",
-            .{ status, length },
-        ) catch return error.BufferOverflow;
+        const framing = try http_status.format_http1_framing(&framing_buffer, status, length);
         try tcp_file.write_data_parts(self, &.{ framing, pending, headers, "\r\n" });
 
         // HEAD keeps the transfer length but never streams body bytes.
@@ -1397,6 +1394,33 @@ pub fn copy_parts_to_ring(buffer: []u8, initial_tail: usize, parts: []const []co
         if (second_len > 0) @memcpy(buffer[0..second_len], part[first_len..]);
         tail = (tail + part.len) % buffer.len;
     }
+    return tail;
+}
+
+/// Copies the parts after the first `skip` bytes into a caller-owned ring and
+/// returns the new tail.
+///
+/// The direct-send fast path queues exactly the suffix a partial `sendmsg`
+/// left unsent; `skip` must not exceed the aggregate parts length.
+pub fn copy_parts_suffix_to_ring(
+    buffer: []u8,
+    initial_tail: usize,
+    parts: []const []const u8,
+    skip: usize,
+) usize {
+    std.debug.assert(buffer.len > 0);
+    var tail = initial_tail;
+    var to_skip = skip;
+
+    for (parts) |part| {
+        if (to_skip >= part.len) {
+            to_skip -= part.len;
+            continue;
+        }
+        tail = copy_parts_to_ring(buffer, tail, &.{part[to_skip..]});
+        to_skip = 0;
+    }
+    std.debug.assert(to_skip == 0);
     return tail;
 }
 
@@ -1610,7 +1634,7 @@ pub fn close_connection(conn: *TcpConnection) void {
     // dropped by that backend. Skipping the cancels there is safe: callbacks
     // already fetched for this tick run before the close completion, and the
     // close callback clears the outstanding flags.
-    if (xev.backend != .kqueue) {
+    if (!xev.is_kqueue()) {
         if (conn.read_active) {
             conn.read_cancel_active = true;
             core_loop.cancel(
@@ -1636,7 +1660,7 @@ pub fn close_connection(conn: *TcpConnection) void {
     }
 
     if (builtin.os.tag == .windows) {
-        close_socket(conn.socket.fd);
+        close_socket(xev.tcp_fd(conn.socket));
         conn.close_complete = true;
         // IOCP drops callbacks for completions canceled before submission;
         // those flags would otherwise keep the slot out of the pool forever.
@@ -1669,9 +1693,10 @@ pub fn close_connection(conn: *TcpConnection) void {
 
                 const connection = user_data orelse return .disarm;
                 connection.close_complete = true;
-                if (xev.backend == .kqueue) {
-                    // The descriptor is closed, so no kevent callback can
-                    // arrive now; clear the flags the skipped cancels left set.
+                if (xev.cancel_abandons_target()) {
+                    // epoll removes a canceled fd registration without
+                    // invoking its callback, and kqueue discards armed kevents
+                    // on close; clear the flags those callbacks would clear.
                     connection.read_active = false;
                     connection.is_writing = false;
                     connection.read_cancel_active = false;
@@ -1785,17 +1810,17 @@ fn init_server_options(
             // Windows has no SO_REUSEPORT. SO_REUSEADDR permits every worker to
             // bind the address, and each accepted connection stays wholly inside
             // the accepting worker's slab; kernel distribution is unspecified.
-            try set_reuse_address_windows(listener.fd);
+            try set_reuse_address_windows(xev.tcp_fd(listener));
         } else {
             try std.posix.setsockopt(
-                listener.fd,
+                xev.tcp_fd(listener),
                 std.posix.SOL.SOCKET,
                 std.posix.SO.REUSEPORT,
                 &std.mem.toBytes(@as(c_int, 1)),
             );
         }
     }
-    apply_listener_tuning(listener.fd);
+    apply_listener_tuning(xev.tcp_fd(listener));
     try listener.bind(parsed_address);
     try listener.listen(128);
 
@@ -1873,6 +1898,25 @@ pub fn request_quickack(fd: SocketFd) void {
     }
 }
 
+/// Disables Nagle batching once per accepted connection.
+///
+/// The write path already coalesces response parts, so Nagle only adds a
+/// delayed-ACK round trip to small responses. Best effort: POSIX kernels
+/// without the option keep their default batching.
+pub fn set_nodelay(fd: SocketFd) void {
+    if (builtin.os.tag == .linux or builtin.os.tag == .macos or
+        builtin.os.tag == .ios)
+    {
+        // Best effort: a kernel without TCP_NODELAY keeps Nagle enabled.
+        std.posix.setsockopt(
+            fd,
+            std.posix.IPPROTO.TCP,
+            std.posix.TCP.NODELAY,
+            &std.mem.toBytes(@as(c_int, 1)),
+        ) catch {};
+    }
+}
+
 /// Arms the listener's recurring accept completion.
 pub fn accept_start(server: *TcpServer, loop: *Loop) void {
     if (server.closing) return;
@@ -1900,7 +1944,7 @@ pub fn close_server(server: *TcpServer, loop: *Loop) void {
         );
     }
     if (builtin.os.tag == .windows) {
-        close_socket(server.listener.fd);
+        close_socket(xev.tcp_fd(server.listener));
         server.close_complete = true;
         return;
     }
@@ -1946,7 +1990,8 @@ fn on_accept_complete(
         return .disarm;
     }
 
-    request_quickack(accepted_socket.fd);
+    request_quickack(xev.tcp_fd(accepted_socket));
+    set_nodelay(xev.tcp_fd(accepted_socket));
     server.on_connection(accepted_socket, server.user_data);
     return .rearm;
 }
@@ -1975,5 +2020,5 @@ pub fn close_socket(fd: SocketFd) void {
 }
 
 fn close_unregistered_socket(socket: xev.TCP) void {
-    close_socket(socket.fd);
+    close_socket(xev.tcp_fd(socket));
 }

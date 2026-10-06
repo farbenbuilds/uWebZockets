@@ -1,7 +1,12 @@
 const std = @import("std");
+const builtin = @import("builtin");
+const xev = @import("xev");
 const tcp = @import("tcp.zig");
 const TcpConnection = tcp.TcpConnection;
 const zero_copy = @import("zero_copy.zig");
+
+/// Largest part count the direct `sendmsg` fast path accepts as iovecs.
+const direct_iovec_capacity = 8;
 
 pub fn enqueue_plain_parts(conn: *TcpConnection, parts: []const []const u8) !void {
     if (conn.closing) return error.ConnectionClosed;
@@ -14,12 +19,67 @@ pub fn enqueue_plain_parts(conn: *TcpConnection, parts: []const []const u8) !voi
     if (total_len > conn.write_queue.len - conn.write_len) return error.WouldBlock;
     if (total_len == 0) return;
 
+    if (comptime builtin.os.tag == .linux) {
+        if (try_direct_send(conn, parts, total_len)) return;
+    }
+
     const tail = (conn.write_head + conn.write_len) % conn.write_queue.len;
     _ = tcp.copy_parts_to_ring(conn.write_queue, tail, parts);
 
     conn.write_len += total_len;
     if (conn.write_len >= conn.write_queue.len / 2) conn.was_backpressured = true;
     conn.start_write();
+}
+
+/// Sends the parts with one nonblocking `sendmsg` while the ring is empty.
+///
+/// Returns true when the caller must not queue anything else: either every byte
+/// reached the kernel, or the unsent suffix was queued and the write completion
+/// was armed. Returns false when the ordinary ring copy must run instead, which
+/// also covers a send error and a partial send of zero bytes.
+fn try_direct_send(conn: *TcpConnection, parts: []const []const u8, total_len: usize) bool {
+    if (conn.ssl != null or conn.file_body != null) return false;
+    if (conn.closing or conn.close_when_drained) return false;
+    if (conn.write_len != 0 or conn.is_writing) return false;
+    if (parts.len == 0 or parts.len > direct_iovec_capacity) return false;
+
+    var iovecs: [direct_iovec_capacity]std.posix.iovec_const = undefined;
+    for (parts, 0..) |part, index| {
+        iovecs[index] = .{ .base = part.ptr, .len = part.len };
+    }
+    const message: std.os.linux.msghdr_const = .{
+        .name = null,
+        .namelen = 0,
+        .iov = &iovecs,
+        .iovlen = parts.len,
+        .control = null,
+        .controllen = 0,
+        .flags = 0,
+    };
+
+    // DONTWAIT keeps a blocking io_uring socket from sleeping inside the event
+    // loop; NOSIGNAL turns a peer reset into an error instead of SIGPIPE.
+    const result = std.os.linux.sendmsg(
+        xev.tcp_fd(conn.socket),
+        &message,
+        std.os.linux.MSG.DONTWAIT | std.os.linux.MSG.NOSIGNAL,
+    );
+    if (std.os.linux.errno(result) != .SUCCESS) return false;
+
+    const written = result;
+    if (written == 0 or written > total_len) return false;
+
+    const now = std.Io.Clock.now(.awake, conn.io);
+    conn.last_active_ms = @intCast(@divTrunc(now.nanoseconds, std.time.ns_per_ms));
+
+    if (written == total_len) return true;
+
+    const tail = (conn.write_head + conn.write_len) % conn.write_queue.len;
+    _ = tcp.copy_parts_suffix_to_ring(conn.write_queue, tail, parts, written);
+    conn.write_len = total_len - written;
+    if (conn.write_len >= conn.write_queue.len / 2) conn.was_backpressured = true;
+    conn.start_write();
+    return true;
 }
 
 /// Copies scatter/gather plaintext parts atomically into the write path.
@@ -56,7 +116,7 @@ pub fn pump_file_body(conn: *TcpConnection) void {
     const file = conn.file_body orelse return;
     if (conn.closing or conn.is_writing or conn.write_len != 0) return;
 
-    const window = zero_copy.open_nonblocking_window(conn.socket.fd);
+    const window = zero_copy.open_nonblocking_window(xev.tcp_fd(conn.socket));
     if (window == .failed) {
         dribble_file_body(conn, file);
         return;
@@ -69,28 +129,28 @@ pub fn pump_file_body(conn: *TcpConnection) void {
             budget,
         ));
         const sent = zero_copy.send_file_chunk(
-            conn.socket.fd,
+            xev.tcp_fd(conn.socket),
             file.handle,
             &conn.file_offset,
             chunk,
         ) catch |err| switch (err) {
             error.WouldBlock => break,
             else => {
-                zero_copy.close_nonblocking_window(window, conn.socket.fd);
+                zero_copy.close_nonblocking_window(window, xev.tcp_fd(conn.socket));
                 tcp.close_connection(conn);
                 return;
             },
         };
         // A short read below Content-Length would desynchronize framing.
         if (sent == 0) {
-            zero_copy.close_nonblocking_window(window, conn.socket.fd);
+            zero_copy.close_nonblocking_window(window, xev.tcp_fd(conn.socket));
             tcp.close_connection(conn);
             return;
         }
         conn.file_remaining -= sent;
         budget -= sent;
     }
-    zero_copy.close_nonblocking_window(window, conn.socket.fd);
+    zero_copy.close_nonblocking_window(window, xev.tcp_fd(conn.socket));
 
     if (conn.closing) return;
     if (conn.file_remaining == 0) {

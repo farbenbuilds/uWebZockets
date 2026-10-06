@@ -152,7 +152,7 @@ pub const ClientConnection = struct {
         }
 
         self.socket = try xev.TCP.init(address);
-        errdefer tcp.close_socket(self.socket.fd);
+        errdefer tcp.close_socket(xev.tcp_fd(self.socket));
 
         self.active = true;
         self.phase = .connecting;
@@ -185,7 +185,7 @@ pub const ClientConnection = struct {
         self.release_callback = null;
         self.active = false;
         self.phase = .idle;
-        tcp.close_socket(self.socket.fd);
+        tcp.close_socket(xev.tcp_fd(self.socket));
         self.session.deinit();
     }
 
@@ -217,7 +217,7 @@ pub const ClientConnection = struct {
         // kqueue drops callbacks for completions canceled before submission and
         // discards armed kevents when the descriptor closes; the close
         // callback clears the outstanding flags instead.
-        if (xev.backend != .kqueue) {
+        if (!xev.is_kqueue()) {
             if (self.connect_active) {
                 self.connect_cancel_active = true;
                 core_loop.cancel(
@@ -266,7 +266,7 @@ pub const ClientConnection = struct {
         }
 
         if (builtin.os.tag == .windows) {
-            tcp.close_socket(self.socket.fd);
+            tcp.close_socket(xev.tcp_fd(self.socket));
             self.close_complete = true;
             if (self.connect_completion.state() != .active) self.connect_active = false;
             if (self.read_completion.state() != .active) self.read_active = false;
@@ -722,8 +722,10 @@ pub const ClientConnection = struct {
         _ = result catch |err| log.debug("client socket close failed: {}", .{err});
 
         self.close_complete = true;
-        if (xev.backend == .kqueue) {
-            // The descriptor is closed, so no kevent callback can arrive now.
+        if (xev.cancel_abandons_target()) {
+            // epoll removes a canceled fd registration without invoking its
+            // callback, and kqueue discards armed kevents on close; clear the
+            // flags those callbacks would have cleared.
             self.connect_active = false;
             self.read_active = false;
             self.write_active = false;

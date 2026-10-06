@@ -19,7 +19,14 @@ pub fn inject(
     const zslay_dependency = b.dependency("zslay", .{ .target = target, .optimize = optimize });
     const xev_dependency = b.dependency("libxev", .{ .target = target, .optimize = optimize });
     const zslay = zslay_dependency.module("zslay");
-    const xev = xev_dependency.module("xev");
+    // Transport code imports this shim as "xev" so the loop can fall back from
+    // io_uring to epoll at runtime; the pinned libxev is imported underneath.
+    const xev = b.createModule(.{
+        .root_source_file = b.path("src/core/xev.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    xev.addImport("xev_impl", xev_dependency.module("xev"));
 
     const module = b.addModule("uWebZockets", .{
         .root_source_file = b.path("src/root.zig"),

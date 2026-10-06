@@ -86,6 +86,11 @@ See [client.md](client.md) for the full contract.
 - `Cluster.request_shutdown` requests shutdown for every worker;
   `App.request_shutdown` is the cross-thread-safe single-app entry, while
   `App.shutdown` must run on the owning loop thread.
+- On Linux the loop uses io_uring when the kernel allows it and falls back to
+  epoll when a container seccomp policy or old kernel rejects the ring, so
+  Docker Desktop and OrbStack hosts no longer need `--privileged` just to
+  start. The fallback moves blocking file operations to a small thread pool;
+  throughput-sensitive deployments should still prefer io_uring.
 
 ## HTTP/3
 

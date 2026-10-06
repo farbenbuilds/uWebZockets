@@ -142,6 +142,14 @@ server, transport, or engine; none is heap-allocated, and none outlives the
 storage it borrows. Only `loop.zig` inspects the libxev backend; every other
 module cancels through the backend-aware shim.
 
+`src/core/xev.zig` re-exports libxev's runtime-selectable API and registers it
+as the package's `xev` import. On Linux the loop probes io_uring first and
+degrades to epoll when the kernel or a container seccomp policy rejects the
+ring, so the server still starts on Docker Desktop and OrbStack without
+privileges; other targets keep libxev's static single-backend API. epoll
+offloads blocking file operations to an owned thread pool, which the loop
+creates and tears down around the event loop.
+
 A closed pool slot returns to the freelist only through
 `release_closed_connection` after close, read, write, and cancellation
 completions have all drained. That gate prevents a stale completion from

@@ -1747,5 +1747,5 @@ pub fn compression_buffers(
 const ebpf_map_path = "/sys/fs/bpf/uwz_latency";
 
 fn close_socket_now(socket: xev.TCP) void {
-    core_tcp.close_socket(socket.fd);
+    core_tcp.close_socket(xev.tcp_fd(socket));
 }

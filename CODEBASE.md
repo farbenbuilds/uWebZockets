@@ -2,7 +2,7 @@
 
 ## Scope
 
-µWebZockets 1.7.1 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
+µWebZockets 1.8.0 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
 server library with bounded HPACK protocol storage. It combines an
 event-driven cross-platform transport (POSIX and Windows IOCP), fixed-capacity
 protocol state, a data-oriented router, and C libraries for TLS, compression, and QUIC.
@@ -23,6 +23,9 @@ Thread-per-core cluster workers each own one such slab, run one libxev loop,
 and coordinate only through lock-free sequence rings. Physical-core affinity,
 `SO_REUSEPORT`, `TCP_DEFER_ACCEPT`, and `TCP_QUICKACK` are applied during
 startup and accept; no mutex or spinlock remains on the steady-state I/O path.
+libxev is reached through `src/core/xev.zig`, which selects io_uring when the
+kernel permits it and otherwise degrades to epoll so containers without
+io_uring still start and serve.
 
 ## Design rules
 
@@ -164,8 +167,12 @@ request lines, headers, bodies, and unsupported expectations. Pipelined bytes
 are retained and parsed again after a response completes.
 
 The router is a fixed-capacity runtime radix tree represented by parallel
-arrays for segments, child/sibling links, route bits, method handlers, and
-WebSocket behaviors. Exact routes retain the radix fast path. Up to 64 pattern
+arrays for segments, child/sibling/parent links, route bits, method handlers,
+and WebSocket behaviors. An open-addressed static-route index (one FNV-1a hash
+plus node slot per entry, sized to twice `max_nodes`) resolves exact routes
+before the radix walk; a slot is accepted only after its node's stored segments
+are compared byte for byte, so a hash collision falls through to the walk.
+Pattern routes are unchanged. Up to 64 pattern
 routes accept `:name` for one nonempty segment and a terminal `*name` for the
 remaining path, including an empty remainder. A request owns 16 borrowed
 capture slots and exposes them

@@ -432,13 +432,16 @@ const LinuxWatcher = struct {
         self.started = true;
         self.read_active = true;
         self.file = xev.File.initFd(self.fd);
-        self.file.read(
+        // Poll the nonblocking inotify descriptor, then drain it with direct
+        // reads. A File.read would be offloaded to a thread pool on the epoll
+        // backend, whose cancellation path is not reliable.
+        self.file.poll(
             loop,
             &self.read_completion,
-            .{ .slice = &self.buffer },
+            .read,
             Self,
             self,
-            on_read,
+            on_readable,
         );
     }
 
@@ -559,28 +562,43 @@ const LinuxWatcher = struct {
         self.directories[index] = self.directories[self.directory_count];
     }
 
-    fn on_read(
+    fn on_readable(
         user_data: ?*Self,
         _: *xev.Loop,
         _: *xev.Completion,
         _: xev.File,
-        _: xev.ReadBuffer,
-        result: xev.ReadError!usize,
+        result: xev.PollError!xev.PollEvent,
     ) xev.CallbackAction {
         const self = user_data.?;
         self.read_active = false;
-        const bytes = result catch |err| {
+        _ = result catch |err| {
             if (self.stopping or err == error.Canceled) return .disarm;
-            log.warn("watch read failed: {}", .{err});
+            log.warn("watch poll failed: {}", .{err});
             self.read_active = true;
             return .rearm;
         };
         if (self.stopping) return .disarm;
-        if (bytes != 0) self.handle_events(self.buffer[0..bytes]);
+        self.drain();
         // An event may have requested shutdown while being handled.
         if (self.stopping) return .disarm;
         self.read_active = true;
         return .rearm;
+    }
+
+    /// Drains ready inotify data with direct nonblocking reads.
+    fn drain(self: *Self) void {
+        while (true) {
+            const bytes = std.posix.read(self.fd, &self.buffer) catch |err| switch (err) {
+                error.WouldBlock => return,
+                else => {
+                    log.warn("watch read failed: {}", .{err});
+                    return;
+                },
+            };
+            if (bytes == 0) return;
+            self.handle_events(self.buffer[0..bytes]);
+            if (self.stopping) return;
+        }
     }
 
     fn on_read_cancel(

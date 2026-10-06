@@ -206,6 +206,22 @@ pub const max_pattern_routes = default_max_pattern_routes;
 
 const null_node: u16 = std.math.maxInt(u16);
 const empty_handlers = [_]?RouteHandler{null} ** method_count;
+/// Smallest static-route index size; keeps tiny capacity sets probeable.
+const min_static_index_size: usize = 16;
+
+/// FNV-1a 64-bit hash of one route path.
+///
+/// The static-route index uses it to pick the first probe slot; slots are
+/// still accepted only after a byte comparison, so the hash only affects
+/// probe length.
+pub fn hash_path(path: []const u8) u64 {
+    var hash: u64 = 0xcbf29ce484222325;
+    for (path) |byte| {
+        hash ^= byte;
+        hash *%= 0x100000001b3;
+    }
+    return hash;
+}
 
 /// Parameterized route pattern with its per-method callbacks.
 pub const PatternRoute = struct {
@@ -288,6 +304,12 @@ pub const Storage = struct {
     registry_storage: []u8,
     /// Route records indexing into `registry_storage`.
     route_records: []RouteRecord,
+    /// Parent node per radix node; `null_node` marks the root.
+    parents: []u16,
+    /// Static-route index slot node indices; `null_node` marks an empty slot.
+    static_nodes: []u16,
+    /// Static-route index slot hashes; parallel to `static_nodes`.
+    static_hashes: []u64,
 };
 
 /// Alignment every carved region base must satisfy for `storage_bytes` to be
@@ -316,6 +338,9 @@ const StoragePlan = struct {
     middleware: Span,
     registry_storage: Span,
     route_records: Span,
+    parents: Span,
+    static_nodes: Span,
+    static_hashes: Span,
     total: usize,
 };
 
@@ -370,11 +395,25 @@ fn reserve(
     return .{ .start = start, .end = end };
 }
 
+/// Static-route index size: the next power of two at or above twice
+/// `max_nodes`, floored at `min_static_index_size`.
+///
+/// Bounding the load factor at one half keeps every probe chain short and
+/// guarantees an insertion or lookup reaches an empty slot.
+fn static_index_size_for(max_nodes: usize) error{InvalidRouterCapacity}!usize {
+    const doubled = std.math.mul(usize, max_nodes, 2) catch return error.InvalidRouterCapacity;
+    const rounded = std.math.ceilPowerOfTwo(usize, doubled) catch {
+        return error.InvalidRouterCapacity;
+    };
+    return @max(rounded, min_static_index_size);
+}
+
 /// Plans the exact carve layout; `storage_bytes` and `carve_storage` both use
 /// this plan so region size and offsets cannot drift.
 fn plan_storage(capacities: Capacities) error{InvalidRouterCapacity}!StoragePlan {
     try validate_capacities(capacities);
     const record_count = capacities.max_registered_routes();
+    const static_index_size = try static_index_size_for(capacities.max_nodes);
 
     var cursor: usize = 0;
     var plan: StoragePlan = undefined;
@@ -427,6 +466,27 @@ fn plan_storage(capacities: Capacities) error{InvalidRouterCapacity}!StoragePlan
         @sizeOf(RouteRecord),
         @alignOf(RouteRecord),
     );
+    // Parents and node slots first; the hash array closes the plan on an
+    // eight-aligned boundary so `storage_bytes` is a multiple of the storage
+    // alignment and an exactly sized region carves without trailing waste.
+    plan.parents = try reserve(
+        &cursor,
+        capacities.max_nodes,
+        @sizeOf(u16),
+        @alignOf(u16),
+    );
+    plan.static_nodes = try reserve(
+        &cursor,
+        static_index_size,
+        @sizeOf(u16),
+        @alignOf(u16),
+    );
+    plan.static_hashes = try reserve(
+        &cursor,
+        static_index_size,
+        @sizeOf(u64),
+        @alignOf(u64),
+    );
     plan.total = cursor;
     return plan;
 }
@@ -477,6 +537,9 @@ pub fn carve_storage(region: []u8, capacities: Capacities) error{InvalidRouterCa
         .middleware = carved_slice(MiddlewareEntry, region, prefix, plan.middleware),
         .registry_storage = carved_slice(u8, region, prefix, plan.registry_storage),
         .route_records = carved_slice(RouteRecord, region, prefix, plan.route_records),
+        .parents = carved_slice(u16, region, prefix, plan.parents),
+        .static_nodes = carved_slice(u16, region, prefix, plan.static_nodes),
+        .static_hashes = carved_slice(u64, region, prefix, plan.static_hashes),
     };
 }
 
@@ -490,49 +553,16 @@ pub fn bundle(comptime capacities: Capacities) type {
     }
     return struct {
         const Self = @This();
+        // The guard above proved the capacities valid, so the plan cannot fail.
+        const bytes_len = capacities.storage_bytes() catch unreachable;
 
-        route_storage: [capacities.max_registered_routes() * capacities.max_route_path_size]u8 = undefined,
-        segment_offsets: [capacities.max_nodes]u32 = undefined,
-        segment_lengths: [capacities.max_nodes]u16 = undefined,
-        first_child: [capacities.max_nodes]u16 = undefined,
-        next_sibling: [capacities.max_nodes]u16 = undefined,
-        has_route: [capacities.max_nodes]bool = undefined,
-        http_handlers: [capacities.max_nodes][method_count]?RouteHandler = undefined,
-        ws_behaviors: [capacities.max_nodes]?WsBehavior = undefined,
-        pattern_routes: [capacities.max_pattern_routes]PatternRoute = undefined,
-        pattern_offsets: [capacities.max_pattern_routes]u32 = undefined,
-        pattern_lengths: [capacities.max_pattern_routes]u16 = undefined,
-        middleware: [capacities.max_middleware]MiddlewareEntry = undefined,
-        registry_storage: [capacities.registry_storage_size]u8 = undefined,
-        route_records: [capacities.max_registered_routes()]RouteRecord = undefined,
+        bytes: [bytes_len]u8 align(storage_alignment) = undefined,
 
-        comptime {
-            // `storage_bytes` already rejected bad capacities at instantiation.
-            if (@sizeOf(Self) < (capacities.storage_bytes() catch unreachable)) {
-                @compileError("router bundle layout must cover carve_storage");
-            }
-        }
-
-        /// Borrows the bundle's inline arrays as router storage.
+        /// Borrows the bundle's inline region as router storage.
         pub fn storage(self: *Self) Storage {
-            return .{
-                .route_storage = &self.route_storage,
-                .max_route_path_size = capacities.max_route_path_size,
-                .max_route_params = capacities.max_route_params,
-                .segment_offsets = &self.segment_offsets,
-                .segment_lengths = &self.segment_lengths,
-                .first_child = &self.first_child,
-                .next_sibling = &self.next_sibling,
-                .has_route = &self.has_route,
-                .http_handlers = &self.http_handlers,
-                .ws_behaviors = &self.ws_behaviors,
-                .pattern_routes = &self.pattern_routes,
-                .pattern_offsets = &self.pattern_offsets,
-                .pattern_lengths = &self.pattern_lengths,
-                .middleware = &self.middleware,
-                .registry_storage = &self.registry_storage,
-                .route_records = &self.route_records,
-            };
+            // The region is aligned and exactly `storage_bytes` long, so the
+            // carve cannot fail for these capacities.
+            return carve_storage(&self.bytes, capacities) catch unreachable;
         }
     };
 }
@@ -562,6 +592,9 @@ pub const Router = struct {
     middleware: []MiddlewareEntry = &.{},
     registry_storage: []u8 = &.{},
     route_records: []RouteRecord = &.{},
+    static_hashes: []u64 = &.{},
+    static_nodes: []u16 = &.{},
+    parents: []u16 = &.{},
 
     node_count: u16 = 0,
     root_idx: u16 = null_node,
@@ -599,19 +632,25 @@ pub const Router = struct {
             .middleware = storage.middleware,
             .registry_storage = storage.registry_storage,
             .route_records = storage.route_records,
+            .static_hashes = storage.static_hashes,
+            .static_nodes = storage.static_nodes,
+            .parents = storage.parents,
         };
         router.root_idx = 0;
         router.node_count = 1;
+        router.segment_offsets[0] = 0;
         router.segment_lengths[0] = 0;
         router.first_child[0] = null_node;
         router.next_sibling[0] = null_node;
         router.has_route[0] = false;
         router.http_handlers[0] = empty_handlers;
         router.ws_behaviors[0] = null;
+        router.parents[0] = null_node;
+        @memset(router.static_nodes, null_node);
         return router;
     }
 
-    fn alloc_node(self: *Router, bytes: []const u8) !u16 {
+    fn alloc_node(self: *Router, bytes: []const u8, parent: u16) !u16 {
         if (@as(usize, self.node_count) >= self.segment_offsets.len) {
             return error.RouteCapacityReached;
         }
@@ -623,6 +662,7 @@ pub const Router = struct {
         self.node_count += 1;
         self.first_child[index] = null_node;
         self.next_sibling[index] = null_node;
+        self.parents[index] = parent;
         self.has_route[index] = false;
         self.http_handlers[index] = empty_handlers;
         self.ws_behaviors[index] = null;
@@ -681,7 +721,7 @@ pub const Router = struct {
             }
 
             if (best_child == null_node) {
-                const new_child = try self.alloc_node(search);
+                const new_child = try self.alloc_node(search, current);
                 self.next_sibling[new_child] = self.first_child[current];
                 self.first_child[current] = new_child;
                 return new_child;
@@ -693,11 +733,12 @@ pub const Router = struct {
                 const nodes_left = self.segment_offsets.len - @as(usize, self.node_count);
                 if (required_nodes > nodes_left) return error.RouteCapacityReached;
 
-                const split_node = try self.alloc_node(child_segment[best_prefix..]);
+                const split_node = try self.alloc_node(child_segment[best_prefix..], best_child);
                 self.first_child[split_node] = self.first_child[best_child];
                 self.has_route[split_node] = self.has_route[best_child];
                 self.http_handlers[split_node] = self.http_handlers[best_child];
                 self.ws_behaviors[split_node] = self.ws_behaviors[best_child];
+                if (self.has_route[split_node]) self.relocate_static_index(best_child, split_node);
 
                 self.segment_lengths[best_child] = @intCast(best_prefix);
                 self.first_child[best_child] = split_node;
@@ -743,6 +784,7 @@ pub const Router = struct {
 
         self.http_handlers[node][method_index] = handler;
         self.has_route[node] = true;
+        self.index_static_path(path, node);
         self.record_route(path, method, false);
     }
 
@@ -879,6 +921,7 @@ pub const Router = struct {
 
         self.ws_behaviors[node] = behavior;
         self.has_route[node] = true;
+        self.index_static_path(path, node);
         self.record_route(path, .get, true);
     }
 
@@ -959,6 +1002,79 @@ pub const Router = struct {
         self.route_record_count += 1;
     }
 
+    /// Reports whether the stored segments from `node` up to the root
+    /// concatenate to exactly `path`.
+    fn node_path_equals(self: *const Router, node: u16, path: []const u8) bool {
+        var remaining = path;
+        var current = node;
+        while (true) {
+            if (current == self.root_idx) return remaining.len == 0;
+            const bytes = self.segment(current);
+            if (bytes.len > remaining.len) return false;
+            const start = remaining.len - bytes.len;
+            if (!std.mem.eql(u8, remaining[start..], bytes)) return false;
+            remaining = remaining[0..start];
+            current = self.parents[current];
+        }
+    }
+
+    /// Probes the static-route index for the terminal node registered under
+    /// `path`.
+    ///
+    /// A slot is accepted only when its hash and the node's stored segments
+    /// both match, so a hash collision falls through to the next probe
+    /// instead of selecting the wrong route.
+    fn find_static_node(self: *const Router, path: []const u8) ?u16 {
+        if (self.static_nodes.len == 0) return null;
+
+        const hash = hash_path(path);
+        const mask = self.static_nodes.len - 1;
+        var index = @as(usize, @truncate(hash)) & mask;
+        while (true) {
+            const node = self.static_nodes[index];
+            if (node == null_node) return null;
+            if (self.static_hashes[index] == hash and self.node_path_equals(node, path)) {
+                return node;
+            }
+            index = (index + 1) & mask;
+        }
+    }
+
+    /// Adds `node` to the static-route index under its full `path`.
+    ///
+    /// Re-registering the same path for another method probes the existing
+    /// slot and leaves the table unchanged, keeping one entry per route.
+    fn index_static_path(self: *Router, path: []const u8, node: u16) void {
+        const hash = hash_path(path);
+        const mask = self.static_nodes.len - 1;
+        var index = @as(usize, @truncate(hash)) & mask;
+        // At most `max_nodes` terminal routes are indexed and the table is at
+        // least twice that size, so the probe always reaches an empty slot.
+        while (true) {
+            const slot = self.static_nodes[index];
+            if (slot == null_node) {
+                self.static_hashes[index] = hash;
+                self.static_nodes[index] = node;
+                return;
+            }
+            if (self.static_hashes[index] == hash and self.node_path_equals(slot, path)) return;
+            index = (index + 1) & mask;
+        }
+    }
+
+    /// Re-points the index entry of a node that a split just superseded.
+    ///
+    /// Splitting truncates `from` and moves its route to `to`; without the
+    /// update the index would keep resolving the now-route-less node.
+    fn relocate_static_index(self: *Router, from: u16, to: u16) void {
+        for (self.static_nodes) |*slot| {
+            if (slot.* == from) {
+                slot.* = to;
+                return;
+            }
+        }
+    }
+
     /// Reports whether any route enables automatic WebSocket heartbeats.
     pub fn has_ws_heartbeats(self: *const Router) bool {
         for (self.ws_behaviors[0..self.node_count]) |behavior| {
@@ -976,6 +1092,7 @@ pub const Router = struct {
 
     /// Matches a path without materializing parameter captures.
     pub fn match(self: *const Router, path: []const u8, method: ?HttpMethod) ?RouteMatch {
+        if (self.find_static_node(path)) |node| return self.node_match(node, path, method);
         if (self.find_node(path)) |node| return self.node_match(node, path, method);
         const pattern_index = self.find_pattern(path) orelse return null;
         return self.pattern_match(pattern_index, path, method);
@@ -988,6 +1105,9 @@ pub const Router = struct {
         method: ?HttpMethod,
     ) ?RouteMatch {
         request.clear_params();
+        if (self.find_static_node(request.path)) |node| {
+            return self.node_match(node, request.path, method);
+        }
         if (self.find_node(request.path)) |node| {
             return self.node_match(node, request.path, method);
         }
