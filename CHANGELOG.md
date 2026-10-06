@@ -62,8 +62,9 @@ signature changes.
 - Datagram ring: non-power-of-two capacities stay correct across the u32
   cursor ceiling by rebasing both cursors by one capacity before wrap, with a
   proof that such cursors never wrap a second time.
-- OSS-Fuzz: libFuzzer objects carry trace-pc-guard coverage and the build fails
-  when the instrumentation symbols are missing; HPACK and multipart parsing
+- OSS-Fuzz: libFuzzer objects carry inline-8bit-counter coverage (registered
+  with the engine by `oss-fuzz/zig_sancov_shim.c`) and the build fails when the
+  counter sections are missing; HPACK and multipart parsing
   gained deterministic fuzz coverage; WASM and eBPF artifacts are compiled in
   CI.
 

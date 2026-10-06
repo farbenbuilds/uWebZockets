@@ -117,14 +117,13 @@ fn add_fuzz_object(
         .target = target,
         .optimize = optimize,
         .stack_check = false,
+        // `-ffuzz` emits inline-8bit-counter sections without registration
+        // calls; `oss-fuzz/zig_sancov_shim.c` registers those sections with
+        // libFuzzer at link time, and the object step verifies the sections.
+        .fuzz = true,
     });
     module.addImport("fuzz_support", fuzz_support);
-    const object = b.addObject(.{ .name = name, .root_module = module });
-    // libFuzzer only sees feedback from trace-pc-guard callbacks; without the
-    // instrumentation the OSS-Fuzz targets mutate blind. The object step runs
-    // check_fuzzer_coverage.sh so an edit that drops the flag fails CI.
-    object.sanitize_coverage_trace_pc_guard = true;
-    return object;
+    return b.addObject(.{ .name = name, .root_module = module });
 }
 
 fn add_smoke(

@@ -102,9 +102,12 @@ zig build oss-fuzz-smoke -Doptimize=ReleaseSafe
 The Smith harness retains HTTP, query/Accept, zslay, extension-negotiation,
 HPACK, multipart, and HTTP/3 validation coverage. The OSS-Fuzz objects export
 `LLVMFuzzerTestOneInput` for HTTP framing, WebSocket masking, query parsing,
-cookie parsing, and QUIC/WebTransport packet boundaries. `zig build
-oss-fuzz-objects` fails when an object lacks the trace-pc-guard symbols
-libFuzzer needs for feedback, and `oss-fuzz-smoke` runs deterministic seeds
+cookie parsing, and QUIC/WebTransport packet boundaries. Zig's `-ffuzz`
+instrumentation emits inline-8bit-counter sections rather than the
+trace-pc-guard callbacks current libFuzzer runtimes reject;
+`oss-fuzz/zig_sancov_shim.c` registers those sections with libFuzzer at link
+time. `zig build oss-fuzz-objects` fails when an object lacks
+`__sancov_cntrs`, and `oss-fuzz-smoke` runs deterministic seeds
 without libFuzzer. A reusable ClusterFuzzLite workflow links and executes
 all five targets with the OSS-Fuzz ASan/libFuzzer environment on the exact
 revision under test. This is an OSS-Fuzz compatibility gate, not a claim of
