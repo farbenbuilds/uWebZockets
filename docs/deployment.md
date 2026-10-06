@@ -76,9 +76,11 @@ var server = try uz.Server.builder(init.io)
 - `App.log_metrics()` writes a registry snapshot through the development log.
 - The development log is allocation-free and per-worker; it never blocks the
   loop on a slow terminal (failed or short writes are dropped and counted).
-- The optional eBPF latency histogram and AF_XDP redirect require Linux
-  network-administration privileges and fall back to the standard stack when
-  unavailable. See [operations.md](operations.md).
+- The optional eBPF latency histogram is read when its map is pinned. The
+  server data path always serves through the standard network stack; a
+  `ServerConfig.transport = .kernel_bypass` request reports reason
+  `.data_path_unwired`, and the AF_XDP transport module stays available to
+  callers that drive it directly. See [operations.md](operations.md).
 
 ## 5. Shutdown and draining
 
@@ -98,16 +100,15 @@ try app.run();
 
 ## 6. Platforms
 
-| Tier | Targets | Evidence |
-| --- | --- | --- |
-| Tier 1 | Linux and macOS on `x86_64` and `aarch64` | Built, tested, and published by CI |
-| Tier 2 | `x86_64-windows-gnu`, FreeBSD, NetBSD, OpenBSD, DragonFlyBSD | Windows compiles the test and C ABI graph on a native runner; runtime validation is a Tier 2 responsibility because the pinned libxev IOCP accept path is blocked upstream (see [roadmap.md](roadmap.md)). BSDs share the build graph without dedicated CI |
+| Supported | Linux and macOS on `x86_64` and `aarch64` | Built and tested by CI |
+| Not officially supported | `x86_64-windows-gnu` | Compile-checked only: the pinned libxev IOCP accept path is blocked upstream (see [roadmap.md](roadmap.md#windows-runtime-blocker-details)); no runtime behavior is claimed |
+| Community | FreeBSD, NetBSD, OpenBSD, DragonFlyBSD | Share the build graph without dedicated CI |
 
-- Shared-nothing clustering is fully supported on Linux. Windows uses the
-  `SO_REUSEADDR` fallback with unspecified kernel distribution; macOS runs
-  unpinned because the platform exposes no hard-affinity API.
-- Windows QUIC uses IOCP receives and Winsock sends; runtime QUIC interop
-  remains a Tier 2 responsibility.
+- Shared-nothing clustering is fully supported on Linux. macOS runs unpinned
+  because the platform exposes no hard-affinity API. The Windows
+  `SO_REUSEADDR` fallback remains compiled but is not officially supported.
+- Windows QUIC uses IOCP receives and Winsock sends, but Windows runtime
+  behavior is not claimed until the libxev accept blocker is fixed.
 - Sanitizer coverage is native Linux only. MemorySanitizer instruments the
   pinned C/C++ dependencies, not Zig code; plan an independent review for
   Zig-side memory questions.
@@ -120,10 +121,10 @@ try app.run();
   branch.
 - The build needs only Zig 0.16.0; C/C++ dependencies compile with `zig cc` and
   `zig c++` from pinned sources.
-- Release archives contain the static libraries and `uWebZockets.h` for C and
-  C++ consumers. Linking them directly also needs libc, the C++ runtime, and
-  the platform networking libraries listed in
-  [operations.md](operations.md#build).
+- Release tags are source distributions: there are no per-platform binary
+  archives. Consumers fetch a tag with `zig fetch`, and the package manifest
+  builds the pinned dependency sources locally. Link metadata for
+  `zig-out/lib` archives is in [operations.md](operations.md#build).
 
 ## 8. Verify before launch
 

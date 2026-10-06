@@ -134,6 +134,224 @@ test "http: reports first request boundary for pipelining" {
     try std.testing.expectEqualStrings("/two", req.path);
 }
 
+fn expect_invalid_request(wire: []u8) !void {
+    var p = parser.HttpParser{};
+    var req = Request{};
+    _ = parser.consume(&p, &req, wire);
+    try std.testing.expectEqual(parser.ParserState.error_invalid, p.state);
+}
+
+test "http: accepts asterisk and absolute request targets" {
+    var p = parser.HttpParser{};
+    var req = Request{};
+
+    var asterisk = "OPTIONS * HTTP/1.1\r\nHost: example.test\r\n\r\n".*;
+    _ = parser.consume(&p, &req, &asterisk);
+    try std.testing.expectEqual(parser.ParserState.done, p.state);
+    try std.testing.expectEqualStrings("*", req.target);
+    try std.testing.expectEqualStrings("*", req.path);
+    try std.testing.expectEqualStrings("", req.query);
+
+    parser.reset(&p);
+    req = .{};
+    var absolute = "GET http://example.com/a/b?x=1 HTTP/1.1\r\nHost: example.com\r\n\r\n".*;
+    _ = parser.consume(&p, &req, &absolute);
+    try std.testing.expectEqual(parser.ParserState.done, p.state);
+    try std.testing.expectEqualStrings("http://example.com/a/b?x=1", req.target);
+    try std.testing.expectEqualStrings("/a/b", req.path);
+    try std.testing.expectEqualStrings("x=1", req.query);
+
+    parser.reset(&p);
+    req = .{};
+    var empty_path = "GET http://example.com HTTP/1.1\r\nHost: example.com\r\n\r\n".*;
+    _ = parser.consume(&p, &req, &empty_path);
+    try std.testing.expectEqual(parser.ParserState.done, p.state);
+    try std.testing.expectEqualStrings("/", req.path);
+    try std.testing.expectEqualStrings("", req.query);
+}
+
+test "http: rejects unsupported request target forms" {
+    var foreign_scheme = "GET ftp://example.com/a HTTP/1.1\r\nHost: example.com\r\n\r\n".*;
+    try expect_invalid_request(&foreign_scheme);
+    var empty_authority = "GET http:///a HTTP/1.1\r\nHost: example.com\r\n\r\n".*;
+    try expect_invalid_request(&empty_authority);
+    var userinfo = "GET http://user@example.com/a HTTP/1.1\r\nHost: example.com\r\n\r\n".*;
+    try expect_invalid_request(&userinfo);
+    var absolute_fragment = "GET http://example.com/a#x HTTP/1.1\r\nHost: example.com\r\n\r\n".*;
+    try expect_invalid_request(&absolute_fragment);
+    var origin_fragment = "GET /a#x HTTP/1.1\r\nHost: example.com\r\n\r\n".*;
+    try expect_invalid_request(&origin_fragment);
+    var get_asterisk = "GET * HTTP/1.1\r\nHost: example.com\r\n\r\n".*;
+    try expect_invalid_request(&get_asterisk);
+}
+
+test "http: reports the same consumed length when done is re-entered" {
+    var p = parser.HttpParser{};
+    var req = Request{};
+    var head = "GET /reentry HTTP/1.1\r\nHost: example.test\r\n\r\n".*;
+    const head_first = parser.consume(&p, &req, &head);
+    try std.testing.expectEqual(head.len, head_first);
+    try std.testing.expectEqual(head_first, parser.consume(&p, &req, &head));
+
+    parser.reset(&p);
+    req = .{};
+    var body = "POST /reentry HTTP/1.1\r\nHost: example.test\r\nContent-Length: 4\r\n\r\nnext".*;
+    const body_first = parser.consume(&p, &req, &body);
+    try std.testing.expectEqual(body.len, body_first);
+    try std.testing.expectEqual(body_first, parser.consume(&p, &req, &body));
+
+    parser.reset(&p);
+    req = .{};
+    var chunked = "POST /reentry HTTP/1.1\r\nHost: example.test\r\nTransfer-Encoding: chunked\r\n\r\n4\r\ntest\r\n0\r\n\r\nNEXT".*;
+    const chunked_first = parser.consume(&p, &req, &chunked);
+    try std.testing.expectEqual(chunked.len - "NEXT".len, chunked_first);
+    try std.testing.expectEqual(chunked_first, parser.consume(&p, &req, &chunked));
+}
+
+test "http: framing conflict wins over an oversized content length" {
+    var p = parser.HttpParser{};
+    var req = Request{};
+    var data = "POST / HTTP/1.1\r\nHost: example.test\r\nTransfer-Encoding: chunked\r\nContent-Length: 999999\r\n\r\n".*;
+    _ = parser.consume(&p, &req, &data);
+    try std.testing.expectEqual(parser.ParserState.error_invalid, p.state);
+}
+
+test "http: multipart accepts a preamble and an epilogue" {
+    var with_preamble = ("preamble text\r\n--abc\r\n" ++
+        "Content-Disposition: form-data; name=\"field\"\r\n\r\nvalue\r\n--abc--\r\n").*;
+    var preamble_parser = try support.multipart.Parser.init(&with_preamble, "abc");
+    const preamble_part = (try preamble_parser.next_part()).?;
+    try std.testing.expectEqualStrings("field", preamble_part.name);
+    try std.testing.expectEqualStrings("value", preamble_part.data);
+    try std.testing.expect((try preamble_parser.next_part()) == null);
+
+    var with_epilogue = ("--abc\r\nContent-Disposition: form-data; name=\"field\"\r\n\r\n" ++
+        "value\r\n--abc--\r\nepilogue bytes").*;
+    var epilogue_parser = try support.multipart.Parser.init(&with_epilogue, "abc");
+    const epilogue_part = (try epilogue_parser.next_part()).?;
+    try std.testing.expectEqualStrings("value", epilogue_part.data);
+    try std.testing.expect((try epilogue_parser.next_part()) == null);
+}
+
+test "http: static conditional requests use strong list and star validators" {
+    var request = Request{};
+    request.header_names[0] = "if-none-match";
+    request.header_values[0] = "*";
+    request.header_count = 1;
+    try std.testing.expect(support.static_files.not_modified(&request, "\"abc\"", ""));
+
+    request.header_values[0] = "W/\"abc\"";
+    try std.testing.expect(support.static_files.not_modified(&request, "\"abc\"", ""));
+
+    request.header_values[0] = "\"other\", \"abc\"";
+    try std.testing.expect(support.static_files.not_modified(&request, "\"abc\"", ""));
+
+    request.header_values[0] = "\"other\"";
+    try std.testing.expect(!support.static_files.not_modified(&request, "\"abc\"", ""));
+
+    // If-None-Match suppresses If-Modified-Since even when it does not match.
+    request.header_names[1] = "if-modified-since";
+    request.header_values[1] = "Wed, 21 Oct 2015 07:28:00 GMT";
+    request.header_count = 2;
+    try std.testing.expect(!support.static_files.not_modified(
+        &request,
+        "\"abc\"",
+        "Wed, 21 Oct 2015 07:28:00 GMT",
+    ));
+}
+
+test "http: static If-Range selects ranges only for matching validators" {
+    const modified = "Wed, 21 Oct 2015 07:28:00 GMT";
+    var request = Request{};
+    request.header_names[0] = "if-range";
+    request.header_values[0] = "\"abc\"";
+    request.header_count = 1;
+    try std.testing.expect(support.static_files.range_allowed(&request, "\"abc\"", modified));
+
+    request.header_values[0] = "\"stale\"";
+    try std.testing.expect(!support.static_files.range_allowed(&request, "\"abc\"", modified));
+
+    request.header_values[0] = "W/\"abc\"";
+    try std.testing.expect(!support.static_files.range_allowed(&request, "\"abc\"", modified));
+
+    request.header_values[0] = modified;
+    try std.testing.expect(support.static_files.range_allowed(&request, "\"abc\"", modified));
+
+    request.header_values[0] = "Wed, 21 Oct 2015 07:28:01 GMT";
+    try std.testing.expect(!support.static_files.range_allowed(&request, "\"abc\"", modified));
+
+    request.header_count = 0;
+    try std.testing.expect(support.static_files.range_allowed(&request, "\"abc\"", modified));
+}
+
+fn probe_stream_producer(
+    _: *anyopaque,
+    _: *response.Response,
+) anyerror!response.StreamStatus {
+    return .pending;
+}
+
+test "http: begin_stream includes pending headers on framed transports" {
+    const Capture = struct {
+        seen: [256]u8 = undefined,
+        seen_len: usize = 0,
+        called: bool = false,
+
+        fn http3_stream(
+            context: *anyopaque,
+            _: []const u8,
+            headers: []const u8,
+            _: *anyopaque,
+            _: response.StreamProducer,
+        ) anyerror!bool {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            @memcpy(self.seen[0..headers.len], headers);
+            self.seen_len = headers.len;
+            self.called = true;
+            return false;
+        }
+
+        fn unused_end(_: *anyopaque, _: []const u8, _: []const u8, _: []const u8) anyerror!void {
+            return error.UnexpectedDispatch;
+        }
+
+        fn unused_begin(_: *anyopaque, _: []const u8, _: []const u8) anyerror!void {
+            return error.UnexpectedDispatch;
+        }
+
+        fn unused_write(_: *anyopaque, _: []const u8) anyerror!void {
+            return error.UnexpectedDispatch;
+        }
+
+        fn unused_finish(_: *anyopaque) anyerror!void {
+            return error.UnexpectedDispatch;
+        }
+    };
+
+    var capture = Capture{};
+    var res = response.Response{ .target = .{ .http3 = .{
+        .context = &capture,
+        .end_fn = Capture.unused_end,
+        .begin_fn = Capture.unused_begin,
+        .write_fn = Capture.unused_write,
+        .finish_fn = Capture.unused_finish,
+        .begin_stream_fn = Capture.http3_stream,
+    } } };
+    try res.append_header("X-Pending", "yes");
+    try res.begin_stream("200 OK", "Content-Type: text/plain\r\n", &capture, probe_stream_producer);
+    try std.testing.expect(capture.called);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        capture.seen[0..capture.seen_len],
+        "X-Pending: yes\r\n",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        capture.seen[0..capture.seen_len],
+        "Content-Type: text/plain\r\n",
+    ) != null);
+}
+
 test "http: rejects unsupported transfer codings" {
     var p = parser.HttpParser{};
     var req = Request{};

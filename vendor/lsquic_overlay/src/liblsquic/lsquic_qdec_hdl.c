@@ -666,11 +666,23 @@ qdh_reset_header_error_stream (struct qpack_dec_hdl *qdh,
 }
 
 
+/* A resource shortage is stream-scoped: the request can be retried later
+ * and must not take the connection down with it.
+ */
+static void
+qdh_reset_resource_error_stream (struct qpack_dec_hdl *qdh,
+                                                struct lsquic_stream *stream)
+{
+    lsquic_stream_maybe_reset(stream, HEC_REQUEST_REJECTED, 1);
+}
+
+
 int
 lsquic_qdh_take_hsi_error (struct qpack_dec_hdl *qdh)
 {
-    const int had_error = !!(qdh->qdh_flags & QDH_HSI_HEADER_ERROR);
-    qdh->qdh_flags &= ~QDH_HSI_HEADER_ERROR;
+    const int had_error = !!(qdh->qdh_flags & (QDH_HSI_HEADER_ERROR
+                                            | QDH_HSI_RESOURCE_ERROR));
+    qdh->qdh_flags &= ~(QDH_HSI_HEADER_ERROR|QDH_HSI_RESOURCE_ERROR);
     return had_error;
 }
 
@@ -746,9 +758,18 @@ qdh_header_read_results (struct qpack_dec_hdl *qdh,
     }
     else if (rhs == LQRHS_ERROR)
     {
-        if (qdh->qdh_flags & QDH_HSI_HEADER_ERROR)
+        if (qdh->qdh_flags & (QDH_HSI_HEADER_ERROR | QDH_HSI_RESOURCE_ERROR))
         {
-            qdh_reset_header_error_stream(qdh, stream);
+            /* Return the in-flight header set before resetting: the reset
+             * path only discards through lsquic_qdh_cancel_stream(), which
+             * depends on SMQF_QPACK_DEC having been armed by an earlier
+             * LQRHS_NEED/LQRHS_BLOCKED and is not set for a one-shot error.
+             */
+            qdh_maybe_destroy_hblock_ctx(qdh, stream);
+            if (qdh->qdh_flags & QDH_HSI_RESOURCE_ERROR)
+                qdh_reset_resource_error_stream(qdh, stream);
+            else
+                qdh_reset_header_error_stream(qdh, stream);
             return rhs;
         }
         qdh_maybe_destroy_hblock_ctx(qdh, stream);
@@ -787,6 +808,8 @@ lsquic_qdh_header_in_begin (struct qpack_dec_hdl *qdh,
     if (!u)
     {
         LSQ_INFO("cannot allocate hblock_ctx");
+        qdh->qdh_flags |= QDH_HSI_RESOURCE_ERROR;
+        qdh_reset_resource_error_stream(qdh, stream);
         return LQRHS_ERROR;
     }
 
@@ -797,6 +820,8 @@ lsquic_qdh_header_in_begin (struct qpack_dec_hdl *qdh,
     {
         free(u);
         LSQ_DEBUG("hsi_create_header_set failure");
+        qdh->qdh_flags |= QDH_HSI_RESOURCE_ERROR;
+        qdh_reset_resource_error_stream(qdh, stream);
         return LQRHS_ERROR;
     }
 

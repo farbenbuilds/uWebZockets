@@ -838,7 +838,7 @@ test "config: app dispatch copies datagrams into the persistent ring" {
     try std.testing.expectEqual(@as(u64, 1), registry.get(.datagrams_dropped));
 }
 
-test "config: kernel bypass falls back safely and records the verdict" {
+test "config: kernel bypass request reports the unwired data path" {
     const TestApp = app_module.configured_app_with_timeout(2, 1024, 4096, 0);
     const config = comptime Preset.kernel_bypass.with(.{
         .max_connections = 2,
@@ -850,12 +850,19 @@ test "config: kernel bypass falls back safely and records the verdict" {
     defer server.deinit();
 
     const registry = server.metrics() orelse return error.TestUnexpectedResult;
-    if (server.xdp_transport == null) {
-        try std.testing.expectEqual(@as(u64, 1), registry.get(.xdp_kernel_bypass_fallbacks));
-        try std.testing.expect(server.transport_availability.reason != .none);
-    } else {
-        try std.testing.expectEqual(@as(u64, 1), registry.get(.kernel_bypass_active));
-    }
+    // The server never dispatches through AF_XDP, so it must neither claim the
+    // bypass nor leave a transport behind.
+    try std.testing.expect(server.xdp_transport == null);
+    try std.testing.expectEqual(
+        support.xdp_transport.Mode.standard,
+        server.transport_availability.mode,
+    );
+    try std.testing.expectEqual(
+        support.xdp_transport.FallbackReason.data_path_unwired,
+        server.transport_availability.reason,
+    );
+    try std.testing.expectEqual(@as(u64, 1), registry.get(.xdp_kernel_bypass_fallbacks));
+    try std.testing.expectEqual(@as(u64, 0), registry.get(.kernel_bypass_active));
 }
 
 test "config: builder exposes datagram, bypass, and observability knobs" {
@@ -1016,6 +1023,16 @@ test "config: H3 capacity knobs validate, size, and reach the engine type" {
         error.InvalidHttp3Capacity,
         (ServerConfig{ .max_h3_response_header_count = 0 }).validate(),
     );
+    // The QUIC stream stacks a transmit descriptor per response field.
+    try std.testing.expectError(
+        error.InvalidHttp3Capacity,
+        (ServerConfig{
+            .max_h3_response_header_count = config_module.h3_response_header_count_limit + 1,
+        }).validate(),
+    );
+    try (ServerConfig{
+        .max_h3_response_header_count = config_module.h3_response_header_count_limit,
+    }).validate();
     // Response field offsets and lengths are u16 in the lsquic header API.
     try std.testing.expectError(
         error.InvalidHttp3Capacity,

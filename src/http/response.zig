@@ -395,11 +395,13 @@ pub const Response = struct {
             },
             .http2 => |target| {
                 const arm = target.begin_stream_fn orelse return error.ProducerStreamingUnsupported;
+                var combined_buffer: [pending_header_capacity * 2]u8 = undefined;
+                const complete_headers = try self.combine_headers(headers, &combined_buffer);
                 const finished = try arm(
                     target.context,
                     target.stream_id,
                     status,
-                    headers,
+                    complete_headers,
                     context,
                     producer,
                 );
@@ -407,7 +409,9 @@ pub const Response = struct {
             },
             .http3 => |target| {
                 const arm = target.begin_stream_fn orelse return error.ProducerStreamingUnsupported;
-                const finished = try arm(target.context, status, headers, context, producer);
+                var combined_buffer: [pending_header_capacity * 2]u8 = undefined;
+                const complete_headers = try self.combine_headers(headers, &combined_buffer);
+                const finished = try arm(target.context, status, complete_headers, context, producer);
                 self.state = if (finished) .ended else .streaming;
             },
         }

@@ -13,7 +13,9 @@ const Header = types.Header;
 /// Borrowed view of a completed response, re-exported for the transport.
 pub const ResponseView = types.ResponseView;
 
-/// Maximum accepted header fields, including trailers.
+/// Maximum accepted response head fields. Trailer fields are validated
+/// against the same bound independently, so a response may carry up to this
+/// many head fields and this many trailer fields.
 pub const max_header_fields = types.max_response_header_fields;
 /// Maximum accepted response head, including the status line.
 pub const max_head_bytes = types.max_response_head_bytes;

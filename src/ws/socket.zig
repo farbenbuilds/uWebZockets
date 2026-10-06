@@ -186,12 +186,20 @@ pub const WebSocket = struct {
         if (self.permessage_deflate != null and (opcode == .text or opcode == .binary)) {
             const context = self.conn.ws_deflate orelse return error.CompressionUnavailable;
             const window_bits = self.permessage_deflate.?.server_max_window_bits orelse 15;
-            payload = try context.compress_message_window(
+            const candidate = try context.compress_message_window(
                 data,
                 self.conn.ws_compression_output_buffer,
                 window_bits,
             );
-            compressed = true;
+            if (candidate.len > self.behavior.max_frame_size) {
+                // RFC 7692 allows an uncompressed frame at any time, so prefer
+                // the raw payload over rejecting a message the route accepts.
+                if (data.len > self.behavior.max_frame_size) return error.PayloadTooLarge;
+                payload = data;
+            } else {
+                payload = candidate;
+                compressed = true;
+            }
         }
 
         var node = try self.z_conn.prepare_frame(true, opcode, payload, false, null);
@@ -217,8 +225,9 @@ pub const WebSocket = struct {
                 }
                 const chunk = remaining[0..@min(capacity, remaining.len)];
                 self.conn.h2.write_response_data(stream_id, chunk, callbacks) catch |err| {
-                    // The header is already on the wire; reset the stream so
-                    // the peer never observes a corrupt frame.
+                    // The header is already on the wire and there is no
+                    // per-stream pending queue, so a flow-control stall cannot
+                    // be parked; reset rather than expose a partial frame.
                     self.terminate();
                     return err;
                 };
@@ -560,6 +569,9 @@ pub const WebSocket = struct {
                 self.heartbeat_ping_ms = 0;
             },
             .close => {
+                // Capture the transport before send and notify_close can
+                // deinitialize this socket and clear h2_stream_id.
+                const h2_tunnel = self.h2_stream_id != null;
                 switch (close_payload_status(payload)) {
                     .valid => {},
                     .protocol_error => {
@@ -583,10 +595,10 @@ pub const WebSocket = struct {
                 // then finish the close exchange for this transport.
                 self.complete_frame();
                 self.notify_close();
-                if (self.h2_stream_id == null) {
-                    tcp.close_after_flush(self.conn);
-                } else {
+                if (h2_tunnel) {
                     self.terminate();
+                } else {
+                    tcp.close_after_flush(self.conn);
                 }
                 return false;
             },
@@ -600,16 +612,19 @@ pub const WebSocket = struct {
 
     fn fail(self: *WebSocket, code: u16, reason: []const u8) void {
         self.failed = true;
+        // Capture the transport before send_close can deinitialize this socket
+        // and clear h2_stream_id.
+        const h2_tunnel = self.h2_stream_id != null;
         self.send_close(code, reason) catch {
             self.terminate();
             return;
         };
         self.notify_close();
-        if (self.h2_stream_id == null) {
-            tcp.close_after_flush(self.conn);
-        } else {
+        if (h2_tunnel) {
             // Reset the tunnel so a wedged parser can never be fed more DATA.
             self.terminate();
+        } else {
+            tcp.close_after_flush(self.conn);
         }
     }
 
@@ -626,7 +641,12 @@ pub const WebSocket = struct {
     }
 
     /// Immediately closes the underlying TCP connection or H2 stream.
+    ///
+    /// Deinitialization has already closed or reset the transport, so a second
+    /// terminate must not fall through to the TCP branch and close an HTTP/2
+    /// connection that is carrying other streams.
     pub fn terminate(self: *WebSocket) void {
+        if (!self.initialized) return;
         if (self.h2_stream_id) |stream_id| {
             const callbacks = self.conn.http2_callbacks();
             // The peer may have closed the stream before local termination.

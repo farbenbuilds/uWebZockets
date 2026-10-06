@@ -94,10 +94,17 @@ int main(void)
     size_t sent = 0;
     unsigned int attempt;
 
-    if (strcmp(uwz_version(), "1.7.0") != 0)
+    if (strcmp(uwz_version(), "1.7.1") != 0)
         return 1;
     if (strcmp(uwz_error_name(UWZ_OK), "ok") != 0)
         return 2;
+    {
+        /* *out_app must be NULL; a non-NULL value is left unchanged. */
+        uwz_app *occupied = (uwz_app *) (uintptr_t) 1;
+        if (uwz_app_create(&occupied) != UWZ_ERROR_INVALID_ARGUMENT ||
+            occupied != (uwz_app *) (uintptr_t) 1)
+            return 18;
+    }
     if (uwz_app_create(&app) != UWZ_OK || app == NULL)
         return 3;
     context.app = &app;

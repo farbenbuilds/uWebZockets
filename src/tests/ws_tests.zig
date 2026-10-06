@@ -538,3 +538,221 @@ test "websocket validates outgoing application frames" {
         ws_socket.validate_outgoing_payload(&([_]u8{0} ** 126), .ping),
     );
 }
+
+test "handshake: validates RFC 8441 extended connect version" {
+    try handshake.validate_extended_connect("13");
+    try handshake.validate_extended_connect(" 13 ");
+    try std.testing.expectError(
+        error.MissingVersion,
+        handshake.validate_extended_connect(null),
+    );
+    try std.testing.expectError(
+        error.UnsupportedVersion,
+        handshake.validate_extended_connect("8"),
+    );
+}
+
+test "ws: terminate is a no-op once the socket is deinitialized" {
+    var tcp_conn = TcpConnection{ .socket = undefined };
+    var ws = WebSocket{ .conn = &tcp_conn, .initialized = true };
+
+    ws.deinit();
+    try std.testing.expect(!ws.initialized);
+
+    // The transport already closed during deinit; a second terminate must not
+    // fall through to the HTTP/1 TCP close path.
+    ws.terminate();
+    try std.testing.expect(!tcp_conn.closing);
+}
+
+test "ws: peer close completes the HTTP/1 close handshake after flush" {
+    var write_queue: [128]u8 = undefined;
+    var tcp_conn = TcpConnection{
+        .socket = undefined,
+        .write_queue = &write_queue,
+        .is_writing = true,
+    };
+    var ws = WebSocket{
+        .conn = &tcp_conn,
+        .behavior = .{ .max_frame_size = 64, .max_message_size = 64 },
+        .initialized = true,
+    };
+    ws.z_conn = try zslay.Conn.init(&ws.tx_nodes, .{
+        .role = .server,
+        .max_frame_len = 64,
+        .max_message_len = 64,
+    });
+
+    const masking_key = [_]u8{ 1, 2, 3, 4 };
+    var wire: [16]u8 = undefined;
+    const header_len = try zslay.encode_header(
+        &wire,
+        .{
+            .payload_len = 2,
+            .mask = true,
+            .opcode = @intFromEnum(zslay.Opcode.close),
+            .rsv3 = false,
+            .rsv2 = false,
+            .rsv1 = false,
+            .fin = true,
+        },
+        2,
+        masking_key,
+    );
+    wire[header_len] = 0x03 ^ masking_key[0];
+    wire[header_len + 1] = 0xe8 ^ masking_key[1];
+
+    ws.on_data(wire[0 .. header_len + 2]);
+
+    try std.testing.expect(ws.close_received);
+    try std.testing.expect(ws.close_sent);
+    try std.testing.expect(tcp_conn.close_when_drained);
+    try std.testing.expect(!tcp_conn.closing);
+}
+
+/// Fills `destination` with deterministic high-entropy bytes so DEFLATE has no
+/// choice but to expand them.
+fn fill_incompressible(destination: []u8) void {
+    var counter: u64 = 0;
+    var offset: usize = 0;
+    while (offset < destination.len) : (counter += 1) {
+        var seed: [8]u8 = undefined;
+        std.mem.writeInt(u64, &seed, counter, .little);
+        var digest: [32]u8 = undefined;
+        std.crypto.hash.sha2.Sha256.hash(&seed, &digest, .{});
+        const take = @min(digest.len, destination.len - offset);
+        @memcpy(destination[offset .. offset + take], digest[0..take]);
+        offset += take;
+    }
+}
+
+/// Connection stub with compression scratch and a write ring as the only sink.
+fn compression_connection(
+    write_queue: []u8,
+    message_buffer: []u8,
+    compression_buffer: []u8,
+    compression_output: []u8,
+    context: *deflate.Context,
+) TcpConnection {
+    return .{
+        .socket = undefined,
+        .write_queue = write_queue,
+        .ws_message_buffer = message_buffer,
+        .ws_compression_buffer = compression_buffer,
+        .ws_compression_output_buffer = compression_output,
+        .ws_deflate = context,
+        .is_writing = true,
+    };
+}
+
+test "ws: compressed send falls back to the raw payload at the frame limit" {
+    var write_queue: [512]u8 = undefined;
+    var message_buffer: [256]u8 = undefined;
+    var compression_buffer: [256]u8 = undefined;
+    var compression_output: [256]u8 = undefined;
+    var context = try deflate.Context.init(6);
+    defer context.deinit();
+
+    var tcp_conn = compression_connection(
+        &write_queue,
+        &message_buffer,
+        &compression_buffer,
+        &compression_output,
+        &context,
+    );
+    var ws = WebSocket{
+        .conn = &tcp_conn,
+        .behavior = .{ .max_frame_size = 64, .max_message_size = 256 },
+        .initialized = true,
+        .permessage_deflate = .{},
+    };
+    ws.z_conn = try zslay.Conn.init(&ws.tx_nodes, .{
+        .role = .server,
+        .max_frame_len = 64,
+        .max_message_len = 256,
+    });
+
+    var payload: [64]u8 = undefined;
+    fill_incompressible(&payload);
+    const compressed = try context.compress_message_window(&payload, &compression_output, 15);
+    try std.testing.expect(compressed.len > ws.behavior.max_frame_size);
+
+    try ws.send(&payload, .binary);
+
+    try std.testing.expectEqual(@as(usize, 2 + payload.len), tcp_conn.write_len);
+    // FIN + binary without RSV1: the raw payload was sent in place.
+    try std.testing.expectEqual(@as(u8, 0x82), write_queue[0]);
+    try std.testing.expectEqual(@as(u8, payload.len), write_queue[1]);
+    try std.testing.expectEqualSlices(
+        u8,
+        &payload,
+        write_queue[2 .. 2 + payload.len],
+    );
+}
+
+test "ws: compressed send rejects a payload no frame can carry" {
+    var write_queue: [512]u8 = undefined;
+    var message_buffer: [256]u8 = undefined;
+    var compression_buffer: [256]u8 = undefined;
+    var compression_output: [256]u8 = undefined;
+    var context = try deflate.Context.init(6);
+    defer context.deinit();
+
+    var tcp_conn = compression_connection(
+        &write_queue,
+        &message_buffer,
+        &compression_buffer,
+        &compression_output,
+        &context,
+    );
+    var ws = WebSocket{
+        .conn = &tcp_conn,
+        .behavior = .{ .max_frame_size = 64, .max_message_size = 256 },
+        .initialized = true,
+        .permessage_deflate = .{},
+    };
+    ws.z_conn = try zslay.Conn.init(&ws.tx_nodes, .{
+        .role = .server,
+        .max_frame_len = 64,
+        .max_message_len = 256,
+    });
+
+    var payload: [65]u8 = undefined;
+    fill_incompressible(&payload);
+
+    try std.testing.expectError(error.PayloadTooLarge, ws.send(&payload, .binary));
+    try std.testing.expectEqual(@as(usize, 0), tcp_conn.write_len);
+}
+
+test "ws: compressed send still marks RSV1 when the compressed form fits" {
+    var write_queue: [512]u8 = undefined;
+    var message_buffer: [256]u8 = undefined;
+    var compression_buffer: [256]u8 = undefined;
+    var compression_output: [256]u8 = undefined;
+    var context = try deflate.Context.init(6);
+    defer context.deinit();
+
+    var tcp_conn = compression_connection(
+        &write_queue,
+        &message_buffer,
+        &compression_buffer,
+        &compression_output,
+        &context,
+    );
+    var ws = WebSocket{
+        .conn = &tcp_conn,
+        .behavior = .{ .max_frame_size = 256, .max_message_size = 256 },
+        .initialized = true,
+        .permessage_deflate = .{},
+    };
+    ws.z_conn = try zslay.Conn.init(&ws.tx_nodes, .{
+        .role = .server,
+        .max_frame_len = 256,
+        .max_message_len = 256,
+    });
+
+    const payload = "compressible payload " ** 4;
+    try ws.send(payload, .binary);
+
+    try std.testing.expect(write_queue[0] & 0x40 != 0);
+}

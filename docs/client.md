@@ -195,11 +195,17 @@ BoringSSL ships no default trust store, so verification fails closed:
 - `verify = false` disables chain and name checks and is a development-only
   mode. It exists for talking to the ephemeral development certificates in
   [tls.md](tls.md); never ship it.
+- The TLS context pins TLS 1.3 as both the minimum and maximum protocol
+  version. A peer that cannot negotiate TLS 1.3 fails the handshake with a
+  `.tls` failure instead of falling back to an older protocol.
 
 One client caches at most one TLS context. Changing `verify` or `ca_path`
 between fetches on the same client fails with `error.TlsConfigurationMismatch`
 so a verification result is never reused under different trust rules. The
-context is created on the first TLS fetch and released in `deinit`.
+context is created on the first TLS fetch and released in `deinit`. Creating
+it reads and parses the CA bundle synchronously inside `fetch`, so arm the
+first TLS fetch between `run` calls rather than from a completion callback;
+later TLS fetches reuse the context.
 
 The client does not present a certificate and has no mutual-TLS configuration.
 

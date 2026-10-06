@@ -82,6 +82,7 @@ pub fn map_error(err: anyerror) c_int {
         error.ReferenceCountOverflow,
         => capacity,
         error.RouteAlreadyRegistered,
+        error.RoutePatternConflicts,
         error.AlreadyListening,
         error.TlsAlreadyInitialized,
         => already_exists,

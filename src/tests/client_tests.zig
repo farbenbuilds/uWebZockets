@@ -594,12 +594,18 @@ const TlsServer = struct {
     response: []const u8,
     ca_path: ?[:0]const u8,
     pki: ?*TestPki = null,
+    /// Pins the test server to TLS 1.2 so the client's TLS 1.3 floor is tested.
+    tls12_only: bool = false,
 
     fn run(self: *TlsServer) void {
         const io = std.testing.io;
         if (self.pki) |pki| {
             const context = c.SSL_CTX_new(c.TLS_server_method()) orelse return;
             defer c.SSL_CTX_free(context);
+            if (self.tls12_only) {
+                if (c.SSL_CTX_set_min_proto_version(context, c.TLS1_2_VERSION) != 1) return;
+                if (c.SSL_CTX_set_max_proto_version(context, c.TLS1_2_VERSION) != 1) return;
+            }
             if (c.SSL_CTX_use_certificate(context, pki.leaf_cert) != 1) return;
             if (c.SSL_CTX_use_PrivateKey(context, pki.leaf_key) != 1) return;
             if (c.SSL_CTX_check_private_key(context) != 1) return;
@@ -1015,6 +1021,52 @@ test "client: tls verification rejects the wrong server name" {
         .{
             .port = port,
             .tls = .{ .verify = true, .ca_path = ca_path, .server_name = "not-localhost" },
+            .read_timeout_ms = 5_000,
+        },
+        &storage,
+    );
+
+    switch (outcome) {
+        .failure => |failure| try std.testing.expectEqual(client.FailureKind.tls, failure.kind),
+        .response => return error.UnexpectedResponse,
+    }
+}
+
+test "client: rejects a tls 1.2 only server" {
+    // The ASan and MSan runtimes abort on this toolchain's thread teardown.
+    if (test_options.sanitize or test_options.memory_sanitize) return error.SkipZigTest;
+    var directory = std.testing.tmpDir(.{});
+    defer directory.cleanup();
+
+    const ca_path = try std.fs.path.joinZ(
+        std.testing.allocator,
+        &.{ ".zig-cache", "tmp", &directory.sub_path, "ca.pem" },
+    );
+    defer std.testing.allocator.free(ca_path);
+
+    var pki = try generate_test_pki();
+    defer pki.deinit();
+
+    const wire = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello";
+    var port_slot = PortSlot{};
+    var server = TlsServer{
+        .port_slot = &port_slot,
+        .response = wire,
+        .ca_path = ca_path,
+        .pki = &pki,
+        .tls12_only = true,
+    };
+    const thread = try std.Thread.spawn(.{}, TlsServer.run, .{&server});
+    defer thread.join();
+
+    const port = port_slot.wait();
+    var storage = client.FetchStorage{};
+    const outcome = try client.fetch_blocking(
+        std.testing.io,
+        .{ .method = .get, .host = "127.0.0.1", .path = "/" },
+        .{
+            .port = port,
+            .tls = .{ .verify = true, .ca_path = ca_path, .server_name = "localhost" },
             .read_timeout_ms = 5_000,
         },
         &storage,

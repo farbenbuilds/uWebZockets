@@ -150,7 +150,7 @@ jobs:
         run: nix develop "path:." -c zig build fuzz --fuzz=100K -Doptimize=ReleaseSafe
 
   artifacts:
-    name: Release artifacts
+    name: Cross-target compile checks
     runs-on: ubuntu-24.04
     environment: Testing
     timeout-minutes: 30
@@ -172,6 +172,9 @@ jobs:
 
       - name: Build ReleaseFast library
         run: nix develop "path:." -c zig build lib -Doptimize=ReleaseFast --summary all
+
+      - name: Build WASM and eBPF artifacts
+        run: nix develop "path:." -c zig build all-targets -Doptimize=ReleaseSafe --summary all
 
   checks:
     name: Checks & Tests

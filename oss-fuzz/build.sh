@@ -19,11 +19,18 @@ zig build oss-fuzz-objects \
     -Doptimize=ReleaseSafe \
     --prefix "$install_dir"
 
+# Zig's -ffuzz counters need a registration hook for the external libFuzzer
+# runtime; keep the shim free of sanitizer flags so it cannot drag in a
+# rejected coverage flavor of its own.
+"$CC" -O2 -c "$project_dir/oss-fuzz/zig_sancov_shim.c" \
+    -o "$install_dir/oss-fuzz/zig_sancov_shim.o"
+
 for target in http_framing ws_masking quic_packets query_parse cookie_parse; do
     # OSS-Fuzz exposes compiler arguments as space-delimited strings.
     # shellcheck disable=SC2086
     "$CXX" $CXXFLAGS \
         -no-pie \
+        "$install_dir/oss-fuzz/zig_sancov_shim.o" \
         "$install_dir/oss-fuzz/${target}.o" \
         $LIB_FUZZING_ENGINE \
         -o "$OUT/$target"

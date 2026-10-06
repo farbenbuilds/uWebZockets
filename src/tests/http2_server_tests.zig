@@ -2,6 +2,7 @@ const std = @import("std");
 const support = @import("test_support");
 const http2 = support.http2;
 const http2_server = support.http2_server;
+const hpack = support.http2_hpack;
 const Request = support.http_request.Request;
 const Response = support.http_response.Response;
 const radix = support.radix;
@@ -366,6 +367,23 @@ fn frame_count(
     return count;
 }
 
+/// Returns the error code of the first GOAWAY frame, or null when absent.
+fn goaway_code(output: []const u8) !?u32 {
+    var offset: usize = 0;
+    while (offset < output.len) {
+        if (output.len - offset < 9) return error.IncompleteFrame;
+        const header = try http2.FrameHeader.parse(output[offset..][0..9]);
+        const frame_length = 9 + header.payload_length;
+        if (frame_length > output.len - offset) return error.IncompleteFrame;
+        if (header.frame_type == @intFromEnum(http2.FrameType.goaway)) {
+            if (header.payload_length < 8) return error.InvalidFrameSize;
+            return std.mem.readInt(u32, output[offset + 9 + 4 ..][0..4], .big);
+        }
+        offset += frame_length;
+    }
+    return null;
+}
+
 const DataFrames = struct {
     count: usize = 0,
     bytes_length: usize = 0,
@@ -711,14 +729,14 @@ test "http2 server: fragmented refused headers reset only after completion" {
     );
 }
 
-test "http2 server: skipped-stream headers preserve HPACK before reset" {
+test "http2 server: skipped lower stream id is a connection error" {
     var fixture: SessionFixture = .{};
     try fixture.init();
     var session = fixture.session;
     var state = RefusalState{};
 
     const active_headers = [_]u8{ 0x82, 0x86, 0x84 };
-    const closed_headers = [_]u8{
+    const skipped_headers = [_]u8{
         0x40, 0x06, 'x', '-', 't', 'e', 's', 't',
         0x05, 'v',  'a', 'l', 'u', 'e',
     };
@@ -727,7 +745,42 @@ test "http2 server: skipped-stream headers preserve HPACK before reset" {
     var input_length: usize = http2.client_preface.len;
     try append_frame(&input, &input_length, .settings, 0, 0, "");
     try append_frame(&input, &input_length, .headers, 0x5, 3, &active_headers);
-    try append_frame(&input, &input_length, .headers, 0x5, 1, &closed_headers);
+    try append_frame(&input, &input_length, .headers, 0x5, 1, &skipped_headers);
+    try session.receive(input[0..input_length], state.callbacks());
+
+    // h2spec 5.1.1: stream 1 was skipped by opening 3, so HEADERS on it is an
+    // unexpected stream identifier; the connection fails before decoding.
+    try std.testing.expect(session.is_closed());
+    try std.testing.expectEqual(@as(usize, 1), state.dispatch_count);
+    try std.testing.expectEqual(
+        @as(?u32, @intFromEnum(http2_server.ErrorCode.protocol_error)),
+        try goaway_code(state.output[0..state.output_length]),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        try reset_count(state.output[0..state.output_length], 1, .stream_closed),
+    );
+}
+
+test "http2 server: previously opened closed stream resets without dropping HPACK state" {
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
+    var state = RefusalState{};
+
+    const active_headers = [_]u8{ 0x82, 0x86, 0x84 };
+    const repeated_headers = [_]u8{
+        0x40, 0x06, 'x', '-', 't', 'e', 's', 't',
+        0x05, 'v',  'a', 'l', 'u', 'e',
+    };
+    var input: [160]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x5, 3, &active_headers);
+    const cancel = [_]u8{ 0, 0, 0, 8 };
+    try append_frame(&input, &input_length, .rst_stream, 0, 3, &cancel);
+    try append_frame(&input, &input_length, .headers, 0x5, 3, &repeated_headers);
     try session.receive(input[0..input_length], state.callbacks());
 
     try std.testing.expect(!session.is_closed());
@@ -735,7 +788,7 @@ test "http2 server: skipped-stream headers preserve HPACK before reset" {
     try std.testing.expectEqual(@as(usize, 1), session.dynamic_table.?.count());
     try std.testing.expectEqual(
         @as(usize, 1),
-        try reset_count(state.output[0..state.output_length], 1, .stream_closed),
+        try reset_count(state.output[0..state.output_length], 3, .stream_closed),
     );
 }
 
@@ -2341,4 +2394,478 @@ test "http2: decoded request headers spill into extras" {
     try std.testing.expectEqualStrings("v", state.first.?);
     try std.testing.expectEqualStrings("v", state.last.?);
     try std.testing.expectEqual(@as(usize, 70), state.entries);
+}
+
+/// Encodes one literal HPACK field without indexing.
+fn append_hpack_literal(
+    buffer: []u8,
+    offset: usize,
+    name: []const u8,
+    value: []const u8,
+) !usize {
+    const required = 2 + name.len + 1 + value.len;
+    if (required > buffer.len - offset) return error.OutputTooSmall;
+    var cursor = offset;
+    buffer[cursor] = 0;
+    cursor += 1;
+    buffer[cursor] = @intCast(name.len);
+    cursor += 1;
+    @memcpy(buffer[cursor .. cursor + name.len], name);
+    cursor += name.len;
+    buffer[cursor] = @intCast(value.len);
+    cursor += 1;
+    @memcpy(buffer[cursor .. cursor + value.len], value);
+    return cursor + value.len;
+}
+
+/// Encodes an RFC 8441 CONNECT request with zero or more handshake fields.
+fn connect_ws_header_block(
+    buffer: []u8,
+    versions: []const []const u8,
+    keys: []const []const u8,
+) ![]const u8 {
+    var offset: usize = 0;
+    offset = try append_hpack_literal(buffer, offset, ":method", "CONNECT");
+    offset = try append_hpack_literal(buffer, offset, ":scheme", "https");
+    offset = try append_hpack_literal(buffer, offset, ":path", "/chat");
+    offset = try append_hpack_literal(buffer, offset, ":authority", "example.com");
+    offset = try append_hpack_literal(buffer, offset, ":protocol", "websocket");
+    for (versions) |value| {
+        offset = try append_hpack_literal(buffer, offset, "sec-websocket-version", value);
+    }
+    for (keys) |value| {
+        offset = try append_hpack_literal(buffer, offset, "sec-websocket-key", value);
+    }
+    return buffer[0..offset];
+}
+
+/// Builds one masked client WebSocket frame with a short payload.
+fn masked_ws_frame(buffer: []u8, opcode: u8, payload: []const u8, key: [4]u8) []u8 {
+    buffer[0] = 0x80 | opcode;
+    buffer[1] = 0x80 | @as(u8, @intCast(payload.len));
+    @memcpy(buffer[2..6], &key);
+    for (payload, 0..) |byte, index| {
+        buffer[6 + index] = byte ^ key[index % 4];
+    }
+    return buffer[0 .. 6 + payload.len];
+}
+
+fn find_headers_block(output: []const u8, stream_id: u32) ![]const u8 {
+    var offset: usize = 0;
+    while (offset < output.len) {
+        if (output.len - offset < 9) return error.IncompleteFrame;
+        const header = try http2.FrameHeader.parse(output[offset..][0..9]);
+        const frame_length = 9 + header.payload_length;
+        if (frame_length > output.len - offset) return error.IncompleteFrame;
+        if (header.frame_type == @intFromEnum(http2.FrameType.headers) and
+            header.stream_id == stream_id)
+        {
+            return output[offset + 9 .. offset + frame_length];
+        }
+        offset += frame_length;
+    }
+    return error.HeadersNotFound;
+}
+
+/// Decodes one response header block into caller storage.
+fn decode_response(
+    output: []const u8,
+    stream_id: u32,
+    fields: []hpack.Header,
+    storage: []u8,
+) ![]const hpack.Header {
+    var entries: [8]hpack.DynamicEntry = undefined;
+    var dynamic_bytes: [256]u8 = undefined;
+    var table = try hpack.DynamicTable.init(&entries, &dynamic_bytes, 256);
+    var decoder = hpack.Decoder.init(&table, 1024);
+    return decoder.decode_fields(
+        try find_headers_block(output, stream_id),
+        fields,
+        storage,
+    );
+}
+
+fn response_field(fields: []const hpack.Header, name: []const u8) ?[]const u8 {
+    for (fields) |field| {
+        if (std.mem.eql(u8, field.name, name)) return field.value;
+    }
+    return null;
+}
+
+/// Connection with no live socket whose write ring is the only output sink.
+fn tunnel_connection(
+    ring: []u8,
+    message_buffer: []u8,
+    router: *const radix.Router,
+) support.tcp.TcpConnection {
+    return .{
+        .socket = undefined,
+        .router = router,
+        .write_queue = ring,
+        .ws_message_buffer = message_buffer,
+        .is_writing = true,
+    };
+}
+
+const tunnel_key = "dGhlIHNhbXBsZSBub25jZQ==";
+
+fn terminate_on_close(ws: *support.ws_socket.WebSocket) void {
+    ws.terminate();
+}
+
+/// Feeds one client HEADERS frame into an established session.
+fn receive_headers_frame(
+    conn: *support.tcp.TcpConnection,
+    stream_id: u32,
+    block: []const u8,
+) !void {
+    var input: [256]u8 = undefined;
+    var input_length: usize = 0;
+    try append_frame(&input, &input_length, .headers, 0x4, stream_id, block);
+    try conn.h2.receive(input[0..input_length], conn.http2_callbacks());
+}
+
+/// Feeds a client preface, SETTINGS, and one CONNECT header block.
+fn receive_connect_request(
+    conn: *support.tcp.TcpConnection,
+    stream_id: u32,
+    block: []const u8,
+) !void {
+    var input: [512]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x4, stream_id, block);
+    try conn.h2.receive(input[0..input_length], conn.http2_callbacks());
+}
+
+fn expect_response_status(
+    output: []const u8,
+    stream_id: u32,
+    expected: []const u8,
+) !void {
+    var fields: [16]hpack.Header = undefined;
+    var storage: [1024]u8 = undefined;
+    const decoded = try decode_response(output, stream_id, &fields, &storage);
+    try std.testing.expectEqualStrings(
+        expected,
+        response_field(decoded, ":status") orelse return error.MissingStatus,
+    );
+}
+
+test "http2 websocket: CONNECT without version is rejected with 426" {
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    try router.ws("/chat", .{ .max_frame_size = 64, .max_message_size = 64 });
+
+    var ring: [1024]u8 = undefined;
+    var message_buffer: [64]u8 = undefined;
+    var conn = tunnel_connection(&ring, &message_buffer, &router);
+    var h2_bundle = support.tcp.Http2Session.Bundle(support.tcp.Http2Session.default_capacities){};
+    conn.h2 = try support.tcp.Http2Session.init(h2_bundle.storage());
+
+    var block: [256]u8 = undefined;
+    const headers = try connect_ws_header_block(&block, &.{}, &.{tunnel_key});
+    try receive_connect_request(&conn, 1, headers);
+
+    try std.testing.expect(!conn.ws.initialized);
+    try expect_response_status(ring[0..conn.write_len], 1, "426");
+
+    var fields: [16]hpack.Header = undefined;
+    var storage: [1024]u8 = undefined;
+    const decoded = try decode_response(ring[0..conn.write_len], 1, &fields, &storage);
+    try std.testing.expectEqualStrings(
+        "13",
+        response_field(decoded, "sec-websocket-version") orelse return error.MissingHeader,
+    );
+}
+
+test "http2 websocket: CONNECT with version 8 is rejected with 426" {
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    try router.ws("/chat", .{ .max_frame_size = 64, .max_message_size = 64 });
+
+    var ring: [1024]u8 = undefined;
+    var message_buffer: [64]u8 = undefined;
+    var conn = tunnel_connection(&ring, &message_buffer, &router);
+    var h2_bundle = support.tcp.Http2Session.Bundle(support.tcp.Http2Session.default_capacities){};
+    conn.h2 = try support.tcp.Http2Session.init(h2_bundle.storage());
+
+    var block: [256]u8 = undefined;
+    const headers = try connect_ws_header_block(&block, &.{"8"}, &.{tunnel_key});
+    try receive_connect_request(&conn, 1, headers);
+
+    try std.testing.expect(!conn.ws.initialized);
+    try expect_response_status(ring[0..conn.write_len], 1, "426");
+}
+
+test "http2 websocket: duplicate version is rejected and the key is ignored" {
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    try router.ws("/chat", .{ .max_frame_size = 64, .max_message_size = 64 });
+
+    var ring: [1024]u8 = undefined;
+    var message_buffer: [64]u8 = undefined;
+    var conn = tunnel_connection(&ring, &message_buffer, &router);
+    var h2_bundle = support.tcp.Http2Session.Bundle(support.tcp.Http2Session.default_capacities){};
+    conn.h2 = try support.tcp.Http2Session.init(h2_bundle.storage());
+
+    var block: [256]u8 = undefined;
+    const duplicate_version = try connect_ws_header_block(&block, &.{ "13", "13" }, &.{tunnel_key});
+    try receive_connect_request(&conn, 1, duplicate_version);
+    try std.testing.expect(!conn.ws.initialized);
+    try expect_response_status(ring[0..conn.write_len], 1, "426");
+
+    // RFC 8441 Section 5 supersedes Sec-WebSocket-Key processing, so a
+    // duplicated key neither rejects the request nor reaches the handshake.
+    const duplicate_key = try connect_ws_header_block(&block, &.{"13"}, &.{ tunnel_key, tunnel_key });
+    try receive_headers_frame(&conn, 3, duplicate_key);
+    try std.testing.expect(conn.ws.initialized);
+    try expect_response_status(ring[0..conn.write_len], 3, "200");
+}
+
+test "http2 websocket: CONNECT with version 13 opens a tunnel without a key" {
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    try router.ws("/chat", .{ .max_frame_size = 64, .max_message_size = 64 });
+
+    var ring: [1024]u8 = undefined;
+    var message_buffer: [64]u8 = undefined;
+    var conn = tunnel_connection(&ring, &message_buffer, &router);
+    var h2_bundle = support.tcp.Http2Session.Bundle(support.tcp.Http2Session.default_capacities){};
+    conn.h2 = try support.tcp.Http2Session.init(h2_bundle.storage());
+
+    var block: [256]u8 = undefined;
+    const headers = try connect_ws_header_block(&block, &.{"13"}, &.{});
+    try receive_connect_request(&conn, 1, headers);
+
+    try std.testing.expect(conn.ws.initialized);
+    try expect_response_status(ring[0..conn.write_len], 1, "200");
+
+    // Reset the sink so only the control reply is inspected.
+    conn.write_len = 0;
+    conn.write_head = 0;
+
+    var ws_frame: [16]u8 = undefined;
+    const frame = masked_ws_frame(&ws_frame, 0x9, "p", .{ 1, 2, 3, 4 });
+    var data: [32]u8 = undefined;
+    var data_length: usize = 0;
+    try append_frame(&data, &data_length, .data, 0, 1, frame);
+    try conn.h2.receive(data[0..data_length], conn.http2_callbacks());
+
+    var body: [64]u8 = undefined;
+    const frames = try collect_data_frames(ring[0..conn.write_len], 1, &body);
+    // The WebSocket frame header and payload may arrive as separate DATA
+    // frames; only the concatenated WebSocket bytes are contractual.
+    try std.testing.expectEqual(@as(usize, 3), frames.bytes_length);
+    try std.testing.expectEqualSlices(u8, &.{ 0x8a, 0x01, 'p' }, body[0..frames.bytes_length]);
+    try std.testing.expect(!conn.closing);
+}
+
+test "http2 websocket: terminate in the close callback keeps the connection" {
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    try router.ws("/chat", .{
+        .close = terminate_on_close,
+        .max_frame_size = 64,
+        .max_message_size = 64,
+    });
+
+    var ring: [1024]u8 = undefined;
+    var message_buffer: [64]u8 = undefined;
+    var conn = tunnel_connection(&ring, &message_buffer, &router);
+    var h2_bundle = support.tcp.Http2Session.Bundle(support.tcp.Http2Session.default_capacities){};
+    conn.h2 = try support.tcp.Http2Session.init(h2_bundle.storage());
+
+    var block: [256]u8 = undefined;
+    const headers = try connect_ws_header_block(&block, &.{"13"}, &.{tunnel_key});
+    try receive_connect_request(&conn, 1, headers);
+    try std.testing.expect(conn.ws.initialized);
+
+    conn.write_len = 0;
+    conn.write_head = 0;
+
+    var ws_frame: [16]u8 = undefined;
+    const frame = masked_ws_frame(&ws_frame, 0x8, &.{ 0x03, 0xe8 }, .{ 1, 2, 3, 4 });
+    var data: [32]u8 = undefined;
+    var data_length: usize = 0;
+    try append_frame(&data, &data_length, .data, 0, 1, frame);
+    try conn.h2.receive(data[0..data_length], conn.http2_callbacks());
+
+    // The close callback reset only the tunnel; the TCP connection survives.
+    try std.testing.expect(!conn.ws.initialized);
+    try std.testing.expect(!conn.close_when_drained);
+    try std.testing.expect(!conn.closing);
+}
+
+/// Counts open and close callback deliveries for the pairing regression.
+const PairingCapture = struct {
+    var opens: usize = 0;
+    var closes: usize = 0;
+
+    fn on_open(_: *support.ws_socket.WebSocket) void {
+        opens += 1;
+    }
+
+    fn on_close(_: *support.ws_socket.WebSocket) void {
+        closes += 1;
+    }
+};
+
+test "http2 websocket: failed 200 commit reports neither open nor close" {
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    try router.ws("/chat", .{
+        .open = PairingCapture.on_open,
+        .close = PairingCapture.on_close,
+        .max_frame_size = 64,
+        .max_message_size = 64,
+    });
+
+    // A ring that fits the SETTINGS ack but not the committed 200 headers.
+    var ring: [18]u8 = undefined;
+    var message_buffer: [64]u8 = undefined;
+    var conn = tunnel_connection(&ring, &message_buffer, &router);
+    var h2_bundle = support.tcp.Http2Session.Bundle(support.tcp.Http2Session.default_capacities){};
+    conn.h2 = try support.tcp.Http2Session.init(h2_bundle.storage());
+
+    PairingCapture.opens = 0;
+    PairingCapture.closes = 0;
+
+    var block: [256]u8 = undefined;
+    const headers = try connect_ws_header_block(&block, &.{"13"}, &.{tunnel_key});
+    receive_connect_request(&conn, 1, headers) catch |err| {
+        try std.testing.expectEqual(error.WouldBlock, err);
+    };
+
+    try std.testing.expect(!conn.ws.initialized);
+    try std.testing.expectEqual(@as(usize, 0), PairingCapture.opens);
+    try std.testing.expectEqual(@as(usize, 0), PairingCapture.closes);
+}
+
+test "http2 server: advertises the configured dynamic table capacity" {
+    const SizedSession = http2_server.server_session(1);
+    const sized_capacities = SizedSession.Capacities{
+        .header_block_size = 4096,
+        .request_header_size = 4096,
+        .body_size = 1024,
+        .dynamic_table_size = 8192,
+    };
+    const SizedBundle = SizedSession.Bundle(sized_capacities);
+    var bundle: SizedBundle = .{};
+    var session = try SizedSession.init(bundle.storage());
+    var state = RefusalState{};
+    try session.receive(http2.client_preface, state.callbacks());
+
+    const settings = try http2.FrameHeader.parse(state.output[0..9]);
+    try std.testing.expectEqual(
+        @intFromEnum(http2.FrameType.settings),
+        settings.frame_type,
+    );
+    var offset: usize = 9;
+    var table_size: ?u32 = null;
+    while (offset < 9 + settings.payload_length) : (offset += 6) {
+        const id = std.mem.readInt(u16, state.output[offset..][0..2], .big);
+        if (id == 0x1) {
+            table_size = std.mem.readInt(u32, state.output[offset + 2 ..][0..4], .big);
+        }
+    }
+    try std.testing.expectEqual(@as(?u32, 8192), table_size);
+    try std.testing.expectEqual(@as(usize, 8192), session.dynamic_table.?.maximum_size());
+
+    // The default capacity stays wire-compatible with the HTTP/2 default.
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var default_session = fixture.session;
+    var default_state = RefusalState{};
+    try default_session.receive(http2.client_preface, default_state.callbacks());
+    const default_settings = try http2.FrameHeader.parse(default_state.output[0..9]);
+    offset = 9;
+    table_size = null;
+    while (offset < 9 + default_settings.payload_length) : (offset += 6) {
+        const id = std.mem.readInt(u16, default_state.output[offset..][0..2], .big);
+        if (id == 0x1) {
+            table_size = std.mem.readInt(
+                u32,
+                default_state.output[offset + 2 ..][0..4],
+                .big,
+            );
+        }
+    }
+    try std.testing.expectEqual(@as(?u32, 4096), table_size);
+}
+
+test "http2 server: priority self-dependency resets only the stream" {
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
+    var state = RefusalState{};
+
+    var input: [64]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    const self_dependency = [_]u8{ 0, 0, 0, 1, 16 };
+    try append_frame(&input, &input_length, .priority, 0, 1, &self_dependency);
+    try session.receive(input[0..input_length], state.callbacks());
+
+    try std.testing.expect(!session.is_closed());
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        try reset_count(state.output[0..state.output_length], 1, .protocol_error),
+    );
+    try std.testing.expectEqual(
+        @as(?u32, null),
+        try goaway_code(state.output[0..state.output_length]),
+    );
+}
+
+/// Streams one response after queueing a header through the response API.
+fn queued_header_stream_route_handler(context: *anyopaque, _: *Request, response: *Response) void {
+    const producer: *StreamProducerState = @ptrCast(@alignCast(context));
+    response.append_header("X-Pending", "yes") catch |err| {
+        producer.begin_error = err;
+        return;
+    };
+    response.begin_stream(
+        "200 OK",
+        "Content-Type: text/plain\r\n",
+        producer,
+        StreamProducerState.produce,
+    ) catch |err| {
+        producer.begin_error = err;
+    };
+}
+
+test "http2: begin_stream carries pending headers into the response block" {
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    var producer = StreamProducerState{ .remaining_chunks = 0 };
+    try router.route_context(.get, "/stream", &producer, queued_header_stream_route_handler);
+
+    var ring: [2048]u8 = undefined;
+    var conn = producer_connection(&ring, &router);
+    var h2_bundle = support.tcp.Http2Session.Bundle(support.tcp.Http2Session.default_capacities){};
+    conn.h2 = try support.tcp.Http2Session.init(h2_bundle.storage());
+
+    const request_headers = producer_request_headers();
+    var input: [128]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x5, 1, &request_headers);
+    try conn.h2.receive(input[0..input_length], conn.http2_callbacks());
+
+    try std.testing.expectEqual(@as(?anyerror, null), producer.begin_error);
+    var fields: [16]hpack.Header = undefined;
+    var storage: [1024]u8 = undefined;
+    const decoded = try decode_response(ring[0..conn.write_len], 1, &fields, &storage);
+    try std.testing.expectEqualStrings(
+        "yes",
+        response_field(decoded, "x-pending") orelse return error.MissingPendingHeader,
+    );
+    try std.testing.expectEqualStrings(
+        "text/plain",
+        response_field(decoded, "content-type") orelse return error.MissingContentType,
+    );
 }

@@ -368,6 +368,14 @@ pub fn connection(comptime max_streams: usize) type {
         connection_send_window: i64 = default_window_size,
         /// Greatest client-initiated stream ID observed.
         highest_peer_stream_id: u32 = 0,
+        /// Bitmap of recently opened peer stream IDs relative to
+        /// `highest_peer_stream_id`, where bit 0 is the highest ID. Client
+        /// IDs are odd, so 32 bits retain the last 32 opens (a 64-ID span).
+        /// The window is bounded to keep the connection footprint fixed
+        /// because slab slots are reused; an ID opened earlier than the
+        /// window degrades to the closed-stream treatment instead of
+        /// rejecting the connection.
+        opened_peer_bitmap: u32 = 0,
         /// Stream that must supply the next CONTINUATION frame, if any.
         continuation_stream_id: ?u32 = null,
         /// Refused stream whose compressed block still needs CONTINUATION.
@@ -568,6 +576,16 @@ pub fn connection(comptime max_streams: usize) type {
 
             var index = self.streams.find(header.stream_id);
             if (index == null) {
+                // A HEADERS frame for a lower ID that was never opened is an
+                // unexpected stream identifier; only previously opened IDs
+                // (or locally reset tombstones) may fall through to the
+                // stream-level closed handling.
+                if (header.stream_id <= self.highest_peer_stream_id and
+                    !self.was_opened(header.stream_id) and
+                    !self.was_locally_reset(header.stream_id))
+                {
+                    return error.UnexpectedStreamId;
+                }
                 switch (self.classify_missing_stream(header.stream_id)) {
                     .closed => {
                         if (header.flags & 0x4 == 0) {
@@ -595,7 +613,7 @@ pub fn connection(comptime max_streams: usize) type {
                 }
                 if (self.shutting_down) return error.StreamClosed;
                 if (self.streams.active_count >= max_streams) {
-                    self.highest_peer_stream_id = header.stream_id;
+                    self.record_opened_stream(header.stream_id);
                     if (header.flags & 0x4 == 0) {
                         self.continuation_stream_id = header.stream_id;
                         self.refused_continuation_stream_id = header.stream_id;
@@ -611,7 +629,7 @@ pub fn connection(comptime max_streams: usize) type {
                     self.local_settings.initial_window_size,
                     self.peer_settings.initial_window_size,
                 );
-                self.highest_peer_stream_id = header.stream_id;
+                self.record_opened_stream(header.stream_id);
             } else switch (self.streams.states[index.?]) {
                 .open, .half_closed_local => {},
                 .half_closed_remote, .closed => {
@@ -891,6 +909,22 @@ pub fn connection(comptime max_streams: usize) type {
                 if (candidate == stream_id) return true;
             }
             return false;
+        }
+
+        fn record_opened_stream(self: *Self, stream_id: u32) void {
+            const steps = (stream_id - self.highest_peer_stream_id) / 2;
+            self.opened_peer_bitmap = if (steps >= @bitSizeOf(u32))
+                1
+            else
+                (self.opened_peer_bitmap << @intCast(steps)) | 1;
+            self.highest_peer_stream_id = stream_id;
+        }
+
+        fn was_opened(self: *const Self, stream_id: u32) bool {
+            const steps = (self.highest_peer_stream_id - stream_id) / 2;
+            if (steps >= @bitSizeOf(u32)) return false;
+            const mask: u32 = @as(u32, 1) << @intCast(steps);
+            return self.opened_peer_bitmap & mask != 0;
         }
 
         fn consume_closed_data(self: *Self, flags: u8, payload: []const u8) !void {

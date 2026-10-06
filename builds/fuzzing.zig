@@ -64,12 +64,20 @@ pub fn inject(
         .dest_dir = .{ .override = .{ .custom = "oss-fuzz" } },
         .dest_sub_path = "cookie_parse.o",
     });
+    const coverage_check = b.addSystemCommand(&.{"sh"});
+    coverage_check.addFileArg(b.path("fuzz/check_fuzzer_coverage.sh"));
+    coverage_check.addFileArg(http_object.getEmittedBin());
+    coverage_check.addFileArg(ws_object.getEmittedBin());
+    coverage_check.addFileArg(quic_object.getEmittedBin());
+    coverage_check.addFileArg(query_object.getEmittedBin());
+    coverage_check.addFileArg(cookie_object.getEmittedBin());
     const object_step = b.step("oss-fuzz-objects", "Build libFuzzer ABI objects with sanitizer coverage");
     object_step.dependOn(&install_http.step);
     object_step.dependOn(&install_ws.step);
     object_step.dependOn(&install_quic.step);
     object_step.dependOn(&install_query.step);
     object_step.dependOn(&install_cookie.step);
+    object_step.dependOn(&coverage_check.step);
 
     const http_smoke = add_smoke(b, "http_framing_smoke", "fuzz/smoke_http.zig", target, optimize, fuzz_support);
     const ws_smoke = add_smoke(b, "ws_masking_smoke", "fuzz/smoke_ws.zig", target, optimize, fuzz_support);
@@ -109,6 +117,10 @@ fn add_fuzz_object(
         .target = target,
         .optimize = optimize,
         .stack_check = false,
+        // `-ffuzz` emits inline-8bit-counter sections without registration
+        // calls; `oss-fuzz/zig_sancov_shim.c` registers those sections with
+        // libFuzzer at link time, and the object step verifies the sections.
+        .fuzz = true,
     });
     module.addImport("fuzz_support", fuzz_support);
     return b.addObject(.{ .name = name, .root_module = module });

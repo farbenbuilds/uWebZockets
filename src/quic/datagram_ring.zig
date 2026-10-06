@@ -6,9 +6,12 @@
 //! parallel arrays and every payload is copied into a fixed stride.
 //!
 //! `head` and `tail` are wrapping u32 cursors; the live length is
-//! `tail -% head`, which stays correct across cursor rollover. Capacity is
-//! fixed at init and must fit the u32 cursor range. The value is a cursor pair
-//! over caller storage, so do not copy it after mutation.
+//! `tail -% head`, which stays correct across cursor rollover. Power-of-two
+//! capacities map exactly modulo 2^32. Other capacities keep `cursor %
+//! capacity` exact by rebasing both cursors down by one capacity before they
+//! reach the u32 ceiling, so those cursors never wrap. Capacity is fixed at
+//! init and must fit the u32 cursor range. The value is a cursor pair over
+//! caller storage, so do not copy it after mutation.
 
 const std = @import("std");
 
@@ -32,8 +35,8 @@ pub const DatagramView = struct {
 
 /// Construction and enqueue failures.
 pub const Error = error{
-    /// Metadata slice lengths disagree, capacity is zero, or capacity exceeds
-    /// the u32 cursor range.
+    /// Metadata slice lengths disagree, capacity is zero, exceeds the u32
+    /// cursor range, or is a non-power-of-two above half the u32 range.
     InvalidCapacity,
     /// `payload_stride` is zero, exceeds the u32 length bound, overflows
     /// `capacity * payload_stride`, or does not fit `payload_storage`.
@@ -81,6 +84,12 @@ pub const DatagramRing = struct {
         }
         // The u32 cursors cannot address more slots than a u32 length.
         if (std.math.cast(u32, slot_count) == null) return error.InvalidCapacity;
+        // Non-power-of-two capacities keep modulo indexing exact by rebasing
+        // both cursors before they wrap; the rebase needs `head >= capacity`,
+        // which holds when the capacity fits in half the u32 range.
+        if (slot_count > std.math.maxInt(u32) / 2 and !std.math.isPowerOfTwo(slot_count)) {
+            return error.InvalidCapacity;
+        }
         if (payload_stride == 0) return error.InvalidStride;
         if (std.math.cast(u32, payload_stride) == null) return error.InvalidStride;
 
@@ -137,7 +146,7 @@ pub const DatagramRing = struct {
         if (self.is_full()) return error.Full;
 
         self.write_slot(self.tail, value);
-        self.tail +%= 1;
+        self.advance_tail();
     }
 
     /// Drops the oldest queued datagram when full, then pushes `value`.
@@ -147,12 +156,12 @@ pub const DatagramRing = struct {
     pub fn push_dropping_oldest(self: *@This(), value: Datagram) Error!void {
         if (value.payload.len > self.payload_stride) return error.PayloadTooLarge;
         if (self.is_full()) {
-            self.head +%= 1;
+            self.advance_head();
             self.dropped +%= 1;
         }
 
         self.write_slot(self.tail, value);
-        self.tail +%= 1;
+        self.advance_tail();
     }
 
     /// Returns the oldest queued datagram without removing it.
@@ -166,7 +175,7 @@ pub const DatagramRing = struct {
     /// The returned payload remains valid until its slot is reused.
     pub fn pop(self: *@This()) ?DatagramView {
         const view = self.peek() orelse return null;
-        self.head +%= 1;
+        self.advance_head();
         return view;
     }
 
@@ -175,16 +184,44 @@ pub const DatagramRing = struct {
         self.dropped +%= 1;
     }
 
-    /// Maps a wrapping cursor onto a slot.
+    /// Advances the oldest-slot cursor.
     ///
-    /// Power-of-two capacities use a mask instead of division; the branch is
-    /// decided per call so the ring carries no derived mask state.
-    fn slot_index(self: *const @This(), index: u32) usize {
+    /// A pop only runs while the ring is non-empty, so `head < tail` and the
+    /// increment cannot overflow.
+    fn advance_head(self: *@This()) void {
+        self.head +%= 1;
+    }
+
+    /// Advances the next-free-slot cursor, rebasing both cursors when a
+    /// non-power-of-two capacity would otherwise wrap.
+    ///
+    /// Power-of-two capacities map exactly modulo 2^32 and may wrap. Other
+    /// capacities keep `cursor % capacity` exact only while cursors never
+    /// wrap, so both are shifted down by one capacity, a multiple of the slot
+    /// count that preserves every live slot. `init` bounds these capacities to
+    /// half the u32 range, so `head >= capacity` holds whenever this runs.
+    fn advance_tail(self: *@This()) void {
+        if (self.tail == std.math.maxInt(u32)) {
+            const slot_count = self.capacity();
+            if (!std.math.isPowerOfTwo(slot_count)) {
+                const shift: u32 = @intCast(slot_count);
+                self.head -= shift;
+                self.tail -= shift;
+            }
+        }
+        self.tail +%= 1;
+    }
+
+    /// Maps a cursor onto a slot.
+    ///
+    /// Power-of-two capacities use a mask instead of division; other
+    /// capacities never wrap, so plain modulo stays exact.
+    fn slot_index(self: *const @This(), cursor: u32) usize {
         const slot_count = self.capacity();
         if (std.math.isPowerOfTwo(slot_count)) {
-            return @as(usize, index) & (slot_count - 1);
+            return @as(usize, cursor) & (slot_count - 1);
         }
-        return @as(usize, index) % slot_count;
+        return @as(usize, cursor) % slot_count;
     }
 
     /// Copies one datagram into the slot selected by `cursor`.

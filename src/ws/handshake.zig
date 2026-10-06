@@ -72,6 +72,25 @@ pub fn valid_client_key(client_key: []const u8) bool {
     return true;
 }
 
+/// Reasons an RFC 8441 extended-CONNECT WebSocket request is rejected.
+pub const ExtendedConnectError = error{
+    MissingVersion,
+    UnsupportedVersion,
+};
+
+/// Validates the RFC 8441 fields that replace the HTTP/1 upgrade handshake.
+///
+/// RFC 8441 Section 5 applies Sec-WebSocket-Version as defined in RFC 6455 but
+/// supersedes Sec-WebSocket-Key processing with the `:protocol` pseudo-header,
+/// so a key is neither required nor inspected. Pass the unique version field
+/// value, or null when the field is absent or duplicated.
+pub fn validate_extended_connect(version: ?[]const u8) ExtendedConnectError!void {
+    const version_value = version orelse return error.MissingVersion;
+    if (!std.mem.eql(u8, std.mem.trim(u8, version_value, " \t"), "13")) {
+        return error.UnsupportedVersion;
+    }
+}
+
 /// Fixed 28-byte buffer for the base64-encoded SHA-1 accept token.
 pub const AcceptTokenBuffer = [28]u8;
 

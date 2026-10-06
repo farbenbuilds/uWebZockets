@@ -10,6 +10,7 @@ const Request = @import("../http/request.zig").Request;
 const http_response = @import("../http/response.zig");
 const Response = http_response.Response;
 const WebSocket = @import("../ws/socket.zig").WebSocket;
+const ws_handshake = @import("../ws/handshake.zig");
 const radix = @import("../router/radix.zig");
 const Router = radix.Router;
 const handshake = @import("../crypto/handshake.zig");
@@ -514,6 +515,21 @@ pub const TcpConnection = struct {
                         try response.end("500 Internal Server Error", "Invalid WebSocket limits");
                         return;
                     }
+                    // RFC 8441 Section 5 supersedes Sec-WebSocket-Key
+                    // processing with the `:protocol` pseudo-header, so only
+                    // the version field participates in the handshake.
+                    ws_handshake.validate_extended_connect(
+                        request.get_unique_header("sec-websocket-version"),
+                    ) catch |err| {
+                        switch (err) {
+                            error.MissingVersion, error.UnsupportedVersion => try response.end_with_headers(
+                                "426 Upgrade Required",
+                                "Sec-WebSocket-Version: 13\r\n",
+                                "WebSocket version 13 required",
+                            ),
+                        }
+                        return;
+                    };
                     if (ws_behavior.upgrade) |authorize| {
                         if (!authorize(request)) {
                             try response.end("403 Forbidden", "WebSocket upgrade rejected");
@@ -536,10 +552,11 @@ pub const TcpConnection = struct {
                         try response.end("500 Internal Server Error", "Invalid WebSocket limits");
                         return;
                     };
-                    self.ws.initialized = true;
-                    errdefer self.ws.deinit();
 
                     try response.begin_chunked("200 OK", "");
+                    // The tunnel only becomes live after the 200 commits, so a
+                    // failed commit cannot fire close without a preceding open.
+                    self.ws.initialized = true;
                     self.log_request(request.method, request.path, 200);
                     if (self.ws.behavior.open) |callback| callback(&self.ws);
                     return;

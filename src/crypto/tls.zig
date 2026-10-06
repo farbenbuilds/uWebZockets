@@ -54,18 +54,27 @@ pub const TlsContext = struct {
 
     /// Loads an HTTPS context that authenticates clients with certificates.
     ///
-    /// ALPN (`h2` then `http/1.1`) and the safe-method 0-RTT replay policy
-    /// match `init`. `.none` skips the trust store entirely: BoringSSL's
-    /// default `SSL_VERIFY_NONE` sends no CertificateRequest, so `ca_path` is
-    /// never opened. Any other mode rejects an empty `ca_path` with
-    /// `error.InvalidClientAuthConfig` and a bundle that cannot be read or
-    /// parsed with `error.TrustStoreLoadFailed`.
+    /// ALPN (`h2` then `http/1.1`) matches `init`. TLS 1.3 early data is
+    /// disabled whenever a client certificate is requested: the certificate is
+    /// verified only in the second flight, so early-data requests would reach
+    /// the HTTP parser before authentication. `.none` keeps the safe-method
+    /// 0-RTT replay policy of `init` and skips the trust store entirely:
+    /// BoringSSL's default `SSL_VERIFY_NONE` sends no CertificateRequest, so
+    /// `ca_path` is never opened. Any other mode rejects an empty `ca_path`
+    /// with `error.InvalidClientAuthConfig` and a bundle that cannot be read
+    /// or parsed with `error.TrustStoreLoadFailed`.
     pub fn init_mtls(
         cert_path: [:0]const u8,
         key_path: [:0]const u8,
         config: ClientAuthConfig,
     ) !TlsContext {
-        return init_with_alpn(cert_path, key_path, config, select_http_alpn, true);
+        return init_with_alpn(
+            cert_path,
+            key_path,
+            config,
+            select_http_alpn,
+            early_data_enabled(config.mode),
+        );
     }
 
     /// Loads an HTTP/3-only context advertising `h3`.
@@ -151,6 +160,16 @@ fn new_server_context(callback: AlpnCallback, early_data: bool) !*c.SSL_CTX {
     c.SSL_CTX_set_alpn_select_cb(ctx, callback, null);
     c.SSL_CTX_set_early_data_enabled(ctx, @intFromBool(early_data));
     return ctx;
+}
+
+/// Reports whether a context with this client-auth policy may accept 0-RTT.
+///
+/// Client certificates are verified only in the second handshake flight, after
+/// early data has already been read, so any mode that requests a certificate
+/// disables early data to keep unauthenticated requests away from the HTTP
+/// parser.
+pub fn early_data_enabled(mode: ClientAuth) bool {
+    return mode == .none;
 }
 
 /// Applies the client-certificate policy to a server context.

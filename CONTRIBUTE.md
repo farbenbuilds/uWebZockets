@@ -170,5 +170,6 @@ When bumping lsquic, regenerate `vendor/lsquic_overlay`:
    Autobahn, h1spec, and HTTP/3 cross-implementation checks on the release
    commit.
 6. Tag the final commit as `v<version>` and push the tag.
-7. Review all seven release archives and
-   `SHA256SUMS` before announcing the release.
+7. Confirm the release notes render the changelog and the tag resolves through
+   `zig fetch` before announcing the release. Releases publish source only;
+   there are no archives or `SHA256SUMS` to review.

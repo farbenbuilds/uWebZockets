@@ -243,10 +243,15 @@ pub const HeaderSet = struct {
         }
         const method = self.method orelse return false;
         const is_connect = std.mem.eql(u8, method, "CONNECT");
+        // RFC 9220 defines :protocol only for extended CONNECT requests.
+        if (self.protocol != null and !is_connect) return false;
         const target = if (is_connect) blk: {
             if (self.protocol != null) {
                 _ = self.scheme orelse return false;
                 const path = self.path orelse return false;
+                // Extended CONNECT keeps the authority-form target and so
+                // requires :authority (RFC 8441 section 4).
+                _ = self.authority orelse return false;
                 break :blk path;
             }
             if (self.scheme != null or self.path != null) return false;
@@ -379,7 +384,6 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
         headers_sent: bool = false,
         suppress_body: bool = false,
         dispatched: bool = false,
-        dispatch_suspended: bool = false,
         stream_producer_context: ?*anyopaque = null,
         stream_producer: ?http_response.StreamProducer = null,
         async_response_state: http_response.AsyncResponseState = .{},
@@ -620,7 +624,6 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
 
         /// Cancels deferred dispatch and returns pooled state to its owner.
         pub fn on_close(self: *Self) void {
-            self.dispatch_suspended = false;
             self.async_response_state.cancel();
             self.clear_stream_producer();
             if (self.header_set) |header_set| header_set.release();
@@ -715,12 +718,10 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
                 .asynchronous => |callback| {
                     const token = self.async_response_state.arm(self.async_target());
                     callback(request, token);
-                    self.dispatch_suspended = token.is_pending();
                 },
                 .contextual_async => |binding| {
                     const token = self.async_response_state.arm(self.async_target());
                     binding.callback(binding.context, request, token);
-                    self.dispatch_suspended = token.is_pending();
                 },
             }
         }
@@ -759,10 +760,9 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
             };
         }
 
-        fn wake_async_dispatch(context: *anyopaque) void {
-            const self: *Self = @ptrCast(@alignCast(context));
-            self.dispatch_suspended = false;
-        }
+        /// QUIC completions arm the response directly, so the transport-level
+        /// wake hook has no queued dispatch to resume.
+        fn wake_async_dispatch(_: *anyopaque) void {}
 
         fn send_method_response(
             self: *Self,
@@ -976,7 +976,6 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
         }
 
         fn close_now(self: *Self) void {
-            self.dispatch_suspended = false;
             self.async_response_state.cancel();
             self.clear_stream_producer();
             _ = io.close(self.stream);

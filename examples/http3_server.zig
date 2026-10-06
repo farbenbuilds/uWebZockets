@@ -15,5 +15,8 @@ pub fn main(init: std.process.Init) !void {
 
     _ = try server.get("/", index);
     try server.listen_udp("0.0.0.0", 8443);
+    // SIGINT/SIGTERM must reach the normal drain path so `deinit` can assert
+    // that every engine pool was returned.
+    try server.catch_shutdown_signals();
     try server.run();
 }

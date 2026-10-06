@@ -60,6 +60,12 @@ pub const Error = error{
     SlabTooSmall,
 };
 
+/// Upper bound on decoded HTTP/3 response header fields.
+///
+/// The QUIC stream stacks one transmit descriptor per configured field, so the
+/// count is capped to keep response framing off the guard page.
+pub const h3_response_header_count_limit = 4096;
+
 /// Human-readable server capacities translated once into one startup slab.
 ///
 /// Capacities are compile-time by design: they determine the type of the
@@ -136,6 +142,9 @@ pub const ServerConfig = struct {
     /// above 65535 are rejected because field offsets and lengths are u16.
     max_h3_response_header_size: usize = 4096,
     /// Maximum decoded HTTP/3 response header fields per response.
+    ///
+    /// Capped at `h3_response_header_count_limit`; the QUIC stream stacks one
+    /// transmit descriptor per field.
     max_h3_response_header_count: usize = 64,
     /// Inactivity timeout in milliseconds; zero disables the sweeper.
     idle_timeout_ms: u64 = 120_000,
@@ -546,6 +555,9 @@ pub const ServerConfig = struct {
         if (self.max_h3_body_size == 0) return error.InvalidHttp3Capacity;
         if (self.max_h3_response_header_size == 0) return error.InvalidHttp3Capacity;
         if (self.max_h3_response_header_count == 0) return error.InvalidHttp3Capacity;
+        if (self.max_h3_response_header_count > h3_response_header_count_limit) {
+            return error.InvalidHttp3Capacity;
+        }
         // Response field offsets and lengths are u16 in the lsquic header API.
         if (self.max_h3_response_header_size > std.math.maxInt(u16)) {
             return error.InvalidHttp3Capacity;

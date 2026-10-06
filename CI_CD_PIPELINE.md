@@ -11,7 +11,7 @@ it is not a proof that all memory or security defects are absent.
 | --- | --- | --- | --- |
 | `lint.yml` | pushes and pull requests to `main`, manual | `Linting` | Zig formatting and repository conventions |
 | `test.yml` | pushes and pull requests to `main`, manual | `Testing` | Parallel Debug, sanitizer, fuzz, ReleaseSafe, and ReleaseFast verification |
-| `windows.yml` | manual, reusable from tagged publishing | `Testing` | Native `x86_64-windows-gnu` Debug test execution, ReleaseSafe test compilation, and static-library build |
+| `windows.yml` | manual, reusable from tagged publishing | `Testing` | Native `x86_64-windows-gnu` ReleaseSafe test compilation and static-library build; runtime execution stays blocked |
 | `oss_fuzz.yml` | pushes and pull requests to `main`, manual, reusable | `Testing` | OSS-Fuzz-compatible ASan/libFuzzer build and execution |
 | `autobahn_compliance.yml` | pushes and pull requests to `main`, manual | `autobahn Compliance` | RFC 6455 server compliance |
 | `h1spec_compliance.yml` | pushes and pull requests to `main`, manual | `h1spec Compliance` | HTTP/1.1 compliance |
@@ -153,22 +153,23 @@ suite so malformed-input coverage does not depend solely on an external tool.
 `flake.nix` defines native GNU or macOS packages and Linux musl packages. Its
 Nixpkgs input is pinned to the 26.05 release so all four supported host systems,
 including x86_64-darwin, remain evaluable. Checks compile tests for both native
-and musl targets without attempting to execute foreign binaries. The main
-publish matrix runs natively on these GitHub-hosted architectures:
+and musl targets without attempting to execute foreign binaries. The native
+targets are:
 
 - x86_64-linux-gnu
-- x86_64-linux-musl
-- aarch64-linux-gnu
-- aarch64-linux-musl
+- x86_64-linux-musl (compile check)
+- aarch64-linux-gnu (compile check)
+- aarch64-linux-musl (compile check)
 - x86_64-macos
 - aarch64-macos
 
-The reusable Windows workflow runs separately on `windows-2025` in the
-`Windows Publishing` deployment environment. It installs
-the exact Zig release, compiles the ReleaseSafe test and C ABI graph, builds
-ReleaseFast static libraries, and retains the packaged result as a 14-day
-workflow artifact. Tag publishing calls the same workflow and includes its
-archive as the seventh release asset.
+Releases publish source tags only: no per-platform static-library archives are
+built or uploaded, and consumers use `zig fetch` so their own toolchain builds
+the pinned dependencies.
+
+The reusable Windows workflow runs separately on `windows-2025`. It installs
+the exact Zig release and compiles the ReleaseSafe test and C ABI graph plus the
+ReleaseFast static libraries. Windows is not officially supported.
 
 Runtime execution on Windows is currently blocked by two defects, both
 documented with evidence in [docs/roadmap.md](docs/roadmap.md#windows-runtime-blocker-details).
@@ -180,8 +181,7 @@ Windows close path treats queued completions as active, so a canceled-before-
 submission write never delivers its callback and the connection slot never
 returns to the pool. Every server listener on Windows goes through that accept
 path, so a native runtime gate cannot pass until both are fixed. The workflow
-therefore remains compile-only, and Windows stays a Tier 2 target where runtime
-validation is the deployment's responsibility.
+therefore remains compile-only, and no Windows binaries are published.
 
 The default build also compiles the bounded `http3_server` example. The HTTP/3
 gate drives it independently with pinned curl/ngtcp2/nghttp3 and aioquic,
@@ -226,26 +226,22 @@ A `v*` tag gates four release phases.
    centralized Debug and ASan/UBSan suite plus the MSan dependency-boundary
    smoke, compiles ReleaseSafe tests and all OSS-Fuzz objects, and builds the
    downstream package consumer from the exact tagged source. The reusable
-   Autobahn, h1spec, HTTP/3, OSS-Fuzz compatibility, and native Windows
-   workflows run in parallel against that same tag, and the Windows workflow
-   compiles the ReleaseSafe test and C ABI graph before producing the seventh
-   archive. Release creation cannot start until all six verification paths and
-   the target builds pass.
-2. Each matrix job enters the `Publish` environment and runs the shared release
-   metadata check. The tag must be valid Semantic Versioning and match the Zig
-   package, centralized Nix version, C ABI macros/string, C/C++ smoke tests,
-   changelog, and versioned documentation before the package builds.
-3. Each of the seven targets is packaged as one `.tar.gz` containing the
-   µWebZockets, BoringSSL, lsquic, libdeflate, and zlib static archives,
-   `include/uWebZockets.h`, metadata, and all relevant licenses.
-4. The release job enters the `Publish` environment, requires exactly seven
-   archives, writes `SHA256SUMS`, extracts matching changelog notes, and creates
-   or updates the GitHub release through `gh` with the title
-   `uWebZockets v<version>`. Versions containing a hyphen are
+   Autobahn, h1spec, HTTP/3, and OSS-Fuzz compatibility workflows run in
+   parallel against that same tag. Release creation cannot start until all five
+   verification paths pass.
+2. The tag must be valid Semantic Versioning and match the Zig package,
+   centralized Nix version, C ABI macros/string, C/C++ smoke tests, changelog,
+   and versioned documentation before the release job runs.
+3. The release job enters the `Publish` environment, extracts the matching
+   changelog section, and creates or updates the GitHub release through `gh`
+   with the title `uWebZockets v<version>`. Versions containing a hyphen are
    marked as prereleases; stable versions are marked latest.
+4. Releases carry no binary assets: the tagged source is the distribution, and
+   consumers fetch it with `zig fetch` so the package manager builds the
+   pinned dependencies.
 
-Release uploads are idempotent: rerunning a tag workflow updates notes and
-replaces assets with the same names.
+Release notes are idempotent: rerunning a tag workflow refreshes the notes for
+the same tag.
 
 ## Release checklist
 
@@ -258,7 +254,8 @@ replaces assets with the same names.
 - Run Autobahn and h1spec compliance.
 - Verify third-party revisions and licenses.
 - Create and push `v<version>` only after the release commit is final.
-- Review the seven release archives and generated checksums.
+- Confirm the release notes render the changelog and the tag resolves through
+  `zig fetch`; there are no archives or checksums to review.
 
 The benchmark workflow is advisory for release tags because it runs on pull
 requests and nightly rather than on `publish.yml`. Performance claims must cite

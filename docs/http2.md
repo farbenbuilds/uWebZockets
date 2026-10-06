@@ -19,6 +19,11 @@ is the standard encrypted one.
 
 - Strict client preface, frame size, and frame sequencing validation.
 - SETTINGS negotiation, PING, GOAWAY, and RST_STREAM.
+- Stream identifiers: HEADERS for a never-opened lower identifier is a
+  connection error, while a previously opened and closed stream keeps
+  stream-level handling (RFC 9113 section 5.1.1).
+- `SETTINGS_HEADER_TABLE_SIZE` advertises the caller's configured HPACK
+  dynamic-table capacity, and the decoder allows exactly that many bytes.
 - Stream lifecycle with an eight-stream request, body, response, and
   async-token slab carved from the startup allocation.
 - Partial DATA and trailers.

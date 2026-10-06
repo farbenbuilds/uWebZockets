@@ -10,8 +10,10 @@ their wire behavior.
 The TCP connection accumulates a bounded request until the parser can prove it
 is complete. The parser rejects conflicting or malformed framing, excessive
 request lines, headers, and bodies, and unsupported expectations. Pipelined
-bytes are retained and parsed again after a response completes. Responses
-validate control-character injection and ambiguous `Content-Length` /
+bytes are retained and parsed again after a response completes. Request targets
+accept origin-form, absolute-form for `http`/`https`, and asterisk-form for
+server-wide `OPTIONS`; authority-form, fragments, and userinfo are rejected.
+Responses validate control-character injection and ambiguous `Content-Length` /
 `Transfer-Encoding` before writing.
 
 ### Limits and rejections
@@ -72,6 +74,9 @@ captures.
 - Static routes win over parameter and wildcard matches.
 - Malformed patterns, duplicate parameter names, and nonterminal wildcards fail
   registration instead of falling back to ambiguous matching.
+- Parameterized patterns with the same shape, which differ only in capture
+  names, fail registration with `error.RoutePatternConflicts`; a registered
+  route is never silently shadowed by another shape.
 - Registration is a startup activity. Route arrays are immutable once a
   listener starts, so callbacks never observe a structural mutation.
 - `App.openapi(path)` serves a generated OpenAPI 3.1 document; parameter and
@@ -153,7 +158,9 @@ when the key header can be set by the client.
 
 `App.static(prefix, root, options)` mounts a directory with directory-relative
 path confinement, symlinks disabled, MIME detection, ETag and Last-Modified
-validation, cache control, and one RFC 9110 byte range. Plaintext `GET` and
+validation, cache control, and one RFC 9110 byte range. `If-None-Match` handles
+`*`, comma lists, and weak validators; `If-Range` must match the current strong
+ETag or Last-Modified value before a range is applied. Plaintext `GET` and
 `HEAD` responses stream the file with the kernel `sendfile` boundary
 (`Response.send_file`), so assets are not capped by the per-route file buffer.
 TLS, HTTP/2, and HTTP/3 remain on the bounded buffered path.

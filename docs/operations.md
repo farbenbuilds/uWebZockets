@@ -7,8 +7,9 @@ the [README](../README.md) for the quick start and the other
 ## Requirements
 
 - Zig 0.16.0
-- A build target: Linux, macOS, FreeBSD, NetBSD, OpenBSD, DragonFlyBSD, or
-  Windows
+- A build target: Linux or macOS are supported; FreeBSD, NetBSD, OpenBSD,
+  DragonFlyBSD, and Windows are community or compile-only targets (see
+  [Platform support](#platform-support))
 - The `vendor/h1spec` submodule for the h1spec development suite
 
 Zig fetches and compiles BoringSSL, lsquic, ls-qpack, ls-hpack, libdeflate, and
@@ -50,7 +51,12 @@ release it exactly once. The eBPF step emits
 `zig-out/share/uwebzockets/uwz_latency.o` for the per-CPU packet-length
 histogram served by the hidden `/metrics` endpoint when the map is pinned at
 `/sys/fs/bpf/uwz_latency`. Attaching the redirect, pinning the histogram, and
-populating the XSK map require Linux network-administration privileges.
+populating the XSK map require Linux network-administration privileges. The
+server data path never attaches the XSK redirect: requesting
+`ServerConfig.transport = .kernel_bypass` reports `.standard` with reason
+`.data_path_unwired`. Applications that want AF_XDP drive `uz.xdp_transport`
+and `uz.xdp` directly. The hidden `/metrics` endpoint still reads the pinned
+latency histogram.
 
 ### Sanitizers
 
@@ -93,12 +99,17 @@ zig build oss-fuzz-objects -Doptimize=ReleaseSafe
 zig build oss-fuzz-smoke -Doptimize=ReleaseSafe
 ```
 
-The Smith harness retains HTTP, query/Accept, zslay, extension-negotiation, and
-HTTP/3 validation coverage. The OSS-Fuzz objects export
+The Smith harness retains HTTP, query/Accept, zslay, extension-negotiation,
+HPACK, multipart, and HTTP/3 validation coverage. The OSS-Fuzz objects export
 `LLVMFuzzerTestOneInput` for HTTP framing, WebSocket masking, query parsing,
-and QUIC/WebTransport packet boundaries; `oss-fuzz-smoke` runs deterministic
-seeds without libFuzzer. A reusable ClusterFuzzLite workflow links and executes
-all four targets with the OSS-Fuzz ASan/libFuzzer environment on the exact
+cookie parsing, and QUIC/WebTransport packet boundaries. Zig's `-ffuzz`
+instrumentation emits inline-8bit-counter sections rather than the
+trace-pc-guard callbacks current libFuzzer runtimes reject;
+`oss-fuzz/zig_sancov_shim.c` registers those sections with libFuzzer at link
+time. `zig build oss-fuzz-objects` fails when an object lacks
+`__sancov_cntrs`, and `oss-fuzz-smoke` runs deterministic seeds
+without libFuzzer. A reusable ClusterFuzzLite workflow links and executes
+all five targets with the OSS-Fuzz ASan/libFuzzer environment on the exact
 revision under test. This is an OSS-Fuzz compatibility gate, not a claim of
 enrollment in the hosted service; `oss-fuzz/README.md` documents the Zig
 sanitizer boundary.
@@ -113,7 +124,9 @@ zlib prefix. A musl cross build is one command:
 zig build -Dtarget=aarch64-linux-musl -Doptimize=ReleaseSafe
 ```
 
-Windows builds use the same package and require no MinGW zlib installation:
+Windows compilation checks use the same package and require no MinGW zlib
+installation. Windows is not officially supported; the commands document the
+compile-only path:
 
 ```powershell
 zig build test-compile -Dtarget=x86_64-windows-gnu `
@@ -300,19 +313,22 @@ toolchain cohorts.
 
 ## Platform support
 
-- Tier 1: Linux and macOS on `x86_64` and `aarch64`; these targets are built,
-  tested, and published by CI.
-- Tier 2: `x86_64-windows-gnu`, FreeBSD, NetBSD, OpenBSD, and DragonFlyBSD.
-  Windows libraries and the complete test/ABI graph are compiled on a native
-  Windows runner for tagged releases, with a manual pre-release trigger
-  available; the resulting archive is published. Windows runtime tests remain a
-  Tier 2 validation responsibility. Windows QUIC uses IOCP UDP receives and
-  Winsock `WSASendTo` sends. The BSD targets share the build graph without
-  dedicated CI.
+- Supported: Linux and macOS on `x86_64` and `aarch64`; these targets are built
+  and tested by CI.
+- Not officially supported: `x86_64-windows-gnu`. The pinned libxev IOCP accept
+  path is blocked upstream and the runtime is therefore not claimed. The
+  reusable Windows workflow compiles the test and C ABI graph and the
+  ReleaseFast libraries on a native runner; no Windows binaries are published.
+  Windows QUIC uses IOCP UDP receives and Winsock `WSASendTo` sends but is not
+  runtime-verified.
+- Community: FreeBSD, NetBSD, OpenBSD, and DragonFlyBSD share the build graph
+  without dedicated CI.
 
-Shared-nothing clustering is fully supported on Linux. Windows uses the
-`SO_REUSEADDR` fallback and native thread affinity; macOS runs workers without
-hard pinning because the platform exposes no affinity API. See
+Releases are source tags; no per-platform binary archives are built or
+uploaded, and developers fetch the tag with `zig fetch`.
+
+Shared-nothing clustering is fully supported on Linux. macOS runs workers
+without hard pinning because the platform exposes no affinity API. See
 [architecture.md](architecture.md#windows-fallback).
 
 Request fields, route captures, middleware, async tokens, and transport pools

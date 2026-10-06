@@ -37,6 +37,8 @@ pub const IssueKind = enum {
     unknown_field,
     too_few_items,
     too_many_items,
+    /// Validation could not reach a nested field before the depth cap.
+    too_deep,
 };
 
 /// First rejected constraint, naming the offending field when decoded.
@@ -93,7 +95,7 @@ fn parse_issue_kind(err: anyerror) IssueKind {
     };
 }
 
-/// Deepest nested schema level walked before validation stops silently.
+/// Deepest nested schema level walked before validation fails closed.
 pub const max_nested_depth = 4;
 
 /// Pure constraint check for an already-decoded value.
@@ -101,15 +103,26 @@ pub fn validate(comptime T: type, value: T, issue: *Issue) !void {
     const type_info = @typeInfo(T);
     if (type_info != .@"struct") return error.SchemaMustBeStruct;
     if (!@hasDecl(T, "validation")) return;
-    try validate_at_depth(T, value, issue, 0);
+    try validate_at_depth(T, value, issue, 0, "");
 }
 
 /// Applies direct rules and descends into fields with their own validation.
 ///
 /// The depth bound is runtime rather than comptime so self-referential schema
-/// types cannot explode comptime instantiation or recurse without end.
-fn validate_at_depth(comptime T: type, value: T, issue: *Issue, depth: usize) !void {
-    if (depth >= max_nested_depth) return;
+/// types cannot explode comptime instantiation or recurse without end. Past
+/// the bound the walker fails with `too_deep` instead of silently dropping
+/// constraints.
+fn validate_at_depth(
+    comptime T: type,
+    value: T,
+    issue: *Issue,
+    depth: usize,
+    field_name: []const u8,
+) !void {
+    if (depth >= max_nested_depth) {
+        issue.* = .{ .field = field_name, .kind = .too_deep };
+        return error.ConstraintViolation;
+    }
     const rules = T.validation;
     inline for (@typeInfo(T).@"struct".fields) |field| {
         const field_value = @field(value, field.name);
@@ -117,7 +130,7 @@ fn validate_at_depth(comptime T: type, value: T, issue: *Issue, depth: usize) !v
             const rule: Rule = @field(rules, field.name);
             try validate_field(field.name, field_value, rule, issue);
         }
-        try validate_nested(field_value, issue, depth + 1);
+        try validate_nested(field.name, field_value, issue, depth + 1);
     }
 }
 
@@ -130,24 +143,29 @@ fn declares_validation(comptime T: type) bool {
 }
 
 /// Recurses into nested structs and collection elements with their own rules.
-fn validate_nested(value: anytype, issue: *Issue, depth: usize) !void {
+fn validate_nested(
+    field_name: []const u8,
+    value: anytype,
+    issue: *Issue,
+    depth: usize,
+) !void {
     const T = @TypeOf(value);
     switch (@typeInfo(T)) {
         .@"struct" => {
             if (!comptime declares_validation(T)) return;
-            try validate_at_depth(T, value, issue, depth);
+            try validate_at_depth(T, value, issue, depth, field_name);
         },
         .array => |array| {
             if (!comptime declares_validation(array.child)) return;
-            for (value) |element| try validate_at_depth(array.child, element, issue, depth);
+            for (value) |element| try validate_at_depth(array.child, element, issue, depth, field_name);
         },
         .pointer => |pointer| {
             if (pointer.size != .slice) return;
             if (!comptime declares_validation(pointer.child)) return;
-            for (value) |element| try validate_at_depth(pointer.child, element, issue, depth);
+            for (value) |element| try validate_at_depth(pointer.child, element, issue, depth, field_name);
         },
         .optional => {
-            if (value) |present| try validate_nested(present, issue, depth);
+            if (value) |present| try validate_nested(field_name, present, issue, depth);
         },
         else => {},
     }

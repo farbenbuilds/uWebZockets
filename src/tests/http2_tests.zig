@@ -327,6 +327,39 @@ test "http2: idle closed and locally reset streams remain distinct" {
     try std.testing.expect((try connection.receive_frame(reset_window)) == .ignored);
 }
 
+test "http2: lower stream id after a skipped gap is a connection error" {
+    const Connection = http2.connection(2);
+    var connection = Connection{};
+    _ = try connection.consume_preface(http2.client_preface);
+
+    var storage: [64]u8 = undefined;
+    const opened = try append_frame(&storage, .headers, 0x5, 5, "h");
+    _ = try connection.receive_frame(opened);
+    try std.testing.expectEqual(@as(u32, 5), connection.highest_peer_stream_id);
+
+    // h2spec 5.1.1: a HEADERS frame on an ID that was never opened is an
+    // unexpected stream identifier and must fail the connection.
+    const skipped = try append_frame(&storage, .headers, 0x5, 3, "h");
+    try std.testing.expectError(error.UnexpectedStreamId, connection.receive_frame(skipped));
+}
+
+test "http2: previously opened then closed stream stays a stream error" {
+    const Connection = http2.connection(1);
+    var connection = Connection{};
+    _ = try connection.consume_preface(http2.client_preface);
+
+    var storage: [64]u8 = undefined;
+    const opened = try append_frame(&storage, .headers, 0x5, 1, "h");
+    const event = try connection.receive_frame(opened);
+    try std.testing.expect(try connection.close_local(event.headers.stream_index));
+    try std.testing.expect(connection.streams.find(1) == null);
+
+    const repeat = try append_frame(&storage, .headers, 0x5, 1, "h");
+    const repeated = try connection.receive_frame(repeat);
+    try std.testing.expect(repeated == .closed_headers);
+    try std.testing.expectEqual(@as(u32, 1), repeated.closed_headers.stream_id);
+}
+
 test "http2: closed DATA consumes connection flow-control credit" {
     const Connection = http2.connection(1);
     var connection = Connection{};

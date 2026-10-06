@@ -1,6 +1,7 @@
 const std = @import("std");
 const Request = @import("request.zig").Request;
 const Response = @import("response.zig").Response;
+const cache = @import("cache.zig");
 
 pub const Options = struct {
     index: ?[]const u8 = "index.html",
@@ -107,8 +108,11 @@ pub fn static_files(comptime file_capacity: usize) type {
                 return;
             }
 
-            const range = if (request.get_unique_header("range")) |value|
-                parse_range(value, stat.size) catch {
+            const range = if (request.get_unique_header("range")) |value| rng: {
+                // RFC 9110 section 13.1.5: a mismatched If-Range validator
+                // ignores the Range field entirely, so 416 is not emitted.
+                if (!range_allowed(request, entity_tag, modified)) break :rng null;
+                break :rng parse_range(value, stat.size) catch {
                     var content_range_buffer: [80]u8 = undefined;
                     const content_range = try std.fmt.bufPrint(
                         &content_range_buffer,
@@ -117,9 +121,8 @@ pub fn static_files(comptime file_capacity: usize) type {
                     );
                     try response.end_with_headers("416 Range Not Satisfiable", content_range, "");
                     return;
-                }
-            else
-                null;
+                };
+            } else null;
 
             var headers_buffer: [768]u8 = undefined;
             const headers = try format_headers(
@@ -320,17 +323,33 @@ fn format_http_date(buffer: []u8, mtime_ns: i96) ![]const u8 {
     );
 }
 
-fn not_modified(request: *const Request, etag: []const u8, modified: []const u8) bool {
-    if (etag.len != 0) {
-        if (request.get_unique_header("if-none-match")) |candidate| {
-            // RFC 9110: If-Modified-Since is ignored when If-None-Match is
-            // present, even if the ETag does not match.
-            return std.mem.eql(u8, std.mem.trim(u8, candidate, " \t"), etag);
-        }
+/// Reports whether a conditional GET is satisfied without a body.
+///
+/// If-None-Match takes precedence over If-Modified-Since per RFC 9110; the
+/// existing cache helper handles `*`, comma lists, and weak comparison.
+pub fn not_modified(request: *const Request, etag: []const u8, modified: []const u8) bool {
+    if (etag.len != 0 and request.has_header("if-none-match")) {
+        return cache.is_not_modified(request, etag);
     }
     if (modified.len == 0) return false;
     const candidate = request.get_unique_header("if-modified-since") orelse return false;
     return std.mem.eql(u8, std.mem.trim(u8, candidate, " \t"), modified);
+}
+
+/// Reports whether If-Range permits the requested byte range.
+///
+/// RFC 9110 section 13.1.5 requires strong entity-tag comparison, so a weak
+/// validator never matches; an HTTP-date must equal Last-Modified exactly.
+pub fn range_allowed(request: *const Request, etag: []const u8, modified: []const u8) bool {
+    const candidate = request.get_unique_header("if-range") orelse return true;
+    const trimmed = std.mem.trim(u8, candidate, " \t");
+    if (trimmed.len == 0) return false;
+    if (std.mem.startsWith(u8, trimmed, "W/")) return false;
+    if (trimmed[0] == '"') {
+        return etag.len != 0 and std.mem.eql(u8, trimmed, etag);
+    }
+    if (modified.len == 0) return false;
+    return std.mem.eql(u8, trimmed, modified);
 }
 
 fn format_headers(

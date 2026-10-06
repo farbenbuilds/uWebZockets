@@ -25,10 +25,6 @@ jobs:
     name: OSS-Fuzz compatibility
     uses: ./.github/workflows/oss_fuzz.yml
 
-  windows:
-    name: Windows build and test compilation
-    uses: ./.github/workflows/windows.yml
-
   verify:
     name: Verify tagged source
     runs-on: ubuntu-24.04
@@ -84,89 +80,14 @@ jobs:
         working-directory: tests/package_consumer
         run: nix develop "path:../.." -c zig build check -Doptimize=ReleaseSafe --summary all
 
-  build:
-    name: Build ${{ matrix.target }}
+  release:
+    name: Create GitHub release
     needs:
       - autobahn
       - h1spec
       - http3
       - oss_fuzz
       - verify
-    runs-on: ${{ matrix.runner }}
-    environment: Publish
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-24.04
-            target: x86_64-linux-gnu
-            flake_package: release
-          - runner: ubuntu-24.04
-            target: x86_64-linux-musl
-            flake_package: musl
-          - runner: ubuntu-24.04-arm
-            target: aarch64-linux-gnu
-            flake_package: release
-          - runner: ubuntu-24.04-arm
-            target: aarch64-linux-musl
-            flake_package: musl
-          - runner: macos-15-intel
-            target: x86_64-macos
-            flake_package: release
-          - runner: macos-15
-            target: aarch64-macos
-            flake_package: release
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          fetch-depth: 0
-          submodules: recursive
-
-      - name: Install Nix
-        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-
-      - name: Validate release metadata
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          sh scripts/check_release_version.sh "$version"
-
-      - name: Build static library
-        shell: bash
-        run: |
-          nix build "path:.#${{ matrix.flake_package }}" \
-            --out-link "result-${{ matrix.target }}"
-
-      - name: Package artifact
-        shell: bash
-        run: |
-          archive_root="$RUNNER_TEMP/uWebZockets-${{ matrix.target }}"
-          mkdir -p "$archive_root/lib" "$archive_root/include"
-          cp "result-${{ matrix.target }}"/lib/*.a "$archive_root/lib/"
-          cp "result-${{ matrix.target }}"/include/uWebZockets.h "$archive_root/include/"
-          cp CHANGELOG.md LICENSE README.md THIRD_PARTY_NOTICES.md build.zig.zon "$archive_root/"
-          cp -R licenses "$archive_root/"
-          tar -C "$RUNNER_TEMP" -czf "uWebZockets-${{ matrix.target }}.tar.gz" \
-            "uWebZockets-${{ matrix.target }}"
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: uwebzockets-${{ matrix.target }}
-          path: uWebZockets-${{ matrix.target }}.tar.gz
-          if-no-files-found: error
-          retention-days: 14
-
-  release:
-    name: Create GitHub release
-    needs:
-      - build
-      - windows
     runs-on: ubuntu-24.04
     environment: Publish
     permissions:
@@ -178,22 +99,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Download artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - name: Prepare release
+      - name: Extract release notes
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
-          artifact_count=$(find artifacts -maxdepth 1 -name '*.tar.gz' | wc -l)
-          test "$artifact_count" -eq 7
-          (
-            cd artifacts
-            sha256sum ./*.tar.gz >SHA256SUMS
-          )
           awk -v version="$version" '
             index($0, "## [" version "]") == 1 {
               found = 1
@@ -231,11 +140,8 @@ jobs:
               --title "uWebZockets $GITHUB_REF_NAME" \
               --notes-file release_notes.md \
               "${release_flags[@]}"
-            gh release upload "$GITHUB_REF_NAME" \
-              artifacts/*.tar.gz artifacts/SHA256SUMS --clobber
           else
             gh release create "$GITHUB_REF_NAME" \
-              artifacts/*.tar.gz artifacts/SHA256SUMS \
               --verify-tag \
               --title "uWebZockets $GITHUB_REF_NAME" \
               --notes-file release_notes.md \

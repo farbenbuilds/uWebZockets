@@ -188,11 +188,49 @@ async def run(args):
                 )
             assert_response(f"sibling request for {case}", sibling, expected_response)
 
+        # More malformed requests than the engine's header pool can hold
+        # (2 * connection capacity). A leaked header set per rejection would
+        # exhaust the pool and abort this connection; a correct server keeps
+        # rejecting every one of them with the stream error.
+        soak_count = int(expectations["soak"]["malformed_requests"])
+        results["soak"] = {"requests": soak_count, "rejected": 0}
+        for index in range(soak_count):
+            outcome = await protocol.request(
+                malformed_headers("connection_specific_header", authority),
+                args.timeout,
+            )
+            if outcome.get("outcome") not in accepted:
+                raise RuntimeError(
+                    f"soak malformed request {index} was not rejected: {outcome}"
+                )
+            if outcome.get("error_code") != expected_stream_error:
+                raise RuntimeError(
+                    f"soak malformed request {index} used wrong stream error: {outcome}"
+                )
+            results["soak"]["rejected"] += 1
+
         results["post_malformed_health"] = await protocol.request(
             request_headers(authority), args.timeout
         )
     health = results["post_malformed_health"]
     assert_response("post-malformed health request", health, expected_response)
+
+    # A fresh connection proves the soak did not exhaust engine-global pools.
+    fresh_configuration = QuicConfiguration(is_client=True, alpn_protocols=H3_ALPN)
+    fresh_configuration.verify_mode = ssl.CERT_NONE
+    async with connect(
+        args.host,
+        args.port,
+        configuration=fresh_configuration,
+        create_protocol=ProbeProtocol,
+        wait_connected=True,
+    ) as connected:
+        fresh_protocol = cast(ProbeProtocol, connected)
+        fresh_health = await fresh_protocol.request(
+            request_headers(authority), args.timeout
+        )
+    assert_response("soak fresh-connection health request", fresh_health, expected_response)
+    results["soak_fresh_connection"] = fresh_health
     return results
 
 

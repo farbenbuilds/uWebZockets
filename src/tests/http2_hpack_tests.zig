@@ -54,6 +54,68 @@ test "http2 hpack: malformed Huffman padding fails closed" {
     );
 }
 
+test "http2 hpack: control bytes in field values and paths fail closed" {
+    var entries: [0]hpack.DynamicEntry = .{};
+    var dynamic_bytes: [0]u8 = .{};
+    var table = try hpack.DynamicTable.init(&entries, &dynamic_bytes, 0);
+    var decoder = hpack.Decoder.init(&table, 1024);
+    var headers: [8]hpack.Header = undefined;
+    var header_bytes: [256]u8 = undefined;
+
+    // :path carries a fragment delimiter, which origin-form forbids.
+    const bad_path = [_]u8{
+        0x82, 0x87, 0x04, 0x05, '/', 'b', 'a', 'd', '#',
+    };
+    try std.testing.expectError(
+        error.InvalidPath,
+        decoder.decode_request(&bad_path, &headers, &header_bytes),
+    );
+
+    // A regular field value carries 0x01.
+    const bad_control = [_]u8{
+        0x82, 0x87, 0x84, 0x00, 0x06, 'x', '-',
+        'b',  'a',  'd',  '1',  0x02, 'v', 0x01,
+    };
+    try std.testing.expectError(
+        error.InvalidHeaderValue,
+        decoder.decode_request(&bad_control, &headers, &header_bytes),
+    );
+
+    // A regular field value carries the ESC control byte.
+    const bad_escape = [_]u8{
+        0x82, 0x87, 0x84, 0x00, 0x06, 'x', '-',
+        'b',  'a',  'd',  '2',  0x02, 'v', 0x1b,
+    };
+    try std.testing.expectError(
+        error.InvalidHeaderValue,
+        decoder.decode_request(&bad_escape, &headers, &header_bytes),
+    );
+
+    // HTAB remains legal inside a value.
+    const tab_value = [_]u8{
+        0x82, 0x87, 0x84, 0x00, 0x06, 'x', '-',
+        't',  'a',  'b',  '1',  0x03, 'v', '\t',
+        'w',
+    };
+    const tabbed = try decoder.decode_request(&tab_value, &headers, &header_bytes);
+    try std.testing.expectEqualStrings("v\tw", tabbed.fields[0].value);
+
+    // Asterisk-form stays legal for OPTIONS and illegal for GET.
+    const options = [_]u8{
+        0x00, 0x07, ':',  'm',  'e',  't',  'h',
+        'o',  'd',  0x07, 'O',  'P',  'T',  'I',
+        'O',  'N',  'S',  0x87, 0x04, 0x01, '*',
+    };
+    const options_request = try decoder.decode_request(&options, &headers, &header_bytes);
+    try std.testing.expectEqualStrings("*", options_request.path.?);
+
+    const get_asterisk = [_]u8{ 0x82, 0x87, 0x04, 0x01, '*' };
+    try std.testing.expectError(
+        error.InvalidPath,
+        decoder.decode_request(&get_asterisk, &headers, &header_bytes),
+    );
+}
+
 test "http2 hpack: connection-specific fields and list overflow are rejected" {
     var entries: [0]hpack.DynamicEntry = .{};
     var dynamic_bytes: [0]u8 = .{};
