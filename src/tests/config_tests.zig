@@ -228,20 +228,23 @@ test "config: with merges request limit overrides" {
 test "config: default slab carries the router region at the end" {
     const config = ServerConfig{};
     const router_bytes = try config.router_storage_bytes();
-    try std.testing.expectEqual(@as(usize, 858_240), router_bytes);
+    try std.testing.expectEqual(@as(usize, 863_872), router_bytes);
 
     const total = try config.slab_bytes();
     // The connection slab dominates the default footprint. The inline route
     // capture accessors added a pointer pair and a count to `TcpConnection`,
     // the per-stream HTTP/2 session storage moved out of `TcpConnection` into
-    // a carved per-connection region, and the per-stream HTTP/2 response
-    // status array added sixteen bytes per connection, moving 671_561_856 to
-    // this total.
-    try std.testing.expectEqual(@as(usize, 681_384_064), total);
+    // a carved per-connection region, the per-stream HTTP/2 response status
+    // array added sixteen bytes per connection, the runtime-selectable
+    // libxev wrappers added the epoll variants to every per-connection
+    // completion, and the static-route index added its 512 hash slots, 512
+    // node slots, and 256 parent links (5_632 bytes) to the router region,
+    // moving 681_711_744 to this total.
+    try std.testing.expectEqual(@as(usize, 681_717_376), total);
     // The default route-param extras stride is zero: the region extends the
     // slab by exactly one router region's bytes.
     try std.testing.expectEqual(@as(usize, 0), try config.extra_route_param_stride());
-    try std.testing.expectEqual(@as(usize, 680_525_824), total - router_bytes);
+    try std.testing.expectEqual(@as(usize, 680_853_504), total - router_bytes);
 }
 
 test "config: slab bytes grow with each router capacity knob" {

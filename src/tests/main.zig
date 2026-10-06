@@ -30,4 +30,5 @@ comptime {
     _ = @import("watch_tests.zig");
     _ = @import("ws_tests.zig");
     _ = @import("web_standards_tests.zig");
+    _ = @import("xev_tests.zig");
 }

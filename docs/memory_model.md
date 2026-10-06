@@ -97,9 +97,11 @@ fields they need:
   and release are O(1) and range-checked; `from_slices` adopts caller-carved
   storage without owning it.
 - **Router** (`src/router/radix.zig`): parallel arrays for node segments,
-  child/sibling links, route bits, method handlers, and WebSocket behaviors.
-  Exact routes stay on the radix fast path; parameterized and wildcard matches
-  live in bounded side tables.
+  child/sibling/parent links, route bits, method handlers, and WebSocket
+  behaviors. An open-addressed FNV-1a index resolves exact static routes before
+  the radix walk, verifying each hit against the node's stored segments so a
+  hash collision cannot select the wrong route; parameterized and wildcard
+  matches live in bounded side tables.
 - **HTTP/2 session** (`src/http2/server.zig`): per-stream arrays for request
   metadata, body lengths, pending offsets, and flags, plus connection-wide
   HPACK dynamic-table and decoded-header storage.

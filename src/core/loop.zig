@@ -1,24 +1,18 @@
+const std = @import("std");
 const xev = @import("xev");
 
 /// Completion-driven event loop backed by libxev.
 pub const Loop = struct {
     xev_loop: xev.Loop,
+    /// Owned thread pool for backends that offload blocking file operations
+    /// (epoll, kqueue, IOCP). Null on io_uring, which runs them in the ring.
+    thread_pool: ?*xev.ThreadPool = null,
 
     /// Returns the borrowed libxev loop handle used by transport integrations.
     pub inline fn get_xev_loop(self: *Loop) *xev.Loop {
         return &self.xev_loop;
     }
 };
-
-/// Completion-cancellation callback accepted by `cancel`, bound to `Userdata`.
-pub fn cancel_callback(comptime Userdata: type) type {
-    return *const fn (
-        userdata: ?*Userdata,
-        loop: *xev.Loop,
-        completion: *xev.Completion,
-        result: xev.CancelError!void,
-    ) xev.CallbackAction;
-}
 
 /// Cancels a completion across libxev backends.
 pub fn cancel(
@@ -27,55 +21,71 @@ pub fn cancel(
     cancel_completion: *xev.Completion,
     comptime Userdata: type,
     userdata: ?*Userdata,
-    comptime callback: cancel_callback(Userdata),
+    comptime callback: xev.cancel_callback(Userdata),
 ) void {
-    if (xev.backend != .kqueue and xev.backend != .iocp) {
-        loop.cancel(
-            completion,
-            cancel_completion,
-            Userdata,
-            userdata,
-            callback,
-        );
-        return;
-    }
+    xev.cancel(loop, completion, cancel_completion, Userdata, userdata, callback);
+}
 
-    cancel_completion.* = .{
-        .op = .{ .cancel = .{ .c = completion } },
-        .userdata = userdata,
-        .callback = (struct {
-            fn callback_inner(
-                raw_userdata: ?*anyopaque,
-                inner_loop: *xev.Loop,
-                inner_completion: *xev.Completion,
-                result: xev.Result,
-            ) xev.CallbackAction {
-                const typed_userdata: ?*Userdata = if (Userdata == void)
-                    null
-                else
-                    @ptrCast(@alignCast(raw_userdata));
-                return @call(.always_inline, callback, .{
-                    typed_userdata,
-                    inner_loop,
-                    inner_completion,
-                    if (result.cancel) |_| {} else |err| err,
-                });
-            }
-        }).callback_inner,
-    };
-    loop.add(cancel_completion);
+fn create_thread_pool() !*xev.ThreadPool {
+    const pool = try std.heap.page_allocator.create(xev.ThreadPool);
+    pool.* = xev.ThreadPool.init(.{});
+    return pool;
+}
+
+fn destroy_thread_pool(pool: *xev.ThreadPool) void {
+    pool.shutdown();
+    pool.deinit();
+    std.heap.page_allocator.destroy(pool);
 }
 
 /// Initializes an event loop sized for 4096 completion entries.
+///
+/// Selects the first available backend before any watcher exists and falls
+/// back to epoll when an available io_uring still cannot create its ring.
 pub fn init() !Loop {
+    try xev.detect();
+
+    var thread_pool: ?*xev.ThreadPool = null;
+    errdefer if (thread_pool) |pool| destroy_thread_pool(pool);
+
+    const needs_pool = xev.backend() != .io_uring;
+    if (needs_pool) thread_pool = try create_thread_pool();
+
+    if (comptime xev.dynamic) {
+        const handle = xev.Loop.init(.{
+            .entries = 4096,
+            .thread_pool = thread_pool,
+        }) catch |err| {
+            if (xev.backend() != .io_uring or !xev.prefer(.epoll)) return err;
+            // io_uring probed as available but ring creation failed; degrade
+            // to epoll instead of refusing to start.
+            if (thread_pool == null) thread_pool = try create_thread_pool();
+            return .{
+                .xev_loop = try xev.Loop.init(.{
+                    .entries = 4096,
+                    .thread_pool = thread_pool,
+                }),
+                .thread_pool = thread_pool,
+            };
+        };
+        return .{ .xev_loop = handle, .thread_pool = thread_pool };
+    }
+
     return .{
-        // allows processing up to 4096 i/o events in a single kernel wake-up
-        .xev_loop = try xev.Loop.init(.{ .entries = 4096 }),
+        .xev_loop = try xev.Loop.init(.{
+            .entries = 4096,
+            .thread_pool = thread_pool,
+        }),
+        .thread_pool = thread_pool,
     };
 }
 
 /// Releases operating-system resources after all operations have stopped.
 pub fn deinit(l: *Loop) void {
+    // libxev requires the thread pool to stop before the loop's storage is
+    // released, since a worker may still deliver a completion into it.
+    if (l.thread_pool) |pool| destroy_thread_pool(pool);
+    l.thread_pool = null;
     l.xev_loop.deinit();
 }
 

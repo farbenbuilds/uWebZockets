@@ -106,7 +106,7 @@ pub fn quic_transport(comptime Engine: type) type {
             try self.engine.start(
                 self.ssl_ctx,
                 self.router,
-                self.socket.fd,
+                xev.udp_fd(self.socket),
                 self.local_address,
             );
             self.loop = loop;
@@ -201,7 +201,7 @@ pub fn quic_transport(comptime Engine: type) type {
             // kqueue drops the callback of a receive canceled before
             // submission and discards armed kevents when the socket closes;
             // the close callback clears the receive flags instead.
-            if (xev.backend != .kqueue and self.read_active and !self.read_cancel_active) {
+            if (!xev.is_kqueue() and self.read_active and !self.read_cancel_active) {
                 self.read_cancel_active = true;
                 core_loop.cancel(
                     loop,
@@ -214,7 +214,7 @@ pub fn quic_transport(comptime Engine: type) type {
             }
             self.close_started = true;
             if (builtin.os.tag == .windows) {
-                tcp.close_socket(self.socket.fd);
+                tcp.close_socket(xev.udp_fd(self.socket));
                 self.close_complete = true;
                 // IOCP drops callbacks for completions canceled before
                 // submission; clear a receive flag that can never clear.
@@ -254,8 +254,10 @@ pub fn quic_transport(comptime Engine: type) type {
             const self = user_data.?;
             _ = result catch |err| log.debug("udp close error: {}", .{err});
             self.close_complete = true;
-            if (xev.backend == .kqueue) {
-                // The socket is closed, so no kevent callback can arrive now.
+            if (xev.cancel_abandons_target()) {
+                // epoll removes a canceled fd registration without invoking
+                // its callback, and kqueue discards armed kevents on close;
+                // clear the flags those callbacks would have cleared.
                 self.read_active = false;
                 self.read_cancel_active = false;
             }
@@ -337,5 +339,5 @@ pub fn quic_transport(comptime Engine: type) type {
 }
 
 fn close_unregistered_socket(socket: xev.UDP) void {
-    tcp.close_socket(socket.fd);
+    tcp.close_socket(xev.udp_fd(socket));
 }

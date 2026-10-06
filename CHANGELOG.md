@@ -3,6 +3,61 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [1.8.0] - 2026-10-06
+
+This release removes per-response formatting overhead, gives the transport a
+zero-copy plaintext fast path and Nagle-free accepts, indexes exact routes
+ahead of the radix walk, and makes the event loop select its libxev backend at
+runtime so Linux containers without io_uring still start. No exported function
+signature, wire behavior, or default capacity semantic changes.
+
+### Added
+
+- Runtime-selectable libxev backend (`src/core/xev.zig`): the loop probes
+  io_uring and degrades to epoll when the kernel or a container seccomp policy
+  rejects the ring, so Docker Desktop and OrbStack hosts no longer need
+  privileges just to start. epoll loops own a small thread pool for blocking
+  file operations; io_uring loops do not.
+- Fixed-capacity FNV-1a index for exact static routes (`src/router/radix.zig`):
+  lookups verify the candidate's stored segments byte-for-byte, so a hash
+  collision falls through to the radix walk instead of selecting the wrong
+  route.
+- Allocation-free HTTP/1.1 head writer (`status.format_http1_framing`,
+  `status.format_http1_chunked_framing`) with an exact-bounds decimal encoder.
+- `TCP_NODELAY` is requested on every accepted connection, removing the
+  Nagle/delayed-ACK stall from small responses.
+
+### Changed
+
+- Router: exact static routes now resolve through an open-addressed FNV-1a
+  hash index before the radix walk. Capacities, matching order, and error
+  behavior are unchanged; the default router storage region grows by 5,632
+  bytes (512 hash slots, 512 node slots, 256 parent links).
+- HTTP/1.1 response heads, `append_header`, and `redirect` write bytes with
+  manual copies instead of `std.fmt`, removing format machinery from the
+  per-response path. Ordering, validation, and emitted bytes are unchanged.
+- Plaintext responses are sent with a single nonblocking `sendmsg` when the
+  write ring is empty and no write is in flight; a partial send queues only
+  the unsent suffix, so any remaining queue copy carries new bytes.
+- The Linux development file watcher polls the inotify descriptor and drains
+  it with direct nonblocking reads, so it no longer depends on a thread-pool
+  read completion.
+- `TcpConnection.begin_file_response` uses the shared framing writer.
+
+### Fixed
+
+- epoll: canceling an armed read or write removes the registration without
+  invoking the canceled callback, so the close callback now clears the flags
+  that completion would have cleared. Without this, closed slots never
+  returned to the pool on the epoll fallback.
+- The event loop shuts its owned thread pool down before releasing loop
+  storage, matching libxev's teardown ordering.
+
+### Security
+
+- Response field and redirect formatters bound every slice before
+  concatenation, closing an integer-overflow path in the length computation.
+
 ## [1.7.1] - 2026-10-06
 
 This release fixes the defects found by a full-tree audit of 1.7.0. It closes a

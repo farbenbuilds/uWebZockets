@@ -521,6 +521,158 @@ test "router: exact route wins before bounded parameter patterns" {
     try std.testing.expectEqualStrings("", request.get_param("path").?);
 }
 
+test "router: static index resolves exact routes with identical match data" {
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    try router.get("/httpz", dummy_handler);
+    try router.get("/api/users", exact_handler);
+    try router.ws("/socket", .{});
+
+    // The default index rounds twice the 256-node capacity to 512 slots.
+    try std.testing.expectEqual(@as(usize, 512), router.static_nodes.len);
+
+    var allow_buffer: [64]u8 = undefined;
+    const page = router.match("/httpz", .get).?;
+    try std.testing.expectEqual(@intFromPtr(&dummy_handler), @intFromPtr(page.http_handler.?));
+    try std.testing.expect(page.has_http);
+    try std.testing.expect(page.ws_behavior == null);
+    try std.testing.expectEqualStrings(
+        "GET, HEAD",
+        try radix.format_allowed_methods(page.allowed_methods, &allow_buffer),
+    );
+
+    // A method mismatch still resolves the node so the caller can answer 405.
+    const users = router.match("/api/users", .post).?;
+    try std.testing.expect(users.http_handler == null);
+    try std.testing.expect(users.has_http);
+
+    const socket = router.match("/socket", .get).?;
+    try std.testing.expect(socket.ws_behavior != null);
+    try std.testing.expect(!socket.has_http);
+    try std.testing.expectEqualStrings(
+        "GET",
+        try radix.format_allowed_methods(socket.allowed_methods, &allow_buffer),
+    );
+}
+
+test "router: static index follows a route moved by a split" {
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    try router.get("/alpha", dummy_handler);
+    // Inserting a shorter shared prefix splits "/alpha" and moves its route
+    // to the new leaf, which must keep resolving through the index.
+    try router.get("/alp", exact_handler);
+
+    const alpha = router.match("/alpha", .get).?;
+    try std.testing.expectEqual(@intFromPtr(&dummy_handler), @intFromPtr(alpha.http_handler.?));
+    const alp = router.match("/alp", .get).?;
+    try std.testing.expectEqual(@intFromPtr(&exact_handler), @intFromPtr(alp.http_handler.?));
+
+    // A deeper registration after the split must not disturb either route.
+    try router.get("/alpine", exact_handler);
+    const alpine = router.match("/alpine", .get).?;
+    try std.testing.expectEqual(@intFromPtr(&exact_handler), @intFromPtr(alpine.http_handler.?));
+    const alpha_again = router.match("/alpha", .get).?;
+    try std.testing.expectEqual(@intFromPtr(&dummy_handler), @intFromPtr(alpha_again.http_handler.?));
+}
+
+test "router: static index preserves duplicate registration errors" {
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    try router.get("/dup", dummy_handler);
+    try std.testing.expectError(
+        error.RouteAlreadyRegistered,
+        router.get("/dup", exact_handler),
+    );
+    try router.ws("/dup", .{});
+    try std.testing.expectError(
+        error.RouteAlreadyRegistered,
+        router.ws("/dup", .{}),
+    );
+
+    const match = router.match("/dup", .get).?;
+    try std.testing.expectEqual(@intFromPtr(&dummy_handler), @intFromPtr(match.http_handler.?));
+    try std.testing.expect(match.ws_behavior != null);
+
+    // Both methods share one indexed terminal node, so the table holds one
+    // entry and the failed duplicates did not grow it.
+    var entries: usize = 0;
+    for (router.static_nodes) |node| {
+        if (node != std.math.maxInt(u16)) entries += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), entries);
+}
+
+test "router: static index probes slot collisions without false matches" {
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    const mask = router.static_nodes.len - 1;
+
+    var hashes: [256]u64 = undefined;
+    var path_buffer: [32]u8 = undefined;
+    for (0..hashes.len) |candidate| {
+        const path = try std.fmt.bufPrint(&path_buffer, "/collide/{d}", .{candidate});
+        hashes[candidate] = radix.hash_path(path);
+    }
+
+    // Find two distinct paths that share a first probe slot.
+    var first: usize = 0;
+    var second: usize = 0;
+    var found = false;
+    outer: for (0..hashes.len) |left| {
+        for (left + 1..hashes.len) |right| {
+            if (hashes[left] & mask != hashes[right] & mask) continue;
+            first = left;
+            second = right;
+            found = true;
+            break :outer;
+        }
+    }
+    try std.testing.expect(found);
+
+    var first_path: [32]u8 = undefined;
+    var second_path: [32]u8 = undefined;
+    const first_bytes = try std.fmt.bufPrint(&first_path, "/collide/{d}", .{first});
+    const second_bytes = try std.fmt.bufPrint(&second_path, "/collide/{d}", .{second});
+    try router.get(first_bytes, dummy_handler);
+    try router.get(second_bytes, exact_handler);
+
+    const first_match = router.match(first_bytes, .get).?;
+    try std.testing.expectEqual(
+        @intFromPtr(&dummy_handler),
+        @intFromPtr(first_match.http_handler.?),
+    );
+    const second_match = router.match(second_bytes, .get).?;
+    try std.testing.expectEqual(
+        @intFromPtr(&exact_handler),
+        @intFromPtr(second_match.http_handler.?),
+    );
+}
+
+test "router: static index size derives from the node capacity" {
+    const capacities = radix.Capacities{
+        .max_nodes = 5,
+        .max_pattern_routes = 1,
+        .max_middleware = 2,
+        .max_route_path_size = 64,
+        .registry_storage_size = 256,
+    };
+    var bundle = radix.Bundle(capacities){};
+    var router = try radix.Router.init(bundle.storage());
+    // Twice five rounds up to the sixteen-slot floor.
+    try std.testing.expectEqual(@as(usize, 16), router.static_hashes.len);
+    try std.testing.expectEqual(@as(usize, 16), router.static_nodes.len);
+    try std.testing.expectEqual(@as(usize, 5), router.parents.len);
+
+    try router.get("/a", dummy_handler);
+    try router.get("/b", dummy_handler);
+    try router.get("/c", dummy_handler);
+    try std.testing.expectError(
+        error.RouteCapacityReached,
+        router.get("/d", dummy_handler),
+    );
+}
+
 test "router: route patterns fail closed when malformed or over capacity" {
     var bundle = radix.DefaultBundle{};
     var router = try radix.Router.init(bundle.storage());
@@ -699,6 +851,9 @@ test "router: configured capacities size storage and route counts" {
     try std.testing.expectEqual(@as(usize, 2), router.middleware.len);
     try std.testing.expectEqual(@as(usize, 6), router.route_records.len);
     try std.testing.expectEqual(@as(usize, 64), router.max_route_path_size);
+    // Twice five nodes rounds up to the sixteen-slot index floor.
+    try std.testing.expectEqual(@as(usize, 16), router.static_nodes.len);
+    try std.testing.expectEqual(@as(usize, 5), router.parents.len);
 
     var context: u8 = 0;
     try router.use(&context, MiddlewareContext.run);
@@ -766,7 +921,7 @@ test "router: carve_storage honors alignment and storage_bytes" {
     const method_slots = @typeInfo(radix.HttpMethod).@"enum".fields.len;
     for (cases) |capacities| {
         const bytes = try capacities.storage_bytes();
-        var backing: [64 * 1024]u8 align(@alignOf(radix.Storage)) = undefined;
+        var backing: [68 * 1024]u8 align(@alignOf(radix.Storage)) = undefined;
         try std.testing.expect(bytes + 16 <= backing.len);
 
         // Carving starts at an odd base; carve_storage pads to alignment.
@@ -786,11 +941,14 @@ test "router: carve_storage honors alignment and storage_bytes" {
         try expect_aligned(u16, storage.pattern_lengths);
         try expect_aligned(radix.MiddlewareEntry, storage.middleware);
         try expect_aligned(radix.RouteRecord, storage.route_records);
+        try expect_aligned(u64, storage.static_hashes);
+        try expect_aligned(u16, storage.static_nodes);
+        try expect_aligned(u16, storage.parents);
 
         const aligned_base = std.mem.alignForward(usize, @intFromPtr(region.ptr), @alignOf(radix.Storage));
         try std.testing.expectEqual(aligned_base, @intFromPtr(storage.route_storage.ptr));
-        const consumed = @intFromPtr(storage.route_records.ptr) +
-            storage.route_records.len * @sizeOf(radix.RouteRecord) - aligned_base;
+        const consumed = @intFromPtr(storage.static_hashes.ptr) +
+            storage.static_hashes.len * @sizeOf(u64) - aligned_base;
         try std.testing.expectEqual(bytes, consumed);
 
         // An aligned region of exactly storage_bytes carves without padding.

@@ -726,6 +726,37 @@ test "http: body-forbidden statuses scatter headers without Content-Length" {
     try std.testing.expect(std.mem.endsWith(u8, written, "\r\n\r\n"));
 }
 
+test "http: head framing helpers pin exact bytes and overflow" {
+    const status = support.status;
+
+    var framing_buffer: [128]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n",
+        try status.format_http1_framing(&framing_buffer, "404 Not Found", 9),
+    );
+    try std.testing.expectEqualStrings(
+        "HTTP/1.1 204 No Content\r\n",
+        try status.format_http1_framing(&framing_buffer, "204 No Content", null),
+    );
+    try std.testing.expectEqualStrings(
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n",
+        try status.format_http1_chunked_framing(&framing_buffer, "200 OK"),
+    );
+    try std.testing.expectError(
+        error.BufferOverflow,
+        status.format_http1_framing(framing_buffer[0..11], "404 Not Found", null),
+    );
+
+    var ring: [1024]u8 = undefined;
+    var conn = test_connection(&ring);
+    var res = response.Response{ .target = .{ .tcp = &conn } };
+    try res.end("404 Not Found", "not found");
+    try std.testing.expectEqualStrings(
+        "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nnot found",
+        ring[0..conn.write_len],
+    );
+}
+
 test "http: begin_stream resumes after write-ring backpressure" {
     const Producer = struct {
         remaining: usize = 64,
