@@ -13,7 +13,7 @@ bad_files=$(
         while IFS= read -r file; do
             base=${file##*/}
             case "$base" in
-                build.zig | build.zig.zon | *.schema.json | CODE_OF_CONDUCT.md | COMMIT_CONVENTION.md | Dockerfile | PULL_REQUEST_TEMPLATE.md | README.md | uWebZockets.h)
+                build.zig | build.zig.zon | *.schema.json | CODE_OF_CONDUCT.md | COMMIT_CONVENTION.md | Dockerfile | FUNDING.yml | PULL_REQUEST_TEMPLATE.md | README.md | uWebZockets.h)
                     continue
                     ;;
             esac
