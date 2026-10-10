@@ -96,3 +96,32 @@ Rules:
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+
+## Agent Team Workflow
+
+Use the project agent teams in `.opencode/agents/` and `.codex/agents/` when
+multi-agent work is requested or materially improves a multi-part task. Keep
+the root agent responsible for scope, decisions, and the final report. Read
+the relevant existing specialist instructions and `.agents/skills/<name>/SKILL.md`
+before assigning work; preserve all rules in this file and
+`CODING_CONVENTION.md`.
+
+Follow this sequence:
+
+1. **Architect** reads the request and relevant project context, states
+   assumptions, identifies affected ownership boundaries, and produces a
+   scoped plan with acceptance criteria. The architect does not implement.
+2. **Developer** implements the assigned slice, consulting the relevant
+   domain specialist where useful. Developers report changed files, commands,
+   and unresolved questions; they do not claim unrun checks passed.
+3. **Reviewer** independently reviews the resulting diff and evidence for
+   correctness, security, compatibility, tests, conventions, and scope. The
+   reviewer is read-only and reports findings with file and line references.
+4. **Integrator** resolves ownership overlaps, routes findings back to the
+   developer, checks the final combined diff and required verification, and
+   prepares the delivery summary. Re-review changed work before integration.
+
+Do not advance past a phase while its required output is missing. Keep edits
+to shared files serialized; parallelize only independent assignments. The
+root agent decides whether specialist agents or additional review passes are
+needed and integrates all agent results before reporting completion.
