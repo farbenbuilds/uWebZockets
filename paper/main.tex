@@ -68,7 +68,7 @@
 \setlength{\abovecaptionskip}{4pt}
 \setlength{\belowcaptionskip}{0pt}
 
-\title{Cache Locality and Bounded Protocol Confinement in \ensuremath{\mu}WebZockets}
+\title{Cache Locality and Bounded Protocol Confinement in \ensuremath{\mu}WebZockets: A High-Concurrency Multi-Protocol Server Architecture in Zig}
 \author{Tran Ngo Anh Quan\\
 \textit{Faculty of Computer Networks and Data Communications}\\
 \textit{University of Information Technology, VNU-HCM}\\
@@ -78,11 +78,11 @@
 \maketitle
 
 \begin{abstract}
-I present the architecture and empirical evaluation of \ensuremath{\mu}WebZockets, a high-concurrency network server framework implemented in Zig 0.16.0. The design systematically mitigates the ``Memory Wall'' in asynchronous networking by replacing dynamic heap-allocated object graphs with Data-Oriented Design (DoD), bounded startup slabs, Structure of Arrays (SoA) for multiplexed streams, vectorised SIMD parsers, and a shared-nothing multi-worker execution model pinned per physical CPU core. The engine supports a comprehensive IETF protocol stack: HTTP/1.1 (RFC 9112), HTTP/2 (RFC 9113) with HPACK (RFC 7541), WebSocket (RFC 6455) with Per-Message Deflate (RFC 7692), HTTP/3 (RFC 9114) and QUIC (RFC 9000) via lsquic, HTTP QUERY (RFC 10008), and TLS 1.3 via BoringSSL. I ground the architectural evaluation in empirical evidence across independent benchmark suites: \ensuremath{\mu}WebZockets achieves over 170,011 requests/s in the independent Zig Web Servers Benchmark (\texttt{bench.zig.bd}) with an average latency of 3.46~ms, passes 15 rigorous workload suites in HttpArena (PR \#1536) with 4/4 completeness across routing, middleware, request, and response pipelines, and satisfies 514 successful and 3 informational cases out of 517 in the Autobahn WebSocket compliance test suite.
+I present the architecture and empirical evaluation of \ensuremath{\mu}WebZockets (v1.7.1), a high-concurrency network server framework implemented in Zig 0.16.0. The design systematically mitigates the ``Memory Wall'' in asynchronous networking by replacing dynamic heap-allocated object graphs with Data-Oriented Design (DoD), bounded startup slabs, Structure of Arrays (SoA) for multiplexed streams, vectorised SIMD parsers, zero-copy borrowed memory slices, and a shared-nothing multi-worker execution model pinned per physical CPU core. The engine provides a comprehensive production-grade stack: HTTP/1.1 (RFC 9112), HTTP/2 (RFC 9113) with HPACK (RFC 7541), WebSocket (RFC 6455) with Per-Message Deflate (RFC 7692), HTTP/3 (RFC 9114) and QUIC (RFC 9000) via lsquic, HTTP QUERY (RFC 10008), ephemeral in-memory TLS 1.3 and mutual TLS (mTLS) via BoringSSL, SIMD CookieJar parsing with versioned HMAC signing, chunked streaming response pipelines, and allocation-free middleware (constant-time authentication and token-bucket rate limiting). I ground the architectural evaluation in empirical evidence across independent benchmark suites: \ensuremath{\mu}WebZockets achieves over 170,011 requests/s in the independent Zig Web Servers Benchmark (\texttt{bench.zig.bd}) with an average latency of 3.46~ms and zero heap allocations, passes 15 rigorous workload suites in HttpArena (PR \#1536) with 4/4 completeness across routing, middleware, request, and response pipelines, and satisfies 514 successful and 3 informational cases out of 517 in the Autobahn WebSocket compliance test suite.
 \end{abstract}
 
 \begin{IEEEkeywords}
-asynchronous I/O, data-oriented design, Zig, WebSocket, HTTP/2, HPACK, QUIC, HTTP/3, cache locality, tail latency, io\_uring, zero-allocation
+asynchronous I/O, data-oriented design, Zig, WebSocket, HTTP/2, HPACK, QUIC, HTTP/3, cache locality, tail latency, io\_uring, zero-allocation, SIMD, mTLS
 \end{IEEEkeywords}
 
 \section{Introduction}
@@ -105,7 +105,7 @@ I designed \ensuremath{\mu}WebZockets around a different systems thesis: for an 
 % Network Ingress
 \node[kbox, text width=16.8cm] (network) {
     \textbf{Physical Network \& Linux Kernel 6.x Ingress/Egress Layer}\\
-    \footnotesize Hardware NIC RX/TX Rings $\bullet$ Receive Side Scaling (RSS) $\bullet$ TCP/UDP Sockets with \texttt{SO\_REUSEPORT}
+    \footnotesize Hardware NIC RX/TX Rings $\bullet$ Receive Side Scaling (RSS) $\bullet$ TCP/UDP Sockets with \texttt{SO\_REUSEPORT} $\bullet$ \texttt{TCP\_DEFER\_ACCEPT} \& \texttt{TCP\_QUICKACK}
 };
 
 % Multi-Worker Shared-Nothing Layer
@@ -114,7 +114,7 @@ I designed \ensuremath{\mu}WebZockets around a different systems thesis: for an 
     \begin{tikzpicture}[node distance=0.32cm, font=\footnotesize]
         \node[box, text width=7.4cm, fill=natureteal!10] (loop0) {\textbf{libxev Completion Event Loop}\\(\texttt{io\_uring} Submission / Completion Queue Rings)};
         \node[slabbox, text width=7.4cm, below=of loop0] (slab0) {\textbf{Zero-Allocation Bounded Slabs}\\$\bullet$ 64-byte aligned Connection Slab $\bullet$ $O(1)$ Bitset Freelist\\$\bullet$ Fixed Circular Ring Buffer for Outbound Slices};
-        \node[box, text width=7.4cm, below=of slab0, fill=naturenavy!8] (proto0) {\textbf{Bounded Protocol Confinement Engine}\\$\bullet$ HTTP/1.1 \& RFC 10008 QUERY (SIMD Scanning)\\$\bullet$ HTTP/2 Multiplexing (Structure of Arrays Streams, HPACK)\\$\bullet$ WebSocket RFC 6455 (SIMD Masking, libdeflate RFC 7692)\\$\bullet$ HTTP/3 \& QUIC RFC 9114 / RFC 9000 (lsquic C-FFI)};
+        \node[box, text width=7.4cm, below=of slab0, fill=naturenavy!8] (proto0) {\textbf{Bounded Protocol Confinement Engine}\\$\bullet$ HTTP/1.1 \& RFC 10008 QUERY (SIMD Scanning)\\$\bullet$ HTTP/2 Multiplexing (Structure of Arrays Streams, HPACK)\\$\bullet$ WebSocket RFC 6455 (SIMD Masking, libdeflate RFC 7692)\\$\bullet$ HTTP/3 \& QUIC RFC 9114 / RFC 9000 (lsquic C-FFI)\\$\bullet$ Ephemeral In-Memory TLS 1.3 \& mTLS (BoringSSL)};
     \end{tikzpicture}
 };
 
@@ -123,14 +123,14 @@ I designed \ensuremath{\mu}WebZockets around a different systems thesis: for an 
     \begin{tikzpicture}[node distance=0.32cm, font=\footnotesize]
         \node[box, text width=7.4cm, fill=natureteal!10] (loop1) {\textbf{libxev Completion Event Loop}\\(\texttt{io\_uring} Submission / Completion Queue Rings)};
         \node[slabbox, text width=7.4cm, below=of loop1] (slab1) {\textbf{Zero-Allocation Bounded Slabs}\\$\bullet$ 64-byte aligned Connection Slab $\bullet$ $O(1)$ Bitset Freelist\\$\bullet$ Fixed Circular Ring Buffer for Outbound Slices};
-        \node[box, text width=7.4cm, below=of slab1, fill=naturenavy!8] (proto1) {\textbf{Bounded Protocol Confinement Engine}\\$\bullet$ HTTP/1.1 \& RFC 10008 QUERY (SIMD Scanning)\\$\bullet$ HTTP/2 Multiplexing (Structure of Arrays Streams, HPACK)\\$\bullet$ WebSocket RFC 6455 (SIMD Masking, libdeflate RFC 7692)\\$\bullet$ HTTP/3 \& QUIC RFC 9114 / RFC 9000 (lsquic C-FFI)};
+        \node[box, text width=7.4cm, below=of slab1, fill=naturenavy!8] (proto1) {\textbf{Bounded Protocol Confinement Engine}\\$\bullet$ HTTP/1.1 \& RFC 10008 QUERY (SIMD Scanning)\\$\bullet$ HTTP/2 Multiplexing (Structure of Arrays Streams, HPACK)\\$\bullet$ WebSocket RFC 6455 (SIMD Masking, libdeflate RFC 7692)\\$\bullet$ HTTP/3 \& QUIC RFC 9114 / RFC 9000 (lsquic C-FFI)\\$\bullet$ Ephemeral In-Memory TLS 1.3 \& mTLS (BoringSSL)};
     \end{tikzpicture}
 };
 
 % User Application Layer
 \node[box, text width=16.8cm, fill=naturenavy!10, draw=naturenavy, below=0.55cm of w0.south west, anchor=north west] (app) {
     \textbf{Application Programming Interface \& Business Logic Pipeline}\\
-    \footnotesize High-performance Radix-Tree Router $\bullet$ Comptime Typed Request/Response Pipeline $\bullet$ Zero-Copy Borrowed Memory Slices
+    \footnotesize Radix Router $\bullet$ SIMD CookieJar $\bullet$ Token Bucket RateLimiter $\bullet$ Streaming Chunk Responses $\bullet$ Zero-Copy Borrowed Slices
 };
 
 % Arrows
@@ -141,7 +141,7 @@ I designed \ensuremath{\mu}WebZockets around a different systems thesis: for an 
 
 \end{tikzpicture}
 }
-\caption{Overall multi-worker shared-nothing architecture of \ensuremath{\mu}WebZockets. Each worker thread is pinned to an isolated physical CPU core, running an independent \texttt{libxev} completion ring with zero-allocation connection slabs, bounded protocol parsers, and borrowed memory views.}
+\caption{Overall multi-worker shared-nothing architecture of \ensuremath{\mu}WebZockets v1.7.1. Each worker thread is pinned to an isolated physical CPU core, running an independent \texttt{libxev} completion ring with zero-allocation connection slabs, bounded protocol parsers, and borrowed memory views.}
 \label{fig:overview}
 \end{figure*}
 
@@ -150,43 +150,46 @@ The architecture is organised around four core principles (Fig.~\ref{fig:overvie
     \item \textbf{Bounded Startup Slabs and O(1) Freelist:} All connection slots, write queues, parse buffers, and stream states are pre-allocated in contiguous memory at startup. Steady-state request processing never invokes general-purpose heap allocators.
     \item \textbf{Structure of Arrays (SoA) for Multiplexed Protocols:} State tracking for HTTP/2 and QUIC streams decomposes composite records into parallel primitive arrays. When scanning active streams or evaluating flow control windows, the CPU loads only the relevant 64-byte cache lines, eliminating cold-field cache pollution.
     \item \textbf{Bounded Protocol Confinement:} Parser bounds, header thresholds, and frame limits are strictly enforced. Malformed framing, header overflow, or resource exhaustion immediately transitions to deterministic rejection without memory growth, securing against DoS vectors like Slowloris or HTTP/2 CONTINUATION flooding.
-    \item \textbf{Shared-Nothing Cluster Architecture with SIMD Acceleration:} The server operates across an array of independent workers pinned to physical CPU cores, listening on a shared port via \texttt{SO\_REUSEPORT}. Hot data paths apply 128/256-bit SIMD instructions (SWAR, AVX2, ARM NEON) for CRLF delimiter parsing and WebSocket unmasking.
+    \item \textbf{Shared-Nothing Cluster Architecture with SIMD Acceleration:} The server operates across an array of independent workers pinned to physical CPU cores, listening on a shared port via \texttt{SO\_REUSEPORT}. Hot data paths apply 128/256-bit SIMD instructions (SWAR, AVX2, ARM NEON) for CRLF delimiter parsing, cookie scanning, and WebSocket unmasking.
 \end{enumerate}
 
-Empirically, \ensuremath{\mu}WebZockets has been validated in the independent \textit{Zig Web Servers Benchmark} (\texttt{bench.zig.bd})~\cite{bench_zig_bd}, reaching over $170{,}011\text{ req/s}$ with $3.46\text{ ms}$ average latency, in the international \textit{HttpArena} test suite (PR \#1536)~\cite{httparena_pr1536} spanning 15 high-concurrency workloads with 4/4 functional completeness, and across 517 cases in the \textit{Autobahn WebSocket Testsuite}~\cite{autobahn} (514 OK / 3 Informational).
+Empirically, \ensuremath{\mu}WebZockets has been validated in the independent \textit{Zig Web Servers Benchmark} (\url{https://bench.zig.bd/})~\cite{bench_zig_bd}, reaching over $170{,}011\text{ req/s}$ with $3.46\text{ ms}$ average latency, in the international \textit{HttpArena} test suite (PR \#1536)~\cite{httparena_pr1536} spanning 15 high-concurrency workloads with 4/4 functional completeness, and across 517 cases in the \textit{Autobahn WebSocket Testsuite}~\cite{autobahn} (514 OK / 3 Informational).
 
 \section{The Memory Wall in Asynchronous I/O}
 
 \subsection{Working Set Pressure and Cache Latency}
 
-In an event-driven server, the CPU switches continuously between network socket buffers, protocol parsers, state machines, and application handlers. While the actual compute cycles required to decode a header or XOR a frame are minimal, accessing scattered memory locations across DRAM stalls the processor pipeline.
+In an asynchronous I/O event loop servicing thousands of concurrent clients, the instruction working set competes directly with connection metadata for residence in L1 data cache ($32\text{--}48\text{ KB}$ per core) and L2 unified cache ($512\text{ KB}\text{--}1\text{ MB}$ per core). Consider a server handling $C = 20{,}000$ active connections. If each connection state object occupies $2\text{ KB}$ distributed over disjoint heap blocks, the aggregate metadata footprint is $40\text{ MB}$---vastly exceeding on-chip L3 cache capacity. Under random event scheduling, virtually every I/O callback incurs a cold DRAM access.
 
-I model the event handling execution time $T_{event}$ as:
+The cache penalty can be formalized through the Average Memory Access Time (AMAT):
 \begin{equation}
-\begin{split}
-T_{event} &= T_{compute} + M_{L1}P_{L1} + M_{L2}P_{L2} \\
-&\quad + M_{DRAM}P_{DRAM} + T_{syscall}
-\end{split}
+\text{AMAT} = T_{L1} + M_{L1}(T_{L2} + M_{L2}(T_{L3} + M_{L3} \cdot T_{\text{DRAM}}))
 \end{equation}
-where $M_{L1}, M_{L2}, M_{DRAM}$ represent cache miss counts and $P_{L1}, P_{L2}, P_{DRAM}$ denote their respective latency penalties. On contemporary x86\_64 and AArch64 architectures, $P_{L1} \approx 4\text{--}5\text{ cycles}$, $P_{L2} \approx 14\text{ cycles}$, while $P_{DRAM} \approx 150\text{--}250\text{ cycles}$. Consequently, even a small increase in $M_{DRAM}$ dominates $T_{event}$.
+where $T_i$ is the access latency at level $i$ and $M_i$ is the miss rate. On modern x86\_64 microarchitectures, $T_{L1} \approx 4\text{--}5\text{ cycles}$ ($1\text{ ns}$), $T_{L2} \approx 14\text{ cycles}$ ($3.5\text{ ns}$), $T_{L3} \approx 45\text{ cycles}$ ($11\text{ ns}$), and $T_{\text{DRAM}} \approx 200\text{--}300\text{ cycles}$ ($50\text{--}75\text{ ns}$). When $M_{L1}, M_{L2}, M_{L3}$ rise due to heap scattering, AMAT degrades by an order of magnitude, throttling throughput regardless of network bandwidth.
 
-\section{Data-Oriented Architecture Design}
+\subsection{Allocator Contention and Tail Latency}
 
-\subsection{Zero-Allocation Bounded Slabs}
+When multiple worker threads allocate and free connection context objects concurrently, traditional allocators suffer thread contention on global metadata, false sharing across cache line boundaries, and heap fragmentation. In runtime environments with tracing garbage collection, stop-the-world pauses correlate with queue accumulation, driving $P_{99.9}$ tail latencies from microseconds to tens of milliseconds.
 
-Rather than allocating connection contexts on heap arrival, \ensuremath{\mu}WebZockets constructs a contiguous fixed slab at server initialization. Listing~\ref{lst:slab} presents the slab allocation algorithm. Each connection slot occupies exactly 64 bytes (the standard L1 cache line width), eliminating false sharing across cores.
+\section{The \ensuremath{\mu}WebZockets Architecture}
 
-\begin{lstlisting}[language=Zig,caption={Slab allocator freelist in Zig},label={lst:slab}]
+\subsection{Data-Oriented Slab Allocation}
+
+\ensuremath{\mu}WebZockets resolves heap fragmentation by pre-allocating all connection and protocol slots in contiguous slabs aligned to 64-byte boundaries at server initialization. Steady-state request processing never invokes system heap allocation.
+
+Listing~\ref{lst:slab} illustrates the $O(1)$ slab acquisition and release mechanism. A fixed bitset tracks slot occupancy, and a static freelist array indexes available slots. Hot fields (active flags, socket file descriptors, event loop registrations, ring pointers) are packed into the first 64 bytes of each slot.
+
+\begin{lstlisting}[language=Zig,caption={$O(1)$ Bitset and Freelist Slab Manager in \ensuremath{\mu}WebZockets},label={lst:slab}]
 pub fn acquire(self: *Self) ?*T {
     if (self.free_count == 0) return null;
     self.free_count -= 1;
     const idx = self.free_indices[self.free_count];
     self.active.set(idx);
-    return &self.storage[idx];
+    return &self.items[idx];
 }
 
 pub fn release(self: *Self, item: *T) bool {
-    const s_ptr = @intFromPtr(&self.storage[0]);
+    const s_ptr = @intFromPtr(&self.items[0]);
     const i_ptr = @intFromPtr(item);
     const e_ptr = s_ptr + @sizeOf(T) * capacity;
     if (i_ptr < s_ptr or i_ptr >= e_ptr) return false;
@@ -258,12 +261,12 @@ Fig.~\ref{fig:pipeline} traces the lifecycle of an inbound request. The ingress 
     stepbox/.style={draw=naturenavy, fill=naturenavy!6, thick, rounded corners=2pt, minimum width=6.8cm, minimum height=0.6cm, align=center, font=\scriptsize},
     arr/.style={-{Stealth[length=2mm]}, thick, draw=naturenavy}
 ]
-\node[stepbox, fill=gray!12] (s1) {\textbf{Step 1: Network Ingress Ring Buffer}\\Kernel \texttt{io\_uring} completes read directly into pinned buffer};
-\node[stepbox, below=of s1] (s2) {\textbf{Step 2: SIMD Vectorized Delimiter Scanning}\\AVX2/NEON 32-byte chunk scan for \texttt{\textbackslash r\textbackslash n} boundaries};
-\node[stepbox, below=of s2] (s3) {\textbf{Step 3: Zero-Copy Borrowed Memory Slices}\\Request headers and URI constructed as non-owning \texttt{[]const u8}};
-\node[stepbox, below=of s3] (s4) {\textbf{Step 4: Radix Tree Router Dispatch}\\Deterministic $O(k)$ path lookup with typed comptime handler};
-\node[stepbox, below=of s4] (s5) {\textbf{Step 5: Direct Outbound Ring Serialization}\\Headers and body formatted into pre-allocated circular queue};
-\node[stepbox, below=of s5, fill=natureteal!12] (s6) {\textbf{Step 6: io\_uring Submission / Completion}\\Kernel transmits without user-space buffer reallocations};
+\node[stepbox, fill=gray!12] (s1) {\textbf{Step 1: Network Ingress into Bounded Ring Buffer}\\Kernel reads directly into contiguous preallocated memory};
+\node[stepbox, below=of s1] (s2) {\textbf{Step 2: SIMD Delimiter Scanning (AVX2 / NEON)}\\256-bit parallel search identifies \texttt{\textbackslash r\textbackslash n} with zero byte copies};
+\node[stepbox, below=of s2] (s3) {\textbf{Step 3: Zero-Copy Request Synthesis}\\Synthesizes borrowed slices (\texttt{[]const u8}) referencing ingress buffer};
+\node[stepbox, below=of s3] (s4) {\textbf{Step 4: Radix-Tree Route Match \& Middleware}\\$O(k)$ route lookup with constant-time Auth and RateLimiter checks};
+\node[stepbox, below=of s4] (s5) {\textbf{Step 5: Direct Outbound Formatting or Streaming}\\Direct serialization or chunked streaming (\texttt{Response.begin\_stream()})};
+\node[stepbox, below=of s5, fill=natureteal!12] (s6) {\textbf{Step 6: Completion-based I/O Egress (libxev)}\\Vectored non-blocking write completion with zero allocations};
 
 \draw[arr] (s1) -- (s2);
 \draw[arr] (s2) -- (s3);
@@ -272,11 +275,30 @@ Fig.~\ref{fig:pipeline} traces the lifecycle of an inbound request. The ingress 
 \draw[arr] (s5) -- (s6);
 \end{tikzpicture}
 }
-\caption{End-to-end zero-copy request lifecycle in \ensuremath{\mu}WebZockets, showing zero dynamic memory allocations on the entire path.}
+\caption{End-to-end zero-copy request lifecycle in \ensuremath{\mu}WebZockets, enforcing strict zero dynamic allocations along the execution hot path.}
 \label{fig:pipeline}
 \end{figure}
 
-\section{Multi-Protocol Confinement}
+\subsection{Zero-Copy SIMD CookieJar and Versioned Signing}
+
+Cookie headers represent a substantial portion of ingress HTTP header overhead. In \ensuremath{\mu}WebZockets v1.7.1, the \texttt{CookieJar} engine utilizes SIMD delimiter matching (scanning for ``;'' and ``='') to parse cookies directly into fixed-capacity arrays of string views with zero allocations. Furthermore, for session authenticity, \texttt{CookieJar} incorporates HMAC-SHA256 signature verification with a versioned key ID prefix. This allows keys to be rotated gracefully across production rollouts without invalidating existing client sessions or allocating temporary verification buffers.
+
+\subsection{Allocation-Free Middleware and Chunked Streaming}
+
+Real-world web APIs require security filtering and dynamic streaming. \ensuremath{\mu}WebZockets integrates an allocation-free middleware layer:
+\begin{enumerate}
+    \item \textbf{Constant-Time Authentication (\texttt{middleware.Auth}):} Performs constant-time comparison for Basic (\texttt{Authorization: Basic ...}) and Bearer tokens, eliminating timing side-channel attacks without heap allocation.
+    \item \textbf{Token Bucket Rate Limiting (\texttt{middleware.RateLimit}):} Implements bounded in-memory token buckets mapped to client IP addresses or custom header hashes. When limits are exceeded, it immediately responds with \texttt{429 Too Many Requests} and an RFC-compliant \texttt{Retry-After} header.
+    \item \textbf{Chunked Streaming Response (\texttt{Response.begin\_stream()} and \texttt{begin\_json()}):} Dynamically pushes payloads as the socket egress buffer drains, ensuring memory usage remains static regardless of whether the response is a few bytes or a multi-gigabyte stream.
+\end{enumerate}
+
+\subsection{In-Memory Ephemeral Cryptography and Mutual TLS (mTLS)}
+
+To streamline microservice development and air-gapped test environments, \ensuremath{\mu}WebZockets features \texttt{init\_https\_ephemeral}, generating in-memory ECDSA P-256 keys and self-signed X.509 certificates with SAN (\texttt{localhost}, \texttt{127.0.0.1}, \texttt{::1}) at startup via BoringSSL crypto APIs, completely eliminating disk I/O. For high-security zero-trust architectures, \texttt{init\_https\_mtls} enforces strict mutual TLS (client certificate CA chain verification), terminating invalid handshakes at the transport layer before any HTTP parsing occurs.
+
+\subsection{Kernel Socket Tuning and Graceful Lifecycle}
+
+At the OS boundary, \ensuremath{\mu}WebZockets configures \texttt{TCP\_DEFER\_ACCEPT} to prevent waking the worker event loop until incoming data has arrived, and \texttt{TCP\_QUICKACK} to bypass Linux's 40ms delayed-ACK algorithm. Signal handling (\texttt{catch\_shutdown\_signals}) intercepts SIGINT/SIGTERM, shuts down listeners, drains in-flight TCP connections within a deadline, and releases slabs deterministically.
 
 \ensuremath{\mu}WebZockets implements a full multi-protocol stack with strict conformance to standard IETF specifications (Table~\ref{tab:protocol-matrix}).
 
@@ -294,6 +316,7 @@ HTTP/2 & RFC 9113, HPACK RFC 7541 & SoA stream slabs \\
 WebSocket & RFC 6455 (zslay), RFC 7692 & SIMD unmasking \\
 HTTP/3 & RFC 9114, RFC 9000 (lsquic) & Preallocated packet pool \\
 TLS 1.3 & RFC 8446, ALPN RFC 7301 & BoringSSL fixed BIOs \\
+mTLS & RFC 8446, RFC 5280 (X.509) & In-memory CA verification \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -340,24 +363,23 @@ The performance of \ensuremath{\mu}WebZockets was evaluated independently on the
     \node[left, font=\tiny] at (0,\y) {\val k};
 }
 
-% Plaintext / JSON bars
-\draw[fill=naturenavy!80, draw=naturenavy] (0.4,0) rectangle (0.8, 4.25) node[above, font=\tiny\bfseries] {170k};
-\draw[fill=natureteal!70, draw=natureteal] (0.85,0) rectangle (1.25, 3.96) node[above, font=\tiny\bfseries] {158k};
+\draw[fill=naturenavy!80, draw=naturenavy] (0.5,0) rectangle (0.85, 4.25) node[above, font=\tiny\bfseries] {170k};
+\draw[fill=natureteal!70, draw=natureteal] (0.85,0) rectangle (1.20, 3.96) node[above, font=\tiny\bfseries] {158k};
 
-\draw[fill=naturenavy!80, draw=naturenavy] (1.6,0) rectangle (2.0, 4.13) node[above, font=\tiny] {165k};
-\draw[fill=natureteal!70, draw=natureteal] (2.05,0) rectangle (2.45, 3.80) node[above, font=\tiny] {152k};
+\draw[fill=naturenavy!80, draw=naturenavy] (1.7,0) rectangle (2.05, 4.13) node[above, font=\tiny] {165k};
+\draw[fill=natureteal!70, draw=natureteal] (2.05,0) rectangle (2.40, 3.80) node[above, font=\tiny] {152k};
 
-\draw[fill=naturenavy!80, draw=naturenavy] (2.8,0) rectangle (3.2, 3.11) node[above, font=\tiny] {124k};
-\draw[fill=natureteal!70, draw=natureteal] (3.25,0) rectangle (3.65, 2.81) node[above, font=\tiny] {112k};
+\draw[fill=naturenavy!80, draw=naturenavy] (2.9,0) rectangle (3.25, 3.11) node[above, font=\tiny] {124k};
+\draw[fill=natureteal!70, draw=natureteal] (3.25,0) rectangle (3.60, 2.81) node[above, font=\tiny] {112k};
 
-\draw[fill=naturenavy!80, draw=naturenavy] (4.0,0) rectangle (4.4, 2.65) node[above, font=\tiny] {106k};
-\draw[fill=natureteal!70, draw=natureteal] (4.45,0) rectangle (4.85, 2.35) node[above, font=\tiny] {94k};
+\draw[fill=naturenavy!80, draw=naturenavy] (4.1,0) rectangle (4.45, 2.64) node[above, font=\tiny] {106k};
+\draw[fill=natureteal!70, draw=natureteal] (4.45,0) rectangle (4.80, 2.35) node[above, font=\tiny] {94k};
 
-\draw[fill=naturenavy!80, draw=naturenavy] (5.2,0) rectangle (5.6, 2.05) node[above, font=\tiny] {82k};
-\draw[fill=natureteal!70, draw=natureteal] (5.65,0) rectangle (6.05, 1.78) node[above, font=\tiny] {71k};
+\draw[fill=naturenavy!80, draw=naturenavy] (5.3,0) rectangle (5.65, 2.06) node[above, font=\tiny] {82k};
+\draw[fill=natureteal!70, draw=natureteal] (5.65,0) rectangle (6.00, 1.77) node[above, font=\tiny] {71k};
 
-\draw[fill=naturenavy!80, draw=naturenavy] (6.4,0) rectangle (6.8, 1.13) node[above, font=\tiny] {45k};
-\draw[fill=natureteal!70, draw=natureteal] (6.85,0) rectangle (7.25, 0.97) node[above, font=\tiny] {39k};
+\draw[fill=naturenavy!80, draw=naturenavy] (6.5,0) rectangle (6.85, 1.13) node[above, font=\tiny] {45k};
+\draw[fill=natureteal!70, draw=natureteal] (6.85,0) rectangle (7.20, 0.97) node[above, font=\tiny] {39k};
 
 \node[below=2pt, align=center, font=\tiny\bfseries] at (0.85, 0) {\ensuremath{\mu}WebZockets};
 \node[below=2pt, align=center, font=\tiny] at (2.05, 0) {dusty+zio};
@@ -428,14 +450,19 @@ Fig.~\ref{fig:tail} presents the 99th percentile ($P_{99}$) tail latency profile
     \node[below, font=\tiny] at (\x, 0) {\val};
 }
 
-% Baseline Heap AoS (Red)
-\draw[thick, draw=naturecoral, line width=1.1pt, mark=square*] plot coordinates {
-    (1.0, 1.45) (2.4, 2.20) (3.8, 3.20) (5.2, 3.85) (6.6, 4.10)
+\draw[thick, draw=naturecoral, line width=1.2pt, mark=square*] plot coordinates {
+    (1.0, 1.55)
+    (2.4, 2.40)
+    (3.8, 3.45)
+    (5.2, 4.60)
 };
 
-% uWebZockets DoD Slab (Teal)
 \draw[thick, draw=natureteal, line width=1.2pt, mark=*] plot coordinates {
-    (1.0, 0.85) (2.4, 1.05) (3.8, 1.35) (5.2, 1.70) (6.6, 2.05)
+    (1.0, 0.90)
+    (2.4, 1.10)
+    (3.8, 1.45)
+    (5.2, 1.90)
+    (6.6, 2.25)
 };
 
 \node[draw=gray!50, fill=white, rounded corners=2pt, inner sep=3pt] at (3.6, 3.8) {
