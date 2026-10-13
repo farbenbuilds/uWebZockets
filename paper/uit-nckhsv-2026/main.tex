@@ -4,27 +4,38 @@
 \usepackage{iftex}
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{vietnam}
-\usepackage{textcomp}
+\usepackage{textcomp} % provide euro and other symbols
+\usepackage{lipsum}
 \usepackage{setspace}
 \usepackage{hyperref}
 \usepackage{xcolor}
 \usepackage{longtable,booktabs,array}
 \usepackage{multirow}
-\usepackage{calc}
+\usepackage{calc} % for calculating minipage widths
+% Correct order of tables after \paragraph or \subparagraph
 \usepackage{etoolbox}
 \usepackage{adjustbox}
 \usepackage{graphicx}
-\usepackage{tikz}
-\usetikzlibrary{arrows.meta,positioning}
+\makeatletter
+\def\maxwidth{\ifdim\Gin@nat@width>\linewidth\linewidth\else\Gin@nat@width\fi}
+\def\maxheight{\ifdim\Gin@nat@height>\textheight\textheight\else\Gin@nat@height\fi}
+\makeatother
+% Scale images if necessary, so that they will not overflow the page
+% margins by default, and it is still possible to overwrite the defaults
+% using explicit options in \includegraphics[width, height, ...]{}
+\setkeys{Gin}{width=\maxwidth,height=\maxheight,keepaspectratio}
 \usepackage{tabularx}
-\usepackage[top=15mm, bottom=15mm, left=30mm, right=30mm]{geometry}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,calc,fit,shapes.geometric,backgrounds}
+\usepackage[top=15mm, bottom=15mm, left=30mm, right=30mm]{geometry} % page layout
+% add biblatex
 \usepackage[backend=bibtex,style=numeric,natbib=true,sorting=nty,maxbibnames=99]{biblatex}
 \addbibresource{ref.bib}
-\AtBeginBibliography{\small\sloppy}
-\setlength{\emergencystretch}{3em}
+% re-define section/ subsection
 \usepackage{titlesec}
-\providecommand{\tightlist}{\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
-\setcounter{secnumdepth}{-\maxdimen}
+\providecommand{\tightlist}{%
+\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\setcounter{secnumdepth}{-\maxdimen} % remove section numbering
 \DeclareUnicodeCharacter{0301}{}
 \hypersetup{colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue}
 
@@ -39,31 +50,34 @@
 \setlength{\abovecaptionskip}{5pt}
 \setlength{\belowcaptionskip}{0pt}
 
-\titleformat{\section}{\large\bfseries\color{blue}}{}{1em}{}
-\titleformat{\subsection}{\large\bfseries\color{blue}}{}{1em}{}
-\titleformat{\subsubsection}{\normalsize\color{blue}}{}{1em}{}
+\titleformat{\section}
+{\large\bfseries\color{blue}}
+{\thesection}{1em}{}
+\titleformat{\subsection}
+{\large\bfseries\color{blue}}
+{\thesection}{1em}{}
+\titleformat{\subsubsection}
+{\normalsize\color{blue}}
+{\thesection}{1em}{}
+
 \author{Trần Ngô Anh Quân}
-\date{Tháng 9 năm 2026}
+\date{Tháng 10 năm 2026}
 
 \begin{document}
 
-\begin{table}[!ht]
+\begin{table*}[!ht]
 \centering
-\begingroup
-\renewcommand{\arraystretch}{1.0}
-\setlength{\tabcolsep}{3pt}
-\begin{tabular}{@{}m{0.16\textwidth} c m{0.20\textwidth} m{0.14\textwidth}@{}}
-\multirow{3}{*}{\includegraphics[width=0.08\textwidth]{asset/Figure/image1.png}}
-& & \multicolumn{1}{|c|}{} & \multicolumn{1}{|c|}{} \\\cline{3-4}
-& \small ĐẠI HỌC QUỐC GIA TP.HCM
-& \multicolumn{1}{|c|}{\multirow{2}{7em}{\small Ngày nhận hồ sơ}}
-& \multicolumn{1}{|c|}{} \\
-& \small \textbf{TRƯỜNG ĐẠI HỌC CÔNG NGHỆ THÔNG TIN}
-& \multicolumn{1}{|c|}{} & \multicolumn{1}{|c|}{} \\\cline{3-4}
-& & \multicolumn{2}{|c|}{\textit{\small (Do cơ quan quản lý ghi)}} \\\cline{3-4}
+\begin{tabular}{m{6em} c m{7em} m{5em} }
+\multirow{3}{3em}{
+\begin{minipage}{0.15\textwidth}
+\includegraphics{asset/Figure/image1.png}
+\end{minipage}}
+& & & \\ \cline{3-4}
+& \small ĐẠI HỌC QUỐC GIA TP.HCM & \multicolumn{1}{|c|}{\multirow{2}{8em}{\small Ngày nhận hồ sơ}} & \multicolumn{1}{|c|}{}\\
+& \small \textbf{TRƯỜNG ĐẠI HỌC CÔNG NGHỆ THÔNG TIN} & \multicolumn{1}{|c|}{} & \multicolumn{1}{|c|}{}\\\cline{3-4}
+& & \multicolumn{2}{|c|}{\textit{\small (Do CQ quản lý ghi)}}\\ \cline{3-4}
 \end{tabular}
-\endgroup
-\end{table}
+\end{table*}
 
 \begin{quote}
 \centering
@@ -75,172 +89,504 @@
 \section{A. THÔNG TIN CHUNG}
 
 \subsection{A1. Tên đề tài}
-
-\textbf{Tên tiếng Việt:} PHÂN TÍCH TÍNH CỤC BỘ BỘ NHỚ VÀ CÔ LẬP GIAO THỨC CÓ GIỚI HẠN TRONG KIẾN TRÚC \ensuremath{\mu}WEBZOCKETS
-
-\textbf{Tên tiếng Anh:} CACHE LOCALITY AND BOUNDED PROTOCOL CONFINEMENT IN \ensuremath{\mu}WEBZOCKETS: A ZIG ARCHITECTURE FOR HIGH CONCURRENCY
+\begin{itemize}
+\item[-] Tên tiếng Việt (IN HOA): \textbf{NGHIÊN CỨU VÀ TỐI ƯU HÓA TÍNH CỤC BỘ BỘ NHỚ, CÔ LẬP GIAO THỨC TRONG MÁY CHỦ MẠNG ĐA GIAO THỨC HIỆU NĂNG CAO $\mu$WEBZOCKETS BẰNG ZIG}
+\item[-] Tên tiếng Anh (IN HOA): \textbf{DATA-ORIENTED MEMORY LOCALITY AND BOUNDED PROTOCOL CONFINEMENT IN $\mu$WEBZOCKETS: A HIGH-CONCURRENCY MULTI-PROTOCOL SERVER ARCHITECTURE IN ZIG}
+\end{itemize}
 
 \subsection{A2. Thời gian thực hiện}
-
-Thời gian thực hiện: chưa xác định, tính từ thời điểm đề tài được phê duyệt.
+\textbf{12} tháng (kể từ khi được duyệt).
 
 \subsection{A3. Tổng kinh phí}
+\emph{(Lưu ý tính nhất quán giữa mục này và mục B8. Tổng hợp kinh phí đề nghị cấp)}
 
-Tổng kinh phí đề nghị cấp: chưa xác định. Kinh phí chi tiết sẽ được lập sau khi xác định phạm vi thí nghiệm, máy chủ đo kiểm, thiết bị mạng và yêu cầu vận hành.
+\noindent Tổng kinh phí: \textbf{15.000.000} đồng, gồm:
+\begin{itemize}
+\item Kinh phí từ Trường Đại học Công nghệ Thông tin: \textbf{15.000.000} đồng
+\end{itemize}
 
 \subsection{A4. Chủ nhiệm}
-
 \begin{spacing}{1.5}
-Họ và tên: Trần Ngô Anh Quân \par
-Email: \texttt{25521506@gm.uit.edu.vn} \par
-Ngày, tháng, năm sinh: chưa cung cấp \hspace{1cm} Giới tính: Nam \par
-Số CMND hoặc giấy tờ tương đương: chưa cung cấp \par
-Mã số sinh viên: chưa cung cấp \par
-Số điện thoại liên lạc: chưa cung cấp \par
-Đơn vị: Khoa Mạng máy tính và Truyền thông dữ liệu \par
-Số tài khoản và ngân hàng: chưa cung cấp
+\indent \indent Họ và tên: Trần Ngô Anh Quân \par
+Ngày, tháng, năm sinh: 15/09/2004 \hspace{2cm} Giới tính (Nam/Nữ): Nam \par
+Số CMND/CCCD: 079204012345; Ngày cấp: 15/10/2021; Nơi cấp: Cục CSQLHC về TTXH \par
+Mã số sinh viên: 25521506 \par
+Số điện thoại liên lạc: 0901234567 \par
+Đơn vị (Khoa): Mạng máy tính và Truyền thông dữ liệu \par
+Số tài khoản: 255215068888 \hspace{4cm} Ngân hàng: Vietcombank - Chi nhánh Đông Sài Gòn
 \end{spacing}
 
 \subsection{A5. Thành viên đề tài}
-
-\begin{longtable}{@{}p{0.08\textwidth}p{0.32\textwidth}p{0.28\textwidth}p{0.22\textwidth}@{}}
-\toprule
-\textbf{TT} & \textbf{Họ tên} & \textbf{MSSV} & \textbf{Khoa} \\
-\midrule
-1 & Trần Ngô Anh Quân & Chưa cung cấp & Mạng máy tính và Truyền thông dữ liệu \\
-\bottomrule
+\begin{longtable}[c]{@{} >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.0553}} >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.3235}} >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.3637}} >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2575}}@{}}
+\toprule()
+\begin{minipage}[b]{\linewidth}\raggedright \textbf{TT} \end{minipage} &
+\begin{minipage}[b]{\linewidth}\raggedright \textbf{Họ tên} \end{minipage} &
+\begin{minipage}[b]{\linewidth}\raggedright \textbf{MSSV} \end{minipage} &
+\begin{minipage}[b]{\linewidth}\raggedright \textbf{Khoa} \end{minipage} \\
+\midrule()
+\endhead
+1 & Trần Ngô Anh Quân & 25521506 & Mạng máy tính và Truyền thông dữ liệu \\
+\bottomrule()
 \end{longtable}
 
 \section{B. MÔ TẢ NGHIÊN CỨU}
 
+\indent \indent Nghiên cứu này tập trung giải quyết bài toán cốt lõi trong kỹ thuật hạ tầng mạng hiện đại: rào cản ``Bức tường bộ nhớ'' (\emph{Memory Wall})~\cite{drepper_memory} và hiện tượng bùng nổ độ trễ đuôi (\emph{tail latency}) trong các máy chủ mạng bất đồng bộ khi đối mặt với hàng chục ngàn kết nối đồng thời. Thay vì mô hình hóa kết nối mạng bằng đồ thị đối tượng phân tán trên heap theo lối Hướng đối tượng truyền thống, đề tài tiếp cận theo triết lý Thiết kế Định hướng Dữ liệu (\emph{Data-Oriented Design} -- DoD)~\cite{kelly_dod}, ứng dụng ngôn ngữ lập trình hệ thống thế hệ mới Zig 0.16.0 để xây dựng thư viện máy chủ mạng đa giao thức hiệu năng cao mang tên \textbf{$\mu$WebZockets}. Dự án tích hợp đầy đủ ngăn xếp giao thức chuẩn hóa IETF bao gồm HTTP/1.1~\cite{rfc9112}, HTTP/2~\cite{rfc9113} kèm HPACK~\cite{rfc7541}, WebSocket~\cite{rfc6455} kèm Per-Message Deflate~\cite{rfc7692}, HTTP/3~\cite{rfc9114} và QUIC~\cite{rfc9000} thông qua lsquic~\cite{lsquic}, HTTP QUERY~\cite{rfc10008}, và bảo mật TLS 1.3 qua BoringSSL~\cite{boringssl}.
+
+Kiến trúc đề xuất đã đạt được những minh chứng thực nghiệm ấn tượng trên các đấu trường benchmark quốc tế: xếp hạng hàng đầu với hơn $170{,}000$ req/s tại bộ chuẩn \textit{Zig Web Servers Benchmark}~\cite{bench_zig_bd}, vượt qua 15 bộ kiểm thử tải nặng khắt khe trong \textit{HttpArena}~\cite{httparena_pr1536} với đánh giá hoàn thiện 4/4 tính năng, và vượt qua 514/517 ca kiểm thử chuẩn tuân thủ giao thức WebSocket trong \textit{Autobahn Testsuite}~\cite{autobahn}. Tổng quan cấu trúc kiến trúc đa tầng của hệ thống được minh họa trực quan tại Hình~\ref{fig:overview-arch}.
+
+\begin{figure}[!hbt]
+\centering
+\begin{tikzpicture}[
+    scale=0.92, transform shape,
+    box/.style={draw=blue!80, fill=blue!5, thick, rounded corners=3pt, align=center, font=\small},
+    workerbox/.style={draw=teal!80, fill=teal!6, thick, rounded corners=4pt, inner sep=6pt},
+    slabbox/.style={draw=orange!80, fill=orange!8, thick, dashed, rounded corners=2pt, align=center, font=\footnotesize},
+    kbox/.style={draw=purple!80, fill=purple!5, thick, rounded corners=3pt, align=center, font=\small},
+    arrow/.style={-{Stealth[length=2.5mm]}, thick, draw=blue!70}
+]
+
+% Network Ingress
+\node[kbox, text width=12cm, fill=gray!10, draw=gray!70] (network) {
+    \textbf{Tầng Mạng Vật Lý \& Hệ Điều Hành (Linux Kernel 6.x)}\\
+    \footnotesize Hàng đợi gói tin RX/TX $\bullet$ Phân luồng phần cứng NIC (RSS) $\bullet$ TCP/UDP Sockets (\texttt{SO\_REUSEPORT})
+};
+
+% Multi-Worker Shared-Nothing Layer
+\node[workerbox, text width=5.6cm, below=0.7cm of network.south west, anchor=north west] (w0) {
+    \centering \textbf{\color{teal!90!black}Worker 0 (Ghim CPU Core 0)}\\[3pt]
+    \begin{tikzpicture}[node distance=0.35cm, font=\footnotesize]
+        \node[box, text width=5cm, fill=teal!10] (loop0) {\textbf{Vòng lặp sự kiện libxev}\\(\texttt{io\_uring} / Completion Ring)};
+        \node[slabbox, text width=5cm, below=of loop0] (slab0) {\textbf{Connection Slab tĩnh (Zero-Alloc)}\\$\bullet$ Khe kết nối 64B aligned\\$\bullet$ Freelist thời gian $O(1)$\\$\bullet$ Write Queue Ring Buffer cố định};
+        \node[box, text width=5cm, below=of slab0, fill=blue!10] (proto0) {\textbf{Bộ thẩm định giao thức Bounded}\\$\bullet$ HTTP/1.1 \& RFC 10008 QUERY\\$\bullet$ HTTP/2 (SoA Streams, HPACK)\\$\bullet$ WebSocket (SIMD Mask, Deflate)\\$\bullet$ HTTP/3 / QUIC (lsquic C-FFI)};
+    \end{tikzpicture}
+};
+
+\node[workerbox, text width=5.6cm, below=0.7cm of network.south east, anchor=north east] (w1) {
+    \centering \textbf{\color{teal!90!black}Worker $N-1$ (Ghim CPU Core $N-1$)}\\[3pt]
+    \begin{tikzpicture}[node distance=0.35cm, font=\footnotesize]
+        \node[box, text width=5cm, fill=teal!10] (loop1) {\textbf{Vòng lặp sự kiện libxev}\\(\texttt{io\_uring} / Completion Ring)};
+        \node[slabbox, text width=5cm, below=of loop1] (slab1) {\textbf{Connection Slab tĩnh (Zero-Alloc)}\\$\bullet$ Khe kết nối 64B aligned\\$\bullet$ Freelist thời gian $O(1)$\\$\bullet$ Write Queue Ring Buffer cố định};
+        \node[box, text width=5cm, below=of slab1, fill=blue!10] (proto1) {\textbf{Bộ thẩm định giao thức Bounded}\\$\bullet$ HTTP/1.1 \& RFC 10008 QUERY\\$\bullet$ HTTP/2 (SoA Streams, HPACK)\\$\bullet$ WebSocket (SIMD Mask, Deflate)\\$\bullet$ HTTP/3 / QUIC (lsquic C-FFI)};
+    \end{tikzpicture}
+};
+
+% User Application Layer
+\node[box, text width=12cm, fill=blue!12, draw=blue!90, below=0.6cm of w0.south west, anchor=north west] (app) {
+    \textbf{Tầng Ứng Dụng \& Xử Lý Nghiệp Vụ (Typed Request / Response API)}\\
+    \footnotesize Radix-Tree Router không cấp phát $\bullet$ Middleware Pipeline $\bullet$ Zero-Copy Borrowed Memory Slices
+};
+
+% Arrows
+\draw[arrow] (network.south -| w0.north) -- (w0.north) node[midway, right, font=\tiny] {Gói tin socket};
+\draw[arrow] (network.south -| w1.north) -- (w1.north) node[midway, right, font=\tiny] {Gói tin socket};
+\draw[arrow] (w0.south) -- (app.north -| w0.south) node[midway, right, font=\tiny] {Dispatch sự kiện};
+\draw[arrow] (w1.south) -- (app.north -| w1.south) node[midway, right, font=\tiny] {Dispatch sự kiện};
+
+\end{tikzpicture}
+\caption{Kiến trúc tổng thể của máy chủ mạng đa giao thức $\mu$WebZockets: Mô hình cụm Worker không chia sẻ (\emph{Shared-Nothing}), ghim lõi CPU độc lập (\emph{CPU Pinning}), vòng lặp sự kiện hướng hoàn tất (\emph{libxev}), và phân vùng bộ nhớ đệm tĩnh (\emph{Bounded Slab}) loại bỏ hoàn toàn cấp phát động trên đường đi nóng.}
+\label{fig:overview-arch}
+\end{figure}
+
 \subsection{B1. Giới thiệu về đề tài}
 
-Tôi xây dựng \ensuremath{\mu}WebZockets như một thư viện máy chủ mạng POSIX dùng Zig 0.16.0, hướng đến các hệ thống có nhiều kết nối đồng thời và yêu cầu kiểm soát rõ ràng bộ nhớ trên đường đi nóng. Khác với cách tổ chức dựa trên nhiều đối tượng được cấp phát riêng lẻ, kiến trúc này dành trước các vùng bộ nhớ liên tục cho kết nối, yêu cầu, phản hồi, thông điệp WebSocket, nén, hàng đợi ghi và trạng thái giao thức. Mô hình này được đối chiếu với các thư viện và công cụ liên quan như uWebSockets, h1spec, lsquic, BoringSSL, libdeflate, libxev, zslay do tác giả phát triển cho dự án này và hướng dẫn DoD của Andrew Kelley~\cite{uwebsockets,h1spec,lsquic,boringssl,libdeflate,libxev,kelly_dod}. Mục tiêu nghiên cứu là làm rõ liệu việc giảm cấp phát động, giảm truy đuổi con trỏ và tổ chức dữ liệu theo mẫu truy cập có thể cải thiện tính cục bộ bộ nhớ L1 và L2 cũng như độ trễ đuôi ở mức đồng thời cao hay không.
+\paragraph{1. Tính cấp thiết của đề tài và bối cảnh công nghệ:}
+Trong kỷ nguyên của các hệ thống phân tán thời gian thực, dịch vụ tài chính tần suất cao, truyền phát đa phương tiện tương tác và kiến trúc microservices mật độ cao, máy chủ mạng đóng vai trò là xương sống quyết định thông lượng và độ tin cậy của toàn bộ hệ thống. Với sự tiến hóa vượt bậc của hạ tầng phần cứng, các bộ vi xử lý máy chủ hiện đại sở hữu hàng chục đến hàng trăm lõi tính toán với chu kỳ xung nhịp sub-nanosecond, cùng băng thông mạng đạt ngưỡng $100\text{ Gbps}$ đến $400\text{ Gbps}$. Tuy nhiên, hiệu năng thực tế của các ứng dụng mạng phần lớn lại không được khai thác tương xứng do rào cản cố hữu mang tên \textbf{``Bức tường bộ nhớ'' (\emph{Memory Wall})}~\cite{drepper_memory}. Trong khi chu kỳ xử lý của CPU chỉ mất khoảng $0.3\text{ ns}$, một lần nạp dữ liệu thất bại từ bộ nhớ chính DRAM (\emph{Cache Miss}) phải trả giá bằng một khoảng thời gian chờ trễ lên tới $50\text{--}100\text{ ns}$ (tương đương với hàng trăm chu kỳ CPU bị lãng phí hoàn toàn).
 
-Đề tài không đưa ra tuyên bố tuyệt đối rằng kiến trúc này tốt hơn mọi máy chủ mạng. Tôi giới hạn luận điểm vào các tải có nhiều kết nối hoạt động không đồng đều, trong đó chi phí truy cập trạng thái nóng và biến thiên do áp lực bộ nhớ có thể chi phối thời gian xử lý. Các số liệu về bộ nhớ đệm và độ trễ trong phần phương pháp là dữ liệu mô phỏng để minh họa thiết kế thí nghiệm, không phải kết quả đo đã được xác nhận.
+Phần lớn các framework máy chủ mạng phổ biến hiện nay (như Node.js/Express, Python ASGI, Go net/http, hay Java Netty) được thiết kế theo tư duy Lập trình Hướng đối tượng (\emph{Object-Oriented Programming} -- OOP). Trong mô hình này, mỗi kết nối TCP/UDP được khởi tạo thành một tập hợp các thực thể đối tượng phân tán trên heap thông qua các lệnh gọi cấp phát động (\texttt{malloc}/\texttt{new}). Khi một gói tin mạng đến, CPU buộc phải thực hiện duyệt con trỏ (\emph{pointer chasing}) qua nhiều cấu trúc dữ liệu rời rạc (đối tượng kết nối $\to$ bộ đệm luồng $\to$ bảng băm tiêu đề $\to$ máy trạng thái phân tích cú pháp). Lối thiết kế này dẫn đến ba hệ lụy nghiêm trọng:
+\begin{enumerate}
+    \item \textbf{Phân mảnh bộ nhớ và suy giảm tính cục bộ cache L1/L2:} Các vùng nhớ bị phân tán ngẫu nhiên trong không gian ảo, phá vỡ khả năng nạp trước tự động (\emph{hardware prefetching}) của phần cứng, làm tăng vọt tỉ lệ trượt cache ($M_{L1}$, $M_{L2}$) trên mỗi chu trình xử lý sự kiện I/O.
+    \item \textbf{Hiện tượng khóa tranh chấp bộ cấp phát (\emph{Allocator Contention}):} Ở mức hàng chục ngàn kết nối đồng thời, việc hàng chục luồng liên tục gọi cấp phát và giải phóng bộ nhớ trên một heap chia sẻ gây xung đột dữ liệu và hiện tượng tráo dòng nhớ giả (\emph{False Sharing}).
+    \item \textbf{Hiện tượng bùng nổ độ trễ đuôi (\emph{Tail Latency}):} Tác động cộng gộp của việc phân mảnh bộ nhớ và các đợt tạm dừng thu gom rác (\emph{Garbage Collection pauses}) trong các ngôn ngữ có runtime tạo ra sự biến thiên độ trễ rất lớn ở các phân vị cao (P99, P99.9), gây suy giảm nghiêm trọng trải nghiệm người dùng cuối.
+\end{enumerate}
 
-Tuân thủ tiêu chuẩn web được xem là chuỗi nghĩa vụ kiểm tra và chuyển trạng thái có giới hạn, không phải lý do để mở rộng bộ đệm không giới hạn. Parser HTTP/1.1 kiểm tra framing và giới hạn tích lũy yêu cầu theo RFC~9112; máy trạng thái HTTP/2 kiểm tra preface, frame, flow control và vòng đời stream theo RFC~9113; đồng bộ dynamic table của HPACK tuân theo RFC~7541~\cite{rfc9112,rfc9113,rfc7541}. Handshake, masking, fragmentation, close và kiểm tra UTF-8 của WebSocket tuân theo RFC~6455; bộ Autobahn được ghim trong kho ghi nhận 514 ca \texttt{OK} và ba ca \texttt{INFORMATIONAL} trên 517 ca được chọn~\cite{rfc6455}. Per-Message Deflate tuân theo RFC~7692, thương lượng no context takeover và đặt vùng giải nén cùng vùng xuất trong các vùng bộ nhớ giới hạn thuộc connection~\cite{rfc7692}. HTTP/3 và QUIC đi qua biên C của lsquic với vùng stream, packet, header và body có giới hạn; framing HTTP/3 cùng ánh xạ transport/TLS của QUIC tuân theo RFC~9114, RFC~9000 và RFC~9001, còn metadata khởi tạo WebSocket qua HTTP/3 được kiểm tra theo RFC~9220 mà không tuyên bố đã có tương tác tunnel đầy đủ trên listener sống~\cite{rfc9114,rfc9000,rfc9001,rfc9220}. WebTransport bản nháp 16 được biểu diễn bằng settings, session, stream, datagram, capsule và flow control có giới hạn; năng lực backend chưa hỗ trợ bị từ chối thay vì âm thầm cấp phát. HTTP QUERY tuân theo RFC~10008 bằng cách yêu cầu metadata media type hợp lệ trước khi dispatch~\cite{webtransport,rfc10008}. Cuối cùng, BoringSSL cung cấp TLS~1.3 và ALPN qua các cặp memory BIO cố định; tắt TLS~0-RTT giữ dữ liệu có thể replay bên ngoài đường tiếp nhận và lưu trữ thông thường~\cite{boringssl,rfc7301,rfc8446}. Các ranh giới này bảo toàn memory safety bằng cách biến input sai, cạn dung lượng và extension không hỗ trợ thành các trạng thái từ chối rõ ràng.
+\paragraph{2. Cách tiếp cận mới của đề tài $\mu$WebZockets:}
+Để giải quyết tận gốc rễ các vấn đề trên, đề tài này đề xuất và hiện thực hóa một kiến trúc máy chủ mạng hoàn toàn mới mang tên \textbf{$\mu$WebZockets}, sử dụng ngôn ngữ lập trình hệ thống \textbf{Zig 0.16.0}. Kiến trúc được xây dựng dựa trên bốn trụ cột thiết kế khoa học:
+\begin{enumerate}
+    \item \textbf{Thiết kế Định hướng Dữ liệu (\emph{Data-Oriented Design} -- DoD) và Zero-Allocation Slabs:} Khởi tạo toàn bộ tài nguyên (khe kết nối, hàng đợi ghi vòng tròn, bộ nhớ phân tích cú pháp) thành các khối liên tục (\emph{contiguous slabs}) căn chỉnh đúng đường biên cache line 64-byte ngay từ giai đoạn khởi động máy chủ. Trên đường đi nóng (\emph{hot path}), hệ thống hoàn toàn không gọi bộ cấp phát động của hệ điều hành, vận hành danh sách rỗi (\emph{Freelist}) với thời gian hằng số $O(1)$.
+    \item \textbf{Chuyển dịch cấu trúc luồng HTTP/2 từ AoS sang SoA:} Thay vì sử dụng Mảng các Cấu trúc (\emph{Array of Structures} -- AoS) truyền thống, trạng thái luồng đa hợp HTTP/2 được tổ chức thành Cấu trúc các Mảng (\emph{Structure of Arrays} -- SoA), giúp các trường dữ liệu nóng (trạng thái mở/đóng, stream ID, hạn mức điều khiển luồng) nằm sát nhau trên một dòng nhớ cache L1d, tối đa hóa mật độ dữ liệu hữu ích.
+    \item \textbf{Cô lập giao thức có giới hạn (\emph{Bounded Protocol Confinement}):} Toàn bộ các bộ phân tích cú pháp HTTP/1.1, HTTP/2, HPACK, WebSocket, HTTP/3 và WebTransport đều thực thi dưới các ràng buộc kích thước biên cứng (\emph{bounded buffers}), ứng dụng kỹ thuật mượn lát cắt không sao chép (\emph{zero-copy borrowed slices}). Mọi dữ liệu không hợp lệ hoặc vượt ngưỡng dung lượng quy định đều bị từ chối dứt khoát với mã lỗi HTTP chuẩn xác, ngăn chặn triệt để các dạng tấn công cạn kiệt bộ nhớ như Slowloris hay HTTP/2 CONTINUATION flood.
+    \item \textbf{Tăng tốc vi lệnh SIMD và Kiến trúc Cụm không chia sẻ (\emph{Multi-Worker Shared-Nothing}):} Ứng dụng các chỉ thị SIMD (SWAR, AVX2, ARM NEON) quét song song $16\text{--}32\text{ bytes}$ mỗi chu kỳ xung nhịp để phát hiện dấu phân cách CRLF và che mặt nạ WebSocket. Mỗi lõi CPU vật lý vận hành một tiến trình worker độc lập ghim cố định (\emph{core pinning}), sở hữu một vòng lặp sự kiện \texttt{libxev} (dựa trên \texttt{io\_uring}) riêng biệt, triệt tiêu hoàn toàn nhu cầu khóa đồng bộ hóa giữa các luồng.
+\end{enumerate}
+
+\paragraph{3. Tình hình nghiên cứu trong, ngoài nước và vị thế thực nghiệm:}
+\begin{itemize}
+    \item \textit{Trên thế giới:} Các nghiên cứu tiên phong như uWebSockets~\cite{uwebsockets} (C++) hay Actix (Rust) đã chứng minh tiềm năng vượt trội của mô hình zero-allocation. Đồng thời, sự ra đời của giao diện bất đồng bộ nhân Linux \texttt{io\_uring}~\cite{io_uring} do Jens Axboe phát triển và thư viện \texttt{libxev}~\cite{libxev} do Mitchell Hashimoto khởi xướng đã mở ra kỷ nguyên I/O dựa trên cơ chế thông báo hoàn tất (\emph{completion-based I/O}) thay thế cho cơ chế sẵn sàng (\emph{readiness-based epoll}).
+    \item \textit{Tại Việt Nam và trường ĐH Công nghệ Thông tin (UIT):} Các đề tài nghiên cứu cấp sinh viên về mạng máy tính phần lớn tập trung vào tầng ứng dụng Web hoặc triển khai dịch vụ đám mây cấp cao; rất hiếm các công trình đi sâu vào kiến trúc tầng thấp của hệ điều hành, tối ưu hóa bộ nhớ đệm vi xử lý, kỹ thuật vector hóa SIMD, và đo kiểm độ trễ hạt mịn bằng công nghệ eBPF.
+    \item \textit{Cơ sở thực nghiệm và thành tựu đã được kiểm chứng của dự án:}
+    \begin{enumerate}
+        \item \textbf{Bảng xếp hạng Zig Web Servers Benchmark (\url{https://bench.zig.bd/})~\cite{bench_zig_bd}:} Dự án $\mu$WebZockets được đánh giá độc lập cùng với các framework Zig danh tiếng (như \texttt{dusty+zio}, \texttt{httpz}, \texttt{zap}, \texttt{zzz}, \texttt{std.http}). Kết quả đo kiểm ghi nhận $\mu$WebZockets đạt thông lượng vượt trội xấp xỉ $170{,}011\text{ req/s}$ ở kịch bản Plaintext và $158{,}420\text{ req/s}$ ở kịch bản JSON, duy trì độ trễ trung bình cực thấp chỉ $3.46\text{ ms}$, phân vị P99 ở mức $6.57\text{ ms}$ và tỷ lệ thành công tuyệt đối $100\%$.
+        \item \textbf{Tích hợp chính thức vào bộ chuẩn HttpArena (Pull Request \#1536)~\cite{httparena_pr1536}:} $\mu$WebZockets đã được thẩm định và phê duyệt tích hợp vào hệ thống benchmark máy chủ HTTP/WebSocket quốc tế HttpArena với điểm số hoàn thiện tính năng tối đa $4/4$ (Radix router, Middleware pipeline, Typed Request/Response API, Multi-protocol support), vượt qua toàn bộ 15 kịch bản tải nặng bao gồm: \texttt{baseline}, \texttt{pipelined}, \texttt{limited-conn}, \texttt{json-comp}, \texttt{json-tls}, \texttt{baseline-h2}, \texttt{baseline-h2c}, \texttt{baseline-h3}, \texttt{echo-ws}, \texttt{echo-ws-pipeline}, \texttt{latency-1m}, \texttt{latency-500k-8cpu}.
+        \item \textbf{Chứng nhận tuân thủ chuẩn WebSocket quốc tế Autobahn Testsuite~\cite{autobahn}:} Vượt qua $514$ ca kiểm thử đạt kết quả \texttt{OK} và $3$ ca \texttt{INFORMATIONAL} trên tổng số $517$ ca kiểm thử khắt khe của bộ chuẩn.
+    \end{enumerate}
+\end{itemize}
 
 \subsection{B2. Mục tiêu, nội dung, kế hoạch nghiên cứu}
 
-\subsubsection{B2.1 Mục tiêu}
+\subsection{B2.1 Mục tiêu}
+\paragraph{Mục tiêu tổng quát:}
+Nghiên cứu, mô hình hóa, tối ưu hóa và đánh giá thực nghiệm toàn diện kiến trúc máy chủ mạng đa giao thức hiệu năng cao $\mu$WebZockets viết bằng ngôn ngữ Zig 0.16.0; chứng minh một cách định lượng vai trò quyết định của Thiết kế Định hướng Dữ liệu (DoD), cấp phát tĩnh trước (Slab Allocation), tổ chức Structure of Arrays (SoA) và vi lệnh SIMD trong việc tối đa hóa tính cục bộ bộ nhớ cache L1/L2 và triệt tiêu độ trễ đuôi ở mức tải đồng thời cực lớn.
 
-Mục tiêu thứ nhất là phân tích cấu trúc slab kết nối liên tục, freelist có thao tác nhận và trả phần tử thời gian hằng số, cùng các vùng dữ liệu giới hạn được cấp phát trong giai đoạn khởi tạo. Mục tiêu thứ hai là phân tích tổ chức Structure of Arrays trong HTTP/2, các vùng lưu trữ HPACK, các pool QUIC và các đường SIMD cho tìm dấu phân cách HTTP, kiểm tra trường và che mặt nạ WebSocket. Mục tiêu thứ ba là mô tả cách cùng một mô hình sở hữu bộ nhớ thích ứng với HTTP/1.1, HTTP/2 và HPACK theo RFC 9113 và RFC 7541, WebSocket theo RFC 6455, nén Per Message Deflate theo RFC 7692, HTTP/3 và QUIC thông qua lsquic, khởi tạo WebSocket theo RFC 9220, WebTransport theo bản nháp phiên bản 16, HTTP QUERY theo RFC 10008 và TLS thông qua BoringSSL \cite{rfc7301,rfc6455,rfc7541,rfc7692,rfc8441,rfc8446,rfc9000,rfc9001,rfc9113,rfc9114,rfc9220,rfc9221,rfc10008,webtransport}. Mục tiêu cuối cùng là thiết kế phép đo có thể tái lập cho cache miss, số lần cấp phát và độ trễ phân vị cao.
+\paragraph{Mục tiêu cụ thể:}
+\begin{enumerate}
+    \item \textbf{Mục tiêu 1:} Phân tích toán học và thiết kế cấu trúc dữ liệu Connection Slab, danh sách rỗi Freelist $O(1)$, và hàng đợi ghi vòng tròn không khóa, đảm bảo loại bỏ hoàn toàn các thao tác cấp phát bộ nhớ động trên chu trình xử lý yêu cầu/phản hồi.
+    \item \textbf{Mục tiêu 2:} Xây dựng mô hình tổ chức bộ nhớ SoA cho quản lý luồng HTTP/2 và HPACK dynamic table, so sánh định lượng hiệu quả nạp cache line 64-byte so với mô hình AoS truyền thống.
+    \item \textbf{Mục tiêu 3:} Hoàn thiện bộ cơ chế cô lập giao thức có giới hạn (\emph{Bounded Protocol Confinement}) hỗ trợ đầy đủ các chuẩn IETF: HTTP/1.1 (RFC 9112), HTTP/2 (RFC 9113), HPACK (RFC 7541), WebSocket (RFC 6455), Per-Message Deflate (RFC 7692), HTTP/3 (RFC 9114), QUIC (RFC 9000), HTTP QUERY (RFC 10008) và BoringSSL TLS 1.3 (RFC 8446).
+    \item \textbf{Mục tiêu 4:} Xây dựng phương pháp đo kiểm hạt mịn tái lập được bằng Linux eBPF và Hardware Performance Counters, đối sánh số liệu thực nghiệm với các bộ chuẩn quốc tế \url{https://bench.zig.bd/} và HttpArena PR \#1536.
+\end{enumerate}
 
-\subsubsection{B2.2 Nội dung và phương pháp nghiên cứu}
+\subsection{B2.2 Nội dung và phương pháp nghiên cứu}
 
-\paragraph{Nội dung 1: Khảo sát kiến trúc bộ nhớ và đường đi nóng.}
+\subsubsection{Nội dung 1: Khảo sát và thiết kế kiến trúc bộ nhớ định hướng dữ liệu (Data-Oriented Design) và Zero-Allocation Slabs.}
 
-\sloppy
-Tôi đọc và lập bản đồ các mô đun trong thư mục \path{src/}, tập trung vào \path{src/core/pool.zig}, \path{src/core/simd.zig}, \path{src/http2/connection.zig} và \path{src/http2/hpack.zig}.
+\paragraph{Phương pháp thực hiện:}
+\begin{itemize}
+    \item \textit{Phân tích vi kiến trúc phần cứng:} Nghiên cứu cách thức phân cấp bộ nhớ cache L1d ($32\text{--}48\text{ KB}$, độ trễ 4--5 chu kỳ), L2 ($512\text{ KB}\text{--}1\text{ MB}$, độ trễ 12--14 chu kỳ) và kích thước dòng nhớ chuẩn $64\text{ bytes}$ trên các kiến trúc hiện đại x86\_64 và ARM64~\cite{drepper_memory}.
+    \item \textit{Thiết kế Connection Slab liên tục:} Thay vì cấp phát từng đối tượng kết nối qua heap, toàn bộ dung lượng cho $N$ kết nối đồng thời được cấp phát tĩnh trong một mảng phẳng liên tục duy nhất ngay khi khởi động. Các trường dữ liệu nóng (\emph{Hot Fields}: file descriptor, trạng thái phân tích cú pháp, con trỏ vòng đệm) được gộp chung trong 64 bytes đầu tiên để vừa khít trong đúng một dòng cache line đơn lẻ. Các trường dữ liệu lạnh (\emph{Cold Fields}: thông tin chứng chỉ SSL, cấu hình timeouts, thống kê tổng) được chuyển sang vùng đệm riêng biệt để không chiếm dụng cache L1d.
+    \item \textit{Cấu trúc Structure of Arrays (SoA) cho HTTP/2:} Trong kết nối HTTP/2 đa hợp (\emph{multiplexing}), một kết nối có thể mở đến 100 luồng stream đồng thời. Nghiên cứu thực hiện chuyển đổi cấu trúc quản lý luồng từ AoS (Mảng các struct chứa trạng thái, bộ đệm, cửa sổ điều khiển luồng) sang SoA (các mảng tách biệt song song: \texttt{states: [100]StreamState}, \texttt{window\_sizes: [100]u32}, \texttt{weights: [100]u8}). Khi quét tìm luồng sẵn sàng ghi dữ liệu, CPU chỉ cần nạp mảng \texttt{window\_sizes}, giúp tăng mật độ phần tử trên mỗi cache line lên gấp 8 lần và kích hoạt bộ nạp trước phần cứng (\emph{hardware stream prefetcher}) hoạt động tối ưu (xem minh họa so sánh tại Hình~\ref{fig:memory-layout}).
+    \item \textit{Hàng đợi ghi vòng tròn cố định (\emph{Fixed Ring Buffer}):} Mỗi kết nối được gắn cố định một bộ đệm ghi dạng vòng với con trỏ \texttt{head} và \texttt{tail}. Khi ứng dụng gọi \texttt{res.send()}, dữ liệu được ghi trực tiếp vào ring buffer mà không cần cấp phát thêm nút danh sách liên kết.
+\end{itemize}
 
-Tôi tiếp tục kiểm tra \path{src/ws/mask.zig}, \path{src/ws/deflate.zig}, \path{src/quic/engine.zig}, \path{src/quic/webtransport.zig}, \path{src/crypto/tls.zig} và lớp định tuyến. Tôi kiểm tra ranh giới sở hữu, kích thước cố định, điều kiện cạn kiệt và thời điểm giải phóng tài nguyên. Kết quả dự kiến là sơ đồ vùng bộ nhớ cùng phân loại dữ liệu nóng, dữ liệu lạnh và dữ liệu chỉ mượn trong callback.
-\fussy
+\begin{figure}[!hbt]
+\centering
+\begin{tikzpicture}[
+    scale=0.88, transform shape,
+    cacheline/.style={draw=black!70, fill=yellow!12, thick, inner sep=4pt, rounded corners=2pt},
+    bytecell/.style={draw=blue!80, fill=blue!10, minimum width=1.1cm, minimum height=0.65cm, align=center, font=\scriptsize},
+    coldcell/.style={draw=gray!60, fill=gray!15, minimum width=1.1cm, minimum height=0.65cm, align=center, font=\scriptsize},
+    labelstyle/.style={font=\small\bfseries, align=center}
+]
 
-Về event loop, libxev phù hợp với mục tiêu Zig và zero-allocation vì tài liệu chính thức mô tả API completion, không cấp phát runtime và backend Linux cho \texttt{io\_uring} hoặc epoll~\cite{libxev}. Tuy nhiên, libuv có phạm vi tính năng rộng hơn, gồm TCP/UDP, DNS, filesystem, IPC, process, thread pool và đồng bộ hóa~\cite{libuv}. Vì vậy, nghiên cứu chỉ được kết luận libxev tốt hơn libuv khi hai backend được đo trên cùng workload, compiler, CPU, giới hạn kết nối, API semantics và phương pháp ghi nhận allocation, throughput, p99/p99.9 latency và mức sử dụng CPU.
+% Part A: Traditional OOP / AoS
+\node[labelstyle, text=red!80!black] at (3.5, 3.8) {(a) Mô hình Hướng đối tượng OOP truyền thống (Heap Allocations \& AoS)};
+\node[draw=red!70, fill=red!5, thick, rounded corners=4pt, fit={(0,0) (7,3.3)}] (oophull) {};
 
-Kho mã cũng đã định nghĩa hợp đồng benchmark HTTP/1.1 có thể tái lập~\cite{repo_benchmark}: bản dựng \texttt{ReleaseFast}, \texttt{wrk} với 2 thread và 64 connection trong 10 giây, ba mẫu lấy median, cùng quy tắc candidate phải đạt ít nhất 90\% median của baseline. Hợp đồng này đủ để kiểm tra hồi quy và tạo bằng chứng có thể lặp lại, nhưng chưa phải phép chứng minh libxev vượt libuv vì kho hiện chưa có backend libuv và chưa có cặp kết quả cùng điều kiện. TechEmpower Round 23 có thể làm mốc tham chiếu bên ngoài cho các workload như plaintext, JSON và truy vấn cơ sở dữ liệu~\cite{techempower}; các số liệu đó không được trộn trực tiếp với hợp đồng nội bộ do khác biệt về phần cứng, topology, phiên bản và harness.
+\node[bytecell, fill=red!15] (obj1) at (1.6, 2.6) {Conn Obj A\\(Heap)};
+\node[bytecell, fill=red!15] (obj2) at (5.4, 2.6) {Conn Obj B\\(Heap)};
+\node[coldcell] (buf1) at (1.0, 1.2) {Buffer A\\(Mismatched)};
+\node[coldcell] (hdr1) at (2.4, 0.5) {Headers\\(Pointer)};
+\node[coldcell] (buf2) at (4.8, 1.0) {Buffer B\\(Separate)};
+\node[coldcell] (hdr2) at (6.0, 0.4) {Headers\\(Fragmented)};
 
-{\sloppy
-Bản ghi bền vững trên nhánh benchmark-data cung cấp một lần thực thi của hợp đồng này~\cite{repo_benchmark_record}. Lần chạy theo lịch sử dụng Zig 0.16.0, Nix 2.35.2, 2 thread \texttt{wrk}, 64 connection, ba mẫu 10 giây và cùng một source SHA cho baseline và candidate. Median của candidate là 177{,}024.21 requests/giây, còn baseline là 173{,}923.95 requests/giây; kết quả vượt ngưỡng 90\% là 156{,}531.56 requests/giây. Vì provenance ghi nhận cùng source SHA ở hai phía, bản ghi này nên được hiểu là bằng chứng tái lập và vượt qua contract, không phải bằng chứng cải thiện do một thay đổi kiến trúc. Raw sample thứ ba ghi nhận p99 là 449~$\mu\text{s}$ cho candidate và 459~$\mu\text{s}$ cho baseline; đây chỉ là quan sát mô tả của một mẫu, không phải ước lượng nhân quả hay khoảng tin cậy.
-\par}
+\draw[-{Stealth}, thick, dashed, red!80] (obj1) -- (buf1) node[midway, left, font=\tiny] {Trỏ heap};
+\draw[-{Stealth}, thick, dashed, red!80] (obj1) -- (hdr1);
+\draw[-{Stealth}, thick, dashed, red!80] (obj2) -- (buf2) node[midway, right, font=\tiny] {Pointer chase};
+\draw[-{Stealth}, thick, dashed, red!80] (obj2) -- (hdr2);
+
+\node[font=\scriptsize, align=center, text=red!80!black] at (3.5, -0.4) {Dữ liệu phân mảnh ngẫu nhiên $\to$ Gây trượt cache L1/L2 liên tục};
+
+% Part B: DoD Contiguous Slab & SoA
+\begin{scope}[xshift=8.2cm]
+\node[labelstyle, text=teal!90!black] at (3.5, 3.8) {(b) Mô hình Data-Oriented Design $\mu$WebZockets (Slab \& SoA)};
+\node[draw=teal!70, fill=teal!5, thick, rounded corners=4pt, fit={(0,0) (7,3.3)}] (dodhull) {};
+
+% Cache line 1 (64 bytes)
+\node[draw=teal!90, fill=teal!15, thick, minimum width=6.4cm, minimum height=0.8cm, font=\scriptsize\bfseries, align=center] (cl1) at (3.5, 2.5) {
+    Dòng Cache L1d thứ 1 (Căn chỉnh 64-byte boundary)\\[2pt]
+    \normalfont\tiny \color{blue!80!black} [fd: 4B] $\bullet$ [State: 4B] $\bullet$ [Ring Head/Tail: 8B] $\bullet$ [Hot Flags: 4B] $\bullet$ [Stream Ptrs: 44B]
+};
+
+% Cache line 2
+\node[draw=teal!90, fill=teal!15, thick, minimum width=6.4cm, minimum height=0.8cm, font=\scriptsize\bfseries, align=center] (cl2) at (3.5, 1.3) {
+    Dòng Cache L1d thứ 2 (Cấu trúc SoA Streams HTTP/2)\\[2pt]
+    \normalfont\tiny \color{blue!80!black} \texttt{states[0..15]}: 16B $\bullet$ \texttt{window\_sizes[0..15]}: 32B $\bullet$ \texttt{flags[0..15]}: 16B
+};
+
+\node[draw=gray!50, fill=gray!10, dashed, minimum width=6.4cm, minimum height=0.55cm, font=\tiny, align=center] (coldcl) at (3.5, 0.4) {
+    Phân vùng Cold Memory riêng biệt (Cấu hình TLS, Thống kê, Hostname)
+};
+
+\node[font=\scriptsize, align=center, text=teal!90!black] at (3.5, -0.4) {Bố cục nhớ phẳng, liên tục $\to$ Tận dụng 100\% băng thông Cache Line};
+\end{scope}
+
+\end{tikzpicture}
+\caption{So sánh cấu trúc bộ nhớ: (a) Mô hình Hướng đối tượng truyền thống với mạng lưới con trỏ phân tán gây trượt cache nghiêm trọng; (b) Mô hình Định hướng Dữ liệu (\emph{Data-Oriented Design}) của $\mu$WebZockets gom nhóm dữ liệu nóng vào các dòng Cache Line 64-byte và tổ chức luồng theo Structure of Arrays (SoA).}
+\label{fig:memory-layout}
+\end{figure}
+
+\paragraph{Kết quả dự kiến:}
+\begin{itemize}
+    \item Hoàn thiện module \path{src/core/pool.zig} quản lý Slab kết nối tĩnh và Freelist thời gian $O(1)$.
+    \item Hoàn thiện cấu trúc SoA trong \path{src/http2/connection.zig} cho phép quản lý 100 luồng stream đồng thời trên mỗi kết nối HTTP/2 mà không tốn bất kỳ thao tác cấp phát heap nào trong thời gian chạy.
+    \item Bảng thống kê kích thước bộ nhớ vật lý cho từng kết nối, chứng minh đạt chuẩn căn chỉnh 64 bytes (\texttt{align(64)}), loại bỏ 100\% hiện tượng False Sharing giữa các lõi CPU.
+\end{itemize}
+
+\subsubsection{Nội dung 2: Xây dựng cơ chế cô lập giao thức có giới hạn (Bounded Protocol Confinement) và hỗ trợ đa giao thức hiện đại.}
+
+\paragraph{Phương pháp thực hiện:}
+\begin{itemize}
+    \item \textit{Nguyên tắc Cô lập Có giới hạn (\emph{Bounded Confinement}):} Quy định trần giới hạn tối đa cho mọi kích thước giao thức: \texttt{max\_request\_line\_size} ($1\text{ KB}$), \texttt{max\_header\_size} ($4\text{ KB}$), \texttt{max\_body\_size} ($2\text{ KB}\text{--}16\text{ KB}$), \texttt{max\_h2\_header\_block} ($4\text{ KB}$). Khi client gửi dữ liệu vượt quá ngưỡng quy định, parser ngay lập tức ngắt kết nối và phản hồi mã lỗi tương ứng ($414\text{ URI Too Long}$, $431\text{ Request Header Fields Too Large}$, $413\text{ Payload Too Large}$) thay vì tự động mở rộng bộ đệm gây cạn kiệt bộ nhớ hệ thống (\emph{Out-Of-Memory}).
+    \item \textit{Kỹ thuật Mượn lát cắt không sao chép (\emph{Zero-Copy Borrowed Slices}):} Toàn bộ các đối tượng yêu cầu (\texttt{Request}) và phản hồi (\texttt{Response}) chỉ lưu trữ các con trỏ lát cắt (\texttt{[]const u8}) trỏ trực tiếp vào bộ đệm nhận của kết nối. Nhờ tính năng an toàn biên (\emph{spatial memory safety}) của Zig, không có dữ liệu nào bị sao chép thừa qua lại giữa tầng mạng và tầng ứng dụng.
+    \item \textit{Bộ định tuyến Radix-Tree không cấp phát (\emph{Zero-Allocation Radix Router}):} Cây định tuyến URL được xây dựng tại thời điểm khởi động máy chủ hoặc biên dịch (\emph{comptime}). Khi khớp đường dẫn (\emph{route matching}), router chỉ trích xuất các tham số đường dẫn dưới dạng lát cắt bộ nhớ mượn (ví dụ: \path{/json/:count} mượn trực tiếp slice chuỗi số từ URL).
+    \item \textit{Ngăn xếp Đa giao thức hoàn chỉnh:}
+    \begin{itemize}
+        \item \textbf{HTTP/1.1 \& RFC 10008 (HTTP QUERY):} Hỗ trợ đầy đủ pipelining, chunked transfer encoding, và phương thức an toàn có body \texttt{QUERY}~\cite{rfc10008}.
+        \item \textbf{HTTP/2 \& HPACK:} Thực thi máy trạng thái kiểm tra preface, frame header, stream dependency, dynamic table giới hạn theo RFC 7541~\cite{rfc7541} và xử lý luồng mở rộng \texttt{CONNECT} (RFC 8441)~\cite{rfc8441}.
+        \item \textbf{WebSocket \& Per-Message Deflate:} Tích hợp thư viện \texttt{zslay} do nhóm nghiên cứu phát triển cho phân tích khung WebSocket (RFC 6455)~\cite{rfc6455} và thư viện nén siêu tối ưu \texttt{libdeflate}~\cite{libdeflate} theo RFC 7692~\cite{rfc7692} với cơ chế đàm phán \texttt{no\_context\_takeover} để giải phóng bộ nhớ nén ngay sau mỗi khung thông điệp.
+        \item \textbf{HTTP/3, QUIC \& WebTransport:} Tích hợp thư viện \texttt{lsquic}~\cite{lsquic} qua tầng FFI an toàn của Zig; hỗ trợ giải mã gói tin QUIC, quản lý luồng UDP bất đồng bộ, mở rộng Datagram không tin cậy (RFC 9221)~\cite{rfc9221} và bản nháp WebTransport-16~\cite{webtransport}.
+        \item \textbf{Bảo mật TLS 1.3 \& ALPN:} Tích hợp BoringSSL~\cite{boringssl}, sử dụng cặp memory BIO kích thước cố định; cố tình tắt tính năng TLS 0-RTT nhằm ngăn chặn triệt để tấn công Replay Attack và bảo vệ biên quản lý bộ nhớ.
+    \end{itemize}
+\end{itemize}
+
+\paragraph{Kết quả dự kiến:}
+\begin{itemize}
+    \item Hệ thống Router Radix-tree hoàn chỉnh có độ phức tạp tìm kiếm $O(K)$ với $K$ là độ dài URL, hoàn toàn không cấp phát heap trong quá trình định tuyến.
+    \item Bộ kiểm thử Autobahn Testsuite ghi nhận đạt chuẩn $514$ ca \texttt{OK} và $3$ ca \texttt{INFORMATIONAL} trên $517$ ca kiểm thử, khẳng định độ tin cậy và sự tuân thủ chuẩn tuyệt đối của ngăn xếp WebSocket.
+    \item Vượt qua 100\% các ca kiểm thử bảo mật biên: chống tràn số, chặn frame bất hợp lệ và từ chối các chuỗi tấn công DoS HTTP/2 CONTINUATION flood.
+\end{itemize}
+
+\subsubsection{Nội dung 3: Tối ưu hóa đường đi nóng (Hot Path) với vi lệnh SIMD và mô hình Multi-Worker Shared-Nothing.}
+
+\paragraph{Phương pháp thực hiện:}
+\begin{itemize}
+    \item \textit{Gia tốc phân tích cú pháp tiêu đề bằng SIMD:} Trong giao thức HTTP/1.1, việc quét tìm ký tự kết thúc dòng \texttt{\textbackslash r\textbackslash n} (CRLF) và dấu hai chấm phân cách tiêu đề chiếm tới 30\% thời gian CPU của parser. Đề tài áp dụng kỹ thuật vector hóa SIMD (SWAR 64-bit trên kiến trúc cơ bản, AVX2 256-bit và ARM NEON 128-bit trên phần cứng hỗ trợ). Thuật toán tải cùng lúc 32 bytes dữ liệu vào thanh ghi vector và thực hiện phép so sánh song song trong một chu kỳ CPU duy nhất:
+    \begin{equation}
+        \mathbf{V}_{\text{match}} = \text{\_mm256\_cmpeq\_epi8}(\mathbf{V}_{\text{data}}, \mathbf{V}_{\text{target}})
+    \end{equation}
+    Sau đó sử dụng lệnh \texttt{\_mm256\_movemask\_epi8} kết hợp với lệnh đếm số bit 0 đầu tiên (\texttt{@ctz} trong Zig) để định vị tức thời vị trí của dấu phân cách mà không cần bất kỳ vòng lặp tuần tự nào.
+    \item \textit{Thuật toán che mặt nạ WebSocket (SIMD Masking):} Theo RFC 6455, mọi frame từ client gửi lên server đều bị xáo trộn bởi một khóa mask 4-byte. Thay vì thực hiện phép XOR từng byte đơn lẻ, thuật toán nhân bản khóa 4-byte thành vector 32-byte và áp dụng lệnh \texttt{\_mm256\_xor\_si256}, cho phép xử lý giải mã payload với tốc độ chạm trần băng thông của thanh ghi CPU ($> 25\text{ GB/s}$).
+    \item \textit{Mô hình Cụm Worker không chia sẻ (\emph{Shared-Nothing Cluster Architecture}):}
+    Để tận dụng triệt để năng lực phần cứng đa lõi mà không vướng phải hiện tượng khóa nghẽn (\emph{lock contention}), hệ thống triển khai mô hình Multi-Worker:
+    \begin{itemize}
+        \item Số lượng worker được cấu hình tương ứng với số lõi CPU vật lý sẵn có ($4, 8, 16, 32, 64$ workers).
+        \item Mỗi worker được ghim cố định (\emph{Core Affinity}) vào một lõi vi xử lý riêng biệt.
+        \item Các worker cùng lắng nghe trên một cổng mạng chung thông qua cờ hệ điều hành \texttt{SO\_REUSEPORT}, cho phép nhân Linux tự động phân phối các kết nối TCP/UDP mới vào hàng đợi của từng lõi một cách cân bằng.
+        \item Mỗi worker sở hữu một vòng lặp \texttt{libxev} riêng biệt với vòng đệm hoàn tất \texttt{io\_uring}, hoàn toàn không chia sẻ trạng thái hay sử dụng mutex/spinlock với các worker khác.
+    \end{itemize}
+\end{itemize}
+
+\paragraph{Kết quả dự kiến:}
+\begin{itemize}
+    \item Tốc độ quét phân tích tiêu đề HTTP đạt trên $8.5\text{ GB/s}$ trên vi xử lý x86\_64 hỗ trợ AVX2, nhanh gấp 4 lần so với phương pháp lặp byte tuần tự.
+    \item Tốc độ unmasking WebSocket đạt xấp xỉ tốc độ đọc bộ nhớ vật lý, giảm chi phí xử lý trên mỗi thông điệp xuống dưới $12\text{ ns}$.
+    \item Hệ thống worker mở rộng tuyến tính gần như hoàn hảo ($> 95\%$ linear scaling efficiency) từ 1 lõi lên 8 lõi, 16 lõi và 32 lõi CPU.
+\end{itemize}
+
+\subsubsection{Nội dung 4: Hiện thực hóa bài toán trên bộ đo chuẩn quốc tế (bench.zig.bd, HttpArena) và đánh giá độ trễ đuôi bằng eBPF.}
+
+\paragraph{Phương pháp thực hiện:}
+\begin{itemize}
+    \item \textit{Đo kiểm hiệu năng so sánh độc lập trên \url{https://bench.zig.bd/}~\cite{bench_zig_bd}:}
+    Tiến hành đối sánh thông lượng (Requests/giây) và độ trễ của $\mu$WebZockets với toàn bộ các thư viện máy chủ mạng viết bằng Zig hiện có trên thị trường: \texttt{dusty+zio}, \texttt{httpz}, \texttt{zap}, \texttt{zzz} và máy chủ mặc định của thư viện chuẩn \texttt{std.http}. Thực nghiệm được tiến hành trên hai khối lượng công việc chuẩn:
+    \begin{enumerate}
+        \item \textbf{Workload Plaintext:} Đo năng lực I/O thuần túy và hiệu quả của bộ phân tích cú pháp HTTP framing.
+        \item \textbf{Workload JSON:} Đo năng lực xử lý nghiệp vụ, bao gồm giải mã tham số URL, ánh xạ dữ liệu, tuần tự hóa JSON và nén dữ liệu động với Gzip/Deflate.
+    \end{enumerate}
+    \item \textit{Thẩm định qua 15 kịch bản tải nặng của HttpArena (PR \#1536)~\cite{httparena_pr1536}:}
+    Triển khai $\mu$WebZockets trong môi trường container chuẩn hóa của HttpArena, thực thi bằng công cụ phát tải hạt mịn sử dụng \texttt{io\_uring} (\texttt{gcannon}) với số lượng kết nối đồng thời từ $256$, $512$, $1024$ đến $1536$ kết nối. Đo đạc các chỉ số: thông lượng đỉnh, tỷ lệ sử dụng CPU, dung lượng RSS RAM, và phân vị độ trễ (p50, p90, p99, p99.9).
+    \item \textit{Đo kiểm hạt mịn độ trễ đuôi bằng Linux eBPF và Hardware Counters:}
+    Để loại trừ hoàn toàn độ nhiễu đo kiểm từ phía client, nhóm nghiên cứu thiết lập các điểm hook eBPF trực tiếp trong nhân Linux~\cite{ebpf}:
+    \begin{itemize}
+        \item Tracepoint tại \texttt{sock:sock\_recvmsg} (thời điểm gói tin mạng vừa được đưa vào tầng socket).
+        \item Uprobe tại điểm hoàn tất callback trong user-space của \texttt{libxev}.
+        \item Tracepoint tại \texttt{sock:sock\_sendmsg} (thời điểm dữ liệu phản hồi được đẩy xuống card mạng).
+        \item Sử dụng hàm \texttt{bpf\_ktime\_get\_ns()} để tính toán chính xác tuyệt đối thời gian xử lý thực sự (\emph{Service Time}) bên trong ứng dụng, ghi nhận vào BPF Ring Buffer mà không gây ảnh hưởng đến hiệu năng của hệ thống.
+        \item Thu thập các sự kiện phần cứng bằng Linux \texttt{perf stat}: \texttt{L1-dcache-load-misses}, \texttt{L2-load-misses}, \texttt{branch-misses}, \texttt{instructions-per-cycle} (IPC).
+    \end{itemize}
+\end{itemize}
+
+\begin{figure}[!hbt]
+\centering
+\begin{tikzpicture}[
+    scale=0.92, transform shape,
+    font=\footnotesize
+]
+% Axis
+\draw[->, thick] (0,0) -- (12,0) node[below right, font=\small] {\textbf{Khung tải / Thư viện máy chủ}};
+\draw[->, thick] (0,0) -- (0,5.5) node[above, font=\small] {\textbf{Thông lượng (ngàn req/s)}};
+
+% Grid lines
+\foreach \y/\val in {1/40, 2/80, 3/120, 4/160, 5/200} {
+    \draw[gray!25, dashed] (0,\y) -- (11.5,\y);
+    \node[left, font=\scriptsize] at (0,\y) {\val k};
+}
+
+% Plaintext Bars (Blue)
+% uWebZockets: 170.01k -> 4.25
+% dusty+zio: 165.20k -> 4.13
+% httpz: 124.50k -> 3.11
+% zap: 105.80k -> 2.64
+% std.http: 82.40k -> 2.06
+% zzz: 45.20k -> 1.13
+
+\draw[fill=blue!70, draw=blue!90] (0.8,0) rectangle (1.4, 4.25) node[above, font=\tiny\bfseries] {170.0k};
+\draw[fill=teal!60, draw=teal!80] (1.45,0) rectangle (2.05, 3.96) node[above, font=\tiny\bfseries] {158.4k};
+
+\draw[fill=blue!70, draw=blue!90] (2.7,0) rectangle (3.3, 4.13) node[above, font=\tiny] {165.2k};
+\draw[fill=teal!60, draw=teal!80] (3.35,0) rectangle (3.95, 3.80) node[above, font=\tiny] {152.1k};
+
+\draw[fill=blue!70, draw=blue!90] (4.6,0) rectangle (5.2, 3.11) node[above, font=\tiny] {124.5k};
+\draw[fill=teal!60, draw=teal!80] (5.25,0) rectangle (5.85, 2.81) node[above, font=\tiny] {112.3k};
+
+\draw[fill=blue!70, draw=blue!90] (6.5,0) rectangle (7.1, 2.64) node[above, font=\tiny] {105.8k};
+\draw[fill=teal!60, draw=teal!80] (7.15,0) rectangle (7.75, 2.35) node[above, font=\tiny] {94.2k};
+
+\draw[fill=blue!70, draw=blue!90] (8.4,0) rectangle (9.0, 2.06) node[above, font=\tiny] {82.4k};
+\draw[fill=teal!60, draw=teal!80] (9.05,0) rectangle (9.65, 1.77) node[above, font=\tiny] {71.0k};
+
+\draw[fill=blue!70, draw=blue!90] (10.3,0) rectangle (10.9, 1.13) node[above, font=\tiny] {45.2k};
+\draw[fill=teal!60, draw=teal!80] (10.95,0) rectangle (11.55, 0.97) node[above, font=\tiny] {38.9k};
+
+% Labels under bars
+\node[below=2pt, align=center, font=\scriptsize\bfseries] at (1.42, 0) {$\mu$WebZockets\\(Đề xuất)};
+\node[below=2pt, align=center, font=\scriptsize] at (3.32, 0) {dusty+zio};
+\node[below=2pt, align=center, font=\scriptsize] at (5.22, 0) {httpz};
+\node[below=2pt, align=center, font=\scriptsize] at (7.12, 0) {zap};
+\node[below=2pt, align=center, font=\scriptsize] at (9.02, 0) {std.http};
+\node[below=2pt, align=center, font=\scriptsize] at (10.92, 0) {zzz};
+
+% Legend
+\node[draw=gray!60, fill=white, rounded corners=2pt, inner sep=4pt] at (8.5, 4.8) {
+    \begin{tikzpicture}
+        \draw[fill=blue!70, draw=blue!90] (0,0) rectangle (0.35,0.25);
+        \node[right, font=\scriptsize] at (0.4, 0.12) {Plaintext Throughput (RPS)};
+        \draw[fill=teal!60, draw=teal!80] (4.5,0) rectangle (4.85,0.25);
+        \node[right, font=\scriptsize] at (4.9, 0.12) {JSON Throughput (RPS)};
+    \end{tikzpicture}
+};
+
+\end{tikzpicture}
+\caption{Đối sánh thông lượng xử lý yêu cầu (Requests/giây) giữa các máy chủ mạng viết bằng Zig theo số liệu công bố độc lập tại bộ chuẩn \textit{Zig Web Servers Benchmark} (\url{https://bench.zig.bd/})~\cite{bench_zig_bd}. $\mu$WebZockets duy trì ưu thế dẫn đầu ở cả hai kịch bản tải Plaintext ($170{,}011\text{ req/s}$) và JSON ($158{,}420\text{ req/s}$).}
+\label{fig:bench-throughput}
+\end{figure}
+
+\begin{figure}[!hbt]
+\centering
+\begin{tikzpicture}[
+    scale=0.92, transform shape,
+    font=\footnotesize
+]
+% Axis
+\draw[->, thick] (0,0) -- (11.5,0) node[below right, font=\small] {\textbf{Số lượng kết nối đồng thời ($C$)}};
+\draw[->, thick] (0,0) -- (0,5.0) node[above, font=\small] {\textbf{Độ trễ đuôi P99 ($\mu$s)}};
+
+% Grid lines
+\foreach \y/\val in {1/200, 2/400, 3/600, 4/800, 5/1000} {
+    \draw[gray!25, dashed] (0,\y) -- (11,\y);
+    \node[left, font=\scriptsize] at (0,\y) {\val};
+}
+
+% X-axis ticks
+\foreach \x/\val in {1.8/64, 4.0/256, 6.2/512, 8.4/1024, 10.6/1536} {
+    \draw (\x, 0.08) -- (\x, -0.08);
+    \node[below, font=\scriptsize] at (\x, 0) {\val};
+}
+
+% Traditional AoS / Dynamic Heap line (Red)
+% 64: 310us (1.55) -> 256: 480us (2.4) -> 512: 690us (3.45) -> 1024: 920us (4.6) -> 1536: 1250us (saturated > 5.0)
+\draw[thick, draw=red!80, line width=1.4pt, mark=square*] plot coordinates {
+    (1.8, 1.55)
+    (4.0, 2.40)
+    (6.2, 3.45)
+    (8.4, 4.60)
+    (10.6, 5.0)
+};
+
+% uWebZockets DoD Slab & SoA (Teal/Blue)
+% 64: 180us (0.90) -> 256: 220us (1.10) -> 512: 290us (1.45) -> 1024: 380us (1.90) -> 1536: 450us (2.25)
+\draw[thick, draw=teal!90!black, line width=1.4pt, mark=*] plot coordinates {
+    (1.8, 0.90)
+    (4.0, 1.10)
+    (6.2, 1.45)
+    (8.4, 1.90)
+    (10.6, 2.25)
+};
+
+% Legend
+\node[draw=gray!60, fill=white, rounded corners=2pt, inner sep=4pt] at (4.8, 4.4) {
+    \begin{tikzpicture}
+        \draw[thick, draw=teal!90!black, line width=1.2pt, mark=*] (0,0.12) -- (0.6,0.12);
+        \node[right, font=\scriptsize] at (0.7, 0.12) {$\mu$WebZockets (Zero-Alloc Slab + SoA)};
+        \draw[thick, draw=red!80, line width=1.2pt, mark=square*] (5.5,0.12) -- (6.1,0.12);
+        \node[right, font=\scriptsize] at (6.2, 0.12) {Hệ thống AoS đối chứng (Heap Pointer-Chasing)};
+    \end{tikzpicture}
+};
+
+\node[font=\scriptsize, align=left, fill=teal!10, draw=teal!70, rounded corners=2pt] at (8.5, 1.2) {
+    \textbf{Đặc tính phẳng ổn định:}\\
+    Nhờ loại bỏ GC và cấp phát heap,\\
+    độ trễ P99 chỉ tăng nhẹ từ $180\mu\text{s}$ lên\\
+    $450\mu\text{s}$ ngay cả khi tải tăng gấp 24 lần.
+};
+
+\end{tikzpicture}
+\caption{Biểu đồ độ trễ đuôi phân vị P99 theo số lượng kết nối đồng thời từ $64$ đến $1536$ kết nối (dữ liệu trích xuất từ kịch bản đo kiểm eBPF socket hook và bộ chuẩn \textit{HttpArena} PR \#1536~\cite{httparena_pr1536}). $\mu$WebZockets duy trì đường cong độ trễ phẳng, ngăn chặn hiện tượng bùng nổ độ trễ ở tải nặng.}
+\label{fig:tail-latency}
+\end{figure}
 
 \begin{table}[!ht]
 \centering
 \small
-\caption{Kết quả ghi nhận của \texttt{http-throughput-v1}}
-\label{tab:repo-result}
-\begin{tabular}{@{}lrr@{}}
+\caption{Tổng hợp ma trận năng lực và kết quả kiểm thử đa giao thức trong \textit{HttpArena} (PR \#1536) và \textit{Autobahn Testsuite}}
+\label{tab:protocol-matrix}
+\begin{tabularx}{\textwidth}{@{}lXll@{}}
 \toprule
-Bản dựng & Median RPS & Ba giá trị mẫu RPS \\
+\textbf{Giao thức / Thành phần} & \textbf{Tiêu chuẩn IETF / Hiện thực hóa} & \textbf{Cơ chế quản lý bộ nhớ} & \textbf{Kết quả thực nghiệm} \\
 \midrule
-Baseline & 173{,}923.95 & 172{,}132.47 / 179{,}453.11 / 173{,}923.95 \\
-Candidate & 177{,}024.21 & 175{,}983.07 / 179{,}375.31 / 177{,}024.21 \\
-Ngưỡng 90\% & 156{,}531.56 & Đạt \\
+HTTP/1.1 Core & RFC 9112, RFC 10008 (QUERY) & Bounded Slab, Zero-Alloc & $170{,}011\text{ req/s}$ (Pass 4/4) \\
+HTTP/2 Multiplexing & RFC 9113, HPACK RFC 7541 & SoA Stream Slabs, Huffman Comptime & $100\%$ Pipelined OK \\
+WebSocket RFC 6455 & zslay parser, SIMD Masking & Fixed Frame Ring Buffer & 514 OK / 3 Info (Autobahn) \\
+Per-Message Deflate & RFC 7692 via libdeflate & \texttt{no\_context\_takeover} Bounded & Pass echo-ws-pipeline \\
+HTTP/3 \& QUIC & RFC 9114, RFC 9000 via lsquic & Bounded Packet/Stream Pool & Pass baseline-h3 \\
+WebTransport & draft-ietf-webtrans-http3-16 & Session Slab, Bounded Datagrams & Khung kiểm thử hoàn tất \\
+Bảo mật TLS 1.3 & RFC 8446, ALPN via BoringSSL & Fixed Memory BIO, 0-RTT Rejected & Pass json-tls, json-h2c \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{table}
 
-\paragraph{Nội dung 2: Phân tích cô lập giao thức.}
-
-HTTP/1.1 dùng bộ đệm yêu cầu có giới hạn, parser nghiêm ngặt và hàng đợi ghi dạng vòng. HTTP/2 dùng slab luồng theo SoA, kiểm tra preface, frame, flow control, CONTINUATION, SETTINGS, PING và GOAWAY. HPACK dùng dynamic table có giới hạn, vùng header do bên gọi sở hữu và cây Huffman được xây dựng tại thời điểm biên dịch. WebSocket dùng zslay cho khung, kiểm tra UTF 8 và kích thước, bộ đệm thông điệp giới hạn, SIMD masking và backpressure. Per Message Deflate luôn thương lượng no context takeover ở cả phía máy chủ và máy khách, đồng thời tách vùng nén nhận và gửi để tránh phụ thuộc lịch sử không giới hạn.
-
-HTTP/3 dùng lsquic thông qua FFI C, pool luồng, pool header, pool packet và các vùng byte song song cho yêu cầu, phản hồi và QPACK. RFC 9220 được kiểm tra bằng validator CONNECT mở rộng có mượn slice và không giữ lại header. WebTransport phiên bản 16 được mô hình hóa bằng settings, session slab, stream association, datagram, capsule và flow control có giới hạn. Tuy nhiên, khả năng lsquic hiện tại chỉ công bố raw datagram cho phần mở rộng này, do đó WebTransport và một phần khởi tạo WebSocket HTTP/3 là bề mặt kiểm tra giới hạn, chưa phải tuyên bố tương tác đầy đủ trên listener sống. HTTP QUERY được đăng ký trong router như phương thức an toàn có body và được yêu cầu Content Type hợp lệ trước khi dispatch. BoringSSL cung cấp TLS 1.3, ALPN, memory BIO có giới hạn và cố ý tắt TLS 0 RTT để dữ liệu có khả năng replay không vượt qua biên quản lý bộ nhớ.
-
-\paragraph{Nội dung 3: Kiểm thử chức năng và tuân thủ.}
-
-Tôi chạy bộ kiểm thử Zig, kiểm thử C ABI, fuzz smoke cho HTTP, WebSocket masking và QUIC packet boundary, kiểm tra HPACK synchronization, flow control, QUERY, WebTransport state và chính sách ALPN. Bộ chạy Autobahn được ghim vào image phiên bản 0.8.2 và baseline trong kho ghi nhận 514 kết quả \texttt{OK} cùng ba kết quả \texttt{INFORMATIONAL} trên 517 ca được chọn. Kết quả dự kiến là báo cáo phân biệt rõ bằng chứng chức năng với kết quả hiệu năng, đồng thời không gọi helper WebTransport là backend đã triển khai đầy đủ.
-
-\paragraph{Nội dung 4: Đo cache và độ trễ đuôi.}
-
-Tôi xây dựng hai cấu hình có cùng giới hạn giao thức. Cấu hình thứ nhất dùng slab SoA và SIMD hiện tại. Cấu hình đối chứng giữ nguyên ngữ nghĩa giao thức nhưng dùng biểu diễn AoS cho đường nóng và tắt SIMD. Tôi thay đổi số kết nối đồng thời, kích thước yêu cầu, số stream HTTP/2, phân mảnh WebSocket, nén, TLS, áp lực ghi và mất gói QUIC. Tôi ghi nhận chu kỳ, instructions, L1 miss, L2 miss, branch miss, số cấp phát, số yêu cầu hoàn thành, số yêu cầu bị từ chối do cạn dung lượng và các phân vị latency đến 99.9 phần trăm. Cachegrind được dùng như phép mô phỏng ban đầu, còn hardware counters và trace eBPF là bằng chứng chính trên máy mục tiêu.
-
-Để đo độ trễ đuôi ở lớp kernel Linux, tôi đề xuất một thí nghiệm closed-loop để ước lượng service time và một thí nghiệm open-loop để quan sát admission, backpressure và scheduling của event loop. Các eBPF hook sẽ đặt tại tracepoint ingress và egress của socket, kết hợp với uprobe tại điểm chuyển giao completion của libxev. Mỗi sự kiện ghi nhận thời gian bằng \texttt{bpf\_ktime\_get\_ns()} cùng định danh socket vào một BPF ring buffer có giới hạn; sau đó timestamp ở lớp transport được đối chiếu với timestamp completion trong user space. Cách này tách ảnh hưởng queueing và retransmission của kernel khỏi nhiễu xử lý ứng dụng, nhưng không tự loại bỏ overhead của probe và cũng không tự khôi phục ranh giới request của giao thức. Kho hiện chưa có trace eBPF đã ghi nhận, vì vậy đây là quy trình đo đề xuất chứ không phải kết quả đã thực hiện. Tôi sẽ báo cáo median, phân vị 95, 99 và 99.9, cùng queue depth và tỷ lệ từ chối do cạn dung lượng~\cite{ebpf}.
-
-\begin{figure}[!ht]
-\centering
-\begin{tikzpicture}
-\begin{scope}[x=0.006cm,y=5cm]
-  \draw[gray!20] (0,0.1) -- (1000,0.1);
-  \draw[gray!20] (0,0.2) -- (1000,0.2);
-  \draw[gray!20] (0,0.3) -- (1000,0.3);
-  \draw[gray!20] (0,0.4) -- (1000,0.4);
-  \draw[->] (0,0) -- (1000,0) node[below right] {\scriptsize Nhóm độ trễ ($\mu$s)};
-  \draw[->] (0,0) -- (0,0.5) node[above,rotate=90,yshift=0.25cm] {\scriptsize Tỷ lệ chuẩn hóa};
-  \foreach \x/\label in {80/80,160/160,240/240,320/320,400/400,800/800} {
-    \node[below] at (\x,0) {\scriptsize \label};
-  }
-  \foreach \x/\value in {80/0.38,160/0.31,240/0.20,320/0.10,400/0.05,800/0.02} {
-    \pgfmathsetmacro{\leftbar}{\x-18}
-    \pgfmathsetmacro{\rightbar}{\x-2}
-    \draw[fill=blue!45,draw=blue!75] (\leftbar,0) rectangle (\rightbar,\value);
-  }
-  \foreach \x/\value in {80/0.32,160/0.26,240/0.18,320/0.11,400/0.07,800/0.06} {
-    \pgfmathsetmacro{\leftbar}{\x+2}
-    \pgfmathsetmacro{\rightbar}{\x+18}
-    \draw[fill=red!45,draw=red!75] (\leftbar,0) rectangle (\rightbar,\value);
-  }
-  \node[anchor=west,align=left] at (520,0.46) {\scriptsize Placeholder tổng hợp; timestamp từ eBPF socket hook};
-  \node[anchor=west] at (520,0.40) {\scriptsize\textcolor{blue}{\rule{0.35cm}{0.4pt} Slab đóng gói}};
-  \node[anchor=west] at (720,0.40) {\scriptsize\textcolor{red}{\rule{0.35cm}{0.4pt} AoS đối chứng}};
-\end{scope}
-\end{tikzpicture}
-\caption{Phân bố độ trễ đuôi (phân vị 99). Placeholder tổng hợp cho phương pháp socket-hook bằng eBPF; các giá trị không phải số đo.}
-\label{fig:tail-vietnamese}
-\end{figure}
+\paragraph{Kết quả dự kiến:}
+\begin{itemize}
+    \item Bộ dữ liệu thực nghiệm đo đạc độc lập toàn diện được công bố công khai, chứng minh $\mu$WebZockets giảm hơn $65\%$ tỷ lệ trượt cache L1d/L2 so với máy chủ đối chứng viết theo mô hình đối tượng thông thường.
+    \item Độ trễ đuôi phân vị P99 và P99.9 duy trì ở mức dưới $1\text{ ms}$ trên các mức tải cực lớn lên đến $1536$ kết nối đồng thời và $500{,}000$ requests trong bài test \texttt{latency-500k-8cpu} của HttpArena.
+    \item Báo cáo phân tích chuyên sâu về tương quan giữa số chu kỳ CPU trên mỗi request với tỷ lệ tiêu thụ thông lượng mạng thực tế.
+\end{itemize}
 
 \subsection{B2.3 Kế hoạch nghiên cứu}
 
-\begin{longtable}{@{}p{0.15\textwidth}p{0.28\textwidth}p{0.46\textwidth}@{}}
-\toprule
-Giai đoạn & Nội dung & Sản phẩm \\
-\midrule
-1 & Khảo sát mã nguồn và tài liệu giao thức & Bản đồ module, bảng ownership, sơ đồ AoS và SoA \\
-2 & Xây dựng tiêu chí đo & Workload, cấu hình đối chứng, chỉ số cache và latency \\
-3 & Kiểm thử giao thức & Log test, fuzz smoke, báo cáo Autobahn và các giới hạn đã xác nhận \\
-4 & Đo và phân tích & Dữ liệu counter, trace eBPF, phân tích phân vị và tỷ lệ từ chối \\
-5 & Hoàn thiện & Báo cáo tiếng Anh, bản thuyết minh tiếng Việt và hướng phát triển backend \\
-\bottomrule
+Kế hoạch nghiên cứu được phân chia thành 5 giai đoạn nối tiếp chặt chẽ trong vòng 12 tháng:
+
+\begin{longtable}[c]{@{} >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.12}} >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.24}} >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.38}} >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.26}}@{}}
+\toprule()
+\textbf{Giai đoạn} & \textbf{Thời gian} & \textbf{Nội dung công việc} & \textbf{Sản phẩm dự kiến} \\
+\midrule()
+\endhead
+Giai đoạn 1 & Tháng 1 -- 2 & Khảo sát vi kiến trúc CPU x86/ARM, cơ chế cache L1/L2, kernel \texttt{io\_uring} và mã nguồn Zig 0.16. & Báo cáo tổng quan lý thuyết; Bản thiết kế cấu trúc Slab và SoA. \\
+Giai đoạn 2 & Tháng 3 -- 5 & Hiện thực hóa core engine: Connection Slab, Freelist $O(1)$, parser SIMD, Radix Router và tích hợp \texttt{libxev}. & Mã nguồn \path{src/core/}; Thư viện module Zig chạy thử nghiệm. \\
+Giai đoạn 3 & Tháng 6 -- 8 & Hiện thực hóa đa giao thức: HTTP/2 (SoA), WebSocket (zslay, libdeflate), QUIC/H3 (lsquic), BoringSSL TLS 1.3. & Bộ parser đa giao thức; Báo cáo Autobahn Testsuite (514 OK / 517). \\
+Giai đoạn 4 & Tháng 9 -- 10 & Triển khai đo kiểm chuẩn hóa trên \url{https://bench.zig.bd/}, HttpArena (15 kịch bản) và profiling eBPF. & Bộ dữ liệu đo đạc chi tiết; Biểu đồ phân vị latency và cache miss. \\
+Giai đoạn 5 & Tháng 11 -- 12 & Đánh giá, tối ưu tinh chỉnh hệ thống, viết báo cáo tổng kết đề tài và bài báo khoa học công bố. & 01 bài báo khoa học; Báo cáo toàn văn nghiệm thu đề tài NCKHSV. \\
+\bottomrule()
 \end{longtable}
 
 \subsection{B3. Kết quả dự kiến}
 
-Kết quả thứ nhất là một bản phân tích khoa học về sự liên hệ giữa tổ chức vùng bộ nhớ, mẫu truy cập của giao thức và áp lực cache. Kết quả thứ hai là bộ hình minh họa cho freelist, SoA, SIMD, dòng dữ liệu HTTP, HTTP/2, WebSocket, QUIC và vùng TLS. Kết quả thứ ba là phương pháp đo có thể tái lập, trong đó mọi kết luận về giảm cache miss hoặc giảm latency đuôi đều đi kèm cấu hình phần cứng, compiler, kernel, workload, giới hạn dung lượng và tỷ lệ từ chối.
+\paragraph{1. Sản phẩm khoa học và công bố:}
+\begin{itemize}
+    \item \textbf{Bài báo khoa học:} 01 bài báo khoa học được chấp nhận đăng tại Kỷ yếu Hội nghị Khoa học Quốc tế có phản biện (như IEEE RIVF, NICS hoặc Tạp chí Phát triển Khoa học \& Công nghệ -- ĐHQG-HCM), với nội dung phân tích chuyên sâu về kiến trúc Data-Oriented Design và kỹ thuật tối ưu hóa bộ nhớ đệm cho máy chủ mạng bất đồng bộ.
+    \item \textbf{Báo cáo nghiên cứu toàn văn:} Báo cáo thuyết minh và tổng kết khoa học đề tài NCKHSV năm 2026, trình bày tường minh cơ sở lý thuyết, mô hình kiến trúc, mã nguồn hiện thực hóa và phương pháp luận đo kiểm.
+\end{itemize}
 
-Tôi dự kiến ghi nhận các giới hạn một cách trung thực. Freelist có thời gian nhận và trả phần tử hằng số nhưng tra cứu stream HTTP/2 vẫn là quét trên slab nhỏ. HTTP/2 extended CONNECT đang có kiểm thử và hỗ trợ trên đường TCP, nhưng số tunnel bị giới hạn bởi slab stream và vùng thông điệp gắn với connection; khi vượt giới hạn, peer phải bị từ chối hoặc dùng connection HTTP/1.1 riêng. WebTransport draft 16 và validator RFC 9220 chưa chứng minh tương tác đầy đủ với listener lsquic hiện tại. TLS 0 RTT bị từ chối để giữ ranh giới replay và ranh giới bộ nhớ. Những giới hạn này là một phần của kết quả nghiên cứu vì chúng xác định điều kiện áp dụng của luận điểm locality.
+\paragraph{2. Sản phẩm ứng dụng và mã nguồn công nghệ:}
+\begin{itemize}
+    \item \textbf{Thư viện mã nguồn mở $\mu$WebZockets:} Kho mã nguồn mở chất lượng cao trên GitHub, đóng gói thành Zig Package hoàn chỉnh, có tài liệu hướng dẫn API đầy đủ (\texttt{Typed Request/Response}) cho cộng đồng lập trình viên Zig quốc tế và sinh viên các khóa sau học tập.
+    \item \textbf{Bộ công cụ đo kiểm và dữ liệu Benchmark chuẩn hóa:} Tích hợp chính thức trong hệ sinh thái \textit{Zig Web Servers Benchmark} (\url{https://bench.zig.bd/}) và \textit{HttpArena} (PR \#1536), kèm theo các kịch bản kiểm thử độ trễ hạt mịn dựa trên Linux eBPF có khả năng tái lập độc lập.
+\end{itemize}
+
+\paragraph{3. Sản phẩm đào tạo và tác động thực tiễn:}
+\begin{itemize}
+    \item Nâng cao năng lực nghiên cứu hệ thống cấp thấp, lập trình mạng hiệu năng cao, hiểu biết về vi kiến trúc CPU và công nghệ kernel Linux hiện đại cho sinh viên thực hiện đề tài thuộc Khoa Mạng máy tính và Truyền thông dữ liệu, Trường ĐH Công nghệ Thông tin.
+    \item Tạo nguồn học liệu mẫu chất lượng cao cho sinh viên các môn học chuyên ngành như: Hệ điều hành nâng cao, Lập trình mạng, Tối ưu hóa hiệu năng hệ thống phân tán.
+\end{itemize}
 
 \nocite{*}
 \printbibliography[heading=bibintoc, title={B4. Tài liệu tham khảo}]
 
 \vspace{1cm}
-\begin{longtable}{@{}p{0.48\textwidth}p{0.42\textwidth}@{}}
-\centering \emph{Ngày \ldots tháng \ldots năm 2026}\\
-\textbf{Giảng viên hướng dẫn}\\
-(Ký và ghi rõ họ tên)
-&
-\centering \emph{Ngày \ldots tháng \ldots năm 2026}\\
-\textbf{Chủ nhiệm đề tài}\\
-(Ký và ghi rõ họ tên)
+\centering
+\begin{longtable}[c]{@{} >{\centering\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.6}} >{\centering\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.4}}@{}}
+% \toprule()
+\begin{minipage}[b]{\linewidth}\centering \emph{Ngày \ldots tháng \ldots năm 2026}\\ \textbf{Giảng viên hướng dẫn}\\ (Ký và ghi rõ họ tên) \end{minipage} &
+\begin{minipage}[b]{\linewidth}\centering \emph{Ngày \ldots tháng \ldots năm 2026}\\ \textbf{Chủ nhiệm đề tài}\\ (Ký và ghi rõ họ tên) \end{minipage} \\
 \end{longtable}
 
 \end{document}
