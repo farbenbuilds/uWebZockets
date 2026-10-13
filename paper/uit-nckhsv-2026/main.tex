@@ -293,32 +293,32 @@ Nghiên cứu, mô hình hóa, tối ưu hóa và đánh giá thực nghiệm to
 ]
 
 % ==================== PANEL A: OOP TRADITIONAL ====================
-\draw[draw=naturecoral!70, fill=naturecoral!3, thick, rounded corners=6pt] (0, 3.5) rectangle (15.0, 8.3);
+\draw[draw=naturecoral!70, fill=naturecoral!3, thick, rounded corners=6pt] (0, 4.2) rectangle (15.0, 9.0);
 
-\node[anchor=west, font=\bfseries\normalsize, text=naturecoral, text width=14.4cm] at (0.3, 7.85) {
+\node[anchor=west, font=\bfseries\normalsize, text=naturecoral, text width=14.4cm] at (0.3, 8.55) {
     (a) Mô hình Hướng đối tượng OOP truyền thống (Heap Allocations \& Pointer Chasing)
 };
 
 % CPU
-\node[box=naturenavy, text width=2.2cm, minimum height=1.5cm] (cpu) at (1.5, 5.4) {
+\node[box=naturenavy, text width=2.2cm, minimum height=1.5cm] (cpu) at (1.5, 6.1) {
     \textbf{CPU Core}\\[2pt]
     \scriptsize L1d Cache\\(Dung lượng hữu hạn)
 };
 
 % Heap Objects scattered
-\node[box=naturecoral, text width=2.4cm, minimum height=1.5cm] (obj) at (5.0, 5.4) {
+\node[box=naturecoral, text width=2.4cm, minimum height=1.5cm] (obj) at (5.0, 6.1) {
     \textbf{Connection Obj}\\[2pt]
     \footnotesize Heap @ \texttt{0x7fa010}\\[1pt]
     \scriptsize 48 bytes
 };
 
-\node[box=gray, text width=2.4cm, minimum height=1.5cm] (buf) at (8.5, 5.4) {
+\node[box=gray, text width=2.4cm, minimum height=1.5cm] (buf) at (8.5, 6.1) {
     \textbf{Socket Buffer}\\[2pt]
     \footnotesize Heap @ \texttt{0x7fc820}\\[1pt]
     \scriptsize 1024 bytes (Phân mảnh)
 };
 
-\node[box=gray, text width=2.4cm, minimum height=1.5cm] (hdr) at (12.0, 5.4) {
+\node[box=gray, text width=2.4cm, minimum height=1.5cm] (hdr) at (12.0, 6.1) {
     \textbf{HTTP Headers}\\[2pt]
     \footnotesize Heap @ \texttt{0x7fe400}\\[1pt]
     \scriptsize Bảng băm con trỏ
@@ -330,54 +330,52 @@ Nghiên cứu, mô hình hóa, tối ưu hóa và đánh giá thực nghiệm to
 \draw[arrow=naturecoral, dashed, thick] (buf.north) to[bend left=28] node[midway, above, font=\scriptsize\bfseries, text=naturecoral] {3. Chasing (60 ns)} (hdr.north);
 
 % Summary banner A
-\node[anchor=west, font=\footnotesize, text=naturecoral!90!black, fill=white, draw=naturecoral!40, rounded corners=3pt, inner sep=5pt, text width=14.2cm] at (0.3, 4.05) {
+\node[anchor=west, font=\footnotesize, text=naturecoral!90!black, fill=white, draw=naturecoral!40, rounded corners=3pt, inner sep=5pt, text width=14.2cm] at (0.3, 4.75) {
     \textbf{\color{naturecoral}$\times$ Hạn chế:} Con trỏ phân tán ngẫu nhiên trên Heap $\to$ Trượt liên tiếp 3 cấp Cache (L1 $\to$ L2 $\to$ DRAM); Thu gom rác (GC) gây gián đoạn hệ thống.
 };
 
 
 % ==================== PANEL B: DoD UWEBZOCKETS ====================
-\draw[draw=natureteal!70, fill=natureteal!3, thick, rounded corners=6pt] (0, -1.0) rectangle (15.0, 3.2);
+\draw[draw=natureteal!70, fill=natureteal!3, thick, rounded corners=6pt] (0, -1.8) rectangle (15.0, 3.4);
 
-\node[anchor=west, font=\bfseries\normalsize, text=natureteal, text width=14.4cm] at (0.3, 2.8) {
+\node[anchor=west, font=\bfseries\normalsize, text=natureteal, text width=14.4cm] at (0.3, 2.95) {
     (b) Mô hình Định hướng Dữ liệu DoD trong $\mu$WebZockets (Continuous Slab \& SoA)
 };
 
 % Sub-title for Cache line
-\node[anchor=west, font=\footnotesize\bfseries, text=naturenavy, text width=14.4cm] at (0.3, 2.1) {
+\node[anchor=west, font=\footnotesize\bfseries, text=naturenavy, text width=14.4cm] at (0.3, 2.25) {
     Dòng Cache L1d duy nhất (Căn chỉnh đúng 64 Bytes -- 100\% Dữ liệu nóng cho I/O Pipeline):
 };
 
-% 64-byte Cache Line Blocks
-\begin{scope}[xshift=0.3cm, yshift=1.25cm]
-    \node[box=natureteal, text width=2.1cm, minimum height=1.2cm] at (1.1, 0) {
-        \textbf{Socket / Fd}\\[2pt]
-        \scriptsize 4B + 4B Flags
-    };
-    \node[box=natureteal, text width=2.1cm, minimum height=1.2cm] at (3.5, 0) {
-        \textbf{State \& Ring}\\[2pt]
-        \scriptsize 4B State + 8B Ptr
-    };
-    \node[box=natureteal, text width=2.5cm, minimum height=1.2cm] at (6.1, 0) {
-        \textbf{Borrowed Slices}\\[2pt]
-        \scriptsize 16B Không sao chép
-    };
-    \node[box=natureteal, fill=natureteal!25, text width=3.3cm, minimum height=1.2cm] at (9.3, 0) {
-        \textbf{SoA Stream States}\\[2pt]
-        \scriptsize 28B SIMD Bitmask
-    };
-    \node[anchor=west, font=\small\bfseries, text=natureteal, align=left] at (11.2, 0) {
-        $\to$ \textbf{1 Chu kỳ L1d}\\
-        \footnotesize \textbf{(0.5 ns, 100\% Hit)}
-    };
-\end{scope}
+% 64-byte Cache Line Blocks: 4 clean, spacious 2-line cards
+\node[box=natureteal, text width=2.0cm, minimum height=1.2cm] at (1.3, 1.1) {
+    \textbf{Socket / Fd}\\[2pt]
+    \scriptsize 4B + 4B Flags
+};
+\node[box=natureteal, text width=2.3cm, minimum height=1.2cm] at (3.7, 1.1) {
+    \textbf{State \& Ring}\\[2pt]
+    \scriptsize 4B State + 8B Ptr
+};
+\node[box=natureteal, text width=2.7cm, minimum height=1.2cm] at (6.4, 1.1) {
+    \textbf{Borrowed Slices}\\[2pt]
+    \scriptsize 16B Không sao chép
+};
+\node[box=natureteal, fill=natureteal!25, text width=3.1cm, minimum height=1.2cm] at (9.5, 1.1) {
+    \textbf{SoA Stream States}\\[2pt]
+    \scriptsize 28B SIMD Bitmask
+};
+\node[anchor=west, font=\small\bfseries, text=natureteal, align=left] at (11.4, 1.1) {
+    $\to$ \textbf{1 Chu kỳ L1d}\\[2pt]
+    \footnotesize \textbf{(0.5 ns, 100\% Hit)}
+};
 
-% Cold memory note with explicit text width
-\node[anchor=west, font=\scriptsize, text=gray!80!black, text width=14.4cm] at (0.3, 0.25) {
+% Cold memory note: at y=-0.15 (ample vertical clearance above and below)
+\node[anchor=west, font=\scriptsize, text=gray!80!black, text width=14.4cm] at (0.3, -0.15) {
     $\bullet$ \textit{Phân vùng Cold Memory Slab (cấp phát tĩnh DRAM riêng):} Chứng chỉ TLS X.509, Routing string, Metrics đếm tổng.
 };
 
-% Summary banner B
-\node[anchor=west, font=\footnotesize, text=natureteal!90!black, fill=white, draw=natureteal!40, rounded corners=3pt, inner sep=5pt, text width=14.2cm] at (0.3, -0.5) {
+% Summary banner B: at y=-1.05
+\node[anchor=west, font=\footnotesize, text=natureteal!90!black, fill=white, draw=natureteal!40, rounded corners=3pt, inner sep=5pt, text width=14.2cm] at (0.3, -1.05) {
     \textbf{\color{natureteal}$\checkmark$ Ưu thế vi kiến trúc:} Toàn bộ dữ liệu nóng nằm trọn trong \textbf{01 Cache Line 64-byte}; Giảm $26.5\times$ trượt L2; \textbf{0 Heap Allocations}; Độ trễ đuôi phẳng tuyệt đối.
 };
 
