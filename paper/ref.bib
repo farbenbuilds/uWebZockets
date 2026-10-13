@@ -74,6 +74,7 @@
   institution = {IETF}, type = {RFC}, number = {9114}, year = {2022}, month = jun,
   url = {https://www.rfc-editor.org/rfc/rfc9114.html}
 }
+
 @techreport{rfc9220,
   author = {Bishop, Mike},
   title = {Bootstrapping WebSockets with HTTP/3},
@@ -113,8 +114,9 @@
 }
 
 @misc{boringssl,
-  author = {{Google}},
+  author = {{Google LLC}},
   title = {BoringSSL}, howpublished = {Source repository},
+  year = {2026},
   url = {https://boringssl.googlesource.com/boringssl/},
   note = {Accessed: 2026-09-14}
 }
@@ -122,6 +124,7 @@
 @misc{uwebsockets,
   author = {{uNetworking}},
   title = {uWebSockets}, howpublished = {Source repository},
+  year = {2024},
   url = {https://github.com/uNetworking/uWebSockets},
   note = {Accessed: 2026-09-14}
 }
@@ -130,6 +133,7 @@
   author = {{uNetworking}},
   title = {h1spec: Quick and easy HTTP/1.1 server spec. compliance check},
   howpublished = {Source repository},
+  year = {2023},
   url = {https://github.com/uNetworking/h1spec},
   note = {Accessed: 2026-09-14}
 }
@@ -138,13 +142,16 @@
   author = {{LiteSpeed Technologies}},
   title = {lsquic: LiteSpeed QUIC and HTTP/3 library},
   howpublished = {Source repository},
+  year = {2026},
   url = {https://github.com/litespeedtech/lsquic},
   note = {Accessed: 2026-09-14}
 }
+
 @misc{libdeflate,
   author = {Biggers, Eric},
   title = {libdeflate: Heavily optimized library for DEFLATE/zlib/gzip compression and decompression},
   howpublished = {Source repository},
+  year = {2025},
   url = {https://github.com/ebiggers/libdeflate},
   note = {Accessed: 2026-09-14}
 }
@@ -153,6 +160,7 @@
   author = {Hashimoto, Mitchell},
   title = {libxev: Cross-platform, high-performance event loop},
   howpublished = {Source repository},
+  year = {2025},
   url = {https://github.com/mitchellh/libxev},
   note = {Accessed: 2026-09-14}
 }
@@ -161,20 +169,38 @@
   author = {{libuv contributors}},
   title = {libuv: Cross-platform asynchronous I/O},
   howpublished = {Source repository},
+  year = {2024},
   url = {https://github.com/libuv/libuv},
   note = {Accessed: 2026-09-14}
 }
 
+@manual{cachegrind,
+  author = {{Valgrind Developers}},
+  title = {Cachegrind: a cache and branch-prediction profiler},
+  howpublished = {Manual},
+  year = {2024},
+  url = {https://valgrind.org/docs/manual/cg-manual.html},
+  note = {Accessed: 2026-09-14}
+}
+
+@book{ebpf,
+  author = {Gregg, Brendan},
+  title = {BPF Performance Tools: Linux System and Application Observability},
+  publisher = {Addison-Wesley Professional},
+  year = {2019}
+}
+
 @misc{repo_benchmark,
-  author = {{uWebZockets project}},
+  author = {{uWebZockets Project}},
   title = {HTTP Throughput Guarantee v1},
   howpublished = {Repository benchmark contract},
+  year = {2026},
   url = {https://github.com/farbenbuilds/uWebZockets/blob/main/benchmarks/http_throughput_guarantee.md},
   note = {Accessed: 2026-09-14}
 }
 
 @misc{repo_benchmark_record,
-  author = {{uWebZockets project}},
+  author = {{uWebZockets Project}},
   title = {HTTP throughput benchmark record 34327909322-1-7a8b5d3acd49},
   howpublished = {Benchmark-data branch JSON record and raw wrk outputs},
   year = {2026},
@@ -191,16 +217,43 @@
   note = {Round published 2025-02-24; accessed 2026-09-14}
 }
 
-@misc{cachegrind,
-  author = {{Valgrind Developers}},
-  title = {Cachegrind: A cache and branch prediction profiler},
-  howpublished = {Valgrind User Manual},
-  url = {https://valgrind.org/docs/manual/cg-manual.html},
-  note = {Accessed: 2026-09-14}
+@misc{autobahn,
+  author = {{Crossbar.io Technologies GmbH}},
+  title = {Autobahn|Testsuite: The comprehensive WebSocket protocol test suite},
+  howpublished = {Source repository},
+  year = {2024},
+  url = {https://github.com/crossbario/autobahn-testsuite}
 }
 
-@book{ebpf,
-  author = {Gregg, Brendan},
-  title = {BPF Performance Tools: Linux System and Application Observability},
-  publisher = {Addison-Wesley}, year = {2019}
+@misc{bench_zig_bd,
+  author = {{Zig-BD Community}},
+  title = {Zig Web Servers Benchmark: Performance Benchmarking of Zig Web Servers},
+  howpublished = {Online Benchmark Suite: \url{https://bench.zig.bd/}},
+  year = {2026},
+  note = {Accessed: 2026-10-13}
+}
+
+@misc{httparena_pr1536,
+  author = {Martins, Diogo and {HttpArena Contributors}},
+  title = {Add uWebZockets (Zig) framework entry},
+  howpublished = {Pull Request \#1536, MDA2AV/HttpArena repository},
+  year = {2026},
+  url = {https://github.com/MDA2AV/HttpArena/pull/1536},
+  note = {Accessed: 2026-10-13}
+}
+
+@article{drepper_memory,
+  author = {Drepper, Ulrich},
+  title = {What Every Programmer Should Know About Memory},
+  journal = {Red Hat, Inc.},
+  year = {2007},
+  url = {https://people.freebsd.org/~lstewart/articles/cpumemory.pdf}
+}
+
+@techreport{io_uring,
+  author = {Axboe, Jens},
+  title = {Efficient IO with io\_uring},
+  institution = {Kernel.dk},
+  year = {2019},
+  url = {https://kernel.dk/io_uring.pdf}
 }

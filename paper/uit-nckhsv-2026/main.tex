@@ -2,8 +2,12 @@
 \usepackage{amsmath,amssymb}
 \usepackage{lmodern}
 \usepackage{iftex}
-\usepackage[T1]{fontenc}
-\usepackage[utf8]{vietnam}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{vietnam}
+\else
+  \usepackage{fontspec}
+\fi
 \usepackage{textcomp} % provide euro and other symbols
 \usepackage{lipsum}
 \usepackage{setspace}
@@ -36,7 +40,7 @@
 \providecommand{\tightlist}{%
 \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
 \setcounter{secnumdepth}{-\maxdimen} % remove section numbering
-\DeclareUnicodeCharacter{0301}{}
+\ifdefined\DeclareUnicodeCharacter\DeclareUnicodeCharacter{0301}{}\fi
 \hypersetup{colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue}
 
 \setlength{\parindent}{1em}
@@ -215,7 +219,7 @@ Phần lớn các framework máy chủ mạng phổ biến hiện nay (như Node
     \item \textit{Tại Việt Nam và trường ĐH Công nghệ Thông tin (UIT):} Các đề tài nghiên cứu cấp sinh viên về mạng máy tính phần lớn tập trung vào tầng ứng dụng Web hoặc triển khai dịch vụ đám mây cấp cao; rất hiếm các công trình đi sâu vào kiến trúc tầng thấp của hệ điều hành, tối ưu hóa bộ nhớ đệm vi xử lý, kỹ thuật vector hóa SIMD, và đo kiểm độ trễ hạt mịn bằng công nghệ eBPF.
     \item \textit{Cơ sở thực nghiệm và thành tựu đã được kiểm chứng của dự án:}
     \begin{enumerate}
-        \item \textbf{Bảng xếp hạng Zig Web Servers Benchmark (\url{https://bench.zig.bd/})~\cite{bench_zig_bd}:} Dự án $\mu$WebZockets được đánh giá độc lập cùng với các framework Zig danh tiếng (như \texttt{dusty+zio}, \texttt{httpz}, \texttt{zap}, \texttt{zzz}, \texttt{std.http}). Kết quả đo kiểm ghi nhận $\mu$WebZockets đạt thông lượng vượt trội xấp xỉ $170{,}011\text{ req/s}$ ở kịch bản Plaintext và $158{,}420\text{ req/s}$ ở kịch bản JSON, duy trì độ trễ trung bình cực thấp chỉ $3.46\text{ ms}$, phân vị P99 ở mức $6.57\text{ ms}$ và tỷ lệ thành công tuyệt đối $100\%$.
+        \item \textbf{Bảng xếp hạng Zig Web Servers Benchmark (\texttt{bench.zig.bd})~\cite{bench_zig_bd}:} Dự án $\mu$WebZockets được đánh giá độc lập cùng với các framework Zig danh tiếng (như \texttt{dusty+zio}, \texttt{httpz}, \texttt{zap}, \texttt{zzz}, \texttt{std.http}). Kết quả đo kiểm ghi nhận $\mu$WebZockets đạt thông lượng vượt trội xấp xỉ $170{,}011\text{ req/s}$ ở kịch bản Plaintext và $158{,}420\text{ req/s}$ ở kịch bản JSON, duy trì độ trễ trung bình cực thấp chỉ $3.46\text{ ms}$, phân vị P99 ở mức $6.57\text{ ms}$ và tỷ lệ thành công tuyệt đối $100\%$.
         \item \textbf{Tích hợp chính thức vào bộ chuẩn HttpArena (Pull Request \#1536)~\cite{httparena_pr1536}:} $\mu$WebZockets đã được thẩm định và phê duyệt tích hợp vào hệ thống benchmark máy chủ HTTP/WebSocket quốc tế HttpArena với điểm số hoàn thiện tính năng tối đa $4/4$ (Radix router, Middleware pipeline, Typed Request/Response API, Multi-protocol support), vượt qua toàn bộ 15 kịch bản tải nặng bao gồm: \texttt{baseline}, \texttt{pipelined}, \texttt{limited-conn}, \texttt{json-comp}, \texttt{json-tls}, \texttt{baseline-h2}, \texttt{baseline-h2c}, \texttt{baseline-h3}, \texttt{echo-ws}, \texttt{echo-ws-pipeline}, \texttt{latency-1m}, \texttt{latency-500k-8cpu}.
         \item \textbf{Chứng nhận tuân thủ chuẩn WebSocket quốc tế Autobahn Testsuite~\cite{autobahn}:} Vượt qua $514$ ca kiểm thử đạt kết quả \texttt{OK} và $3$ ca \texttt{INFORMATIONAL} trên tổng số $517$ ca kiểm thử khắt khe của bộ chuẩn.
     \end{enumerate}
@@ -446,7 +450,7 @@ Nghiên cứu, mô hình hóa, tối ưu hóa và đánh giá thực nghiệm to
 };
 
 \end{tikzpicture}
-\caption{Đối sánh thông lượng xử lý yêu cầu (Requests/giây) giữa các máy chủ mạng viết bằng Zig theo số liệu công bố độc lập tại bộ chuẩn \textit{Zig Web Servers Benchmark} (\url{https://bench.zig.bd/})~\cite{bench_zig_bd}. $\mu$WebZockets duy trì ưu thế dẫn đầu ở cả hai kịch bản tải Plaintext ($170{,}011\text{ req/s}$) và JSON ($158{,}420\text{ req/s}$).}
+\caption{Đối sánh thông lượng xử lý yêu cầu (Requests/giây) giữa các máy chủ mạng viết bằng Zig theo số liệu công bố độc lập tại bộ chuẩn \textit{Zig Web Servers Benchmark} (\texttt{bench.zig.bd})~\cite{bench_zig_bd}. $\mu$WebZockets duy trì ưu thế dẫn đầu ở cả hai kịch bản tải Plaintext ($170{,}011\text{ req/s}$) và JSON ($158{,}420\text{ req/s}$).}
 \label{fig:bench-throughput}
 \end{figure}
 
@@ -569,7 +573,7 @@ Giai đoạn 5 & Tháng 11 -- 12 & Đánh giá, tối ưu tinh chỉnh hệ th�
 \paragraph{2. Sản phẩm ứng dụng và mã nguồn công nghệ:}
 \begin{itemize}
     \item \textbf{Thư viện mã nguồn mở $\mu$WebZockets:} Kho mã nguồn mở chất lượng cao trên GitHub, đóng gói thành Zig Package hoàn chỉnh, có tài liệu hướng dẫn API đầy đủ (\texttt{Typed Request/Response}) cho cộng đồng lập trình viên Zig quốc tế và sinh viên các khóa sau học tập.
-    \item \textbf{Bộ công cụ đo kiểm và dữ liệu Benchmark chuẩn hóa:} Tích hợp chính thức trong hệ sinh thái \textit{Zig Web Servers Benchmark} (\url{https://bench.zig.bd/}) và \textit{HttpArena} (PR \#1536), kèm theo các kịch bản kiểm thử độ trễ hạt mịn dựa trên Linux eBPF có khả năng tái lập độc lập.
+    \item \textbf{Bộ công cụ đo kiểm và dữ liệu Benchmark chuẩn hóa:} Tích hợp chính thức trong hệ sinh thái \textit{Zig Web Servers Benchmark} (\texttt{bench.zig.bd}) và \textit{HttpArena} (PR \#1536), kèm theo các kịch bản kiểm thử độ trễ hạt mịn dựa trên Linux eBPF có khả năng tái lập độc lập.
 \end{itemize}
 
 \paragraph{3. Sản phẩm đào tạo và tác động thực tiễn:}
