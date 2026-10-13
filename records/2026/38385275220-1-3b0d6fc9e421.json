@@ -1,0 +1,73 @@
+{
+  "benchmark_id": "http-throughput-v1",
+  "guarantee": {
+    "formula": "candidate_median_rps >= baseline_median_rps * minimum_baseline_ratio",
+    "minimum_baseline_ratio": 0.9,
+    "passed": true,
+    "threshold_rps": 98868.114
+  },
+  "methodology": {
+    "build_optimize": "ReleaseFast",
+    "contract_sha256": "d6de76594a2e7b587f016eed86a1f99fc19027eb19ad9a50cd2a15257e3cdb85",
+    "execution_order": [
+      "candidate",
+      "baseline"
+    ],
+    "server_binary": "hello_world",
+    "wrk": {
+      "connections": 64,
+      "duration_seconds": 10,
+      "samples": 3,
+      "statistic": "median",
+      "target_url": "http://127.0.0.1:3000/",
+      "threads": 2
+    }
+  },
+  "provenance": {
+    "baseline_flake_lock_sha256": "a83b090e14e3b52a5ee5453f5dace3dbb2d7264991fef5409ed8c764551ceb5a",
+    "baseline_sha": "3b0d6fc9e421fddf9609c3d027412348a10ce2f8",
+    "candidate_flake_lock_sha256": "a83b090e14e3b52a5ee5453f5dace3dbb2d7264991fef5409ed8c764551ceb5a",
+    "candidate_sha": "3b0d6fc9e421fddf9609c3d027412348a10ce2f8",
+    "event_name": "schedule",
+    "git_ref": "refs/heads/main",
+    "repository": "farbenbuilds/uWebZockets",
+    "run_attempt": 1,
+    "run_id": 38385275220,
+    "workflow_run_url": "https://github.com/farbenbuilds/uWebZockets/actions/runs/38385275220"
+  },
+  "record_id": "38385275220-1-3b0d6fc9e421",
+  "recorded_at": "2026-10-13T10:49:12Z",
+  "results": {
+    "baseline": {
+      "median_rps": 109853.46,
+      "samples_rps": [
+        109853.46,
+        107897.78,
+        110113.7
+      ]
+    },
+    "candidate": {
+      "median_rps": 106190.94,
+      "samples_rps": [
+        106190.94,
+        101652.3,
+        110239.39
+      ]
+    },
+    "candidate_to_baseline_ratio": 0.966659948626106
+  },
+  "runner": {
+    "architecture": "X64",
+    "cpu_model": "AMD EPYC 7763 64-Core Processor",
+    "image": "ubuntu24/20261004.327.1",
+    "kernel": "Linux 6.17.0-1022-azure #22-Ubuntu SMP Mon Jul 27 17:24:03 UTC 2026 x86_64 GNU/Linux",
+    "name": "GitHub Actions 1000003913",
+    "os": "Linux"
+  },
+  "schema_version": 1,
+  "toolchain": {
+    "nix_version": "nix (Nix) 2.35.2",
+    "wrk_version": "unknown",
+    "zig_version": "0.16.0"
+  }
+}
