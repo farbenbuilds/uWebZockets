@@ -285,97 +285,110 @@ Nghiên cứu, mô hình hóa, tối ưu hóa và đánh giá thực nghiệm to
 
 \begin{figure}[!hbt]
 \centering
+\resizebox{\linewidth}{!}{
 \begin{tikzpicture}[
     font=\small,
-    panel/.style={draw=#1!80, fill=#1!4, thick, rounded corners=4pt, inner sep=5pt},
-    cachecell/.style={draw=natureteal!90, fill=natureteal!18, thick, align=center, font=\scriptsize, minimum height=0.72cm},
-    coldcell/.style={draw=gray!60, fill=gray!12, thick, align=center, font=\scriptsize, minimum height=0.68cm},
-    arrow/.style={-{Stealth[length=2.2mm]}, thick, draw=#1}
+    cachecell/.style={draw=natureteal!90, fill=natureteal!14, thick, align=center, font=\footnotesize, minimum height=0.75cm, rounded corners=2pt},
+    coldcell/.style={draw=gray!50, fill=gray!10, thick, align=left, font=\scriptsize, inner sep=5pt, rounded corners=3pt},
+    arrow/.style={-{Stealth[length=2.5mm]}, thick, draw=#1}
 ]
 
 % ==================== PANEL A: OOP TRADITIONAL ====================
-\node[panel=naturecoral, text width=14.4cm] (panela) {
-    \textbf{\color{naturecoral}\large (a) Mô hình Hướng đối tượng OOP truyền thống (Heap Allocations \& Pointer Chasing)}\\[4pt]
-    \begin{tikzpicture}[font=\footnotesize]
-        % CPU Box
-        \node[draw=naturenavy, fill=naturenavy!10, rounded corners=3pt, thick, text width=2.2cm, align=center, minimum height=1.4cm] (cpu) at (0,0) {
-            \textbf{CPU Core}\\[2pt]
-            \scriptsize L1d Cache\\(Chỉ nạp 1 phần)
-        };
+\draw[draw=naturecoral!70, fill=naturecoral!3, thick, rounded corners=6pt] (-0.4, 3.7) rectangle (14.4, 8.4);
 
-        % Heap Objects scattered
-        \node[draw=naturecoral, fill=naturecoral!12, thick, rounded corners=3pt, text width=2.3cm, align=center] (obj) at (3.6, 0.45) {
-            \textbf{Conn Object}\\
-            \tiny Heap @ 0x7fa010\\
-            \scriptsize 48 bytes
-        };
+% Title A
+\node[anchor=west, font=\bfseries\large, text=naturecoral] at (0, 7.9) {
+    (a) Mô hình Hướng đối tượng OOP truyền thống (Heap Allocation \& Pointer Chasing)
+};
 
-        \node[draw=gray!70, fill=gray!10, thick, rounded corners=3pt, text width=2.3cm, align=center] (buf) at (7.2, 0.45) {
-            \textbf{Buffer Heap}\\
-            \tiny Heap @ 0x7fc820\\
-            \scriptsize 1024 bytes
-        };
+% CPU Box
+\node[draw=naturenavy, fill=naturenavy!10, rounded corners=4pt, thick, text width=2.3cm, align=center, minimum height=1.4cm] (cpu) at (1.2, 6.4) {
+    \textbf{CPU Core}\\[2pt]
+    \scriptsize L1d Cache\\(Dung lượng hữu hạn)
+};
 
-        \node[draw=gray!70, fill=gray!10, thick, rounded corners=3pt, text width=2.4cm, align=center] (hdr) at (10.9, 0.45) {
-            \textbf{Headers Hash}\\
-            \tiny Heap @ 0x7fe400\\
-            \scriptsize Phân mảnh rời rạc
-        };
+% Heap Objects scattered
+\node[draw=naturecoral, fill=naturecoral!12, thick, rounded corners=4pt, text width=2.4cm, align=center, minimum height=1.2cm] (obj) at (4.7, 6.4) {
+    \textbf{Connection Obj}\\[1pt]
+    \tiny Heap @ \texttt{0x7fa010}\\
+    \scriptsize 48 bytes
+};
 
-        \node[draw=gray!50, fill=gray!5, dashed, text width=6.5cm, align=center, font=\scriptsize] (garbage) at (7.2, -0.65) {
-            Vùng đệm GC / Allocator Metadata (Gây ô nhiễm bộ nhớ đệm L2/L3)
-        };
+\node[draw=gray!70, fill=gray!10, thick, rounded corners=4pt, text width=2.4cm, align=center, minimum height=1.2cm] (buf) at (8.3, 6.4) {
+    \textbf{Socket Buffer}\\[1pt]
+    \tiny Heap @ \texttt{0x7fc820}\\
+    \scriptsize 1024B (Phân mảnh)
+};
 
-        % Arrows
-        \draw[arrow=naturecoral] (cpu.east) -- (obj.west) node[midway, above, font=\tiny\bfseries] {Nạp trỏ};
-        \draw[arrow=naturecoral, dashed] (obj.east) -- (buf.west) node[midway, above, font=\tiny\bfseries] {Trỏ DRAM};
-        \draw[arrow=naturecoral, dashed] (buf.east) -- (hdr.west) node[midway, above, font=\tiny\bfseries] {Pointer chase};
+\node[draw=gray!70, fill=gray!10, thick, rounded corners=4pt, text width=2.5cm, align=center, minimum height=1.2cm] (hdr) at (12.1, 6.4) {
+    \textbf{HTTP Headers}\\[1pt]
+    \tiny Heap @ \texttt{0x7fe400}\\
+    \scriptsize HashMap rời rạc
+};
 
-        % Callout bottom
-        \node[draw=naturecoral!80, fill=white, rounded corners=3pt, text width=13.8cm, align=left, font=\scriptsize] at (5.9, -1.35) {
-            \textbf{\color{naturecoral}Hạn chế vi kiến trúc:} Duyệt đồ thị con trỏ phân tán qua 3--4 địa chỉ bộ nhớ ngẫu nhiên $\to$ Gây trượt liên tiếp Cache L1d (5 ns), L2 (14 ns) và DRAM (60 ns). Bộ quản lý bộ nhớ sinh ra phân mảnh và dừng hệ thống (GC pauses), khiến độ trễ đuôi $P_{99}$ tăng vọt.
-        };
-    \end{tikzpicture}
+% GC buffer
+\node[draw=gray!50, fill=gray!6, dashed, rounded corners=3pt, text width=7.6cm, align=center, font=\scriptsize, inner sep=4pt] (garbage) at (8.3, 4.95) {
+    Vùng đệm GC / Allocator Metadata (Gây ô nhiễm Cache L2/L3 \& GC Pauses)
+};
+
+% Arrows
+\draw[arrow=naturecoral] (cpu.east) -- (obj.west) node[midway, above, font=\tiny\bfseries] {Nạp trỏ (5ns)};
+\draw[arrow=naturecoral, dashed] (obj.east) -- (buf.west) node[midway, above, font=\tiny\bfseries] {Trỏ DRAM (14ns)};
+\draw[arrow=naturecoral, dashed] (buf.east) -- (hdr.west) node[midway, above, font=\tiny\bfseries] {Chase (60ns)};
+\draw[arrow=gray!60, dotted] (buf.south) -- (garbage.north);
+\draw[arrow=gray!60, dotted] (hdr.south) -- ($(garbage.north)+(2.6, 0)$);
+
+% Footer A
+\node[anchor=west, font=\scriptsize, text=naturecoral!90!black] at (0, 4.15) {
+    $\blacktriangleright$ \textbf{Hậu quả vi kiến trúc:} Trượt liên tiếp 3 cấp Cache (L1 $\to$ L2 $\to$ DRAM); GC thu gom rác gây bùng nổ độ trễ đuôi $P_{99}$.
 };
 
 % ==================== PANEL B: DoD UWEBZOCKETS ====================
-\node[panel=natureteal, text width=14.4cm, below=0.35cm of panela] (panelb) {
-    \textbf{\color{natureteal}\large (b) Mô hình Định hướng Dữ liệu (DoD) trong $\mu$WebZockets (Bounded Slabs \& SoA)}\\[4pt]
-    \begin{tikzpicture}[font=\footnotesize]
-        % Cache Line 1
-        \node[anchor=west, font=\scriptsize\bfseries, text=naturenavy] at (0, 1.95) {Dòng Cache L1d thứ 1 (Căn chỉnh đúng 64 Bytes -- 100\% Dữ liệu Nóng):};
-        
-        \node[cachecell, text width=1.3cm] (c1) at (0.8, 1.4) {\textbf{Socket}\\4B};
-        \node[cachecell, text width=1.3cm] (c2) at (2.3, 1.4) {\textbf{State}\\4B};
-        \node[cachecell, text width=2.1cm] (c3) at (4.2, 1.4) {\textbf{Ring Ptrs}\\8B};
-        \node[cachecell, text width=1.3cm] (c4) at (6.1, 1.4) {\textbf{Flags}\\4B};
-        \node[cachecell, text width=2.5cm] (c5) at (8.2, 1.4) {\textbf{Borrowed View}\\16B};
-        \node[cachecell, text width=2.3cm, fill=natureteal!28] (c6) at (10.8, 1.4) {\textbf{Active Bitset}\\28B};
+\draw[draw=natureteal!70, fill=natureteal!3, thick, rounded corners=6pt] (-0.4, -2.5) rectangle (14.4, 3.2);
 
-        \node[anchor=west, font=\tiny\bfseries, text=natureteal, align=left] at (12.2, 1.4) {$\rightarrow$ 1 nhịp L1d\\(0.5 ns)};
+% Title B
+\node[anchor=west, font=\bfseries\large, text=natureteal] at (0, 2.7) {
+    (b) Mô hình Định hướng Dữ liệu (DoD) trong $\mu$WebZockets (Bounded Slabs \& SoA)
+};
 
-        % Cache Line 2
-        \node[anchor=west, font=\scriptsize\bfseries, text=naturenavy] at (0, 0.75) {Dòng Cache L1d thứ 2 (Structure of Arrays cho HTTP/2 Multiplexing Streams):};
+% Cache Line 1 Title
+\node[anchor=west, font=\footnotesize\bfseries, text=naturenavy] at (0, 1.95) {
+    Dòng Cache L1d thứ 1 (Căn chỉnh đúng 64 Bytes -- 100\% Dữ liệu nóng cho I/O Pipeline):
+};
 
-        \node[cachecell, fill=naturenavy!15, text width=3.6cm] (s1) at (2.0, 0.2) {\textbf{stream\_ids[0..15]}\\16B (Vector SIMD)};
-        \node[cachecell, fill=naturenavy!15, text width=3.6cm] (s2) at (5.8, 0.2) {\textbf{states[0..15]}\\16B (Packed enum)};
-        \node[cachecell, fill=naturenavy!15, text width=3.8cm] (s3) at (9.7, 0.2) {\textbf{recv\_windows[0..15]}\\32B (Song song 16 luồng)};
+% Cache Line 1 Cells (Total 64 Bytes)
+\node[cachecell, text width=1.3cm] (c1) at (0.8, 1.25) {\textbf{Socket}\\4B};
+\node[cachecell, text width=1.1cm] (c2) at (2.2, 1.25) {\textbf{State}\\4B};
+\node[cachecell, text width=1.8cm] (c3) at (3.85, 1.25) {\textbf{Ring Ptrs}\\8B};
+\node[cachecell, text width=1.1cm] (c4) at (5.5, 1.25) {\textbf{Flags}\\4B};
+\node[cachecell, text width=2.0cm] (c5) at (7.25, 1.25) {\textbf{Slice View}\\16B};
+\node[cachecell, text width=2.5cm, fill=natureteal!24] (c6) at (9.7, 1.25) {\textbf{Active Bitmask}\\28B};
+\node[anchor=west, font=\scriptsize\bfseries, text=natureteal, align=left] at (11.2, 1.25) {$\to$ \textbf{1 nhịp L1d}\\(0.5 ns)};
 
-        \node[anchor=west, font=\tiny\bfseries, text=naturenavy, align=left] at (11.8, 0.2) {$\rightarrow$ 16 luồng /\\1 cache line};
+% Cache Line 2 Title
+\node[anchor=west, font=\footnotesize\bfseries, text=naturenavy] at (0, 0.4) {
+    Dòng Cache L1d thứ 2 (Structure of Arrays cho 16 luồng HTTP/2 Multiplexing Streams):
+};
 
-        % Cold Slab
-        \node[coldcell, text width=13.8cm, align=center] (cold) at (6.9, -0.6) {
-            \textbf{Phân vùng Cold Memory Slab riêng biệt (DRAM tĩnh, không nạp vào L1d):} Chứng chỉ TLS X.509 $\bullet$ Hostname Strings $\bullet$ Thông số thống kê tổng
-        };
+% Cache Line 2 Cells
+\node[cachecell, fill=naturenavy!15, text width=3.3cm] (s1) at (1.8, -0.3) {\textbf{stream\_ids[0..15]}\\16 Bytes (SIMD Vector)};
+\node[cachecell, fill=naturenavy!15, text width=3.3cm] (s2) at (5.4, -0.3) {\textbf{stream\_states[0..15]}\\16 Bytes (Packed Bitset)};
+\node[cachecell, fill=naturenavy!15, text width=3.6cm] (s3) at (9.1, -0.3) {\textbf{flow\_windows[0..15]}\\32 Bytes (SIMD Flow Control)};
+\node[anchor=west, font=\scriptsize\bfseries, text=naturenavy, align=left] at (11.2, -0.3) {$\to$ \textbf{16 Streams}\\/ 1 Cache Line};
 
-        % Callout bottom
-        \node[draw=natureteal!80, fill=white, rounded corners=3pt, text width=13.8cm, align=left, font=\scriptsize] at (6.9, -1.35) {
-            \textbf{\color{natureteal}Hiệu năng vi kiến trúc:} Toàn bộ bộ nhớ được cấp phát tĩnh ngay khi khởi động (Slab Allocator), căn chỉnh 64-byte. Phần cứng nạp trước (\emph{hardware prefetcher}) hoạt động tối đa $\to$ Tỷ lệ trúng L1d đạt \textbf{99.6\%}, giảm $26.5\times$ trượt L2, \textbf{hoàn toàn không có cấp phát Heap} trên đường truyền dữ liệu.
-        };
-    \end{tikzpicture}
+% Cold Slab Box
+\node[coldcell, text width=13.6cm] (cold) at (6.9, -1.35) {
+    \textbf{Phân vùng Cold Memory Slab (Cấp phát tĩnh DRAM, tách biệt hoàn toàn khỏi đường truyền nóng):}\\
+    $\bullet$ Chứng chỉ TLS X.509 \& Session Keys \quad $\bullet$ Chuỗi Hostname Routing \quad $\bullet$ Bộ đếm thống kê Metrics
+};
+
+% Footer B
+\node[anchor=west, font=\scriptsize, text=natureteal!90!black, text width=14.0cm, align=left] at (0, -2.15) {
+    $\blacktriangleright$ \textbf{Ưu thế vi kiến trúc:} Toàn bộ bộ nhớ cấp phát tĩnh dạng Slab; Tỷ lệ trúng Cache L1d đạt \textbf{99.6\%}; Hoàn toàn không cấp phát Heap trên đường truyền dữ liệu; Độ trễ đuôi phẳng tuyệt đối.
 };
 
 \end{tikzpicture}
+}
 \caption{Đối sánh vi kiến trúc bộ nhớ: (a) Mô hình Hướng đối tượng OOP truyền thống phân mảnh con trỏ trên Heap gây trượt cache L1/L2 liên tục; (b) Mô hình Định hướng Dữ liệu (DoD) trong $\mu$WebZockets gom cụm dữ liệu nóng vào các dòng Cache Line 64-byte và tổ chức Structure of Arrays (SoA) giúp tăng tốc độ truy xuất vi kiến trúc lên mức tối đa.}
 \label{fig:memory-layout}
 \end{figure}
@@ -547,7 +560,8 @@ Số lần chuyển đổi ngữ cảnh luồng trên giây (Context Switches / 
 ]
 % Axis
 \draw[->, thick] (0,0) -- (11.0,0) node[below right, font=\small] {\textbf{Số lượng kết nối đồng thời ($C$)}};
-\draw[->, thick] (0,0) -- (0,5.0) node[above, font=\small] {\textbf{Độ trễ đuôi P99 ($\mu$s)}};
+\draw[->, thick] (0,0) -- (0,5.2);
+\node[rotate=90, font=\footnotesize\bfseries, anchor=south, text=naturenavy] at (-0.8, 2.5) {Độ trễ đuôi P99 ($\mu$s)};
 
 % Grid lines
 \foreach \y/\val in {1/200, 2/400, 3/600, 4/800, 5/1000} {
@@ -579,13 +593,13 @@ Số lần chuyển đổi ngữ cảnh luồng trên giây (Context Switches / 
     (9.9, 2.25)
 };
 
-% Legend
-\node[draw=gray!50, fill=white, fill opacity=0.92, text opacity=1, rounded corners=3pt, inner sep=5pt, anchor=north west] at (0.4, 4.8) {
+% Legend placed cleanly ABOVE the chart with zero curve overlap
+\node[draw=gray!50, fill=white, rounded corners=3pt, inner sep=4pt] at (5.5, 5.8) {
     \begin{tikzpicture}[font=\scriptsize]
-        \draw[thick, draw=natureteal, line width=1.3pt] (0, 0.35) -- (0.55, 0.35) node[pos=0.5, circle, fill=natureteal, inner sep=1.8pt] {};
-        \node[right, text=naturenavy] at (0.62, 0.35) {\textbf{$\mu$WebZockets} (Zero-Alloc Slab + SoA)};
-        \draw[thick, draw=naturecoral, line width=1.3pt] (0, 0) -- (0.55, 0) node[pos=0.5, rectangle, fill=naturecoral, inner sep=2.0pt] {};
-        \node[right, text=naturecoral!90!black] at (0.62, 0) {\textbf{Hệ thống AoS đối chứng} (Heap Pointer-Chasing)};
+        \draw[thick, draw=natureteal, line width=1.4pt] (0,0) -- (0.6,0) node[pos=0.5, circle, fill=natureteal, inner sep=1.8pt] {};
+        \node[right, text=naturenavy] at (0.65,0) {\textbf{$\mu$WebZockets} (Zero-Alloc Slab + SoA)};
+        \draw[thick, draw=naturecoral, line width=1.4pt] (5.4,0) -- (6.0,0) node[pos=0.5, rectangle, fill=naturecoral, inner sep=2.0pt] {};
+        \node[right, text=naturecoral!90!black] at (6.05,0) {\textbf{Hệ thống AoS đối chứng} (Heap Pointer-Chasing)};
     \end{tikzpicture}
 };
 
