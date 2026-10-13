@@ -35,6 +35,19 @@ def find_tectonic() -> Path:
     )
 
 
+def safe_copy(src: Path, dst: Path) -> Path:
+    try:
+        shutil.copy(src, dst)
+        return dst
+    except PermissionError:
+        # File might be open in a PDF viewer (Acrobat, Chrome, Edge)
+        fallback = dst.with_name(dst.stem + "-updated" + dst.suffix)
+        shutil.copy(src, fallback)
+        print(f"[!] Target file '{dst.name}' is currently open/locked in a viewer.")
+        print(f"[!] Saved as updated copy: {fallback}")
+        return fallback
+
+
 def compile_doc(tex_dir: Path, main_file: str, output_pdf_name: str, tectonic_bin: Path) -> bool:
     print(f"[+] Compiling {tex_dir / main_file}...")
     cmd = [str(tectonic_bin), main_file]
@@ -51,8 +64,8 @@ def compile_doc(tex_dir: Path, main_file: str, output_pdf_name: str, tectonic_bi
         return False
 
     dest = DOWNLOADS_DIR / output_pdf_name
-    shutil.copy(built_pdf, dest)
-    print(f"[OK] Successfully compiled: {built_pdf} -> {dest}")
+    final_dest = safe_copy(built_pdf, dest)
+    print(f"[OK] Successfully compiled: {built_pdf} -> {final_dest}")
     return True
 
 
