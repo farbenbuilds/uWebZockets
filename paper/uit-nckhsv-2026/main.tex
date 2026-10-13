@@ -293,62 +293,62 @@ Nghiên cứu, mô hình hóa, tối ưu hóa và đánh giá thực nghiệm to
 ]
 
 % ==================== PANEL A: OOP TRADITIONAL ====================
-\draw[draw=naturecoral!70, fill=naturecoral!3, thick, rounded corners=6pt] (-0.3, 4.0) rectangle (15.3, 8.2);
+\draw[draw=naturecoral!70, fill=naturecoral!3, thick, rounded corners=6pt] (-0.3, 3.5) rectangle (15.3, 8.3);
 
-\node[anchor=west, font=\bfseries\large, text=naturecoral] at (0.2, 7.7) {
+\node[anchor=west, font=\bfseries\large, text=naturecoral] at (0.2, 7.9) {
     (a) Mô hình Hướng đối tượng OOP truyền thống (Heap Allocations \& Pointer Chasing)
 };
 
 % CPU
-\node[box=naturenavy, text width=2.4cm, minimum height=1.6cm] (cpu) at (1.5, 5.8) {
-    \textbf{CPU Core}\\[3pt]
+\node[box=naturenavy, text width=2.3cm, minimum height=1.5cm] (cpu) at (1.4, 5.4) {
+    \textbf{CPU Core}\\[2pt]
     \scriptsize L1d Cache\\(Dung lượng hữu hạn)
 };
 
 % Heap Objects scattered
-\node[box=naturecoral, text width=2.6cm, minimum height=1.5cm] (obj) at (5.2, 5.8) {
+\node[box=naturecoral, text width=2.5cm, minimum height=1.5cm] (obj) at (5.1, 5.4) {
     \textbf{Connection Obj}\\[2pt]
     \footnotesize Heap @ \texttt{0x7fa010}\\[1pt]
     \scriptsize 48 bytes
 };
 
-\node[box=gray, text width=2.6cm, minimum height=1.5cm] (buf) at (8.9, 5.8) {
+\node[box=gray, text width=2.5cm, minimum height=1.5cm] (buf) at (8.8, 5.4) {
     \textbf{Socket Buffer}\\[2pt]
     \footnotesize Heap @ \texttt{0x7fc820}\\[1pt]
     \scriptsize 1024 bytes (Phân mảnh)
 };
 
-\node[box=gray, text width=2.6cm, minimum height=1.5cm] (hdr) at (12.6, 5.8) {
+\node[box=gray, text width=2.5cm, minimum height=1.5cm] (hdr) at (12.5, 5.4) {
     \textbf{HTTP Headers}\\[2pt]
     \footnotesize Heap @ \texttt{0x7fe400}\\[1pt]
     \scriptsize Bảng băm con trỏ
 };
 
-% Arrows with timing callouts
-\draw[arrow=naturecoral] (cpu.east) -- (obj.west) node[midway, above, font=\scriptsize\bfseries] {Nạp trỏ (5ns)};
-\draw[arrow=naturecoral, dashed] (obj.east) -- (buf.west) node[midway, above, font=\scriptsize\bfseries] {Trỏ DRAM (14ns)};
-\draw[arrow=naturecoral, dashed] (buf.east) -- (hdr.west) node[midway, above, font=\scriptsize\bfseries] {Chase (60ns)};
+% Curved Hop Arrows over the boxes - 100% free of text/border overlap
+\draw[arrow=naturecoral, thick] (cpu.north) to[bend left=28] node[midway, above, font=\scriptsize\bfseries, text=naturecoral] {1. Nạp trỏ (5 ns)} (obj.north);
+\draw[arrow=naturecoral, dashed, thick] (obj.north) to[bend left=28] node[midway, above, font=\scriptsize\bfseries, text=naturecoral] {2. Trỏ DRAM (14 ns)} (buf.north);
+\draw[arrow=naturecoral, dashed, thick] (buf.north) to[bend left=28] node[midway, above, font=\scriptsize\bfseries, text=naturecoral] {3. Chasing (60 ns)} (hdr.north);
 
 % Summary banner A
-\node[anchor=west, font=\footnotesize, text=naturecoral!90!black, fill=white, draw=naturecoral!40, rounded corners=3pt, inner sep=5pt, text width=14.4cm] at (0.2, 4.5) {
+\node[anchor=west, font=\footnotesize, text=naturecoral!90!black, fill=white, draw=naturecoral!40, rounded corners=3pt, inner sep=5pt, text width=14.4cm] at (0.2, 4.05) {
     \textbf{\color{naturecoral}$\times$ Hạn chế:} Con trỏ phân tán ngẫu nhiên trên Heap $\to$ Trượt liên tiếp 3 cấp Cache (L1 $\to$ L2 $\to$ DRAM); Thu gom rác (GC) gây gián đoạn hệ thống.
 };
 
 
 % ==================== PANEL B: DoD UWEBZOCKETS ====================
-\draw[draw=natureteal!70, fill=natureteal!3, thick, rounded corners=6pt] (-0.3, -1.0) rectangle (15.3, 3.4);
+\draw[draw=natureteal!70, fill=natureteal!3, thick, rounded corners=6pt] (-0.3, -1.0) rectangle (15.3, 3.2);
 
-\node[anchor=west, font=\bfseries\large, text=natureteal] at (0.2, 2.9) {
+\node[anchor=west, font=\bfseries\large, text=natureteal] at (0.2, 2.8) {
     (b) Mô hình Định hướng Dữ liệu DoD trong $\mu$WebZockets (Continuous Slab \& SoA)
 };
 
 % Sub-title for Cache line
-\node[anchor=west, font=\footnotesize\bfseries, text=naturenavy] at (0.2, 2.2) {
+\node[anchor=west, font=\footnotesize\bfseries, text=naturenavy] at (0.2, 2.1) {
     Dòng Cache L1d duy nhất (Căn chỉnh đúng 64 Bytes -- 100\% Dữ liệu nóng cho I/O Pipeline):
 };
 
-% 64-byte Cache Line Blocks - Big, spacious, uncluttered!
-\begin{scope}[xshift=0.2cm, yshift=1.3cm]
+% 64-byte Cache Line Blocks
+\begin{scope}[xshift=0.2cm, yshift=1.25cm]
     \node[box=natureteal, text width=2.2cm, minimum height=1.2cm] at (1.2, 0) {
         \textbf{Socket / Fd}\\[2pt]
         \scriptsize 4B + 4B Flags
