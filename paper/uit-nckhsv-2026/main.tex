@@ -99,7 +99,7 @@
 \subsection{A1. Tên đề tài}
 \begin{itemize}
 \item[-] Tên tiếng Việt (IN HOA): \textbf{NGHIÊN CỨU VÀ TỐI ƯU HÓA TÍNH CỤC BỘ BỘ NHỚ, CÔ LẬP GIAO THỨC TRONG MÁY CHỦ MẠNG ĐA GIAO THỨC HIỆU NĂNG CAO $\mu$WEBZOCKETS BẰNG ZIG}
-\item[-] Tên tiếng Anh (IN HOA):\\\textbf{DATA-ORIENTED MEMORY LOCALITY AND BOUNDED PROTOCOL CONFINEMENT IN $\mu$WEBZOCKETS: A HIGH-CONCURRENCY MULTI-PROTOCOL SERVER ARCHITECTURE IN ZIG}
+\item[-] Tên tiếng Anh (IN HOA): {\raggedright\textbf{DATA-ORIENTED MEMORY LOCALITY AND BOUNDED PROTOCOL CONFINEMENT IN $\mu$WEBZOCKETS: A HIGH-CONCURRENCY MULTI-PROTOCOL SERVER ARCHITECTURE IN ZIG}\par}
 \end{itemize}
 
 \subsection{A2. Thời gian thực hiện}
@@ -285,59 +285,98 @@ Nghiên cứu, mô hình hóa, tối ưu hóa và đánh giá thực nghiệm to
 
 \begin{figure}[!hbt]
 \centering
-\resizebox{\linewidth}{!}{
 \begin{tikzpicture}[
-    cacheline/.style={draw=black!70, fill=yellow!12, thick, inner sep=4pt, rounded corners=2pt},
-    bytecell/.style={draw=naturenavy, fill=naturenavy!10, minimum width=1.1cm, minimum height=0.65cm, align=center, font=\scriptsize},
-    coldcell/.style={draw=gray!60, fill=gray!15, minimum width=1.1cm, minimum height=0.65cm, align=center, font=\scriptsize},
-    labelstyle/.style={font=\small\bfseries, align=center}
+    font=\small,
+    panel/.style={draw=#1!80, fill=#1!4, thick, rounded corners=4pt, inner sep=5pt},
+    cachecell/.style={draw=natureteal!90, fill=natureteal!18, thick, align=center, font=\scriptsize, minimum height=0.72cm},
+    coldcell/.style={draw=gray!60, fill=gray!12, thick, align=center, font=\scriptsize, minimum height=0.68cm},
+    arrow/.style={-{Stealth[length=2.2mm]}, thick, draw=#1}
 ]
 
-% Part A: Traditional OOP / AoS
-\node[labelstyle, text=naturecoral] at (3.5, 3.8) {(a) Mô hình Hướng đối tượng OOP truyền thống (Heap Allocations \& AoS)};
-\node[draw=naturecoral!70, fill=naturecoral!5, thick, rounded corners=4pt, fit={(0,0) (7,3.3)}] (oophull) {};
+% ==================== PANEL A: OOP TRADITIONAL ====================
+\node[panel=naturecoral, text width=14.4cm] (panela) {
+    \textbf{\color{naturecoral}\large (a) Mô hình Hướng đối tượng OOP truyền thống (Heap Allocations \& Pointer Chasing)}\\[4pt]
+    \begin{tikzpicture}[font=\footnotesize]
+        % CPU Box
+        \node[draw=naturenavy, fill=naturenavy!10, rounded corners=3pt, thick, text width=2.2cm, align=center, minimum height=1.4cm] (cpu) at (0,0) {
+            \textbf{CPU Core}\\[2pt]
+            \scriptsize L1d Cache\\(Chỉ nạp 1 phần)
+        };
 
-\node[bytecell, fill=naturecoral!15] (obj1) at (1.6, 2.6) {Conn Obj A\\(Heap)};
-\node[bytecell, fill=naturecoral!15] (obj2) at (5.4, 2.6) {Conn Obj B\\(Heap)};
-\node[coldcell] (buf1) at (1.0, 1.2) {Buffer A\\(Mismatched)};
-\node[coldcell] (hdr1) at (2.4, 0.5) {Headers\\(Pointer)};
-\node[coldcell] (buf2) at (4.8, 1.0) {Buffer B\\(Separate)};
-\node[coldcell] (hdr2) at (6.0, 0.4) {Headers\\(Fragmented)};
+        % Heap Objects scattered
+        \node[draw=naturecoral, fill=naturecoral!12, thick, rounded corners=3pt, text width=2.3cm, align=center] (obj) at (3.6, 0.45) {
+            \textbf{Conn Object}\\
+            \tiny Heap @ 0x7fa010\\
+            \scriptsize 48 bytes
+        };
 
-\draw[-{Stealth}, thick, dashed, naturecoral] (obj1) -- (buf1) node[midway, left, font=\tiny] {Trỏ heap};
-\draw[-{Stealth}, thick, dashed, naturecoral] (obj1) -- (hdr1);
-\draw[-{Stealth}, thick, dashed, naturecoral] (obj2) -- (buf2) node[midway, right, font=\tiny] {Pointer chase};
-\draw[-{Stealth}, thick, dashed, naturecoral] (obj2) -- (hdr2);
+        \node[draw=gray!70, fill=gray!10, thick, rounded corners=3pt, text width=2.3cm, align=center] (buf) at (7.2, 0.45) {
+            \textbf{Buffer Heap}\\
+            \tiny Heap @ 0x7fc820\\
+            \scriptsize 1024 bytes
+        };
 
-\node[font=\scriptsize, align=center, text=naturecoral] at (3.5, -0.4) {Dữ liệu phân mảnh ngẫu nhiên $\to$ Gây trượt cache L1/L2 liên tục};
+        \node[draw=gray!70, fill=gray!10, thick, rounded corners=3pt, text width=2.4cm, align=center] (hdr) at (10.9, 0.45) {
+            \textbf{Headers Hash}\\
+            \tiny Heap @ 0x7fe400\\
+            \scriptsize Phân mảnh rời rạc
+        };
 
-% Part B: DoD Contiguous Slab & SoA
-\begin{scope}[xshift=8.2cm]
-\node[labelstyle, text=natureteal] at (3.5, 3.8) {(b) Mô hình Data-Oriented Design $\mu$WebZockets (Slab \& SoA)};
-\node[draw=natureteal!70, fill=natureteal!5, thick, rounded corners=4pt, fit={(0,0) (7,3.3)}] (dodhull) {};
+        \node[draw=gray!50, fill=gray!5, dashed, text width=6.5cm, align=center, font=\scriptsize] (garbage) at (7.2, -0.65) {
+            Vùng đệm GC / Allocator Metadata (Gây ô nhiễm bộ nhớ đệm L2/L3)
+        };
 
-% Cache line 1 (64 bytes)
-\node[draw=natureteal!90, fill=natureteal!15, thick, minimum width=6.4cm, minimum height=0.8cm, font=\scriptsize\bfseries, align=center] (cl1) at (3.5, 2.5) {
-    Dòng Cache L1d thứ 1 (Căn chỉnh 64-byte boundary)\\[2pt]
-    \normalfont\tiny \color{naturenavy} [fd: 4B] $\bullet$ [State: 4B] $\bullet$ [Ring Head/Tail: 8B] $\bullet$ [Hot Flags: 4B] $\bullet$ [Stream Ptrs: 44B]
+        % Arrows
+        \draw[arrow=naturecoral] (cpu.east) -- (obj.west) node[midway, above, font=\tiny\bfseries] {Nạp trỏ};
+        \draw[arrow=naturecoral, dashed] (obj.east) -- (buf.west) node[midway, above, font=\tiny\bfseries] {Trỏ DRAM};
+        \draw[arrow=naturecoral, dashed] (buf.east) -- (hdr.west) node[midway, above, font=\tiny\bfseries] {Pointer chase};
+
+        % Callout bottom
+        \node[draw=naturecoral!80, fill=white, rounded corners=3pt, text width=13.8cm, align=left, font=\scriptsize] at (5.9, -1.35) {
+            \textbf{\color{naturecoral}Hạn chế vi kiến trúc:} Duyệt đồ thị con trỏ phân tán qua 3--4 địa chỉ bộ nhớ ngẫu nhiên $\to$ Gây trượt liên tiếp Cache L1d (5 ns), L2 (14 ns) và DRAM (60 ns). Bộ quản lý bộ nhớ sinh ra phân mảnh và dừng hệ thống (GC pauses), khiến độ trễ đuôi $P_{99}$ tăng vọt.
+        };
+    \end{tikzpicture}
 };
 
-% Cache line 2
-\node[draw=natureteal!90, fill=natureteal!15, thick, minimum width=6.4cm, minimum height=0.8cm, font=\scriptsize\bfseries, align=center] (cl2) at (3.5, 1.3) {
-    Dòng Cache L1d thứ 2 (Cấu trúc SoA Streams HTTP/2)\\[2pt]
-    \normalfont\tiny \color{naturenavy} \texttt{states[0..15]}: 16B $\bullet$ \texttt{window\_sizes[0..15]}: 32B $\bullet$ \texttt{flags[0..15]}: 16B
-};
+% ==================== PANEL B: DoD UWEBZOCKETS ====================
+\node[panel=natureteal, text width=14.4cm, below=0.35cm of panela] (panelb) {
+    \textbf{\color{natureteal}\large (b) Mô hình Định hướng Dữ liệu (DoD) trong $\mu$WebZockets (Bounded Slabs \& SoA)}\\[4pt]
+    \begin{tikzpicture}[font=\footnotesize]
+        % Cache Line 1
+        \node[anchor=west, font=\scriptsize\bfseries, text=naturenavy] at (0, 1.95) {Dòng Cache L1d thứ 1 (Căn chỉnh đúng 64 Bytes -- 100\% Dữ liệu Nóng):};
+        
+        \node[cachecell, text width=1.3cm] (c1) at (0.8, 1.4) {\textbf{Socket}\\4B};
+        \node[cachecell, text width=1.3cm] (c2) at (2.3, 1.4) {\textbf{State}\\4B};
+        \node[cachecell, text width=2.1cm] (c3) at (4.2, 1.4) {\textbf{Ring Ptrs}\\8B};
+        \node[cachecell, text width=1.3cm] (c4) at (6.1, 1.4) {\textbf{Flags}\\4B};
+        \node[cachecell, text width=2.5cm] (c5) at (8.2, 1.4) {\textbf{Borrowed View}\\16B};
+        \node[cachecell, text width=2.3cm, fill=natureteal!28] (c6) at (10.8, 1.4) {\textbf{Active Bitset}\\28B};
 
-\node[draw=gray!50, fill=gray!10, dashed, minimum width=6.4cm, minimum height=0.55cm, font=\tiny, align=center] (coldcl) at (3.5, 0.4) {
-    Phân vùng Cold Memory riêng biệt (Cấu hình TLS, Thống kê, Hostname)
-};
+        \node[anchor=west, font=\tiny\bfseries, text=natureteal, align=left] at (12.2, 1.4) {$\rightarrow$ 1 nhịp L1d\\(0.5 ns)};
 
-\node[font=\scriptsize, align=center, text=natureteal] at (3.5, -0.4) {Bố cục nhớ phẳng, liên tục $\to$ Tận dụng 100\% băng thông Cache Line};
-\end{scope}
+        % Cache Line 2
+        \node[anchor=west, font=\scriptsize\bfseries, text=naturenavy] at (0, 0.75) {Dòng Cache L1d thứ 2 (Structure of Arrays cho HTTP/2 Multiplexing Streams):};
+
+        \node[cachecell, fill=naturenavy!15, text width=3.6cm] (s1) at (2.0, 0.2) {\textbf{stream\_ids[0..15]}\\16B (Vector SIMD)};
+        \node[cachecell, fill=naturenavy!15, text width=3.6cm] (s2) at (5.8, 0.2) {\textbf{states[0..15]}\\16B (Packed enum)};
+        \node[cachecell, fill=naturenavy!15, text width=3.8cm] (s3) at (9.7, 0.2) {\textbf{recv\_windows[0..15]}\\32B (Song song 16 luồng)};
+
+        \node[anchor=west, font=\tiny\bfseries, text=naturenavy, align=left] at (11.8, 0.2) {$\rightarrow$ 16 luồng /\\1 cache line};
+
+        % Cold Slab
+        \node[coldcell, text width=13.8cm, align=center] (cold) at (6.9, -0.6) {
+            \textbf{Phân vùng Cold Memory Slab riêng biệt (DRAM tĩnh, không nạp vào L1d):} Chứng chỉ TLS X.509 $\bullet$ Hostname Strings $\bullet$ Thông số thống kê tổng
+        };
+
+        % Callout bottom
+        \node[draw=natureteal!80, fill=white, rounded corners=3pt, text width=13.8cm, align=left, font=\scriptsize] at (6.9, -1.35) {
+            \textbf{\color{natureteal}Hiệu năng vi kiến trúc:} Toàn bộ bộ nhớ được cấp phát tĩnh ngay khi khởi động (Slab Allocator), căn chỉnh 64-byte. Phần cứng nạp trước (\emph{hardware prefetcher}) hoạt động tối đa $\to$ Tỷ lệ trúng L1d đạt \textbf{99.6\%}, giảm $26.5\times$ trượt L2, \textbf{hoàn toàn không có cấp phát Heap} trên đường truyền dữ liệu.
+        };
+    \end{tikzpicture}
+};
 
 \end{tikzpicture}
-}
-\caption{So sánh cấu trúc bộ nhớ: (a) Mô hình Hướng đối tượng truyền thống với mạng lưới con trỏ phân tán gây trượt cache nghiêm trọng; (b) Mô hình Định hướng Dữ liệu (\emph{Data-Oriented Design}) của $\mu$WebZockets gom nhóm dữ liệu nóng vào các dòng Cache Line 64-byte và tổ chức luồng theo Structure of Arrays (SoA).}
+\caption{Đối sánh vi kiến trúc bộ nhớ: (a) Mô hình Hướng đối tượng OOP truyền thống phân mảnh con trỏ trên Heap gây trượt cache L1/L2 liên tục; (b) Mô hình Định hướng Dữ liệu (DoD) trong $\mu$WebZockets gom cụm dữ liệu nóng vào các dòng Cache Line 64-byte và tổ chức Structure of Arrays (SoA) giúp tăng tốc độ truy xuất vi kiến trúc lên mức tối đa.}
 \label{fig:memory-layout}
 \end{figure}
 
@@ -541,12 +580,12 @@ Số lần chuyển đổi ngữ cảnh luồng trên giây (Context Switches / 
 };
 
 % Legend
-\node[draw=gray!60, fill=white, rounded corners=2pt, inner sep=4pt] at (5.0, 4.5) {
-    \begin{tikzpicture}
-        \draw[thick, draw=natureteal, line width=1.2pt, mark=*] (0,0.12) -- (0.5,0.12);
-        \node[right, font=\scriptsize] at (0.55, 0.12) {$\mu$WebZockets (Zero-Alloc Slab + SoA)};
-        \draw[thick, draw=naturecoral, line width=1.2pt, mark=square*] (5.2,0.12) -- (5.7,0.12);
-        \node[right, font=\scriptsize] at (5.75, 0.12) {Hệ thống AoS đối chứng (Heap Pointer-Chasing)};
+\node[draw=gray!50, fill=white, fill opacity=0.92, text opacity=1, rounded corners=3pt, inner sep=5pt, anchor=north west] at (0.4, 4.8) {
+    \begin{tikzpicture}[font=\scriptsize]
+        \draw[thick, draw=natureteal, line width=1.3pt] (0, 0.35) -- (0.55, 0.35) node[pos=0.5, circle, fill=natureteal, inner sep=1.8pt] {};
+        \node[right, text=naturenavy] at (0.62, 0.35) {\textbf{$\mu$WebZockets} (Zero-Alloc Slab + SoA)};
+        \draw[thick, draw=naturecoral, line width=1.3pt] (0, 0) -- (0.55, 0) node[pos=0.5, rectangle, fill=naturecoral, inner sep=2.0pt] {};
+        \node[right, text=naturecoral!90!black] at (0.62, 0) {\textbf{Hệ thống AoS đối chứng} (Heap Pointer-Chasing)};
     \end{tikzpicture}
 };
 

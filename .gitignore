@@ -1,0 +1,21 @@
+# Local author private configuration
+paper/.author_private.json
+
+# Build and temporary files
+.zig-cache/
+zig-out/
+zig-pkg/
+skills-lock.json
+*.log
+*.aux
+*.out
+*.bbl
+*.blg
+*.bcf
+*.run.xml
+*.xdv
+test_*.tex
+test_*.pdf
+test_*.png
+crop_*.png
+page_*.png
