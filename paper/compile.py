@@ -5,7 +5,7 @@ Compiles both the English IEEE version (paper/main.tex) and the Vietnamese
 UIT-NCKHSV-2026 version (paper/uit-nckhsv-2026/main.tex), then copies the
 generated PDFs to the user's Downloads folder.
 
-Injects private author identification (e.g. CCCD) locally from .author_private.json
+Injects private author identification (e.g. CCCD, phone) locally from .author_private.json
 during compilation only, guaranteeing sanitized placeholders in git repository.
 """
 
@@ -78,6 +78,14 @@ def apply_local_private_info(tex_file: Path):
     if "cccd_issue_date" in private_data:
         modified_content = modified_content.replace(
             "15/10/2021", private_data["cccd_issue_date"]
+        )
+    elif "ngay_cap" in private_data:
+        modified_content = modified_content.replace(
+            "15/10/2021", private_data["ngay_cap"]
+        )
+    if "phone" in private_data:
+        modified_content = modified_content.replace(
+            "0901234567", private_data["phone"]
         )
 
     try:
