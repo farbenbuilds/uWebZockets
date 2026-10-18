@@ -3,7 +3,7 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
-## [1.8.9] - 2026-10-18
+## [1.8.9] - 2026-10-19
 
 This release resolves the v1.8.5 declared-limits handoff. The io_uring retry
 policy is now a pure, tested decision function; threaded tests, including the
