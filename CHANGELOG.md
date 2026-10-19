@@ -3,7 +3,7 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
-## [1.9.0] - 2026-10-19
+## [1.9.0] - 2026-10-20
 
 This release closes or re-declares every limit from the v1.8.5/v1.8.9
 declared-limits handoff. The HTTP/2-over-TLS contract now has a full
