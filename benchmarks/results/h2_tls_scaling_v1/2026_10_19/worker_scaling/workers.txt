@@ -1,5 +1,0 @@
-# workers=1
-info: worker_accepts index=0 accepted=6145 closed=6145
-# workers=2
-info: worker_accepts index=0 accepted=2983 closed=2983
-info: worker_accepts index=1 accepted=3162 closed=3162

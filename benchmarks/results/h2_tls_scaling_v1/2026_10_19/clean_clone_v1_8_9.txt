@@ -1,8 +1,0 @@
-tag=v1.8.9
-commit=2573661d12e573d00ed0036736a68d34955c1339
-merge_commit=2573661d12e573d00ed0036736a68d34955c1339
-zig=0.16.0
-contract=h2-tls-scaling-v1
-clean_global_cache=/dev/shm/uwz-clean-global (empty at start)
-clean_local_cache=/dev/shm/uwz-clean-local (empty at start)
-result=success

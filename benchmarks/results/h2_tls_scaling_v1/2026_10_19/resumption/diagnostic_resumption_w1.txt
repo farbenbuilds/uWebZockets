@@ -1,8 +1,0 @@
-target=127.0.0.1:9446
-iterations=20
-new=20
-reused=100
-failed_handshakes=0
-unclassified_handshakes=0
---- server worker accepts ---
-info: worker_accepts index=0 accepted=120 closed=120

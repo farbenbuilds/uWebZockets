@@ -122,30 +122,32 @@ saturation signature rather than a flow-control or accept-path defect.
 ## Post-commit verification
 
 After the release commit, the 256- and 1,024-connection TLS rows at one and
-eight streams were rerun three times each from the committed tree. See
-`post_commit_summary.tsv` for the exact rates and latencies. This gives the
-contract rows an exact commit identifier even though the full 64-2,048 sweep
-was collected from the immediately preceding working tree.
+eight streams were rerun three times each from the committed tree. The archive
+contains `post_commit/post_commit_summary.tsv` with the exact rates and
+latencies. This gives the contract rows an exact commit identifier even though
+the full 64-2,048 sweep was collected from the immediately preceding working
+tree.
 
-## Artifact layout
+## Artifact archive
 
 | Path | Contents |
 | --- | --- |
-| `tls_cluster_w4/` | One consolidated three-sample raw output per cohort, summary, worker accepts, CPU/RSS samples, metadata, server log, exact body |
-| `plaintext_cluster_w4/` | Same artifact set for the plaintext control |
-| `single_tls_w1/` | Consolidated three-sample raw output per cohort, plus server log |
-| `single_tls_w1_summary.tsv` | Parsed single-app samples at 256/1,024 connections |
-| `worker_scaling/` | Consolidated 1- and 2-worker 1,024-connection raw output, summary, accepts, logs |
-| `resumption/` | Explicit-ticket resumption counts, server logs, tool versions |
-| `post_commit/` | Consolidated post-commit 256/1,024 TLS raw output, server log, provenance |
-| `post_commit_summary.tsv` | Post-commit 256/1,024 TLS verification rows |
-| `clean_clone_v1_8_9.txt`, `clean_clone_v1_8_9_build.log` | Tag, commit, toolchain, and empty-cache build result for `v1.8.9` |
-| `manifest.sha256` | Checksums for every artifact except the manifest itself |
+| `README.md` | Host record, result tables, hypothesis decisions, and reproduction commands |
+| `raw_evidence.tar.gz` | Append-only archive of all raw h2load outputs, parsed summaries, metadata, CPU/RSS samples, worker accepts, server logs, exact body bytes, resumption evidence, post-commit rows, and the clean-clone build log |
+| `manifest.sha256` | SHA-256 of this README and the raw evidence archive |
 
-Each `*_raw.txt` file contains the three sample outputs for one cohort,
-separated by `===== sample N =====` headers. The derived `*_rates.txt`
-intermediates are not committed because `summary.tsv` carries every rate and
-counter. Raw output is never rewritten; it is only concatenated with headers.
+Extract the raw evidence with:
+
+```sh
+mkdir -p /tmp/uwz-h2-evidence
+tar -xzf raw_evidence.tar.gz -C /tmp/uwz-h2-evidence
+```
+
+Inside the archive, each `*_raw.txt` file contains the three sample outputs for
+one cohort, separated by `===== sample N =====` headers. The derived
+`*_rates.txt` intermediates are not included because `summary.tsv` carries
+every rate and counter. Raw output was not rewritten; samples were only
+concatenated with headers before archiving.
 
 Teardown logs contain `error.BrokenPipe` and `error.ConnectionResetByPeer`
 warnings while h2load closes its clients; every sample still reported zero
