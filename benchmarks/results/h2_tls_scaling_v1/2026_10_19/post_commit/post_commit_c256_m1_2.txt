@@ -1,0 +1,76 @@
+starting benchmark...
+spawning thread #0: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #1: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #2: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #3: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #4: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #5: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #6: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #7: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+Warm-up started for thread #2.
+Warm-up started for thread #6.
+Warm-up started for thread #5.
+Warm-up started for thread #4.
+Warm-up started for thread #0.
+Warm-up started for thread #3.
+Warm-up started for thread #Warm-up started for thread #7.
+1.
+progress: 9% of clients started
+progress: 18% of clients started
+progress: 28% of clients started
+progress: 37% of clients started
+progress: 46% of clients started
+progress: 56% of clients started
+progress: 65% of clients started
+progress: 75% of clients started
+progress: 84% of clients started
+progress: 93% of clients started
+TLS Protocol: TLSv1.3
+Cipher: TLS_AES_128_GCM_SHA256
+Server Temp Key: X25519 253 bits
+Certificate: ECDSA prime256v1 256 bits
+Negotiated Group: x25519
+Resumption: no
+Application protocol: h2
+Warm-up phase is over for thread #0.
+Main benchmark duration is started for thread #0.
+Warm-up phase is over for thread #1.
+Main benchmark duration is started for thread #1.
+Warm-up phase is over for thread #2.
+Main benchmark duration is started for thread #2.
+Warm-up phase is over for thread #3.
+Main benchmark duration is started for thread #3.
+Warm-up phase is over for thread #5.
+Main benchmark duration is started for thread #5.
+Warm-up phase is over for thread #6.
+Main benchmark duration is started for thread #6.
+Warm-up phase is over for thread #4.
+Main benchmark duration is started for thread #4.
+Warm-up phase is over for thread #7.
+Main benchmark duration is started for thread #7.
+Main benchmark duration is over for thread #2. Stopping all clients.
+Stopped all clients for thread #2
+Main benchmark duration is over for thread #3. Stopping all clients.
+Stopped all clients for thread #3
+Main benchmark duration is over for thread #0. Stopping all clients.
+Main benchmark duration is over for thread #6. Stopping all clients.
+Stopped all clients for thread #0
+Stopped all clients for thread #6
+Main benchmark duration is over for thread #1. Stopping all clients.
+Main benchmark duration is over for thread #4. Stopping all clients.
+Stopped all clients for thread #1
+Stopped all clients for thread #4
+Main benchmark duration is over for thread #7. Stopping all clients.
+Stopped all clients for thread #7
+Main benchmark duration is over for thread #5. Stopping all clients.
+Stopped all clients for thread #5
+
+finished in 12.00s, 398439.50 req/s, 30.78MB/s
+requests: 3984395 total, 3984395 started, 3984395 done, 3984395 succeeded, 0 failed, 0 errored, 0 timeout
+status codes: 3984395 2xx, 0 3xx, 0 4xx, 0 5xx
+traffic: 307.78MB (322735779) total, 154.93MB (162459276) headers (space savings 46.03%), 132.15MB (138568206) data
+                 min         max         median     p95        p99        mean         sd        +/- sd
+request     :       23us      3.03ms       495us      902us     1.10ms      516us       213us    68.50%
+connect     :        0us         0us         0us        0us        0us        0us         0us     0.00%
+TTFB        :        0us         0us         0us        0us        0us        0us         0us     0.00%
+req/s       :    1403.29     1761.14     1561.10    1693.27    1759.62    1556.27       97.46    58.20%

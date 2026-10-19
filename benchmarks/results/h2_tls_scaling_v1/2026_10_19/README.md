@@ -137,7 +137,9 @@ was collected from the immediately preceding working tree.
 | `single_tls_w1_summary.tsv` | Parsed single-app samples at 256/1,024 connections |
 | `worker_scaling/` | 1- and 2-worker 1,024-connection raw samples, summary, accepts, logs |
 | `resumption/` | Explicit-ticket resumption counts, server logs, OpenSSL and h2load versions |
+| `post_commit/` | Raw post-commit 256/1,024 TLS samples, server log, exit statuses, binary SHA-256 |
 | `post_commit_summary.tsv` | Post-commit 256/1,024 TLS verification rows |
+| `clean_clone_v1.8.9.txt`, `clean_clone_v1.8.9_build.log` | Tag, commit, toolchain, and empty-cache build result for `v1.8.9` |
 | `manifest.sha256` | Checksums for every artifact except the manifest itself |
 
 Teardown logs contain `error.BrokenPipe` and `error.ConnectionResetByPeer`
