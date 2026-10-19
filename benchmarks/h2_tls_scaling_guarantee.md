@@ -123,6 +123,16 @@ Pass the URL as the fourth argument to use a non-default port or the plaintext
 control. Set `UWZ_CURL_INSECURE=1` only when the local CA cannot be passed to
 curl; the recorded metadata notes the choice.
 
+## Committed artifact policy
+
+The runner writes one file per sample for local analysis. Do not commit those
+files individually. Each recorded run is committed as one compressed archive
+plus `README.md` and `manifest.sha256`, so a results directory stays at three
+files. `scripts/check_benchmark_results.sh` runs as part of the convention gate
+and rejects any unarchived `.txt`, `.log`, `.tsv`, or `.bin` file under
+`benchmarks/results/`. The archive is append-only: extract it, inspect it, and
+do not edit the generated output.
+
 ## Current status
 
 The contract, runner, and controls ship with the 1.8.9 declared-limits work.

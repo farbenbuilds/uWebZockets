@@ -147,7 +147,9 @@ Inside the archive, each `*_raw.txt` file contains the three sample outputs for
 one cohort, separated by `===== sample N =====` headers. The derived
 `*_rates.txt` intermediates are not included because `summary.tsv` carries
 every rate and counter. Raw output was not rewritten; samples were only
-concatenated with headers before archiving.
+concatenated with headers before archiving. The convention gate rejects any
+unarchived raw file under `benchmarks/results/`, so the next recorded run keeps
+this same three-file shape.
 
 Teardown logs contain `error.BrokenPipe` and `error.ConnectionResetByPeer`
 warnings while h2load closes its clients; every sample still reported zero
