@@ -133,14 +133,14 @@ tree.
 | Path | Contents |
 | --- | --- |
 | `README.md` | Host record, result tables, hypothesis decisions, and reproduction commands |
-| `raw_evidence.tar.gz` | Append-only archive of all raw h2load outputs, parsed summaries, metadata, CPU/RSS samples, worker accepts, server logs, exact body bytes, resumption evidence, post-commit rows, and the clean-clone build log |
+| `raw_evidence_archive.tgz` | Append-only archive of all raw h2load outputs, parsed summaries, metadata, CPU/RSS samples, worker accepts, server logs, exact body bytes, resumption evidence, post-commit rows, and the clean-clone build log |
 | `manifest.sha256` | SHA-256 of this README and the raw evidence archive |
 
 Extract the raw evidence with:
 
 ```sh
 mkdir -p /tmp/uwz-h2-evidence
-tar -xzf raw_evidence.tar.gz -C /tmp/uwz-h2-evidence
+tar -xzf raw_evidence_archive.tgz -C /tmp/uwz-h2-evidence
 ```
 
 Inside the archive, each `*_raw.txt` file contains the three sample outputs for
