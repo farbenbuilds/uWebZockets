@@ -1,0 +1,76 @@
+test
++- run test w
+[tls] (warn): tls handshake failed: boringssl error code 1
+[tls] (warn): tls handshake failed: boringssl error code 1
+failed command: /dev/shm/uwz-clean-local/o/eb029368c97c3baeca516eb9d0c635da/test --cache-dir=/dev/shm/uwz-clean-local --seed=0xbb7625b6 --listen=-
+
+info(server): server listening on 127.0.0.1:33438
+Build Summary: 23/23 steps succeeded; 568/568 tests passed
+test success
++- run test 568 pass (568 total) 1s MaxRSS:1G
+|  +- compile test Debug x86_64-linux-musl success 16s MaxRSS:474M
+|     +- WriteFile cached
+|     +- compile lib uWebZockets Debug x86_64-linux-musl success 497ms MaxRSS:233M
+|     |  +- WriteFile  success
+|     |  |  +- WriteFile src/liblsquic/lsquic_versions_to_string.c success
+|     |  +- translate-c success 37s MaxRSS:642M
+|     |     +- WriteFile  (+1 more reused dependencies)
+|     +- WriteFile cached
+|     +- compile lib ssl Debug x86_64-linux-musl success 3s MaxRSS:150M
+|     |  +- WriteFile cached
+|     |  +- compile lib crypto Debug x86_64-linux-musl success 16s MaxRSS:252M
+|     |  +- compile lib crypto Debug x86_64-linux-musl (reused)
+|     +- WriteFile (reused)
+|     +- compile lib crypto Debug x86_64-linux-musl (reused)
+|     +- WriteFile success
+|     +- compile lib lsquic Debug x86_64-linux-musl success 1s MaxRSS:195M
+|     |  +- WriteFile  (+1 more reused dependencies)
+|     |  +- WriteFile  (+1 more reused dependencies)
+|     |  +- WriteFile  (+1 more reused dependencies)
+|     |  +- WriteFile  (+1 more reused dependencies)
+|     |  +- WriteFile (reused)
+|     |  +- compile lib crypto Debug x86_64-linux-musl (reused)
+|     |  +- WriteFile (reused)
+|     |  +- compile lib ssl Debug x86_64-linux-musl (+3 more reused dependencies)
+|     |  +- WriteFile cached
+|     |  +- compile lib z Debug x86_64-linux-musl success 182ms MaxRSS:71M
+|     |  +- WriteFile  (+1 more reused dependencies)
+|     |  +- compile lib crypto Debug x86_64-linux-musl (reused)
+|     |  +- compile lib ssl Debug x86_64-linux-musl (+3 more reused dependencies)
+|     |  +- compile lib z Debug x86_64-linux-musl (reused)
+|     +- WriteFile cached
+|     +- compile lib deflate Debug x86_64-linux-musl success 819ms MaxRSS:101M
+|     +- WriteFile (reused)
+|     +- compile lib z Debug x86_64-linux-musl (reused)
+|     +- compile lib uWebZockets Debug x86_64-linux-musl (+2 more reused dependencies)
+|     +- compile lib ssl Debug x86_64-linux-musl (+3 more reused dependencies)
+|     +- compile lib crypto Debug x86_64-linux-musl (reused)
+|     +- compile lib lsquic Debug x86_64-linux-musl (+14 more reused dependencies)
+|     +- compile lib deflate Debug x86_64-linux-musl (reused)
+|     +- compile lib z Debug x86_64-linux-musl (reused)
+|     +- options success
+|     +- translate-c (+1 more reused dependencies)
++- run sh success 6ms
+|  +- compile lib uWebZockets Debug x86_64-linux-musl (+2 more reused dependencies)
++- run exe c_api_smoke success 168ms
+|  +- compile exe c_api_smoke Debug x86_64-linux-musl success 18s MaxRSS:403M
+|     +- WriteFile (reused)
+|     +- compile lib uWebZockets Debug x86_64-linux-musl (+2 more reused dependencies)
+|     +- WriteFile (reused)
+|     +- compile lib ssl Debug x86_64-linux-musl (+3 more reused dependencies)
+|     +- WriteFile (reused)
+|     +- compile lib crypto Debug x86_64-linux-musl (reused)
+|     +- WriteFile (reused)
+|     +- compile lib lsquic Debug x86_64-linux-musl (+14 more reused dependencies)
+|     +- WriteFile (reused)
+|     +- compile lib deflate Debug x86_64-linux-musl (reused)
+|     +- WriteFile (reused)
+|     +- compile lib z Debug x86_64-linux-musl (reused)
+|     +- compile lib uWebZockets Debug x86_64-linux-musl (+2 more reused dependencies)
+|     +- compile lib ssl Debug x86_64-linux-musl (+3 more reused dependencies)
+|     +- compile lib crypto Debug x86_64-linux-musl (reused)
+|     +- compile lib lsquic Debug x86_64-linux-musl (+14 more reused dependencies)
+|     +- compile lib deflate Debug x86_64-linux-musl (reused)
+|     +- compile lib z Debug x86_64-linux-musl (reused)
++- compile obj c_api_header_cpp Debug x86_64-linux-musl success 69ms MaxRSS:63M
+

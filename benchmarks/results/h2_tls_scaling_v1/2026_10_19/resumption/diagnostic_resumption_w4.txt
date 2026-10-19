@@ -1,0 +1,11 @@
+target=127.0.0.1:9446
+iterations=20
+new=96
+reused=24
+failed_handshakes=0
+unclassified_handshakes=0
+--- server worker accepts ---
+info: worker_accepts index=0 accepted=36 closed=36
+info: worker_accepts index=1 accepted=34 closed=34
+info: worker_accepts index=2 accepted=25 closed=25
+info: worker_accepts index=3 accepted=25 closed=25

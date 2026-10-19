@@ -1,0 +1,4 @@
+info: worker_accepts index=0 accepted=36 closed=36
+info: worker_accepts index=1 accepted=34 closed=34
+info: worker_accepts index=2 accepted=25 closed=25
+info: worker_accepts index=3 accepted=25 closed=25
