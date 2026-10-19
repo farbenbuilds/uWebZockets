@@ -131,16 +131,21 @@ was collected from the immediately preceding working tree.
 
 | Path | Contents |
 | --- | --- |
-| `tls_cluster_w4/` | 30 raw h2load outputs, rates, summary, worker accepts, CPU/RSS samples, metadata, server log, exact body |
+| `tls_cluster_w4/` | One consolidated three-sample raw output per cohort, summary, worker accepts, CPU/RSS samples, metadata, server log, exact body |
 | `plaintext_cluster_w4/` | Same artifact set for the plaintext control |
-| `single_tls_w1/` | 12 raw samples for the single-application control, plus summary and server log |
+| `single_tls_w1/` | Consolidated three-sample raw output per cohort, plus server log |
 | `single_tls_w1_summary.tsv` | Parsed single-app samples at 256/1,024 connections |
-| `worker_scaling/` | 1- and 2-worker 1,024-connection raw samples, summary, accepts, logs |
-| `resumption/` | Explicit-ticket resumption counts, server logs, OpenSSL and h2load versions |
-| `post_commit/` | Raw post-commit 256/1,024 TLS samples, server log, exit statuses, binary SHA-256 |
+| `worker_scaling/` | Consolidated 1- and 2-worker 1,024-connection raw output, summary, accepts, logs |
+| `resumption/` | Explicit-ticket resumption counts, server logs, tool versions |
+| `post_commit/` | Consolidated post-commit 256/1,024 TLS raw output, server log, provenance |
 | `post_commit_summary.tsv` | Post-commit 256/1,024 TLS verification rows |
 | `clean_clone_v1_8_9.txt`, `clean_clone_v1_8_9_build.log` | Tag, commit, toolchain, and empty-cache build result for `v1.8.9` |
 | `manifest.sha256` | Checksums for every artifact except the manifest itself |
+
+Each `*_raw.txt` file contains the three sample outputs for one cohort,
+separated by `===== sample N =====` headers. The derived `*_rates.txt`
+intermediates are not committed because `summary.tsv` carries every rate and
+counter. Raw output is never rewritten; it is only concatenated with headers.
 
 Teardown logs contain `error.BrokenPipe` and `error.ConnectionResetByPeer`
 warnings while h2load closes its clients; every sample still reported zero

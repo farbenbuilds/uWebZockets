@@ -33,3 +33,6 @@ certs/
 
 # generated knowledge graph (graphify)
 graphify-out/
+
+# local planning notes
+TODO.md

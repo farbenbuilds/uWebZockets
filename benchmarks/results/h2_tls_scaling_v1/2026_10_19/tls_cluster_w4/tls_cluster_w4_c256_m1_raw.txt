@@ -1,0 +1,234 @@
+===== sample 1 =====
+starting benchmark...
+spawning thread #0: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #1: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #2: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #3: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #4: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #5: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #6: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #7: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+Warm-up started for thread #0.
+Warm-up started for thread #Warm-up started for thread #Warm-up started for thread #41..
+
+Warm-up started for thread #7.
+Warm-up started for thread #6.
+Warm-up started for thread #5.
+3.
+Warm-up started for thread #2.
+progress: 9% of clients started
+progress: 18% of clients started
+progress: 28% of clients started
+progress: 37% of clients started
+progress: 46% of clients started
+progress: 56% of clients started
+progress: 65% of clients started
+progress: 75% of clients started
+progress: 84% of clients started
+progress: 93% of clients started
+TLS Protocol: TLSv1.3
+Cipher: TLS_AES_128_GCM_SHA256
+Server Temp Key: X25519 253 bits
+Certificate: ECDSA prime256v1 256 bits
+Negotiated Group: x25519
+Resumption: no
+Application protocol: h2
+Warm-up phase is over for thread #0.
+Main benchmark duration is started for thread #0.
+Warm-up phase is over for thread #1.
+Main benchmark duration is started for thread #1.
+Warm-up phase is over for thread #4.
+Warm-up phase is over for thread #5.Main benchmark duration is started for thread #
+4.Main benchmark duration is started for thread #5.
+
+Warm-up phase is over for thread #2.
+Warm-up phase is over for thread #Main benchmark duration is started for thread #62.
+Main benchmark duration is started for thread #6.
+.
+Warm-up phase is over for thread #3.
+Main benchmark duration is started for thread #3.
+Warm-up phase is over for thread #7.
+Main benchmark duration is started for thread #7.
+Main benchmark duration is over for thread #0. Stopping all clients.
+Main benchmark duration is over for thread #1. Stopping all clients.
+Stopped all clients for thread #0
+Main benchmark duration is over for thread #2. Stopping all clients.
+Stopped all clients for thread #1
+Stopped all clients for thread #2
+Main benchmark duration is over for thread #5. Stopping all clients.
+Stopped all clients for thread #5
+Main benchmark duration is over for thread #3. Stopping all clients.
+Main benchmark duration is over for thread #4. Stopping all clients.
+Stopped all clients for thread #3
+Stopped all clients for thread #4
+Main benchmark duration is over for thread #7. Stopping all clients.
+Stopped all clients for thread #7
+Main benchmark duration is over for thread #6. Stopping all clients.
+Stopped all clients for thread #6
+
+finished in 12.00s, 391754.60 req/s, 30.26MB/s
+requests: 3917546 total, 3917546 started, 3917546 done, 3917546 succeeded, 0 failed, 0 errored, 0 timeout
+status codes: 3917546 2xx, 0 3xx, 0 4xx, 0 5xx
+traffic: 302.62MB (317320785) total, 152.22MB (159610008) headers (space savings 46.03%), 129.83MB (136137948) data
+                 min         max         median     p95        p99        mean         sd        +/- sd
+request     :       20us      3.61ms       518us      920us     1.09ms      532us       213us    68.22%
+connect     :        0us         0us         0us        0us        0us        0us         0us     0.00%
+TTFB        :        0us         0us         0us        0us        0us        0us         0us     0.00%
+req/s       :    1411.52     1731.63     1522.01    1641.50    1693.87    1530.14       68.77    65.23%
+
+===== sample 2 =====
+starting benchmark...
+spawning thread #0: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #1: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #2: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #3: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #4: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #5: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #6: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #7: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+Warm-up started for thread #3.
+Warm-up started for thread #Warm-up started for thread #2Warm-up started for thread #Warm-up started for thread #4.
+Warm-up started for thread #Warm-up started for thread #0.
+71.
+.
+Warm-up started for thread #6.
+.
+5.
+progress: 9% of clients started
+progress: 18% of clients started
+progress: 28% of clients started
+progress: 37% of clients started
+progress: 46% of clients started
+progress: 56% of clients started
+progress: 65% of clients started
+progress: 75% of clients started
+progress: 84% of clients started
+progress: 93% of clients started
+TLS Protocol: TLSv1.3
+Cipher: TLS_AES_128_GCM_SHA256
+Server Temp Key: X25519 253 bits
+Certificate: ECDSA prime256v1 256 bits
+Negotiated Group: x25519
+Resumption: no
+Application protocol: h2
+Warm-up phase is over for thread #0.
+Main benchmark duration is started for thread #0.
+Warm-up phase is over for thread #1.
+Main benchmark duration is started for thread #1.
+Warm-up phase is over for thread #2.
+Main benchmark duration is started for thread #2.
+Warm-up phase is over for thread #6.
+Main benchmark duration is started for thread #6.
+Warm-up phase is over for thread #4.
+Main benchmark duration is started for thread #4.
+Warm-up phase is over for thread #3.
+Main benchmark duration is started for thread #3.
+Warm-up phase is over for thread #7.
+Main benchmark duration is started for thread #7.
+Warm-up phase is over for thread #5.
+Main benchmark duration is started for thread #5.
+Main benchmark duration is over for thread #0. Stopping all clients.
+Stopped all clients for thread #0
+Main benchmark duration is over for thread #1. Stopping all clients.
+Stopped all clients for thread #1
+Main benchmark duration is over for thread #2. Stopping all clients.
+Stopped all clients for thread #2
+Main benchmark duration is over for thread #6. Stopping all clients.
+Main benchmark duration is over for thread #4. Stopping all clients.
+Stopped all clients for thread #6
+Stopped all clients for thread #4
+Main benchmark duration is over for thread #3. Stopping all clients.
+Main benchmark duration is over for thread #7. Stopping all clients.
+Stopped all clients for thread #3
+Stopped all clients for thread #7
+Main benchmark duration is over for thread #5. Stopping all clients.
+Stopped all clients for thread #5
+
+finished in 12.00s, 387271.20 req/s, 29.92MB/s
+requests: 3872712 total, 3872712 started, 3872712 done, 3872712 succeeded, 0 failed, 0 errored, 0 timeout
+status codes: 3872712 2xx, 0 3xx, 0 4xx, 0 5xx
+traffic: 299.16MB (313690104) total, 150.84MB (158169768) headers (space savings 46.03%), 128.66MB (134909508) data
+                 min         max         median     p95        p99        mean         sd        +/- sd
+request     :       25us      5.67ms       519us      958us     1.16ms      543us       227us    68.80%
+connect     :        0us         0us         0us        0us        0us        0us         0us     0.00%
+TTFB        :        0us         0us         0us        0us        0us        0us         0us     0.00%
+req/s       :    1339.89     1832.66     1483.50    1789.62    1830.65    1512.65      145.33    60.94%
+
+===== sample 3 =====
+starting benchmark...
+spawning thread #0: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #1: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #2: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #3: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #4: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #5: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #6: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+spawning thread #7: 32 total client(s). Timing-based test with 2s of warm-up time and 10s of main duration for measurements.
+Warm-up started for thread #6.
+Warm-up started for thread #Warm-up started for thread #Warm-up started for thread #0.Warm-up started for thread #
+51.
+4.
+Warm-up started for thread #.3.
+Warm-up started for thread #Warm-up started for thread #72
+..
+
+progress: 9% of clients started
+progress: 18% of clients started
+progress: 28% of clients started
+progress: 37% of clients started
+progress: 46% of clients started
+progress: 56% of clients started
+progress: 65% of clients started
+progress: 75% of clients started
+progress: 84% of clients started
+progress: 93% of clients started
+TLS Protocol: TLSv1.3
+Cipher: TLS_AES_128_GCM_SHA256
+Server Temp Key: X25519 253 bits
+Certificate: ECDSA prime256v1 256 bits
+Negotiated Group: x25519
+Resumption: no
+Application protocol: h2
+Warm-up phase is over for thread #1.
+Main benchmark duration is started for thread #1.
+Warm-up phase is over for thread #0.
+Main benchmark duration is started for thread #0.
+Warm-up phase is over for thread #4.
+Warm-up phase is over for thread #Main benchmark duration is started for thread #4.
+5.
+Main benchmark duration is started for thread #5.
+Warm-up phase is over for thread #3.
+Main benchmark duration is started for thread #3.
+Warm-up phase is over for thread #7.
+Main benchmark duration is started for thread #7.
+Warm-up phase is over for thread #2.
+Main benchmark duration is started for thread #2.
+Warm-up phase is over for thread #6.
+Main benchmark duration is started for thread #6.
+Main benchmark duration is over for thread #1. Stopping all clients.
+Stopped all clients for thread #1
+Main benchmark duration is over for thread #0. Stopping all clients.
+Main benchmark duration is over for thread #4. Stopping all clients.
+Stopped all clients for thread #0
+Stopped all clients for thread #4
+Main benchmark duration is over for thread #7. Stopping all clients.
+Main benchmark duration is over for thread #3. Stopping all clients.
+Stopped all clients for thread #7
+Main benchmark duration is over for thread #Stopped all clients for thread #2. Stopping all clients.3
+
+Stopped all clients for thread #2
+Main benchmark duration is over for thread #5. Stopping all clients.
+Stopped all clients for thread #5
+Main benchmark duration is over for thread #6. Stopping all clients.
+Stopped all clients for thread #6
+
+finished in 12.00s, 391752.60 req/s, 30.26MB/s
+requests: 3917526 total, 3917526 started, 3917526 done, 3917526 succeeded, 0 failed, 0 errored, 0 timeout
+status codes: 3917526 2xx, 0 3xx, 0 4xx, 0 5xx
+traffic: 302.62MB (317319849) total, 152.39MB (159791330) headers (space savings 46.03%), 129.98MB (136292605) data
+                 min         max         median     p95        p99        mean         sd        +/- sd
+request     :       27us      3.76ms       515us      938us     1.09ms      531us       220us    67.78%
+connect     :        0us         0us         0us        0us        0us        0us         0us     0.00%
+TTFB        :        0us         0us         0us        0us        0us        0us         0us     0.00%
+req/s       :    1441.80     1650.95     1518.08    1632.29    1648.62    1530.15       56.53    65.63%
+
