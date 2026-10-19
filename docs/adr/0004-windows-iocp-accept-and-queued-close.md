@@ -52,7 +52,7 @@ tests already read the bound port through `ws2_32.getsockname` and bound client
 reads with `SO_RCVTIMEO`, so they must execute rather than skip.
 
 The upstream report is
-<https://github.com/mitchellh/libxev/issues/254>.
+<https://github.com/mitchellh/libxev/issues/252>.
 
 ## Alternatives considered
 
