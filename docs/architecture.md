@@ -43,6 +43,13 @@ accepting worker's slab and is only ever touched by that worker's event loop.
 TLS contexts are created before the first listener starts, so handshakes,
 sessions, and credential state stay confined to the owning loop.
 
+The compiled `worker_count` is a capacity, not a hard runtime cap. A process may
+select fewer active workers with `ClusterOptions.worker_count` or the
+`UWEBZOCKETS_WORKERS` environment variable; the default is the platform CPU
+count. Only active workers allocate slabs, inboxes, and thread handles, so a
+large capacity does not reserve memory for unused workers. `worker(2)` is how you
+check that a two-worker cluster exposes exactly two workers.
+
 ```text
                SO_REUSEPORT
                     |
@@ -124,6 +131,7 @@ HTTP request accumulator --> strict parser --> middleware --> radix route
                                       |                       |
                                       |                       +--> bounded HTTP writer
                                       |                       +--> one-shot async token
+                                      |                       +--> per-worker gzip pool
                                       v
                              WebSocket upgrade
                                       |
@@ -140,6 +148,22 @@ UDP read/timer --> lsquic engine --> bounded QPACK header set --> same router
                                    v                           v
                             bounded body slab          structured H3 response
 ```
+
+On Linux, equal-sized lsquic packets for one destination are submitted with one
+`sendmsg` carrying `UDP_SEGMENT` (GSO). Mixed sizes or destinations fall back to
+the per-packet path. Receive-side `UDP_GRO` remains disabled until the loop can
+read ancillary segment boundaries; feeding a coalesced buffer to lsquic without
+them would corrupt short-header parsing.
+
+## Listeners and the startup barrier
+
+`App.listen` binds one TCP endpoint. `App.listen_all` accepts up to four
+endpoints, binds all of them without arming an accept, verifies each local port,
+and only then arms every accept completion. A failure closes the sockets created
+by that call and leaves routes unlocked. Each endpoint may select TLS
+independently, but all TLS listeners share the application's certificate and
+client-auth policy. The barrier is in-process and all-or-nothing; cross-process
+socket takeover is a later milestone.
 
 ## Event loop and completions
 

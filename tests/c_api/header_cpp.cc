@@ -2,8 +2,8 @@
 
 #include <type_traits>
 
-static_assert(UWZ_VERSION_MAJOR == 1);
-static_assert(UWZ_VERSION_MINOR == 9);
+static_assert(UWZ_VERSION_MAJOR == 2);
+static_assert(UWZ_VERSION_MINOR == 0);
 static_assert(UWZ_VERSION_PATCH == 0);
 static_assert(UWZ_HTTP_ANY == 7);
 static_assert(UWZ_HTTP_QUERY == 8);

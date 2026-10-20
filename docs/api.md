@@ -45,6 +45,10 @@ defer app.deinit();                        // drains, then releases the slab
 
 _ = try app.get("/", hello);
 try app.listen("0.0.0.0", 3000);           // locks route registration
+try app.listen_all(&.{                    // bind every port first
+    .{ .address = "0.0.0.0", .port = 3001 },
+    .{ .address = "0.0.0.0", .port = 3443, .tls = true },
+});
 try app.run();                             // blocks until shutdown drains
 ```
 
@@ -77,12 +81,13 @@ The watcher is allocation-free and coalesces repeated signals.
 _ = try app.get("/users/:id", show_user);
 _ = try app.post("/users", create_user);
 _ = try app.query("/search", search);        // RFC 10008 QUERY
+_ = try app.trace("/probe", trace);           // opt-in TRACE
 _ = try app.any("/health", health);
 ```
 
 | Registration | Callback signature | Use |
 | --- | --- | --- |
-| `get` / `head` / `post` / `put` / `delete` / `patch` / `options` / `query` / `any` | `fn (*Request, *Response) void` | Synchronous work |
+| `get` / `head` / `post` / `put` / `delete` / `patch` / `options` / `trace` / `query` / `any` | `fn (*Request, *Response) void` | Synchronous work |
 | `route_context` / `get_context` | `fn (*anyopaque, *Request, *Response) void` | Explicit caller-owned state |
 | `route_async` / `get_async` | `fn (*Request, AsyncResponse) void` | Work completed later |
 | `route_async_context` / `get_async_context` | `fn (*anyopaque, *Request, AsyncResponse) void` | Deferred work with state |
@@ -90,6 +95,12 @@ _ = try app.any("/health", health);
 Path patterns: exact segments stay on the radix fast path, `:name` captures one
 nonempty segment, and a terminal `*name` captures the remainder. Static routes
 win. Malformed patterns fail registration rather than matching ambiguously.
+
+`trace` is opt-in: the library does not register a route or synthesize the
+RFC 9110 echo response. A handler that reflects the request must redact
+`Authorization`, `Cookie`, `Proxy-Authorization`, and application secrets, and
+must keep the reflected bytes within the response capacity. Prefer disabling
+TRACE on public deployments unless an operational requirement exists.
 
 ## Middleware
 
@@ -147,11 +158,21 @@ _ = try app.openapi("/openapi.json");
 
 ## Cluster
 
+`listen_all(&.{ ... })` binds up to four TCP endpoints and does not arm any
+accept completion until every socket has bound and reported a local port. A
+bind or verification failure closes the sockets created by that call, leaves
+`listener_count == 0`, and keeps routes unlocked. Each endpoint may set
+`.tls = true` or `.tls = false`; null follows whether the application owns a TLS
+context. All TLS listeners share the application certificate.
+
 `App.cluster(worker_count)` and
 `Server.builder(...).build_cluster(allocator, worker_count, options)` return a
-heap-backed thread-per-core manager. Configure routes per worker, `listen`
-once, and `run` joins every worker. `Cluster.publish` broadcasts through
-bounded per-worker rings, and `Cluster.request_shutdown` drains all workers.
+heap-backed thread-per-core manager. `worker_count` is the compiled capacity;
+`ClusterOptions.worker_count` selects a smaller active count at startup.
+`UWEBZOCKETS_WORKERS` overrides the active count, and the default is the
+platform CPU count. Configure routes per worker, `listen` once, and `run` joins
+every worker. `Cluster.publish` broadcasts through bounded per-worker rings, and
+`Cluster.request_shutdown` drains all workers.
 Because it returns `void`, `request_shutdown` after `deinit` is a documented
 non-erroring no-op: the worker slice has already been released, so rebuild the
 cluster instead of relying on shutdown to report a lifecycle error. The guard
