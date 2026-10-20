@@ -44,11 +44,13 @@ TLS contexts are created before the first listener starts, so handshakes,
 sessions, and credential state stay confined to the owning loop.
 
 The compiled `worker_count` is a capacity, not a hard runtime cap. A process may
-select fewer active workers with `ClusterOptions.worker_count` or the
-`UWEBZOCKETS_WORKERS` environment variable; the default is the platform CPU
-count. Only active workers allocate slabs, inboxes, and thread handles, so a
-large capacity does not reserve memory for unused workers. `worker(2)` is how you
-check that a two-worker cluster exposes exactly two workers.
+select fewer active workers with `ClusterOptions.worker_count`, or use
+`build_cluster_from_environment` to read `UWEBZOCKETS_WORKERS` and default to
+the platform CPU count. Only active workers allocate slabs, inboxes, and thread
+handles, so a large capacity does not reserve memory for unused workers.
+`worker(2)` is how you check that a two-worker cluster exposes exactly two
+workers. Pinning is physical-core based; a logical-CPU default may oversubscribe
+SMT hosts when affinity is enabled.
 
 ```text
                SO_REUSEPORT

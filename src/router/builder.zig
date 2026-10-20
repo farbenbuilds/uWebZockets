@@ -8,6 +8,7 @@
 
 const std = @import("std");
 const app_module = @import("app.zig");
+const cluster_module = @import("cluster.zig");
 const config_module = @import("config.zig");
 
 /// Human-readable capacities accepted by the builder.
@@ -396,6 +397,29 @@ pub fn configured_builder(comptime config: ServerConfig) type {
                 config,
                 options,
                 worker_count,
+            );
+        }
+
+        /// Resolves `UWEBZOCKETS_WORKERS`, or the platform CPU count, at startup.
+        ///
+        /// This is the environment-aware cluster entry point. Invalid, zero, or
+        /// above-capacity values fail before any worker slab is allocated.
+        pub fn build_cluster_from_environment(
+            self: Self,
+            allocator: std.mem.Allocator,
+            comptime worker_capacity: usize,
+            environ: *const std.process.Environ.Map,
+            options: app_module.ClusterOptions,
+        ) !AppType.cluster(worker_capacity) {
+            const workers = try cluster_module.worker_count_from_environment(
+                environ,
+                worker_capacity,
+            );
+            return self.build_cluster_with_worker_count(
+                allocator,
+                worker_capacity,
+                workers,
+                options,
             );
         }
     };

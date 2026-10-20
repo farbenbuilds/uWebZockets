@@ -13,15 +13,16 @@ append-only. No performance number is claimed without a quiet-host rerun.
 
 ### Added
 
-- `App.listen_all` binds up to four TCP endpoints, verifies every local port,
-  and only then arms all accept completions. A failed bind closes the sockets
+- `listen_all` binds up to four TCP endpoints, verifies every local port, and
+  only then arms all accept completions. A failed bind closes the sockets
   created by that call and leaves routes unlocked. Endpoints may select TLS
-  independently while sharing the application certificate.
-- `ClusterOptions.worker_count` and `UWEBZOCKETS_WORKERS` select the active
-  worker count at startup. The default is the platform CPU count, and only
-  active workers allocate slabs, inboxes, and thread handles. The
-  `examples/tls_cluster.zig` runner accepts the canonical variable and keeps
-  `UWZ_WORKERS` as a compatibility alias.
+  independently while sharing the application certificate. Listener port
+  verification reads both IPv4 and IPv6 socket addresses.
+- `ClusterOptions.worker_count` selects an explicit active count, and
+  `build_cluster_from_environment` resolves `UWEBZOCKETS_WORKERS` or the
+  platform CPU count at startup. Only active workers allocate slabs, inboxes,
+  and thread handles. The `examples/tls_cluster.zig` runner accepts the
+  canonical variable and keeps `UWZ_WORKERS` as a compatibility alias.
 - Per-worker HTTP gzip pooling: `with_http_compression(true)` opens one
   `libdeflate` compressor and bounded scratch during startup, and
   `Response.end_gzip` compresses HTTP/1.1 and HTTP/2 responses without a
@@ -63,7 +64,14 @@ append-only. No performance number is claimed without a quiet-host rerun.
   build could otherwise treat the tunnel as capacity-reached and skip the
   handshake.
 - Pipelined plaintext responses no longer issue one write syscall per response
-  when the read already contains another complete request.
+  when the read already contains another complete request. If the accumulated
+  batch would overflow the ring, the completed batch is drained before the next
+  response is admitted instead of disconnecting mid-pipeline.
+- A direct batch flush skips streaming producer connections and leaves file
+  bodies on the completion path, so a drained socket still resumes the producer
+  or file pump.
+- IPv6 listener port verification uses a family-sized socket-address buffer, so
+  `listen_all` does not regress `App.listen("::", ...)` on Windows.
 - WebSocket echo paths no longer arm a completion per buffered frame.
 - Startup with auxiliary listeners can no longer race the primary port into
   accepting before later sockets are bound.

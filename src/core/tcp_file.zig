@@ -16,8 +16,17 @@ pub fn enqueue_plain_parts(conn: *TcpConnection, parts: []const []const u8) !voi
         if (part.len > conn.write_queue.len - total_len) return error.WouldBlock;
         total_len += part.len;
     }
-    if (total_len > conn.write_queue.len - conn.write_len) return error.WouldBlock;
     if (total_len == 0) return;
+
+    // A pipelined batch can exceed the ring even when every individual
+    // response fits. Drain the accumulated batch with one direct write before
+    // rejecting the next response, so response amplification cannot turn a
+    // valid pipeline into a mid-stream disconnect.
+    if (conn.write_batch_depth != 0 and total_len > conn.write_queue.len - conn.write_len) {
+        flush_batched(conn);
+        if (conn.closing) return error.ConnectionClosed;
+    }
+    if (total_len > conn.write_queue.len - conn.write_len) return error.WouldBlock;
 
     if (comptime builtin.os.tag == .linux) {
         if (conn.write_batch_depth == 0 and try_direct_send(conn, parts, total_len)) return;
@@ -96,6 +105,8 @@ pub fn flush_batched(conn: *TcpConnection) void {
 
 fn try_direct_flush(conn: *TcpConnection) bool {
     if (conn.ssl != null or conn.file_body != null) return false;
+    // A producer expects the write completion to pull its next chunk.
+    if (conn.stream_producer != null) return false;
     if (conn.closing or conn.is_writing or conn.write_len == 0) return false;
 
     const head = conn.write_head;

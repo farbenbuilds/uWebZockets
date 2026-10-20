@@ -167,6 +167,22 @@ test "cluster: runtime worker count stays inside compiled capacity" {
         support.cluster.parse_worker_count("many", 8),
     );
     try std.testing.expect(support.cluster.default_worker_count() > 0);
+
+    var environ = std.process.Environ.Map.init(std.testing.allocator);
+    defer environ.deinit();
+    try environ.put("UWEBZOCKETS_WORKERS", "3");
+    try std.testing.expectEqual(
+        @as(usize, 3),
+        try support.cluster.worker_count_from_environment(&environ, 8),
+    );
+
+    var overflow = std.process.Environ.Map.init(std.testing.allocator);
+    defer overflow.deinit();
+    try overflow.put("UWEBZOCKETS_WORKERS", "9");
+    try std.testing.expectError(
+        error.InvalidWorkerCount,
+        support.cluster.worker_count_from_environment(&overflow, 8),
+    );
 }
 
 test "cluster: request_shutdown after deinit is a documented no-op" {

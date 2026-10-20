@@ -44,19 +44,24 @@ var app = try uz.App(128).init(init.io);   // one allocation
 defer app.deinit();                        // drains, then releases the slab
 
 _ = try app.get("/", hello);
-try app.listen("0.0.0.0", 3000);           // locks route registration
-try app.listen_all(&.{                    // bind every port first
+try app.listen_all(&.{                    // bind every port before accepting
+    .{ .address = "0.0.0.0", .port = 3000 },
     .{ .address = "0.0.0.0", .port = 3001 },
-    .{ .address = "0.0.0.0", .port = 3443, .tls = true },
 });
 try app.run();                             // blocks until shutdown drains
 ```
+
+`listen` is the one-endpoint convenience wrapper. `listen_all` replaces it; it
+returns `error.AlreadyListening` after either call. A `.tls = true` endpoint
+requires an HTTPS initializer (`init_https`, `init_https_ephemeral`, or
+`init_http3`) before the listen call.
 
 | Step | Rules |
 | --- | --- |
 | `init*` | Choose plaintext, HTTPS, mTLS, or HTTP/3; HTTPS variants load credentials before the loop starts |
 | Route registration | Before the first `listen`; later calls return `error.RoutesLocked` |
 | `listen` / `listen_udp` | Bind and start accepting; the `App` must stay at a stable address |
+| `listen_all` | Bind up to four TCP endpoints, verify every port, then arm accepts |
 | `run` | Drives the loop until shutdown completes; `error.ApplicationAlreadyRunning` if re-entered |
 | `request_shutdown` | Safe from any thread or a callback; stores the request and wakes the owning loop, then returns |
 | `shutdown` | Loop-thread only: from a callback it begins shutdown, otherwise it drives the loop and drains before returning |
@@ -167,11 +172,12 @@ context. All TLS listeners share the application certificate.
 
 `App.cluster(worker_count)` and
 `Server.builder(...).build_cluster(allocator, worker_count, options)` return a
-heap-backed thread-per-core manager. `worker_count` is the compiled capacity;
-`ClusterOptions.worker_count` selects a smaller active count at startup.
-`UWEBZOCKETS_WORKERS` overrides the active count, and the default is the
-platform CPU count. Configure routes per worker, `listen` once, and `run` joins
-every worker. `Cluster.publish` broadcasts through bounded per-worker rings, and
+heap-backed thread-per-core manager. `worker_count` is the compiled capacity.
+`build_cluster` keeps that exact count; `build_cluster_from_environment`
+resolves `UWEBZOCKETS_WORKERS`, or the platform CPU count, and
+`ClusterOptions.worker_count` selects a smaller active count explicitly.
+Configure routes per worker, `listen` once, and `run` joins every worker.
+`Cluster.publish` broadcasts through bounded per-worker rings, and
 `Cluster.request_shutdown` drains all workers.
 Because it returns `void`, `request_shutdown` after `deinit` is a documented
 non-erroring no-op: the worker slice has already been released, so rebuild the

@@ -1933,28 +1933,38 @@ const winsock_getsockname = @extern(WinsockGetsocknameFn, .{
 /// `std.posix.system` exposes no sockname entry point with a usable Windows
 /// descriptor, so the winsock symbol is bound here like the other options.
 pub fn listener_port(server: *const TcpServer) !u16 {
+    var storage: std.posix.sockaddr.storage = undefined;
+    var length: if (builtin.os.tag == .windows) c_int else std.posix.socklen_t =
+        @sizeOf(std.posix.sockaddr.storage);
     if (builtin.os.tag == .windows) {
-        var address: std.os.windows.ws2_32.sockaddr.in = undefined;
-        var length: c_int = @sizeOf(std.os.windows.ws2_32.sockaddr.in);
         if (winsock_getsockname(
             @intFromPtr(xev.tcp_fd(server.listener)),
-            @ptrCast(&address),
+            @ptrCast(&storage),
             &length,
         ) != 0) return error.ListenerAddressUnavailable;
-        return std.mem.bigToNative(u16, address.port);
+    } else {
+        switch (std.posix.errno(std.posix.system.getsockname(
+            xev.tcp_fd(server.listener),
+            @ptrCast(&storage),
+            &length,
+        ))) {
+            .SUCCESS => {},
+            else => return error.ListenerAddressUnavailable,
+        }
     }
 
-    var address: std.posix.sockaddr.in = undefined;
-    var length: std.posix.socklen_t = @sizeOf(std.posix.sockaddr.in);
-    switch (std.posix.errno(std.posix.system.getsockname(
-        xev.tcp_fd(server.listener),
-        @ptrCast(&address),
-        &length,
-    ))) {
-        .SUCCESS => {},
-        else => return error.ListenerAddressUnavailable,
-    }
-    return std.mem.bigToNative(u16, address.port);
+    const family: *const std.posix.sockaddr = @ptrCast(&storage);
+    return switch (family.family) {
+        std.posix.AF.INET => std.mem.bigToNative(
+            u16,
+            @as(*const std.posix.sockaddr.in, @ptrCast(&storage)).port,
+        ),
+        std.posix.AF.INET6 => std.mem.bigToNative(
+            u16,
+            @as(*const std.posix.sockaddr.in6, @ptrCast(&storage)).port,
+        ),
+        else => error.ListenerAddressUnavailable,
+    };
 }
 
 /// Bounds one blocking receive so a stalled peer fails a read instead of

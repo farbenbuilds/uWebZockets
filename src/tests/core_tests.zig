@@ -57,6 +57,14 @@ fn dummy_accept(socket: @import("xev").TCP, user_data: ?*anyopaque) void {
 }
 
 // test tcp server initialization.
+test "core: tcp listener port supports IPv6" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const server = tcp.init_server("::1", 0, dummy_accept, null) catch
+        return error.SkipZigTest;
+    defer tcp.close_socket(@import("xev").tcp_fd(server.listener));
+    try std.testing.expect(try tcp.listener_port(&server) != 0);
+}
+
 test "core: tcp server init" {
     // bind to ephemeral port 0 to prevent port collisions during tests.
     const server = try tcp.init_server("127.0.0.1", 0, dummy_accept, null);
@@ -198,6 +206,50 @@ test "tcp: write batch defers and flushes pipelined responses in order" {
         received_len += read;
     }
     try std.testing.expectEqualStrings("onetwo", received[0..received_len]);
+}
+
+test "tcp: write batch drains before a pipelined overflow" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var pair: [2]std.posix.fd_t = undefined;
+    if (std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &pair) != 0) {
+        return error.SkipZigTest;
+    }
+    defer {
+        _ = std.posix.system.close(pair[0]);
+        _ = std.posix.system.close(pair[1]);
+    }
+
+    var ring: [64]u8 = undefined;
+    var conn = tcp.TcpConnection{
+        .socket = @import("xev").TCP.initFd(pair[0]),
+        .io = std.testing.io,
+        .write_queue = &ring,
+    };
+
+    const first = [_]u8{'a'} ** 40;
+    const second = [_]u8{'b'} ** 40;
+    conn.begin_write_batch();
+    try conn.write_data(&first);
+    try conn.write_data(&second);
+
+    // The second write could not fit beside the first, so the first 40 bytes
+    // were flushed and only the second response remains queued.
+    try std.testing.expectEqual(@as(usize, 40), conn.write_len);
+    try std.testing.expectEqualStrings(&second, ring[0..40]);
+
+    conn.end_write_batch();
+    try std.testing.expectEqual(@as(usize, 0), conn.write_len);
+
+    var received: [80]u8 = undefined;
+    var received_len: usize = 0;
+    while (received_len < received.len) {
+        const read = try std.posix.read(pair[1], received[received_len..]);
+        if (read == 0) break;
+        received_len += read;
+    }
+    try std.testing.expectEqualSlices(u8, &first, received[0..40]);
+    try std.testing.expectEqualSlices(u8, &second, received[40..80]);
 }
 
 test "tcp: set_nodelay enables TCP_NODELAY on a socket" {

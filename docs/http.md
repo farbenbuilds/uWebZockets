@@ -73,8 +73,10 @@ depends on the queue size.
 
 `Response.end_gzip` compresses into the worker's startup-allocated scratch,
 emits `Content-Encoding: gzip` and `Vary: Accept-Encoding`, and never allocates
-on the request path. Compression is opt-in; do not gzip responses that mix
-secrets with attacker-controlled input.
+on the request path. The input must fit `ServerConfig.max_body_size`; the
+compressed result must also fit the transport's response capacity (HTTP/2 uses
+its configured response stride). Compression is opt-in; do not gzip responses
+that mix secrets with attacker-controlled input.
 
 ## Routing
 

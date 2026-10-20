@@ -111,9 +111,9 @@ dependencies, archive linking, and the C ABI contract.
 `App.cluster(worker_count)` gives every worker its own loop, connection pool,
 request buffers, message regions, and queues. There is no shared I/O ring and
 no lock on the steady-state path. `worker_count` is the compiled capacity;
-`UWEBZOCKETS_WORKERS` or `ClusterOptions.worker_count` selects fewer active
-workers at startup, and the default is the platform CPU count. Only active
-workers allocate memory or threads.
+`build_cluster_from_environment` resolves `UWEBZOCKETS_WORKERS` or the platform
+CPU count, and `ClusterOptions.worker_count` selects an explicit count. Only
+active workers allocate memory or threads.
 
 ```zig
 const std = @import("std");

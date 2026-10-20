@@ -154,10 +154,10 @@ The supported order is `build_cluster` -> `configure` -> `enable_https` (or
 shutdown signal -> `deinit`. TLS setup is startup work: `listen` locks routes
 and starts accepting, so the enable call must not move after it.
 
-The `4` passed to `build_cluster` is the compiled capacity. At startup,
-`UWEBZOCKETS_WORKERS` or `ClusterOptions.worker_count` may select fewer active
-workers; the default is the platform CPU count. Only active workers create TLS
-contexts, slabs, and threads.
+The `4` passed to `build_cluster` is the compiled capacity. Use
+`build_cluster_from_environment` to resolve `UWEBZOCKETS_WORKERS` or default to
+the platform CPU count; `ClusterOptions.worker_count` selects an explicit
+smaller count. Only active workers create TLS contexts, slabs, and threads.
 
 Each worker creates and owns one BoringSSL `SSL_CTX` at enable time, before
 any listener exists; every accepted connection creates its own `SSL` from its

@@ -226,6 +226,7 @@ fn send_segmented(
     for (0..packet_count) |packet_index| {
         const spec = specs[packet_index];
         if (spec.dest_sa == null or spec.iov == null or spec.iovlen == 0) return null;
+        if (spec.ecn != 0) return null;
         if (spec.dest_sa.*.sa_family != first.dest_sa.*.sa_family) return null;
         const address = @as([*]const u8, @ptrCast(spec.dest_sa))[0..address_length];
         if (!std.mem.eql(u8, first_address, address)) return null;

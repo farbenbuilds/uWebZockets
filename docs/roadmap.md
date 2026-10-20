@@ -53,7 +53,7 @@ claim.
 | Task | Resolution |
 | --- | --- |
 | P-1 Multi-core scaling | The shipped `build_cluster` / `enable_https` path is unchanged; every worker still owns one `SSL_CTX` and one loop. No second cluster abstraction or shared TLS state was added |
-| P-2 Uncapped worker scaling | `worker_count` is a compiled capacity. `ClusterOptions.worker_count` and `UWEBZOCKETS_WORKERS` select the active count, defaulting to the platform CPU count. Active workers alone allocate slabs, inboxes, and thread handles; the previous fixed dispatch list and 32-worker concern are gone |
+| P-2 Uncapped worker scaling | `worker_count` is a compiled capacity. `ClusterOptions.worker_count` selects an explicit count, and `build_cluster_from_environment` resolves `UWEBZOCKETS_WORKERS` or the platform CPU count. Active workers alone allocate slabs, inboxes, and thread handles; the previous fixed dispatch list and 32-worker concern are gone |
 | P-3 HTTP/1.1 pipelining | Every complete request in one read is dispatched in order. Multi-request reads append responses to the bounded ring and flush once; a lone request keeps the direct `sendmsg` path |
 | P-4 WebSocket batching | Unmasking uses the widest compiled vector (128-bit baseline, 256-bit AVX2) with scalar tails. Consecutive frames from one read share a single write flush |
 | P-5 Compressor pooling | Workers pre-open one RFC 7692 `libdeflate` context and, when enabled, one HTTP gzip codec with bounded scratch. `Response.end_gzip` never allocates on the request path |
