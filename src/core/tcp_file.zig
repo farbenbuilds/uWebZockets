@@ -20,7 +20,7 @@ pub fn enqueue_plain_parts(conn: *TcpConnection, parts: []const []const u8) !voi
     if (total_len == 0) return;
 
     if (comptime builtin.os.tag == .linux) {
-        if (try_direct_send(conn, parts, total_len)) return;
+        if (conn.write_batch_depth == 0 and try_direct_send(conn, parts, total_len)) return;
     }
 
     const tail = (conn.write_head + conn.write_len) % conn.write_queue.len;
@@ -28,7 +28,7 @@ pub fn enqueue_plain_parts(conn: *TcpConnection, parts: []const []const u8) !voi
 
     conn.write_len += total_len;
     if (conn.write_len >= conn.write_queue.len / 2) conn.was_backpressured = true;
-    conn.start_write();
+    if (conn.write_batch_depth == 0) conn.start_write();
 }
 
 /// Sends the parts with one nonblocking `sendmsg` while the ring is empty.
@@ -79,6 +79,66 @@ fn try_direct_send(conn: *TcpConnection, parts: []const []const u8, total_len: u
     conn.write_len = total_len - written;
     if (conn.write_len >= conn.write_queue.len / 2) conn.was_backpressured = true;
     conn.start_write();
+    return true;
+}
+
+/// Flushes a completed write batch with one vectorized syscall when possible.
+///
+/// Plaintext batches can use one `sendmsg` over the ring's one or two
+/// contiguous slices. TLS batches stay on the completion path because their
+/// ring already contains encrypted records.
+pub fn flush_batched(conn: *TcpConnection) void {
+    if (comptime builtin.os.tag == .linux) {
+        if (try_direct_flush(conn)) return;
+    }
+    conn.start_write();
+}
+
+fn try_direct_flush(conn: *TcpConnection) bool {
+    if (conn.ssl != null or conn.file_body != null) return false;
+    if (conn.closing or conn.is_writing or conn.write_len == 0) return false;
+
+    const head = conn.write_head;
+    const first_len = @min(conn.write_len, conn.write_queue.len - head);
+    var iovecs: [2]std.posix.iovec_const = undefined;
+    iovecs[0] = .{ .base = conn.write_queue[head..].ptr, .len = first_len };
+    var part_count: usize = 1;
+    if (conn.write_len > first_len) {
+        iovecs[1] = .{ .base = conn.write_queue.ptr, .len = conn.write_len - first_len };
+        part_count = 2;
+    }
+
+    const message: std.os.linux.msghdr_const = .{
+        .name = null,
+        .namelen = 0,
+        .iov = &iovecs,
+        .iovlen = part_count,
+        .control = null,
+        .controllen = 0,
+        .flags = 0,
+    };
+    const result = std.os.linux.sendmsg(
+        xev.tcp_fd(conn.socket),
+        &message,
+        std.os.linux.MSG.DONTWAIT | std.os.linux.MSG.NOSIGNAL,
+    );
+    if (std.os.linux.errno(result) != .SUCCESS) return false;
+
+    const written = result;
+    if (written == 0 or written > conn.write_len) return false;
+
+    const now = std.Io.Clock.now(.awake, conn.io);
+    conn.last_active_ms = @intCast(@divTrunc(now.nanoseconds, std.time.ns_per_ms));
+
+    conn.write_len -= written;
+    conn.write_head = tcp.advance_write_head(
+        conn.write_head,
+        written,
+        conn.write_len,
+        conn.write_queue.len,
+    );
+    if (conn.write_len != 0) return false;
+    if (conn.close_when_drained) tcp.close_connection(conn);
     return true;
 }
 

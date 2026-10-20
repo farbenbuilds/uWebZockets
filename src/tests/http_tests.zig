@@ -706,6 +706,35 @@ test "http: end_with_headers scatters fields beyond the old fixed buffer" {
     try std.testing.expect(std.mem.indexOf(u8, written, "X-Fill-063:") != null);
 }
 
+test "http: end_gzip uses the per-worker pool and bounded scratch" {
+    var pool = try support.compression_pool.Pool.init(256);
+    defer pool.deinit();
+
+    var ring: [2048]u8 = undefined;
+    var conn = test_connection(&ring);
+    conn.http_compression = &pool;
+    var res = response.Response{ .target = .{ .tcp = &conn } };
+
+    try res.end_gzip("200 OK", "Content-Type: application/json\r\n", "{\"ok\":true}");
+
+    const written = ring[0..conn.write_len];
+    try std.testing.expect(std.mem.indexOf(u8, written, "Content-Encoding: gzip\r\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, written, "Vary: Accept-Encoding\r\n") != null);
+
+    const head_end = std.mem.indexOf(u8, written, "\r\n\r\n").? + 4;
+    const compressed = written[head_end..];
+    var compressed_copy: [256]u8 = undefined;
+    var output: [256]u8 = undefined;
+    var decompressor = try support.compression_stream.DecompressionStream.init(
+        .gzip,
+        &compressed_copy,
+    );
+    defer decompressor.deinit();
+    try decompressor.write(compressed);
+    const decoded = try decompressor.finish(&output);
+    try std.testing.expectEqualStrings("{\"ok\":true}", decoded);
+}
+
 test "http: begin_chunked scatters headers and frames chunks" {
     var ring: [16 * 1024]u8 = undefined;
     var conn = test_connection(&ring);
