@@ -93,18 +93,18 @@ fn try_direct_send(conn: *TcpConnection, parts: []const []const u8, total_len: u
 
 /// Flushes a completed write batch with one vectorized syscall when possible.
 ///
-/// Plaintext batches can use one `sendmsg` over the ring's one or two
-/// contiguous slices. TLS batches stay on the completion path because their
-/// ring already contains encrypted records.
+/// The ring contains plaintext or encrypted bytes depending on the transport;
+/// both are safe to hand to one nonblocking `sendmsg`. The fallback arms the
+/// ordinary completion even when a batch is still open.
 pub fn flush_batched(conn: *TcpConnection) void {
     if (comptime builtin.os.tag == .linux) {
         if (try_direct_flush(conn)) return;
     }
-    conn.start_write();
+    conn.arm_write();
 }
 
 fn try_direct_flush(conn: *TcpConnection) bool {
-    if (conn.ssl != null or conn.file_body != null) return false;
+    if (conn.file_body != null) return false;
     // A producer expects the write completion to pull its next chunk.
     if (conn.stream_producer != null) return false;
     if (conn.closing or conn.is_writing or conn.write_len == 0) return false;

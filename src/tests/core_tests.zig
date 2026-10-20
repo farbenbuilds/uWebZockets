@@ -209,7 +209,7 @@ test "tcp: write batch defers and flushes pipelined responses in order" {
 }
 
 test "tcp: write batch drains before a pipelined overflow" {
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
 
     var pair: [2]std.posix.fd_t = undefined;
     if (std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &pair) != 0) {

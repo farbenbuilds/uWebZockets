@@ -1282,6 +1282,12 @@ pub const TcpConnection = struct {
         if (overhead > self.write_queue.len - plain_len) return error.WouldBlock;
         const required = plain_len + overhead;
         if (pending > self.write_queue.len - required) return error.WouldBlock;
+        if (self.write_batch_depth != 0 and
+            required + pending > self.write_queue.len - self.write_len)
+        {
+            tcp_file.flush_batched(self);
+            if (self.closing) return error.ConnectionClosed;
+        }
         if (required + pending > self.write_queue.len - self.write_len) return error.WouldBlock;
 
         for (parts) |part| {
@@ -1318,8 +1324,16 @@ pub const TcpConnection = struct {
     }
 
     pub fn start_write(self: *TcpConnection) void {
-        if (self.is_writing or self.write_len == 0 or self.closing) return;
         if (self.write_batch_depth != 0) return;
+        self.arm_write();
+    }
+
+    /// Arms the current ring without consulting the batch depth.
+    ///
+    /// Only the batch flusher uses this on the fallback path after a partial
+    /// direct send, so the completion can drain the remainder.
+    pub fn arm_write(self: *TcpConnection) void {
+        if (self.is_writing or self.write_len == 0 or self.closing) return;
 
         const contiguous_len = @min(self.write_len, self.write_queue.len - self.write_head);
         self.write_in_flight_len = contiguous_len;
