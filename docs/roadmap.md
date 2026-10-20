@@ -70,6 +70,17 @@ claim.
 | UDP receive GRO | The libxev UDP read completion uses `msghdr.control = null`, so `UDP_GRO` segment boundaries are unavailable. Enabling it would make lsquic parse a coalesced buffer as one datagram. Restore when the loop exposes ancillary data or the transport moves to a raw `recvmsg` path |
 | Cross-process listener barrier | `listen_all` is in-process all-or-nothing. A cross-process socket takeover needs a shared-memory protocol and belongs to the v2.9.0 drain/takeover milestone |
 
+## Carried into 2.1.0
+
+- Quiet-host evidence for the v2.0.0 pipeline, WebSocket, `json-comp`, and
+  `latency-1m` targets, archived under the v1.9.0 evidence contract.
+- Receive-side `UDP_GRO` after the loop exposes ancillary segment sizes.
+- libxev IOCP accept overlay removal after upstream issue #252 is fixed and a
+  release contains the fix.
+- Cross-process `SO_REUSEPORT` / systemd socket-activation handoff.
+- Decisions on per-listener certificates, a bounded TRACE reflection example,
+  and an optional `uwz_app_listen_all` C entry point.
+
 ## Deliberate boundaries
 
 These are decisions, not omissions. Each has a reason and, where relevant, the
