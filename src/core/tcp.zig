@@ -1367,10 +1367,7 @@ pub const TcpConnection = struct {
         const ssl = self.ssl orelse return false;
         if (c.SSL_in_early_data(ssl) == 0) return false;
         const parsed = method orelse return true;
-        return switch (parsed) {
-            .get, .head, .options => false,
-            else => true,
-        };
+        return !radix.HttpMethod.early_data_safe(parsed);
     }
 
     /// Returns encrypted or plaintext bytes queued for the socket.

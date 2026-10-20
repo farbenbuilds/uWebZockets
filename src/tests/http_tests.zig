@@ -44,6 +44,19 @@ test "http: parse basic get request" {
     try std.testing.expectEqualStrings("curl", req.get_header("User-Agent").?);
 }
 
+test "http: parse a TRACE request and retain the method token" {
+    var p = parser.HttpParser{};
+    var req = Request{};
+    var request_data = "TRACE /probe HTTP/1.1\r\nHost: example.test\r\n\r\n".*;
+
+    const consumed = parser.consume(&p, &req, &request_data);
+
+    try std.testing.expectEqual(request_data.len, consumed);
+    try std.testing.expectEqual(parser.ParserState.done, p.state);
+    try std.testing.expectEqualStrings("TRACE", req.method);
+    try std.testing.expectEqualStrings("/probe", req.path);
+}
+
 test "http: preserves parser state across split input" {
     var p = parser.HttpParser{};
     var req = Request{};

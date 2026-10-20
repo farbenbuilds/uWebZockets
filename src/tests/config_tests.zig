@@ -228,7 +228,7 @@ test "config: with merges request limit overrides" {
 test "config: default slab carries the router region at the end" {
     const config = ServerConfig{};
     const router_bytes = try config.router_storage_bytes();
-    try std.testing.expectEqual(@as(usize, 863_872), router_bytes);
+    try std.testing.expectEqual(@as(usize, 874_112), router_bytes);
 
     const total = try config.slab_bytes();
     // The connection slab dominates the default footprint. The inline route
@@ -239,8 +239,9 @@ test "config: default slab carries the router region at the end" {
     // libxev wrappers added the epoll variants to every per-connection
     // completion, and the static-route index added its 512 hash slots, 512
     // node slots, and 256 parent links (5_632 bytes) to the router region,
-    // moving 681_711_744 to this total.
-    try std.testing.expectEqual(@as(usize, 681_717_376), total);
+    // moving 681_711_744 to this total. TRACE adds one 8-byte handler slot per
+    // node, moving 681_717_376 to 681_727_616.
+    try std.testing.expectEqual(@as(usize, 681_727_616), total);
     // The default route-param extras stride is zero: the region extends the
     // slab by exactly one router region's bytes.
     try std.testing.expectEqual(@as(usize, 0), try config.extra_route_param_stride());

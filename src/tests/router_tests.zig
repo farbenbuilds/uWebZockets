@@ -139,7 +139,40 @@ test "router: RFC 10008 QUERY is routed as a safe body-bearing method" {
     try std.testing.expectEqualStrings("QUERY", allow);
 }
 
-test "router: ANY advertises every concrete method including QUERY" {
+test "router: TRACE is a first-class opt-in method" {
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    try router.trace("/probe", dummy_handler);
+    try router.trace("/users/:id/probe", dummy_handler);
+
+    try std.testing.expectEqual(radix.HttpMethod.trace, radix.HttpMethod.parse("TRACE").?);
+    try std.testing.expectEqualStrings("TRACE", radix.HttpMethod.trace.name());
+    try std.testing.expect(radix.HttpMethod.early_data_safe(.trace));
+    try std.testing.expect(!radix.HttpMethod.early_data_safe(.post));
+    try std.testing.expect(!radix.HttpMethod.early_data_safe(.query));
+
+    try std.testing.expect(router.match("/probe", .trace).?.http_handler != null);
+    var request = Request{ .path = "/users/42/probe" };
+    try std.testing.expect(router.match_request(&request, .trace).?.http_handler != null);
+    try std.testing.expectEqualStrings("42", request.get_param("id").?);
+
+    const get_only = router.match("/probe", .get).?;
+    var allow_buffer: [96]u8 = undefined;
+    const allow = try radix.format_allowed_methods(get_only.allowed_methods, &allow_buffer);
+    try std.testing.expectEqualStrings("TRACE", allow);
+}
+
+test "router: App.trace registers an opt-in TRACE route" {
+    const TestApp = app.app(1);
+    var server = try TestApp.init(std.testing.io);
+    defer server.deinit();
+
+    _ = try server.trace("/probe", dummy_handler);
+    try std.testing.expect(server.router.match("/probe", .trace).?.http_handler != null);
+    try std.testing.expect(server.router.match("/probe", .get).?.http_handler == null);
+}
+
+test "router: ANY advertises every concrete method including TRACE and QUERY" {
     var bundle = radix.DefaultBundle{};
     var router = try radix.Router.init(bundle.storage());
     try router.any("/resource", dummy_handler);
@@ -148,7 +181,7 @@ test "router: ANY advertises every concrete method including QUERY" {
     var allow_buffer: [96]u8 = undefined;
     const allow = try radix.format_allowed_methods(match.allowed_methods, &allow_buffer);
     try std.testing.expectEqualStrings(
-        "GET, HEAD, POST, PUT, DELETE, PATCH, OPTIONS, QUERY",
+        "GET, HEAD, POST, PUT, DELETE, PATCH, OPTIONS, TRACE, QUERY",
         allow,
     );
 }
@@ -976,7 +1009,7 @@ test "router: carve_storage honors alignment and storage_bytes" {
     const method_slots = @typeInfo(radix.HttpMethod).@"enum".fields.len;
     for (cases) |capacities| {
         const bytes = try capacities.storage_bytes();
-        var backing: [68 * 1024]u8 align(@alignOf(radix.Storage)) = undefined;
+        var backing: [72 * 1024]u8 align(@alignOf(radix.Storage)) = undefined;
         try std.testing.expect(bytes + 16 <= backing.len);
 
         // Carving starts at an odd base; carve_storage pads to alignment.

@@ -71,6 +71,7 @@ static uwz_middleware_result middleware(
 int main(void)
 {
     static const char route[] = "/query";
+    static const char trace_route[] = "/trace";
     static const char bad_address[] = "not-an-ip-address";
     static const char request[] =
         "QUERY /query HTTP/1.1\r\n"
@@ -121,6 +122,15 @@ int main(void)
             &context
         ) != UWZ_OK)
         return 4;
+    if (uwz_app_route(
+            app,
+            UWZ_HTTP_TRACE,
+            trace_route,
+            sizeof(trace_route) - 1,
+            route_handler,
+            &context
+        ) != UWZ_OK)
+        return 19;
     if (uwz_app_use(app, middleware, NULL) != UWZ_OK)
         return 5;
     if (uwz_app_listen(

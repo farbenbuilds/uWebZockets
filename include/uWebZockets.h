@@ -81,7 +81,8 @@ typedef enum uwz_http_method {
     UWZ_HTTP_PATCH = 5,
     UWZ_HTTP_OPTIONS = 6,
     UWZ_HTTP_ANY = 7,
-    UWZ_HTTP_QUERY = 8
+    UWZ_HTTP_QUERY = 8,
+    UWZ_HTTP_TRACE = 9
 } uwz_http_method;
 
 typedef enum uwz_handler_result {

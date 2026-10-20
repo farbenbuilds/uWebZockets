@@ -655,6 +655,13 @@ pub fn configured_app_with_route_params(
             return self;
         }
 
+        /// Registers an opt-in TRACE route.
+        pub fn trace(self: *Self, path: []const u8, handler: radix.Handler) !*Self {
+            try self.ensure_routes_mutable();
+            try self.router.trace(path, handler);
+            return self;
+        }
+
         /// Registers a synchronous fallback-method route.
         pub fn any(self: *Self, path: []const u8, handler: radix.Handler) !*Self {
             try self.ensure_routes_mutable();
