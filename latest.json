@@ -4,7 +4,7 @@
     "formula": "candidate_median_rps >= baseline_median_rps * minimum_baseline_ratio",
     "minimum_baseline_ratio": 0.9,
     "passed": true,
-    "threshold_rps": 129002.031
+    "threshold_rps": 111970.602
   },
   "methodology": {
     "build_optimize": "ReleaseFast",
@@ -25,43 +25,43 @@
   },
   "provenance": {
     "baseline_flake_lock_sha256": "a83b090e14e3b52a5ee5453f5dace3dbb2d7264991fef5409ed8c764551ceb5a",
-    "baseline_sha": "80418eafbe4e227d6f140fa6a0e48305dfe89a18",
+    "baseline_sha": "8666ef18cff0c65bc1dc49b4eb60f1f4ba0a6e08",
     "candidate_flake_lock_sha256": "a83b090e14e3b52a5ee5453f5dace3dbb2d7264991fef5409ed8c764551ceb5a",
-    "candidate_sha": "80418eafbe4e227d6f140fa6a0e48305dfe89a18",
+    "candidate_sha": "8666ef18cff0c65bc1dc49b4eb60f1f4ba0a6e08",
     "event_name": "schedule",
     "git_ref": "refs/heads/main",
     "repository": "farbenbuilds/uWebZockets",
     "run_attempt": 1,
-    "run_id": 39394862301,
-    "workflow_run_url": "https://github.com/farbenbuilds/uWebZockets/actions/runs/39394862301"
+    "run_id": 39570972586,
+    "workflow_run_url": "https://github.com/farbenbuilds/uWebZockets/actions/runs/39570972586"
   },
-  "record_id": "39394862301-1-80418eafbe4e",
-  "recorded_at": "2026-10-20T08:48:21Z",
+  "record_id": "39570972586-1-8666ef18cff0",
+  "recorded_at": "2026-10-21T08:55:25Z",
   "results": {
     "baseline": {
-      "median_rps": 143335.59,
+      "median_rps": 124411.78,
       "samples_rps": [
-        145889.39,
-        143335.59,
-        137971.88
+        122089.58,
+        124411.78,
+        125450.41
       ]
     },
     "candidate": {
-      "median_rps": 146125.9,
+      "median_rps": 120658.9,
       "samples_rps": [
-        146125.9,
-        146673.18,
-        143572.07
+        120273.71,
+        122129.4,
+        120658.9
       ]
     },
-    "candidate_to_baseline_ratio": 1.0194669725781293
+    "candidate_to_baseline_ratio": 0.9698350108004241
   },
   "runner": {
     "architecture": "X64",
-    "cpu_model": "AMD EPYC 9V45 96-Core Processor",
-    "image": "ubuntu24/20261018.339.1",
-    "kernel": "Linux 7.0.0-1017-azure #17~24.04.1-Ubuntu SMP PREEMPT Thu Sep 24 18:46:57 UTC 2026 x86_64 GNU/Linux",
-    "name": "GitHub Actions 1000004269",
+    "cpu_model": "AMD EPYC 9V74 80-Core Processor",
+    "image": "ubuntu24/20261012.334.1",
+    "kernel": "Linux 6.17.0-1022-azure #22-Ubuntu SMP Mon Jul 27 17:24:03 UTC 2026 x86_64 GNU/Linux",
+    "name": "GitHub Actions 1000004486",
     "os": "Linux"
   },
   "schema_version": 1,
