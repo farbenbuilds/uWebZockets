@@ -198,12 +198,14 @@ pub fn quic_transport(comptime Engine: type) type {
             if (!self.started or self.close_started or self.close_complete) return;
             const loop = self.loop orelse return;
 
-            // Every backend completes the cancel; kqueue may drop the target
-            // receive callback, so its close path clears that flag separately.
+            // kqueue and IOCP must flush queued work before canceling so the
+            // receive callback clears its own flag; epoll clears it on close.
             if (self.read_active and !self.read_cancel_active) {
                 if (builtin.os.tag == .windows or xev.submit_before_cancel()) {
                     xev.submit(loop) catch |err| {
-                        log.warn("udp submit before close failed: {}", .{err});
+                        // Keep the receive flag set rather than reuse a slot
+                        // whose queued callback may still fire.
+                        log.err("udp submit before close failed: {}", .{err});
                     };
                 }
                 self.read_cancel_active = true;

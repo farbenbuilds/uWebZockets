@@ -320,7 +320,8 @@ test "ws: pubsub defers reentrant removals until the publish frame ends" {
     try std.testing.expectEqual(@as(usize, 3), engine.sub_count);
 
     // Simulate a publish frame that is still active when a failed send tears
-    // down the transport's subscriptions.
+    // down the transport's subscriptions. The production path sets the same
+    // depth in `publish` and compacts through the same `end_publish` defer.
     engine.publish_depth = 1;
     try std.testing.expect(engine.unsubscribe(&first_socket, "alpha"));
     engine.unsubscribe_all(&first_socket);

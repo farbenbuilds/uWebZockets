@@ -429,7 +429,10 @@ test "rate limit: probe-ready table inserts and finds distinct keys" {
         lengths[index] = key.len;
         var request = header_request("x-tenant", key);
         var capture = ResponseCapture{};
-        _ = try run_rate_limit(&limiter, &request, &capture);
+        try std.testing.expectEqual(
+            support.radix.MiddlewareResult.continue_dispatch,
+            try run_rate_limit(&limiter, &request, &capture),
+        );
     }
 
     var occupied: usize = 0;
@@ -442,7 +445,10 @@ test "rate limit: probe-ready table inserts and finds distinct keys" {
         const key = keys[index][0..lengths[index]];
         var request = header_request("x-tenant", key);
         var capture = ResponseCapture{};
-        _ = try run_rate_limit(&limiter, &request, &capture);
+        try std.testing.expectEqual(
+            support.radix.MiddlewareResult.continue_dispatch,
+            try run_rate_limit(&limiter, &request, &capture),
+        );
     }
     var occupied_after: usize = 0;
     for (buckets) |bucket| {
@@ -467,6 +473,7 @@ test "rate limit: a full table evicts the oldest bucket and stays bounded" {
         .burst = 16,
         .key_header = "x-tenant",
     }, &buckets);
+    try std.testing.expect(!limiter.probe_ready);
 
     var request = header_request("x-tenant", "tenant-c");
     var capture = ResponseCapture{};

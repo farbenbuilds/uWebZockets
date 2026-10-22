@@ -220,7 +220,9 @@ pub const ClientConnection = struct {
             // IOCP and kqueue drop the callback of a completion canceled before
             // it starts. Flush queued work so the target callback owns its flag.
             xev.submit(loop) catch |err| {
-                log.warn("client submit before teardown failed: {}", .{err});
+                // Keep the target flags set: reusing a slot whose queued
+                // callback may still fire would corrupt a new client request.
+                log.err("client submit before teardown failed: {}", .{err});
             };
         }
 

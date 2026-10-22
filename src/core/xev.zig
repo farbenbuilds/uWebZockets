@@ -111,10 +111,10 @@ pub fn prefer(be: Backend) bool {
 
 /// Submits completions that the backend queued but has not started yet.
 ///
-/// IOCP defers queued operations until the next tick. A connection closed from
+/// IOCP and kqueue defer queued operations until the next submit. A close from
 /// the callback that queued its read or write must submit before canceling, or
-/// the cancel only marks the target dead and its callback never fires. Other
-/// backends either start operations during `add` or expose no submit step.
+/// the cancel only marks the target dead and its callback never fires. epoll
+/// and io_uring start operations during `add`.
 pub fn submit(loop: *Loop) !void {
     if (comptime api.dynamic) {
         switch (api.backend) {

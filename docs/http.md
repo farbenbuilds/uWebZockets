@@ -28,12 +28,12 @@ common case.
 | --- | --- | --- | --- |
 | Request line | 8 KiB | `with_max_request_line_size` | `431 Request Header Fields Too Large` |
 | Header block | 16 KiB | `with_max_header_size` | `431 Request Header Fields Too Large` |
+| Header count | 64 inline fields | `with_max_header_count` | Spills into per-connection slab storage, then `431` |
+| Request body | 16 KiB | `with_max_body_size` | `413 Payload Too Large` |
 
 `with_max_header_size` also sizes HTTP/3 request-header storage. Values above
 65535 remain valid for HTTP/1.1 and HTTP/2, but `listen_udp` rejects them
 because lsxpack field lengths are 16-bit.
-| Header count | 64 inline fields | `with_max_header_count` | Spills into per-connection slab storage, then `431` |
-| Request body | 16 KiB | `with_max_body_size` | `413 Payload Too Large` |
 
 Rejections carry the structured JSON documents described in
 [memory_model.md](memory_model.md), so a client always learns which limit it

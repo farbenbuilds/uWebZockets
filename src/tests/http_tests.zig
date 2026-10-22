@@ -231,11 +231,13 @@ fn parser_terminal(state: parser.ParserState) bool {
 fn expect_byte_at_a_time_done(wire: []u8) !usize {
     var p = parser.HttpParser{};
     var req = Request{};
+    var consumed: usize = 0;
     var length: usize = 1;
     while (length <= wire.len) : (length += 1) {
-        _ = parser.consume(&p, &req, wire[0..length]);
+        consumed = parser.consume(&p, &req, wire[0..length]);
     }
     try std.testing.expectEqual(parser.ParserState.done, p.state);
+    try std.testing.expectEqual(wire.len, consumed);
     return p.scan_work;
 }
 
@@ -291,6 +293,15 @@ test "http: chunk extension CRLF split is resumable" {
     try expect_incomplete_then_done(&wire, extension_cr);
     try expect_incomplete_then_done(&wire, extension_cr + 1);
     try expect_incomplete_then_done(&wire, extension_cr + 2);
+}
+
+test "http: chunk trailer terminator split is resumable" {
+    var wire = "POST /upload HTTP/1.1\r\nHost: example.test\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nX-Trailer: yes\r\n\r\n".*;
+    const trailer_end = std.mem.lastIndexOf(u8, &wire, "\r\n\r\n").?;
+    var split: usize = trailer_end;
+    while (split <= trailer_end + 3) : (split += 1) {
+        try expect_incomplete_then_done(&wire, split);
+    }
 }
 
 test "http: framing conflict wins over an oversized content length" {

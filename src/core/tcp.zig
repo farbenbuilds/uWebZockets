@@ -1730,7 +1730,10 @@ pub fn close_connection(conn: *TcpConnection) void {
         // in the submission queue. Flush first so every cancel observes an
         // active target whose callback clears the target flag.
         xev.submit(conn.loop) catch |err| {
-            log.warn("queued completion submit failed before close: {}", .{err});
+            // Keep the target flags set: the backend cannot dispatch the
+            // queued completions, so reusing the slot could fire a stale
+            // callback into a new connection. Shutdown fails closed instead.
+            log.err("queued completion submit failed before close: {}", .{err});
         };
     }
 
@@ -2147,6 +2150,14 @@ pub fn close_server(server: *TcpServer, loop: *Loop) void {
             server,
             on_accept_retry_cancel_complete,
         );
+    }
+
+    // kqueue and IOCP defer an armed accept until submit. Flush first so the
+    // cancel observes an active target instead of dropping its callback.
+    if (xev.submit_before_cancel()) {
+        xev.submit(loop.get_xev_loop()) catch |err| {
+            log.err("accept submit before close failed: {}", .{err});
+        };
     }
 
     if (server.accept_completion.state() == .active) {

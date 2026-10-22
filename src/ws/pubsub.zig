@@ -49,6 +49,11 @@ pub const PubSubEngine = struct {
     }
 
     /// Adds an idempotent socket subscription, copying the topic name if new.
+    ///
+    /// While a publish frame is active, retired rows stay tombstones until the
+    /// outermost fan-out returns. A subscribe in that window can transiently
+    /// report `SubscriptionCapacityReached` even though the rows will be
+    /// reclaimed at the frame boundary.
     pub fn subscribe(self: *PubSubEngine, socket: *WebSocket, topic: []const u8) !void {
         const existing_topic_id = self.find_topic(topic);
 

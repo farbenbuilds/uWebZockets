@@ -379,6 +379,10 @@ pub const RateLimit = struct {
 };
 
 /// Builds caller-owned token-bucket rate limiting over the supplied clock.
+///
+/// The bucket table is mutable limiter state and must be owned by exactly one
+/// `RateLimit`. Sharing a live table between instances can mix the probe and
+/// legacy placement modes.
 pub fn rate_limit(io: std.Io, options: RateLimitOptions, buckets: []RateLimitBucket) RateLimit {
     var probe_ready = true;
     for (buckets) |bucket| {
