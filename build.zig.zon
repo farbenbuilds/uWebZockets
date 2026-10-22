@@ -78,6 +78,7 @@
         "patches",
         "scripts/check_static_archive.sh",
         "vendor/lsquic_overlay",
+        "vendor/libxev_overlay",
         "flake.nix",
         "flake.lock",
     },
