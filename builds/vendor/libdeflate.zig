@@ -44,7 +44,7 @@ pub fn build(
     module.addCSourceFiles(.{
         .root = root,
         .files = &sources,
-        .flags = sanitizers.instrumented_flags(b, &.{
+        .flags = sanitizers.instrumented_flags(b, &.{ "-ffunction-sections", "-fdata-sections",
             "-std=gnu11",
             // Clang derives the AVX-512 and VPCLMULQDQ intrinsics from the
             // evex512 target feature, which these function target attributes
