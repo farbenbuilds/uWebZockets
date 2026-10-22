@@ -567,8 +567,8 @@ pub const ServerConfig = struct {
         if (self.max_h3_response_header_size > std.math.maxInt(u16)) {
             return error.InvalidHttp3Capacity;
         }
-        // Request header bytes and the QUIC receive credit are u32.
-        if (self.max_header_size > std.math.maxInt(u32)) return error.InvalidHttp3Capacity;
+        // lsxpack stores request field offsets and lengths as u16.
+        if (self.max_header_size > std.math.maxInt(u16)) return error.InvalidHttp3Capacity;
         if (self.max_h3_body_size > std.math.maxInt(u32) - self.max_header_size) {
             return error.InvalidHttp3Capacity;
         }

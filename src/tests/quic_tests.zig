@@ -128,6 +128,20 @@ test "quic: bounded header set validates pseudo headers and framing" {
     try std.testing.expectEqualStrings("localhost", header_set.request.get_header("host").?);
 }
 
+test "quic: header set rejects decoded storage exhaustion" {
+    var storage: [32]u8 = undefined;
+    var header_set = HeaderSet{};
+    const Owner = struct {
+        fn release(_: *anyopaque, _: *HeaderSet) void {}
+    };
+    var owner: u8 = 0;
+    header_set.reset(&owner, Owner.release, &storage, &.{}, &.{}, stream.default_capacities);
+
+    try std.testing.expect(add_test_header(&header_set, "x-name", "0123456789"));
+    try std.testing.expect(header_set.prepare_decode(null, header_set.storage.len) == null);
+    try std.testing.expect(header_set.prepare_decode(null, 1) != null);
+}
+
 test "quic: HTTP/3 QUERY exposes invalid media type before dispatch" {
     var storage: [stream.header_capacity]u8 = undefined;
     var header_set = HeaderSet{};

@@ -1062,6 +1062,11 @@ test "config: H3 capacity knobs validate, size, and reach the engine type" {
         error.InvalidHttp3Capacity,
         (ServerConfig{ .max_h3_response_header_size = std.math.maxInt(u16) + 1 }).validate(),
     );
+    // Request field offsets and lengths use the same u16 representation.
+    try std.testing.expectError(
+        error.InvalidHttp3Capacity,
+        (ServerConfig{ .max_header_size = std.math.maxInt(u16) + 1 }).validate(),
+    );
     try std.testing.expectError(
         error.SlabSizeOverflow,
         (ServerConfig{ .max_connections = std.math.maxInt(usize) / 2 }).h3_engine_bytes(),

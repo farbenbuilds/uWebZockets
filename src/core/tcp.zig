@@ -1361,7 +1361,11 @@ pub const TcpConnection = struct {
     pub fn end_write_batch(conn: *TcpConnection) void {
         if (conn.write_batch_depth == 0) return;
         conn.write_batch_depth -= 1;
-        if (conn.write_batch_depth == 0) tcp_file.flush_batched(conn);
+        if (conn.write_batch_depth != 0) return;
+        tcp_file.flush_batched(conn);
+        // A direct batch flush can empty the ring without running the write
+        // completion, so settle backpressure here after handlers have returned.
+        if (!conn.closing) settle_backpressure(conn);
     }
 
     /// Copies one plaintext slice into the bounded transport write path.
@@ -1394,14 +1398,18 @@ pub const TcpConnection = struct {
 
         var framing_buffer: [128]u8 = undefined;
         const framing = try http_status.format_http1_framing(&framing_buffer, status, length);
-        try tcp_file.write_data_parts(self, &.{ framing, pending, headers, "\r\n" });
 
         // HEAD keeps the transfer length but never streams body bytes.
         if (length == 0 or self.suppress_response_body) {
+            try tcp_file.write_data_parts(self, &.{ framing, pending, headers, "\r\n" });
             file.close(self.io);
             if (close_after) close_after_flush(self);
             return;
         }
+
+        // Ownership precedes the head write so neither the direct-send path nor
+        // a batched direct flush can finish the head without arming the
+        // completion that pumps the body.
         self.file_body = file;
         self.file_offset = offset;
         self.file_remaining = length;
@@ -1409,6 +1417,14 @@ pub const TcpConnection = struct {
         // HTTP/1 responses are ordered: hold pipelined dispatch until the body
         // drains so no later response can interleave with the file bytes.
         self.dispatch_suspended = true;
+        tcp_file.write_data_parts(self, &.{ framing, pending, headers, "\r\n" }) catch |err| {
+            // The transfer never started, so the caller still owns `file`.
+            self.file_body = null;
+            self.file_remaining = 0;
+            self.file_close_after = false;
+            self.dispatch_suspended = false;
+            return err;
+        };
     }
 
     /// Releases a pending response file without touching queued socket bytes.
@@ -1624,10 +1640,7 @@ fn on_write_complete(
     // producers that stopped at transport backpressure.
     conn.pump_http2_streams();
 
-    if (conn.was_backpressured and conn.write_len < conn.write_queue.len / 2) {
-        conn.was_backpressured = false;
-        if (conn.ws.initialized) conn.ws.notify_drain();
-    }
+    settle_backpressure(conn);
 
     if (conn.stream_producer != null) conn.pump_stream_body();
 
@@ -1639,6 +1652,18 @@ fn on_write_complete(
     tcp_file.pump_file_body(conn);
     conn.start_write();
     return .disarm;
+}
+
+/// Clears transport backpressure and wakes a paused WebSocket producer.
+///
+/// The caller must be outside a user send callback: `notify_drain` may call
+/// `ws.send` again, and re-entering the ring while a batch is still open would
+/// reorder frames.
+fn settle_backpressure(conn: *TcpConnection) void {
+    if (!conn.was_backpressured) return;
+    if (conn.write_len >= conn.write_queue.len / 2) return;
+    conn.was_backpressured = false;
+    if (conn.ws.initialized) conn.ws.notify_drain();
 }
 
 /// Advances a ring head after a completed partial or full write.
@@ -1697,34 +1722,30 @@ pub fn close_connection(conn: *TcpConnection) void {
         };
     }
 
-    // kqueue discards armed kevents when the descriptor closes, and a read or
-    // write completion canceled before submission can have its callback
-    // dropped by that backend. Skipping the cancels there is safe: callbacks
-    // already fetched for this tick run before the close completion, and the
-    // close callback clears the outstanding flags.
-    if (!xev.is_kqueue()) {
-        if (conn.read_active) {
-            conn.read_cancel_active = true;
-            core_loop.cancel(
-                conn.loop,
-                &conn.read_completion,
-                &conn.read_cancel_completion,
-                TcpConnection,
-                conn,
-                on_read_cancel_complete,
-            );
-        }
-        if (conn.is_writing) {
-            conn.write_cancel_active = true;
-            core_loop.cancel(
-                conn.loop,
-                &conn.write_completion,
-                &conn.write_cancel_completion,
-                TcpConnection,
-                conn,
-                on_write_cancel_complete,
-            );
-        }
+    // Cancel every armed completion so each backend drops its active count
+    // before the descriptor closes. kqueue abandons the target callback but
+    // still completes the cancel, so the close path waits for both.
+    if (conn.read_active) {
+        conn.read_cancel_active = true;
+        core_loop.cancel(
+            conn.loop,
+            &conn.read_completion,
+            &conn.read_cancel_completion,
+            TcpConnection,
+            conn,
+            on_read_cancel_complete,
+        );
+    }
+    if (conn.is_writing) {
+        conn.write_cancel_active = true;
+        core_loop.cancel(
+            conn.loop,
+            &conn.write_completion,
+            &conn.write_cancel_completion,
+            TcpConnection,
+            conn,
+            on_write_cancel_complete,
+        );
     }
 
     if (builtin.os.tag == .windows) {
@@ -1762,13 +1783,11 @@ pub fn close_connection(conn: *TcpConnection) void {
                 const connection = user_data orelse return .disarm;
                 connection.close_complete = true;
                 if (xev.cancel_abandons_target()) {
-                    // epoll removes a canceled fd registration without
-                    // invoking its callback, and kqueue discards armed kevents
-                    // on close; clear the flags those callbacks would clear.
+                    // epoll and kqueue drop the target callback; clear the
+                    // target flags. The cancel callbacks own their flags and
+                    // keep the slot out of the pool until they complete.
                     connection.read_active = false;
                     connection.is_writing = false;
-                    connection.read_cancel_active = false;
-                    connection.write_cancel_active = false;
                 }
                 release_closed_connection(connection);
                 return .disarm;

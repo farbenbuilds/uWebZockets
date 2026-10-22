@@ -6,6 +6,8 @@ const PubSubEngine = support.ws_pubsub.PubSubEngine;
 const ws_socket = support.ws_socket;
 const WebSocket = ws_socket.WebSocket;
 const TcpConnection = support.tcp.TcpConnection;
+const Request = support.http_request.Request;
+const Response = support.http_response.Response;
 const mask = support.ws_mask;
 const utf8 = support.ws_utf8;
 const zslay = @import("zslay");
@@ -51,6 +53,78 @@ test "ws: validates the complete upgrade handshake" {
     try std.testing.expectError(
         error.UnsupportedVersion,
         handshake.validate_request("GET", "Upgrade", "websocket", "12", "dGhlIHNhbXBsZSBub25jZQ=="),
+    );
+}
+
+test "ws: upgrade reads handshake fields past the inline header slots" {
+    var write_queue: [4096]u8 = undefined;
+    var message_buffer: [64]u8 = undefined;
+    var tcp_conn = TcpConnection{
+        .socket = undefined,
+        .write_queue = &write_queue,
+        .ws_message_buffer = &message_buffer,
+        // Keep the queued response in the ring instead of arming a socket write.
+        .is_writing = true,
+    };
+    var req = Request{};
+    req.method = "GET";
+    req.header_names[0] = "Host";
+    req.header_values[0] = "example.test";
+    req.header_names[1] = "Connection";
+    req.header_values[1] = "Upgrade";
+    req.header_names[2] = "Upgrade";
+    req.header_values[2] = "websocket";
+    req.header_names[3] = "Sec-WebSocket-Version";
+    req.header_values[3] = "13";
+    req.header_count = 4;
+    var extra_names = [_][]const u8{"Sec-WebSocket-Key"};
+    var extra_values = [_][]const u8{"dGhlIHNhbXBsZSBub25jZQ=="};
+    req.extra_header_names = &extra_names;
+    req.extra_header_values = &extra_values;
+    req.extra_header_count = 1;
+
+    var res = Response{ .target = .{ .tcp = &tcp_conn } };
+    var ws = WebSocket{ .conn = &tcp_conn };
+    ws.upgrade(&req, &res, .{ .max_frame_size = 64, .max_message_size = 64 });
+
+    try std.testing.expect(ws.initialized);
+    try std.testing.expect(
+        std.mem.indexOf(u8, &write_queue, "101 Switching Protocols") != null,
+    );
+
+    // A duplicate key in the extra slots must fail the unique-field rule.
+    var duplicate_names = [_][]const u8{
+        "Sec-WebSocket-Key",
+        "Sec-WebSocket-Key",
+    };
+    var duplicate_values = [_][]const u8{
+        "dGhlIHNhbXBsZSBub25jZQ==",
+        "dGhlIHNhbXBsZSBub25jZQ==",
+    };
+    var duplicate_req = req;
+    duplicate_req.extra_header_names = &duplicate_names;
+    duplicate_req.extra_header_values = &duplicate_values;
+    duplicate_req.extra_header_count = 2;
+
+    var duplicate_queue: [4096]u8 = undefined;
+    var duplicate_message_buffer: [64]u8 = undefined;
+    var duplicate_conn = TcpConnection{
+        .socket = undefined,
+        .write_queue = &duplicate_queue,
+        .ws_message_buffer = &duplicate_message_buffer,
+        .is_writing = true,
+    };
+    var duplicate_res = Response{ .target = .{ .tcp = &duplicate_conn } };
+    var duplicate_ws = WebSocket{ .conn = &duplicate_conn };
+    duplicate_ws.upgrade(
+        &duplicate_req,
+        &duplicate_res,
+        .{ .max_frame_size = 64, .max_message_size = 64 },
+    );
+
+    try std.testing.expect(!duplicate_ws.initialized);
+    try std.testing.expect(
+        std.mem.indexOf(u8, &duplicate_queue, "400 Bad Request") != null,
     );
 }
 

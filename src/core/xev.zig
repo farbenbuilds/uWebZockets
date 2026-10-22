@@ -126,8 +126,9 @@ pub fn submit(loop: *Loop) !void {
 
 /// Cancels `completion` and reports the outcome through `callback`.
 ///
-/// kqueue drops armed kevents when the descriptor closes, so cancellation is
-/// a no-op there; the close callback clears the outstanding flags instead.
+/// kqueue reconciles its active count through `process_cancellations` even
+/// though closing the descriptor drops the target callback. The close path
+/// therefore keeps the target flags until the cancel callback completes.
 pub fn cancel(
     loop: *Loop,
     completion: *Completion,
@@ -169,7 +170,6 @@ fn cancel_static(
         }.on_result);
         return;
     }
-    if (api.backend == .kqueue) return;
 
     cancel_completion.* = .{
         .op = .{ .cancel = .{ .c = completion } },
@@ -203,7 +203,6 @@ fn cancel_dynamic(
 ) void {
     switch (api.backend) {
         inline else => |tag| {
-            if (comptime std.mem.eql(u8, @tagName(tag), "kqueue")) return;
             const BackendApi = (comptime api.superset(tag)).Api();
             const inner_loop: *BackendApi.Loop = &@field(loop.backend, @tagName(tag));
             completion.ensureTag(tag);

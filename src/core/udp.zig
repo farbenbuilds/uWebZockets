@@ -198,10 +198,9 @@ pub fn quic_transport(comptime Engine: type) type {
             if (!self.started or self.close_started or self.close_complete) return;
             const loop = self.loop orelse return;
 
-            // kqueue drops the callback of a receive canceled before
-            // submission and discards armed kevents when the socket closes;
-            // the close callback clears the receive flags instead.
-            if (!xev.is_kqueue() and self.read_active and !self.read_cancel_active) {
+            // Every backend completes the cancel; kqueue may drop the target
+            // receive callback, so its close path clears that flag separately.
+            if (self.read_active and !self.read_cancel_active) {
                 self.read_cancel_active = true;
                 core_loop.cancel(
                     loop,
@@ -255,11 +254,9 @@ pub fn quic_transport(comptime Engine: type) type {
             _ = result catch |err| log.debug("udp close error: {}", .{err});
             self.close_complete = true;
             if (xev.cancel_abandons_target()) {
-                // epoll removes a canceled fd registration without invoking
-                // its callback, and kqueue discards armed kevents on close;
-                // clear the flags those callbacks would have cleared.
+                // epoll and kqueue drop the target receive callback; the
+                // cancel callback still clears its own flag before drain.
                 self.read_active = false;
-                self.read_cancel_active = false;
             }
             return .disarm;
         }

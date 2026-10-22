@@ -7,6 +7,7 @@ const pool_mod = support.pool;
 const tcp = support.tcp;
 const timer = support.timer;
 const zero_copy = support.zero_copy;
+const WebSocket = support.ws_socket.WebSocket;
 
 // test generic bitset pool logic.
 test "core: bitset pool acquires and releases slots" {
@@ -159,6 +160,73 @@ test "tcp: empty-ring write takes the direct sendmsg path" {
     try std.testing.expectEqualStrings(payload, received[0..received_len]);
 }
 
+test "tcp: file response keeps the body pump armed before the head write" {
+    if (!zero_copy.kernel_send_supported) return error.SkipZigTest;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const payload = "uWebZockets static body";
+    var file = try tmp.dir.createFile(std.testing.io, "asset.bin", .{ .read = true, .truncate = true });
+    var file_owned = true;
+    defer if (file_owned) file.close(std.testing.io);
+    try file.writePositionalAll(std.testing.io, payload, 0);
+
+    var pair: [2]std.posix.fd_t = undefined;
+    if (std.c.socketpair(
+        std.posix.AF.UNIX,
+        std.posix.SOCK.STREAM | std.posix.SOCK.NONBLOCK,
+        0,
+        &pair,
+    ) != 0) {
+        return error.SkipZigTest;
+    }
+    defer _ = std.posix.system.close(pair[1]);
+
+    var event_loop = try loop.init();
+    defer loop.deinit(&event_loop);
+
+    var ring: [512]u8 = undefined;
+    var conn = tcp.TcpConnection{
+        .socket = @import("xev").TCP.initFd(pair[0]),
+        .io = std.testing.io,
+        .write_queue = &ring,
+    };
+    conn.loop = event_loop.get_xev_loop();
+
+    try conn.begin_file_response("200 OK", "", "", file, 0, payload.len, false);
+    file_owned = false;
+
+    // The head must not take a direct-send path that bypasses the completion
+    // which drives pump_file_body.
+    try std.testing.expect(conn.file_body != null);
+    try std.testing.expect(conn.is_writing);
+
+    // This test drives only the file transfer, so do not arm a read after it.
+    conn.dispatch_suspended = false;
+    try event_loop.xev_loop.run(.until_done);
+
+    var received: [1024]u8 = undefined;
+    var received_len: usize = 0;
+    while (received_len < received.len) {
+        const read = std.posix.read(pair[1], received[received_len..]) catch |err| switch (err) {
+            error.WouldBlock => break,
+            else => return err,
+        };
+        if (read == 0) break;
+        received_len += read;
+    }
+    try std.testing.expect(
+        std.mem.indexOf(u8, received[0..received_len], "HTTP/1.1 200 OK") != null,
+    );
+    try std.testing.expect(
+        std.mem.indexOf(u8, received[0..received_len], payload) != null,
+    );
+
+    tcp.close_connection(&conn);
+    try event_loop.xev_loop.run(.until_done);
+}
+
 test "tcp: write batch defers and flushes pipelined responses in order" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
 
@@ -206,6 +274,51 @@ test "tcp: write batch defers and flushes pipelined responses in order" {
         received_len += read;
     }
     try std.testing.expectEqualStrings("onetwo", received[0..received_len]);
+}
+
+test "tcp: direct batch flush settles websocket backpressure" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+
+    const Drain = struct {
+        var calls: usize = 0;
+
+        fn on_drain(_: *WebSocket) void {
+            calls += 1;
+        }
+    };
+    Drain.calls = 0;
+
+    var pair: [2]std.posix.fd_t = undefined;
+    if (std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &pair) != 0) {
+        return error.SkipZigTest;
+    }
+    defer {
+        _ = std.posix.system.close(pair[0]);
+        _ = std.posix.system.close(pair[1]);
+    }
+
+    var ring: [512]u8 = undefined;
+    var conn = tcp.TcpConnection{
+        .socket = @import("xev").TCP.initFd(pair[0]),
+        .io = std.testing.io,
+        .write_queue = &ring,
+    };
+    conn.ws = WebSocket{
+        .conn = &conn,
+        .initialized = true,
+        .behavior = .{ .drain = Drain.on_drain },
+    };
+
+    const payload = [_]u8{'x'} ** 300;
+    conn.begin_write_batch();
+    try conn.write_data(&payload);
+    try std.testing.expect(conn.was_backpressured);
+
+    // The direct flush empties the ring without a write completion; the batch
+    // boundary must still resume the paused producer.
+    conn.end_write_batch();
+    try std.testing.expect(!conn.was_backpressured);
+    try std.testing.expectEqual(@as(usize, 1), Drain.calls);
 }
 
 test "tcp: write batch drains before a pipelined overflow" {

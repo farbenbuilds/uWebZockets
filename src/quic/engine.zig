@@ -44,6 +44,10 @@ pub fn quic_engine(
     if (stream_capacities.request_header_size > std.math.maxInt(c_uint)) {
         @compileError("HTTP/3 request header capacity exceeds lsquic limits");
     }
+    // lsxpack stores field offsets and remaining lengths in u16.
+    if (stream_capacities.request_header_size > std.math.maxInt(u16)) {
+        @compileError("HTTP/3 request header capacity must fit u16 lengths");
+    }
     if (stream_capacities.request_body_size == 0) {
         @compileError("HTTP/3 request body capacity must be greater than zero");
     }
