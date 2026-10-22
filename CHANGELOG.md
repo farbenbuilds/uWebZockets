@@ -24,10 +24,9 @@ route capacities, and default limits are unchanged.
 - `vendor/lsquic_overlay` is regenerated from the v4.10.2 tree and
   `patches/lsquic_h3_message_error.patch`, so the stream-scoped header-error
   behavior is preserved on the new release.
-- HTTP/3 configurations with `max_header_size` above 65535 are rejected during
-  validation. The lsxpack field offsets and lengths are 16-bit, so larger
-  values could trap or truncate on the first decoded field. HTTP/1.1 and HTTP/2
-  configurations within the documented 16 KiB default are unaffected.
+- HTTP/3 activation (`listen_udp`) rejects `max_header_size` above 65535
+  because lsxpack field lengths are 16-bit. The shared HTTP/1.1 and HTTP/2
+  limit is unchanged and may still be raised above that value.
 
 ### Fixed
 
@@ -40,20 +39,34 @@ route capacities, and default limits are unchanged.
   request header view, including the extra slots used when
   `max_header_count` exceeds the inline capacity. A duplicate key in those
   slots is now rejected instead of being treated as absent.
-- HTTP/3 request header capacity above the `u16` lsxpack representation is
-  rejected during configuration validation instead of trapping or truncating
-  at the first decoded field.
+- HTTP/3 engine initialization rejects request header storage above the `u16`
+  lsxpack representation instead of trapping or truncating at the first
+  decoded field. The check runs before any QUIC slab is allocated.
 - A decoded HTTP/3 header section that exceeds the configured storage is
   rejected with a stream-scoped `H3_MESSAGE_ERROR` rather than aborting every
   request on the connection.
 - A direct batch flush that empties the write ring now settles WebSocket
   backpressure at the batch boundary, so a paused producer is resumed even
   when no write completion runs.
-- kqueue cancellation completions now reconcile libxev's active-completion
-  count before the descriptor closes. TCP, UDP, and client teardown no longer
-  leave the loop waiting on completions that the kernel discarded.
+- kqueue cancellation now flushes queued completions before canceling, so the
+  target callback owns its flag and a closed slot cannot return to the pool
+  before its read, write, and close completions drain. TCP, UDP, and client
+  teardown use the same submit-before-cancel rule as IOCP.
 - A timer tick that re-arms its own timer no longer queues the completion a
   second time.
+- Repeated accept failures now arm a bounded one-shot retry instead of
+  returning `.rearm` immediately. A full descriptor table costs one accept
+  attempt per second instead of a busy loop and a warning flood.
+- The HTTP/1 parser keeps a monotonic delimiter scan cursor across reads.
+  Dribbled request lines, header blocks, chunk sizes, chunk extensions, and
+  trailers are scanned once instead of rescanning the accumulated prefix.
+- Rate-limit tables built empty use an open-addressed home probe, so established
+  keys and new keys with free capacity are found without a full-table scan.
+  Pre-seeded tables keep the exact legacy scan and eviction order.
+- Pub/sub publish holds a publish-depth frame and tombstones reentrant
+  unsubscribes until the outermost fan-out returns. A failed subscriber can no
+  longer shift rows, remap topic ids, or cause cross-topic delivery.
+- Pattern-only routers skip the static-route hash and its empty probe table.
 
 ### Security
 

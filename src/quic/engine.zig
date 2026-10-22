@@ -44,10 +44,6 @@ pub fn quic_engine(
     if (stream_capacities.request_header_size > std.math.maxInt(c_uint)) {
         @compileError("HTTP/3 request header capacity exceeds lsquic limits");
     }
-    // lsxpack stores field offsets and remaining lengths in u16.
-    if (stream_capacities.request_header_size > std.math.maxInt(u16)) {
-        @compileError("HTTP/3 request header capacity must fit u16 lengths");
-    }
     if (stream_capacities.request_body_size == 0) {
         @compileError("HTTP/3 request body capacity must be greater than zero");
     }
@@ -154,6 +150,12 @@ pub fn quic_engine(
 
         /// Allocates all stream, header, packet, and payload slabs.
         pub fn init() !Self {
+            // lsxpack field lengths are u16. Keep the shared HTTP/1 limit free
+            // to exceed this, but never allocate an HTTP/3 engine that cannot
+            // represent its own request-header storage.
+            if (stream_capacities.request_header_size > std.math.maxInt(u16)) {
+                return error.InvalidHttp3Capacity;
+            }
             var stream_pool = try StreamPool.init();
             errdefer stream_pool.deinit();
             var header_pool = try HeaderPool.init();

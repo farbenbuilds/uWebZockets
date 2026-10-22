@@ -70,12 +70,20 @@ pub inline fn is_kqueue() bool {
 }
 
 /// Reports whether canceling an armed fd completion abandons that completion's
-/// callback. epoll removes the registration without invoking it, and kqueue
-/// discards armed kevents when the descriptor closes; the close callback must
-/// clear the flags such a completion would otherwise clear.
+/// callback. epoll removes the registration without invoking it; the close
+/// callback must clear the flags such a completion would otherwise clear.
+/// kqueue and io_uring deliver a Canceled callback once the target is active.
 pub inline fn cancel_abandons_target() bool {
-    const name = @tagName(api.backend);
-    return std.mem.eql(u8, name, "epoll") or std.mem.eql(u8, name, "kqueue");
+    return std.mem.eql(u8, @tagName(api.backend), "epoll");
+}
+
+/// Reports whether a close path must flush queued completions before canceling.
+///
+/// kqueue drops the callback of a completion canceled while it is still in the
+/// submission queue. Submitting first makes the target active so its Canceled
+/// callback can clear the target flag and keep the slot out of the free list.
+pub inline fn submit_before_cancel() bool {
+    return is_kqueue();
 }
 
 /// Returns the descriptor behind a TCP watcher.
@@ -126,9 +134,9 @@ pub fn submit(loop: *Loop) !void {
 
 /// Cancels `completion` and reports the outcome through `callback`.
 ///
-/// kqueue reconciles its active count through `process_cancellations` even
-/// though closing the descriptor drops the target callback. The close path
-/// therefore keeps the target flags until the cancel callback completes.
+/// kqueue reconciles its active count through `process_cancellations` and
+/// delivers the target callback after the submission queue is flushed. The
+/// close path therefore waits for both the target and cancel callbacks.
 pub fn cancel(
     loop: *Loop,
     completion: *Completion,

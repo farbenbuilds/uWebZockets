@@ -201,6 +201,11 @@ pub fn quic_transport(comptime Engine: type) type {
             // Every backend completes the cancel; kqueue may drop the target
             // receive callback, so its close path clears that flag separately.
             if (self.read_active and !self.read_cancel_active) {
+                if (builtin.os.tag == .windows or xev.submit_before_cancel()) {
+                    xev.submit(loop) catch |err| {
+                        log.warn("udp submit before close failed: {}", .{err});
+                    };
+                }
                 self.read_cancel_active = true;
                 core_loop.cancel(
                     loop,
@@ -254,8 +259,8 @@ pub fn quic_transport(comptime Engine: type) type {
             _ = result catch |err| log.debug("udp close error: {}", .{err});
             self.close_complete = true;
             if (xev.cancel_abandons_target()) {
-                // epoll and kqueue drop the target receive callback; the
-                // cancel callback still clears its own flag before drain.
+                // epoll drops the target receive callback; kqueue and io_uring
+                // deliver it, so their callbacks own the read flag.
                 self.read_active = false;
             }
             return .disarm;

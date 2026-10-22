@@ -214,9 +214,19 @@ pub const ClientConnection = struct {
         self.phase = .teardown;
         const loop = self.loop.?;
 
+        if ((self.connect_active or self.read_active or self.write_active) and
+            (builtin.os.tag == .windows or xev.submit_before_cancel()))
+        {
+            // IOCP and kqueue drop the callback of a completion canceled before
+            // it starts. Flush queued work so the target callback owns its flag.
+            xev.submit(loop) catch |err| {
+                log.warn("client submit before teardown failed: {}", .{err});
+            };
+        }
+
         // Cancel every armed completion so each backend drops its active count
-        // before the descriptor closes. kqueue abandons the target callback but
-        // still completes the cancel, so `on_close` waits for both.
+        // before the descriptor closes. The target and cancel callbacks each
+        // own their flags, so release waits until both have run.
         if (self.connect_active) {
             self.connect_cancel_active = true;
             core_loop.cancel(
@@ -721,9 +731,8 @@ pub const ClientConnection = struct {
 
         self.close_complete = true;
         if (xev.cancel_abandons_target()) {
-            // epoll and kqueue drop the target callback; clear the target
-            // flags. The cancel callbacks own their flags and keep the slot
-            // out of the pool until they complete.
+            // epoll drops the target callback; clear the target flags. kqueue
+            // and io_uring deliver it, so their callbacks own these flags.
             self.connect_active = false;
             self.read_active = false;
             self.write_active = false;

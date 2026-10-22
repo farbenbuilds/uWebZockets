@@ -81,6 +81,56 @@ test "core: timer init and deinit" {
     defer timer.deinit_timer(&t);
 }
 
+test "tcp: accept retry delay backs off to a bounded ceiling" {
+    try std.testing.expectEqual(@as(u64, 0), tcp.accept_retry_delay_ms(0));
+    try std.testing.expectEqual(@as(u64, 0), tcp.accept_retry_delay_ms(1));
+    try std.testing.expectEqual(@as(u64, 1), tcp.accept_retry_delay_ms(2));
+    try std.testing.expectEqual(@as(u64, 2), tcp.accept_retry_delay_ms(3));
+    try std.testing.expectEqual(@as(u64, 512), tcp.accept_retry_delay_ms(11));
+    try std.testing.expectEqual(tcp.accept_retry_max_ms, tcp.accept_retry_delay_ms(12));
+    try std.testing.expectEqual(tcp.accept_retry_max_ms, tcp.accept_retry_delay_ms(255));
+}
+
+test "core: accept failures arm and drain a bounded retry timer" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    var pair: [2]std.posix.fd_t = undefined;
+    if (std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &pair) != 0) {
+        return error.SkipZigTest;
+    }
+    defer _ = std.posix.system.close(pair[1]);
+
+    var event_loop = try loop.init();
+    defer loop.deinit(&event_loop);
+
+    var server = tcp.TcpServer{
+        .accept_retry_timer = try @import("xev").Timer.init(),
+        .listener = @import("xev").TCP.initFd(pair[0]),
+        .on_connection = dummy_accept,
+        .user_data = null,
+    };
+
+    tcp.accept_start(&server, &event_loop);
+    if (std.c.write(pair[1], "x", 1) != 1) return error.SkipZigTest;
+
+    // A non-listening socket makes accept fail. The first failure rearms; a
+    // second consecutive failure must disarm accept and arm the timer.
+    var attempts: usize = 0;
+    while (!server.accept_retry_active and attempts < 4) : (attempts += 1) {
+        try event_loop.xev_loop.run(.once);
+    }
+    try std.testing.expect(server.accept_retry_active);
+    try std.testing.expect(server.accept_fail_streak >= 2);
+    try std.testing.expect(server.accept_completion.state() != .active);
+
+    tcp.close_server(&server, &event_loop);
+    try event_loop.xev_loop.run(.until_done);
+    try std.testing.expect(server.close_complete);
+    try std.testing.expect(!server.accept_retry_active);
+    try std.testing.expect(!server.accept_retry_cancel_active);
+    tcp.deinit_server(&server);
+}
+
 test "tcp: multipart ring writes preserve order across wrap" {
     var buffer = [_]u8{0} ** 8;
     const tail = tcp.copy_parts_to_ring(&buffer, 6, &.{ "ab", "cde" });

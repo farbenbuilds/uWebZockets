@@ -216,7 +216,8 @@ try server.run();
 
 `with_max_request_line_size`, `with_max_header_size`, and `with_max_header_count`
 extend the HTTP/1 request limits; fields beyond the inline 64 get per-connection
-slab storage. `with_max_route_nodes`, `with_max_pattern_routes`,
+slab storage. `max_header_size` also sizes HTTP/3 request headers, so enabling
+HTTP/3 requires it to be at most 65535. `with_max_route_nodes`, `with_max_pattern_routes`,
 `with_max_middleware`, `with_max_route_path_size`,
 `with_max_route_registry_size`, and `with_max_route_params` size the
 slab-carved router and its capture spill. HTTP/2 metadata is sized by

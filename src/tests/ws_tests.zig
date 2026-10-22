@@ -278,6 +278,101 @@ test "ws: full subscription storage does not leak empty topics" {
     try std.testing.expectEqual(@as(usize, 0), engine.topic_count);
 }
 
+/// Initializes a send-capable socket whose encoded frames stay in `write_queue`.
+fn init_pubsub_socket(socket: *WebSocket, conn: *TcpConnection, write_queue: []u8) !void {
+    conn.* = .{
+        .socket = undefined,
+        .write_queue = write_queue,
+        // Keep frames in the ring instead of arming a socket write.
+        .is_writing = true,
+    };
+    // zslay keeps a pointer to the socket's tx_nodes, so initialize in place.
+    socket.* = .{
+        .conn = conn,
+        .behavior = .{ .max_frame_size = 64, .max_message_size = 64 },
+        .initialized = true,
+    };
+    socket.z_conn = try zslay.Conn.init(&socket.tx_nodes, .{
+        .role = .server,
+        .max_frame_len = 64,
+        .max_message_len = 64,
+    });
+}
+
+test "ws: pubsub defers reentrant removals until the publish frame ends" {
+    var engine = PubSubEngine{};
+    var first_conn: TcpConnection = undefined;
+    var first_socket: WebSocket = undefined;
+    var first_write: [64]u8 = undefined;
+    try init_pubsub_socket(&first_socket, &first_conn, &first_write);
+    var second_conn: TcpConnection = undefined;
+    var second_socket: WebSocket = undefined;
+    var second_write: [64]u8 = undefined;
+    try init_pubsub_socket(&second_socket, &second_conn, &second_write);
+    var third_conn: TcpConnection = undefined;
+    var third_socket: WebSocket = undefined;
+    var third_write: [64]u8 = undefined;
+    try init_pubsub_socket(&third_socket, &third_conn, &third_write);
+
+    try engine.subscribe(&first_socket, "alpha");
+    try engine.subscribe(&second_socket, "beta");
+    try engine.subscribe(&first_socket, "gamma");
+    try std.testing.expectEqual(@as(usize, 3), engine.sub_count);
+
+    // Simulate a publish frame that is still active when a failed send tears
+    // down the transport's subscriptions.
+    engine.publish_depth = 1;
+    try std.testing.expect(engine.unsubscribe(&first_socket, "alpha"));
+    engine.unsubscribe_all(&first_socket);
+
+    try std.testing.expectEqual(@as(usize, 3), engine.sub_count);
+    try std.testing.expectEqual(@as(usize, 2), engine.retired_subscriptions);
+    try std.testing.expect(engine.empty_topic_pending);
+    try std.testing.expect(engine.sub_sockets[0] == null);
+    try std.testing.expect(engine.sub_sockets[2] == null);
+    // Empty topics stay addressable so live rows keep their topic ids.
+    try std.testing.expectEqual(@as(usize, 3), engine.topic_count);
+    try std.testing.expectEqual(@as(u16, 0), engine.topic_subscriber_counts[0]);
+    try std.testing.expectEqual(@as(u16, 1), engine.topic_subscriber_counts[1]);
+    try std.testing.expectEqual(@as(u16, 0), engine.topic_subscriber_counts[2]);
+    try std.testing.expectEqual(@as(u16, 1), engine.sub_topic_ids[1]);
+
+    // A subscription made during the frame appends at the high-water mark
+    // instead of reviving a tombstone.
+    try engine.subscribe(&third_socket, "alpha");
+    try std.testing.expectEqual(@as(usize, 4), engine.sub_count);
+    try std.testing.expect(engine.sub_sockets[0] == null);
+    try std.testing.expect(engine.sub_sockets[3] == &third_socket);
+    try std.testing.expectEqual(@as(u16, 0), engine.sub_topic_ids[3]);
+    try std.testing.expectEqual(@as(u16, 1), engine.topic_subscriber_counts[0]);
+
+    // The outer frame ends; the next publish skips the tombstones, then
+    // compacts and sweeps the gamma topic that became empty.
+    engine.publish_depth = 0;
+    try std.testing.expectEqual(@as(usize, 1), engine.publish("beta", "b", true));
+    try std.testing.expectEqual(@as(usize, 2), engine.sub_count);
+    try std.testing.expectEqual(@as(usize, 0), engine.retired_subscriptions);
+    try std.testing.expect(!engine.empty_topic_pending);
+    try std.testing.expectEqual(@as(usize, 2), engine.topic_count);
+    try std.testing.expect(engine.sub_sockets[0] == &second_socket);
+    try std.testing.expectEqual(@as(u16, 1), engine.sub_topic_ids[0]);
+    try std.testing.expect(engine.sub_sockets[1] == &third_socket);
+    try std.testing.expectEqual(@as(u16, 0), engine.sub_topic_ids[1]);
+    try std.testing.expect(engine.sub_sockets[2] == null);
+    try std.testing.expect(engine.sub_sockets[3] == null);
+
+    // Retired sockets saw nothing. The mid-frame alpha subscription receives
+    // only the later alpha publish, and the beta subscriber never receives
+    // alpha through a remapped topic id.
+    try std.testing.expectEqual(@as(usize, 0), first_conn.write_len);
+    try std.testing.expect(second_conn.write_len > 0);
+    const beta_bytes = second_conn.write_len;
+    try std.testing.expectEqual(@as(usize, 1), engine.publish("alpha", "a", true));
+    try std.testing.expectEqual(@as(usize, 0), first_conn.write_len);
+    try std.testing.expectEqual(beta_bytes, second_conn.write_len);
+    try std.testing.expect(third_conn.write_len > 0);
+}
+
 test "ws: fragmented message completes with an empty continuation" {
     const Capture = struct {
         var calls: usize = 0;

@@ -128,6 +128,13 @@ test "quic: bounded header set validates pseudo headers and framing" {
     try std.testing.expectEqualStrings("localhost", header_set.request.get_header("host").?);
 }
 
+test "quic: engine rejects request header storage above u16 field lengths" {
+    const TestEngine = engine.quic_engine(2, 1024, 0, .{
+        .request_header_size = std.math.maxInt(u16) + 1,
+    });
+    try std.testing.expectError(error.InvalidHttp3Capacity, TestEngine.init());
+}
+
 test "quic: header set rejects decoded storage exhaustion" {
     var storage: [32]u8 = undefined;
     var header_set = HeaderSet{};
