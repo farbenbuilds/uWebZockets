@@ -12,6 +12,7 @@ Please describe the changes this PR makes and why it should be merged.
 
 ## Checklist
 
+- [ ] I assigned this pull request and applied at least one repository label
 - [ ] I have read the [Contributing Guidelines](../CONTRIBUTE.md)
 - [ ] My code follows the code style of this project
 - [ ] I have run `zig fmt --check build.zig build.zig.zon builds src examples tests fuzz`

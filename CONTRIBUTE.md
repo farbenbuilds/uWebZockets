@@ -157,6 +157,9 @@ malformed and capacity-exhaustion cases.
 - Document API, limit, configuration, or compatibility changes.
 - Separate measured performance results from estimates.
 - Note breaking changes explicitly in the pull request and changelog.
+- Assign the pull request to its owner and apply at least one existing
+  repository label before requesting review. An unassigned or unlabeled pull
+  request is not ready for review.
 - Keep commits concise and follow
   [.github/COMMIT_CONVENTION.md](.github/COMMIT_CONVENTION.md).
 

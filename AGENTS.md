@@ -196,6 +196,9 @@ Follow this sequence:
 4. **Integrator** resolves ownership overlaps, routes findings back to the
    developer, checks the final combined diff and required verification, and
    prepares the delivery summary. Re-review changed work before integration.
+   When opening or updating a pull request, assign its owner and apply at least
+   one existing repository label; an unassigned or unlabeled pull request is
+   not ready for review.
 
 Do not advance past a phase while its required output is missing. Keep edits
 to shared files serialized; parallelize only independent assignments. The
