@@ -627,14 +627,18 @@ test "router: timing wheel reaps a silent connection" {
     var client = try address.connect(std.testing.io, .{ .mode = .stream });
     defer client.close(std.testing.io);
 
-    var spins: usize = 0;
-    while (server.pool.count_active() == 0 and spins < 1_000) : (spins += 1) {
+    const accept_deadline = std.Io.Clock.now(.awake, std.testing.io).nanoseconds + 5 * std.time.ns_per_s;
+    while (server.pool.count_active() == 0 and
+        std.Io.Clock.now(.awake, std.testing.io).nanoseconds < accept_deadline)
+    {
         try server.loop.xev_loop.run(.once);
     }
     try std.testing.expectEqual(@as(usize, 1), server.pool.count_active());
 
-    spins = 0;
-    while (server.pool.count_active() != 0 and spins < 2_000) : (spins += 1) {
+    const reap_deadline = std.Io.Clock.now(.awake, std.testing.io).nanoseconds + 5 * std.time.ns_per_s;
+    while (server.pool.count_active() != 0 and
+        std.Io.Clock.now(.awake, std.testing.io).nanoseconds < reap_deadline)
+    {
         try server.loop.xev_loop.run(.once);
     }
     try std.testing.expectEqual(@as(usize, 0), server.pool.count_active());
