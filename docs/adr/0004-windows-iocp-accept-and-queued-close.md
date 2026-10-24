@@ -30,7 +30,7 @@ returns and shutdown reports `ShutdownIncomplete`.
 
 Carried the upstream accept fix as a pre-generated overlay in 1.9.0 instead of
 forking or patching files inside `zig-pkg`; the 2.1.0 migration replaced it
-with fork commit `3746a15`:
+with fork commit `2b969cf`:
 
 - `patches/libxev_iocp_accept_socket.patch` is the reviewable diff against the
   pinned revision.
@@ -88,7 +88,7 @@ The upstream report is
   becomes historical. The 2026-10-24 note below and ADR 0005 now govern
   retirement.
 - 2026-10-24: [ADR 0005](0005-libxev-fork.md) adopts the maintained fork. The
-  2.1.0 migration moved the pin to fork commit `3746a15` on `uwz/zig-0.16`,
+  2.1.0 migration moved the pin to fork commit `2b969cf` on `uwz/zig-0.16`,
   deleted the overlay and audit patch, and retained the queued-close policy in
   `src/core/tcp.zig`.
 - Windows is promoted from compile-only to runtime-supported only when the
@@ -98,5 +98,5 @@ The upstream report is
 
 - `docs/roadmap.md` Windows runtime blocker details.
 - `src/core/tcp.zig`, `src/core/xev.zig`, `builds/targets/native.zig`.
-- `farbenbuilds/libxev` commit `3746a15` on `uwz/zig-0.16`.
+- `farbenbuilds/libxev` commit `2b969cf` on `uwz/zig-0.16`.
 - `.github/workflows/windows.yml`, `CI_CD_PIPELINE.md`.

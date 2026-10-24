@@ -13,7 +13,7 @@ upstream release.
 ## Current state (2026-10-24, 2.1.0)
 
 - `build.zig.zon` pins <https://github.com/farbenbuilds/libxev> at the full
-  commit `3746a151f2cb1d59fecb42d0d425271ed5218465` on `uwz/zig-0.16`. The
+  commit `2b969cfcbd22c6d672ec3fe9a4a2d5848714634a` on `uwz/zig-0.16`. The
   branch is based on upstream `9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf` and
   carries XEV-001 and XEV-002 as ledgered commits.
 - The Windows IOCP `AcceptEx` ownership fix lives in the fork. The former
@@ -96,7 +96,7 @@ and the commit hash is what CI, releases, and benchmark provenance record.
   dependency problem.
 - Never edit a fetched package under `zig-pkg` or any global cache.
 - The pin is `farbenbuilds/libxev` commit
-  `3746a151f2cb1d59fecb42d0d425271ed5218465`, based on
+  `2b969cfcbd22c6d672ec3fe9a4a2d5848714634a`, based on
   `9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf`, with XEV-001 as its only
   downstream modification.
 
@@ -185,8 +185,8 @@ ledger is the durable answer to why the fork diverges.
 
 | ID | Area | Upstream reference | Invariant | Test evidence | Retirement criterion | Current home |
 | --- | --- | --- | --- | --- | --- | --- |
-| XEV-001 | Windows IOCP accept | [mitchellh/libxev#252](https://github.com/mitchellh/libxev/issues/252) | `AcceptEx` transfers ownership of the connected socket. Clear `internal_accept_socket` on both success and error so the next re-arm allocates a fresh socket and never calls `AcceptEx` on a connected one. | The fork commit `3746a151f2cb1d59fecb42d0d425271ed5218465` carries the change. The native `windows-2025` runtime job and the AcceptEx re-arm regression are the behavioral gate; the Linux release host can only run the cross-target compile gate. | The integration base contains an equivalent upstream fix, or the patch is no longer needed. Remove it with a follow-up revert commit and record the retirement in this ledger. | `farbenbuilds/libxev` commit `3746a151f2cb1d59fecb42d0d425271ed5218465` on `uwz/zig-0.16`. |
-| XEV-002 | Windows Winsock error mapping | None; observed in the native Windows runtime job | Winsock codes are not a subset of `Win32Error`. Map known codes and return `error.Unexpected` for the rest instead of constructing an invalid enum. | The fork commit `3746a151f2cb1d59fecb42d0d425271ed5218465` carries the change. The native `windows-2025` runtime suite is the behavioral gate. | Upstream maps unknown Winsock codes without trapping. | `farbenbuilds/libxev` commit `3746a151f2cb1d59fecb42d0d425271ed5218465` on `uwz/zig-0.16`. |
+| XEV-001 | Windows IOCP accept | [mitchellh/libxev#252](https://github.com/mitchellh/libxev/issues/252) | `AcceptEx` transfers ownership of the connected socket. Clear `internal_accept_socket` on both success and error so the next re-arm allocates a fresh socket and never calls `AcceptEx` on a connected one. | The fork commit `2b969cfcbd22c6d672ec3fe9a4a2d5848714634a` carries the change. The native `windows-2025` runtime job and the AcceptEx re-arm regression are the behavioral gate; the Linux release host can only run the cross-target compile gate. | The integration base contains an equivalent upstream fix, or the patch is no longer needed. Remove it with a follow-up revert commit and record the retirement in this ledger. | `farbenbuilds/libxev` commit `2b969cfcbd22c6d672ec3fe9a4a2d5848714634a` on `uwz/zig-0.16`. |
+| XEV-002 | Windows Winsock error mapping | None; observed in the native Windows runtime job | Winsock codes are not a subset of `Win32Error`. Map known codes and return `error.Unexpected` for the rest instead of constructing an invalid enum. | The fork commit `2b969cfcbd22c6d672ec3fe9a4a2d5848714634a` carries the change. The native `windows-2025` runtime suite is the behavioral gate. | Upstream maps unknown Winsock codes without trapping. | `farbenbuilds/libxev` commit `2b969cfcbd22c6d672ec3fe9a4a2d5848714634a` on `uwz/zig-0.16`. |
 
 Patch commits use this format:
 
@@ -259,7 +259,7 @@ record for the sequence and for any future integration branch.
    `uwz(win-iocp): ...` commit with ledger ID XEV-001. The native Windows
    regression remains the CI behavioral gate.
 4. [x] Pushed the tested integration commit
-   `3746a151f2cb1d59fecb42d0d425271ed5218465`. It is not a local-only commit.
+   `2b969cfcbd22c6d672ec3fe9a4a2d5848714634a`. It is not a local-only commit.
 5. [x] Removed the overlay injection from `builds/targets/native.zig`, deleted
    `vendor/libxev_overlay` and the audit patch, and removed the overlay entry
    from `build.zig.zon` `.paths`.
