@@ -178,7 +178,7 @@ a stale artifact cannot hide a dependency problem.
 
 The maintained downstream fork is <https://github.com/farbenbuilds/libxev>,
 and that relationship is policy now. The `uwz/zig-0.16` integration branch
-exists at `1c45062` and carries XEV-001 and XEV-002; the manifest pins that full commit and
+exists at `3746a15` and carries XEV-001 and XEV-002; the manifest pins that full commit and
 the ADR 0004 IOCP overlay is removed. Upstream `mitchellh/libxev` is fetch-only:
 do not push, open issues or pull requests, comment, or send patches there.
 

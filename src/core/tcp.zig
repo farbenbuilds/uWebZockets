@@ -2503,9 +2503,11 @@ pub fn deinit_server(server: *TcpServer) void {
 fn finish_windows_listener_close(server: *TcpServer) void {
     if (builtin.os.tag != .windows) return;
     if (!server.closing or server.close_complete) return;
-    if (server.accept_cancel_active) return;
-    if (server.accept_completion.state() == .active) return;
-    if (server.accept_cancel_requested and !server.accept_target_done) return;
+    if (server.accept_cancel_requested) {
+        if (server.accept_cancel_active or !server.accept_target_done) return;
+    } else if (server.accept_completion.state() == .active) {
+        return;
+    }
     close_socket(xev.tcp_fd(server.listener));
     server.close_complete = true;
 }

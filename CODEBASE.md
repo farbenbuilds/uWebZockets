@@ -416,7 +416,7 @@ by immutable URL or commit plus Zig package hash.
 
 libxev provenance follows the [fork policy](docs/libxev_fork.md).
 `build.zig.zon` pins `farbenbuilds/libxev` at the full commit
-`1c450622dce072fcd3f819e6cb1890b705166675` on `uwz/zig-0.16`; the branch is
+`3746a151f2cb1d59fecb42d0d425271ed5218465` on `uwz/zig-0.16`; the branch is
 based on upstream `9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf` and carries
 XEV-001 (IOCP `AcceptEx` ownership) and XEV-002 (Winsock error mapping)
 ([ADR 0005](docs/adr/0005-libxev-fork.md)). The overlay and audit patch are

@@ -14,8 +14,8 @@
         // Base 9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf plus XEV-001 and
         // XEV-002.
         .libxev = .{
-            .url = "git+https://github.com/farbenbuilds/libxev#1c450622dce072fcd3f819e6cb1890b705166675",
-            .hash = "libxev-0.0.0-86vtc1QVFAB_WaCss0fKFDcI3YUdzreL6McAeHDJBCYB",
+            .url = "git+https://github.com/farbenbuilds/libxev#3746a151f2cb1d59fecb42d0d425271ed5218465",
+            .hash = "libxev-0.0.0-86vtcywWFAC60L-_wNEV-JRXvGO_DXvxBid2L21w0KRG",
         },
 
         // google/boringssl — Google LLC
