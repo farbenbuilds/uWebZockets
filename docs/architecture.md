@@ -276,7 +276,8 @@ and tail latency hold up on lossy paths.
   deadlines exist. Keep-alive, incomplete-header, and deferred response
   deadlines share that timer; there is no periodic pool sweep. The 1 ms tick
   is the safe cross-backend choice on IOCP, where resetting or canceling and
-  reusing the same timer completion races queued callbacks.
+  reusing the same timer completion races queued callbacks. Shutdown lets the
+  final tick disarm instead of canceling.
 
 ### Client
 

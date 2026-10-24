@@ -19,8 +19,9 @@ follow-ups.
   wheel when they come into range.
 - `core/timer.zig` `Scheduler`: one persistent libxev timer per worker loop.
   It wakes on a bounded one-millisecond tick while deadlines exist, advances
-  and cascades the wheel, and never reuses a reset or canceled completion. The
-  old five-second pool sweep is gone for idle connections.
+  and cascades the wheel, and never resets or reuses a completion. `stop`
+  lets the tick disarm instead of canceling. The old five-second pool sweep is
+  gone for idle connections.
 - `AsyncResponse.sleep` and `AsyncResponse.sleep_complete`: zero-allocation
   request parking backed by connection-owned timer nodes. HTTP/1 uses slot 0
   and HTTP/2 maps one slot per stream; an expired or reused generation fails

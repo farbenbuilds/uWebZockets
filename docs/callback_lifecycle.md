@@ -119,8 +119,9 @@ on kqueue and IOCP instead of calling the backend directly.
 - `timer.Scheduler` (`src/core/timer.zig`) owns one persistent libxev timer
   per worker loop. It wakes on a bounded one-millisecond tick while deadlines
   exist, advances the wheel, and cascades nodes. The completion is never reset
-  or reused; `stop` cancels through a dedicated stop completion. This avoids
-  IOCP's queued-callback race at the cost of a 1 ms tick when timers exist.
+  or reused. `stop` does not cancel; the bounded tick wakes once more and
+  disarms after observing the stop flag. This avoids IOCP's queued-callback
+  race at the cost of a 1 ms tick when timers exist.
 - `TcpConnection.touch_activity` arms the keep-alive deadline, or the
   incomplete-header deadline while a request head or body is partial. A
   connection with parked delayed responses suppresses the idle deadline.

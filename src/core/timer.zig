@@ -118,9 +118,6 @@ pub const Scheduler = struct {
     wheel: wheel.Wheel,
     timer: xev.Timer,
     completion: xev.Completion = .{},
-    /// Dedicated stop cancellation. The driving completion is never reused for
-    /// a reset or a second operation.
-    stop_completion: xev.Completion = .{},
     io: std.Io,
     loop: ?*xev.Loop = null,
     armed_deadline_ms: u64 = 0,
@@ -191,16 +188,9 @@ pub const Scheduler = struct {
     pub fn stop(self: *Scheduler, loop: *Loop) void {
         self.stopping = true;
         self.loop = loop.get_xev_loop();
-        if (!self.active or self.in_callback) return;
-        self.active = false;
-        self.timer.cancel(
-            self.loop.?,
-            &self.completion,
-            &self.stop_completion,
-            Scheduler,
-            self,
-            on_cancel,
-        );
+        // The driving timer is not canceled. It wakes on its bounded tick and
+        // returns .disarm after observing `stopping`, which avoids IOCP's
+        // queued-cancel completion race without delaying shutdown.
     }
 
     /// Arms, resets, or intentionally leaves the one driving timer.
@@ -253,21 +243,6 @@ pub const Scheduler = struct {
         if (self.stopping) return .disarm;
         self.wheel.advance(self.current_time_ms());
         self.needs_rearm = true;
-        return .disarm;
-    }
-
-    fn on_cancel(
-        user_data: ?*Scheduler,
-        _: *xev.Loop,
-        _: *xev.Completion,
-        result: xev.CancelError!void,
-    ) xev.CallbackAction {
-        const self = user_data.?;
-        _ = result catch |err| {
-            if (err != error.NotFound) log.debug("timer wheel cancel error: {}", .{err});
-            return .disarm;
-        };
-        self.active = false;
         return .disarm;
     }
 };
