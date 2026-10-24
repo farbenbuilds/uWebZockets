@@ -136,6 +136,7 @@ middleware: `Cors`, `SecurityHeaders`, `Auth`, and `RateLimit`. See
 | Files | `res.send_file()`, `App.static` |
 | Server-Sent Events | `res.sse()` |
 | Redirects and headers | `res.redirect`, `res.append_header`, `end_with_headers` |
+| Callback ABI endings | `end_best_effort`, `end_with_headers_best_effort` (the transport closes a failed peer) |
 
 ## Asynchronous responses
 
@@ -192,14 +193,79 @@ heap-backed thread-per-core manager. `worker_count` is the compiled capacity.
 resolves `UWEBZOCKETS_WORKERS`, or the platform CPU count, and
 `ClusterOptions.worker_count` selects a smaller active count explicitly.
 Configure routes per worker, `listen` once, and `run` joins every worker.
-`Cluster.publish` broadcasts through bounded per-worker rings, and
+
+`Cluster.publish` broadcasts through bounded per-worker rings.
+`Cluster.publish_report` returns a named `PublishReport` with `queued`,
+`dropped`, `notify_failed`, and `first_dropped_worker`; `publish` stays
+source-compatible and returns `queued`. Validation happens before any inbox is
+mutated, so a bad topic or oversized payload cannot partially deliver.
 `Cluster.request_shutdown` drains all workers.
-Because it returns `void`, `request_shutdown` after `deinit` is a documented
-non-erroring no-op: the worker slice has already been released, so rebuild the
-cluster instead of relying on shutdown to report a lifecycle error. The guard
-is explicit in `Cluster.request_shutdown` as of 1.9.0; a public lifecycle
-getter would require an ADR. See [architecture.md](architecture.md) and
-[ADR 0003](adr/0003-tls-cluster-operational-boundaries.md).
+
+### Cluster lifecycle and failures
+
+| API | Contract |
+| --- | --- |
+| `state()` | `configured`, `running`, `stopped`, `releasing`, or `released` |
+| `worker_count()` | Workers allocated for the active runtime count |
+| `worker_capacity()` | Compiled worker capacity |
+| `configure(callback)` | Typed `ConfigureCallback`, before any thread starts |
+| `first_failure()` | `WorkerFailure { index, phase, err }`, or null |
+| `failure_count()` | Total failures recorded since the last `run` |
+| `run()` | Spawns, joins, and reports `error.ClusterWorkerFailed` |
+| `deinit_checked()` | Typed release claim; `error.ClusterRunning` while active |
+
+```zig
+var group = try uz.Server.builder(init.io)
+    .with_max_clients(256)
+    .build_cluster(std.heap.page_allocator, 4, .{});
+defer group.deinit();
+
+const Group = @TypeOf(group);
+try group.configure(struct {
+    fn routes(worker: *Group.Worker, index: usize) !void {
+        _ = index;
+        _ = try worker.get("/", hello);
+    }
+}.routes);
+
+try group.listen("0.0.0.0", 3000);
+group.run() catch |err| {
+    if (group.first_failure()) |failure| {
+        std.log.err("worker {d} ({s}): {s}", .{
+            failure.index,
+            @tagName(failure.phase),
+            @errorName(failure.err),
+        });
+    }
+    return err;
+};
+```
+
+Lifecycle-sensitive calls reject `error.ClusterDeinitialized`,
+`error.ClusterRunning`, or `error.ClusterStopped` instead of silently touching
+released or drained worker storage. `run` uses the same names for re-entry.
+The first worker failure wins, so a shutdown cascade does not replace the root
+cause. A spawn failure records phase `spawn`; an event-loop failure records
+phase `run`.
+
+The `threads`, `thread_count`, `worker_failed`, and `deinitialized` fields stay
+public and source-compatible. They are compatibility mirrors; `state()`,
+`first_failure()`, and `worker_count()` are authoritative. `Cluster.deinit`
+keeps its panic contract; supervisors that need a typed error call
+`deinit_checked()`.
+
+`state()`, `worker_count()`, `worker_capacity()`, `first_failure()`, and
+`failure_count()` are safe read-only from any thread. `request_shutdown()` is
+safe while the group is running, but serialize it with `deinit_checked()`.
+Route configuration, TLS setup, `listen`, `publish`, `run`,
+`catch_shutdown_signals`, and release are caller-serialized; do not race them.
+
+`request_shutdown` after `deinit` remains a documented non-erroring no-op: the
+worker slice has already been released, so rebuild the cluster instead of
+relying on shutdown to report a lifecycle error. See
+[architecture.md](architecture.md),
+[ADR 0003](adr/0003-tls-cluster-operational-boundaries.md), and
+[ADR 0007](adr/0007-cluster-lifecycle-and-failures.md).
 
 ### TLS-enabled clusters
 
@@ -227,8 +293,9 @@ single-application APIs, and a cluster listener is TCP/TLS only.
 
 | Error | Cause |
 | --- | --- |
-| `error.ClusterDeinitialized` | An enable call or `listen` was made after `deinit` |
-| `error.ClusterRunning` | `enable_https` was called while `run` was active |
+| `error.ClusterDeinitialized` | An enable call, `listen`, or publish was made after `deinit` |
+| `error.ClusterRunning` | A configuration call was made while `run` was active |
+| `error.ClusterStopped` | A configuration, listen, or publish call was made after `run` returned |
 | `error.AlreadyListening` | `enable_https` was called after `listen` started |
 | `error.TlsAlreadyEnabled` | `enable_https` was called more than once |
 | `error.CertificateLoadFailed` / `error.PrivateKeyLoadFailed` | The PEM files could not be read or parsed; a mismatched key fails here too |

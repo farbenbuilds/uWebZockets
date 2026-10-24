@@ -109,7 +109,9 @@ try app.run();
 - `deinit` asserts drained state and panics if called from inside the loop.
   Always `defer app.deinit()`.
 - Clusters install one watcher with `Cluster.catch_shutdown_signals()` and
-  request shutdown for every worker.
+  request shutdown for every worker. After `run` returns, `state()` reports
+  `stopped` and `first_failure()` names the first worker index, phase, and
+  error. `deinit_checked()` is the supervisor-safe release path.
 - A supervisor should send SIGTERM and wait for exit; there is no in-flight
   request deadline beyond the configured connection idle timeout.
 

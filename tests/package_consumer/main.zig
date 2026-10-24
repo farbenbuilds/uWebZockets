@@ -26,6 +26,22 @@ fn cluster_surface(init: std.process.Init, allocator: std.mem.Allocator) !void {
             _ = try worker.trace("/probe", hello);
         }
     }.routes);
+    try group.configure(struct {
+        fn narrow_routes(_: *Group.Worker, _: usize) error{OutOfMemory}!void {}
+    }.narrow_routes);
+
+    const state: uz.ClusterState = group.state();
+    const phase: uz.FailurePhase = .run;
+    _ = state;
+    _ = phase;
+    _ = group.worker_count();
+    _ = group.worker_capacity();
+    _ = group.first_failure();
+    _ = group.failure_count();
+    const report: uz.PublishReport = try group.publish_report("topic", "payload", true);
+    _ = report.attempted();
+    _ = report.all_delivered();
+
     try group.enable_https_ephemeral();
     try group.listen("127.0.0.1", 0);
     try group.catch_shutdown_signals();

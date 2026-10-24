@@ -300,6 +300,28 @@ pub const Response = struct {
         return self.end_with_headers(status, "", body);
     }
 
+    /// Ends a response from a callback whose ABI cannot report a failure.
+    ///
+    /// Intended for callbacks that select a complete response after their own
+    /// validation. A failed transport write closes the peer; validation errors
+    /// and an already-started response are dropped because the callback has no
+    /// return channel.
+    pub fn end_best_effort(self: *Response, status: []const u8, body: []const u8) void {
+        self.end(status, body) catch {};
+    }
+
+    /// Ends a response with raw headers on the best-effort callback path.
+    ///
+    /// Uses the same narrowed contract as `end_best_effort`.
+    pub fn end_with_headers_best_effort(
+        self: *Response,
+        status: []const u8,
+        headers: []const u8,
+        body: []const u8,
+    ) void {
+        self.end_with_headers(status, headers, body) catch {};
+    }
+
     /// Sends a complete response with validated raw response fields.
     pub fn end_with_headers(
         self: *Response,

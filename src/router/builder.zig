@@ -393,8 +393,9 @@ pub fn configured_builder(comptime config: ServerConfig) type {
         ///
         /// `worker_capacity` sizes the compile-time worker, inbox, and thread
         /// arrays. `worker_count` must be nonzero and no larger than the
-        /// capacity; this is the entry point for `UWEBZOCKETS_WORKERS` and
-        /// CPU-count defaults without compiling a type per count.
+        /// capacity and wins over `options.worker_count`; this is the entry
+        /// point for `UWEBZOCKETS_WORKERS` and CPU-count defaults without
+        /// compiling a type per count.
         pub fn build_cluster_with_worker_count(
             self: Self,
             allocator: std.mem.Allocator,

@@ -127,6 +127,83 @@ test "affinity: physical cores are discoverable and pinning is best effort" {
     }
 }
 
+test "worker group: starts bounded workers and joins" {
+    const Counter = struct {
+        seen: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
+
+        fn run(self: *@This(), _: usize) void {
+            _ = self.seen.fetchAdd(1, .monotonic);
+        }
+    };
+    const Group = support.worker_group.worker_group(Counter);
+
+    var group: Group = .{};
+    var threads: [4]std.Thread = undefined;
+    var counter = Counter{};
+    try group.begin_run();
+
+    try std.testing.expectError(
+        error.InvalidWorkerCount,
+        group.start(&threads, 0, &counter, Counter.run),
+    );
+    try std.testing.expectError(
+        error.InvalidWorkerCount,
+        group.start(&threads, 5, &counter, Counter.run),
+    );
+
+    try group.start(&threads, 3, &counter, Counter.run);
+    try std.testing.expectEqual(@as(usize, 3), group.worker_count());
+    try std.testing.expectError(
+        error.WorkerGroupAlreadyRunning,
+        group.start(&threads, 1, &counter, Counter.run),
+    );
+
+    group.join(&threads);
+    group.finish_run();
+    try std.testing.expectEqual(@as(usize, 0), group.worker_count());
+    try std.testing.expectEqual(@as(usize, 3), counter.seen.load(.acquire));
+    try std.testing.expect(group.failure() == null);
+    try std.testing.expectEqual(support.worker_group.Lifecycle.stopped, group.state());
+}
+
+test "worker group: first failure is retained" {
+    const Context = struct {};
+    const Group = support.worker_group.worker_group(Context);
+
+    var group: Group = .{};
+
+    group.record_failure(3, .run, error.Exploded);
+    group.record_failure(4, .spawn, error.OtherFailure);
+
+    const failure = group.failure().?;
+    try std.testing.expectEqual(@as(usize, 3), failure.index);
+    try std.testing.expectEqual(support.worker_group.FailurePhase.run, failure.phase);
+    try std.testing.expect(failure.err == error.Exploded);
+    try std.testing.expectEqual(@as(usize, 2), group.failure_count());
+}
+
+test "worker group: lifecycle transitions claim once" {
+    const Context = struct {};
+    const Group = support.worker_group.worker_group(Context);
+    var group: Group = .{};
+
+    try group.require_configured();
+    try group.begin_run();
+    try std.testing.expectError(error.ClusterRunning, group.begin_run());
+    try std.testing.expectError(error.ClusterRunning, group.begin_release());
+    group.finish_run();
+    try std.testing.expectEqual(support.worker_group.Lifecycle.stopped, group.state());
+    try std.testing.expectError(error.ClusterStopped, group.require_configured());
+    try std.testing.expectError(error.ClusterStopped, group.begin_run());
+
+    try std.testing.expect(try group.begin_release());
+    try std.testing.expectEqual(support.worker_group.Lifecycle.releasing, group.state());
+    try std.testing.expect(!try group.begin_release());
+    group.finish_release();
+    try std.testing.expectEqual(support.worker_group.Lifecycle.released, group.state());
+    try std.testing.expectError(error.ClusterDeinitialized, group.require_publishable());
+}
+
 test "cluster: runtime worker count stays inside compiled capacity" {
     const TestApp = support.app.configured_app_with_timeout(4, 1024, 4096, 0);
     const test_config = support.config.ServerConfig{
@@ -153,6 +230,18 @@ test "cluster: runtime worker count stays inside compiled capacity" {
     try std.testing.expectEqual(@as(usize, 2), group.workers.len);
     try std.testing.expectEqual(@as(usize, 2), group.inboxes.len);
 
+    try std.testing.expectEqual(
+        @as(usize, 4),
+        try support.cluster.resolve_worker_count(4, .{}),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 2),
+        try support.cluster.resolve_worker_count(4, .{ .worker_count = 2 }),
+    );
+    try std.testing.expectError(
+        error.InvalidWorkerCount,
+        support.cluster.resolve_worker_count(4, .{ .worker_count = 5 }),
+    );
     try std.testing.expectEqual(@as(usize, 6), try support.cluster.parse_worker_count("6", 8));
     try std.testing.expectError(
         error.InvalidWorkerCount,
@@ -188,11 +277,156 @@ test "cluster: runtime worker count stays inside compiled capacity" {
 test "cluster: request_shutdown after deinit is a documented no-op" {
     const TestApp = support.app.configured_app_with_timeout(1, 1024, 4096, 0);
     var group = try TestApp.cluster(1).init(std.testing.allocator, std.testing.io);
+    try std.testing.expectEqual(@as(usize, 1), group.threads.len);
+    try std.testing.expectEqual(@as(usize, 0), group.thread_count);
+    try std.testing.expect(!group.worker_failed.load(.acquire));
+    try std.testing.expect(!group.deinitialized);
     group.deinit();
+    try group.deinit_checked();
+
+    try std.testing.expectEqual(support.cluster.ClusterState.released, group.state());
+    try std.testing.expectEqual(@as(usize, 0), group.worker_count());
+    try std.testing.expectEqual(@as(usize, 0), group.threads.len);
+    try std.testing.expect(group.deinitialized);
+    try std.testing.expectError(
+        error.ClusterDeinitialized,
+        group.publish("topic", "message", true),
+    );
 
     // Deinit releases the worker slice. A late supervisor or signal callback
     // must not walk released storage or panic.
     group.request_shutdown();
+}
+
+test "cluster: publish report treats failed wakeups as undelivered" {
+    const report = support.cluster.PublishReport{
+        .queued = 2,
+        .notify_failed = 1,
+    };
+    try std.testing.expectEqual(@as(usize, 2), report.attempted());
+    try std.testing.expect(!report.all_delivered());
+}
+
+test "cluster: deinit drains a configured listened watcher" {
+    const TestApp = support.app.configured_app_with_timeout(1, 1024, 4096, 0);
+    var group = try TestApp.cluster(1).init_with_options(
+        std.testing.allocator,
+        std.testing.io,
+        .{
+            .max_connections = 1,
+            .max_ws_message_size = 1024,
+            .write_queue_size = 4096,
+            .idle_timeout_ms = 0,
+            .max_route_nodes = 8,
+            .max_pattern_routes = 4,
+            .max_middleware = 2,
+        },
+        .{ .cpu_affinity = false },
+    );
+    defer group.deinit();
+
+    try group.listen("127.0.0.1", 0);
+    try group.catch_shutdown_signals();
+
+    // Release must stop the watcher and drain worker 0's armed listener
+    // instead of calling run(.until_done) forever.
+    group.deinit();
+    try std.testing.expectEqual(support.cluster.ClusterState.released, group.state());
+}
+
+test "cluster: lifecycle state and publish report stay typed" {
+    const TestApp = support.app.configured_app_with_timeout(1, 1024, 4096, 0);
+    const test_config = support.config.ServerConfig{
+        .max_connections = 1,
+        .max_ws_message_size = 1024,
+        .write_queue_size = 4096,
+        .idle_timeout_ms = 0,
+        .max_route_nodes = 8,
+        .max_pattern_routes = 4,
+        .max_middleware = 2,
+    };
+    var group = try TestApp.cluster(2).init_with_options(
+        std.testing.allocator,
+        std.testing.io,
+        test_config,
+        .{ .cpu_affinity = false, .worker_count = 1 },
+    );
+    defer group.deinit();
+
+    try std.testing.expectEqual(support.cluster.ClusterState.configured, group.state());
+    try std.testing.expectEqual(@as(usize, 1), group.worker_count());
+    try std.testing.expectEqual(@as(usize, 2), group.worker_capacity());
+    try std.testing.expect(group.first_failure() == null);
+    try std.testing.expectEqual(@as(usize, 0), group.failure_count());
+
+    var report = try group.publish_report("topic", "message", true);
+    try std.testing.expectEqual(@as(usize, 1), report.queued);
+    try std.testing.expectEqual(@as(usize, 0), report.dropped);
+    try std.testing.expectEqual(@as(usize, 0), report.notify_failed);
+    try std.testing.expectEqual(@as(usize, 1), report.attempted());
+    try std.testing.expect(report.first_dropped_worker == null);
+    try std.testing.expect(report.all_delivered());
+
+    for (1..support.cluster.queue_capacity) |_| {
+        try std.testing.expectEqual(
+            @as(usize, 1),
+            try group.publish("topic", "message", true),
+        );
+    }
+    report = try group.publish_report("topic", "message", true);
+    try std.testing.expectEqual(@as(usize, 0), report.queued);
+    try std.testing.expectEqual(@as(usize, 1), report.dropped);
+    try std.testing.expectEqual(@as(usize, 1), report.attempted());
+    try std.testing.expectEqual(@as(usize, 0), report.first_dropped_worker.?);
+    try std.testing.expect(!report.all_delivered());
+
+    try std.testing.expectError(
+        error.EmptyTopic,
+        group.publish_report("", "message", true),
+    );
+    var oversized: [1025]u8 = undefined;
+    @memset(&oversized, 0);
+    try std.testing.expectError(
+        error.ClusterMessageTooLarge,
+        group.publish_report("topic", &oversized, true),
+    );
+}
+
+test "cluster: run reports the failing worker phase and error" {
+    const TestApp = support.app.configured_app_with_timeout(2, 1024, 4096, 0);
+    const test_config = support.config.ServerConfig{
+        .max_connections = 2,
+        .max_ws_message_size = 1024,
+        .write_queue_size = 4096,
+        .idle_timeout_ms = 0,
+        .max_route_nodes = 8,
+        .max_pattern_routes = 4,
+        .max_middleware = 2,
+    };
+    var group = try TestApp.cluster(2).init_with_options(
+        std.testing.allocator,
+        std.testing.io,
+        test_config,
+        .{ .cpu_affinity = false },
+    );
+    defer group.deinit();
+
+    // A pre-shutdown worker fails its event-loop driver immediately, while
+    // worker 0 drains the shutdown request normally.
+    try group.worker(1).?.shutdown();
+    try std.testing.expectError(error.ClusterWorkerFailed, group.run());
+
+    try std.testing.expectEqual(support.cluster.ClusterState.stopped, group.state());
+    const failure = group.first_failure().?;
+    try std.testing.expectEqual(@as(usize, 1), failure.index);
+    try std.testing.expectEqual(support.worker_group.FailurePhase.run, failure.phase);
+    try std.testing.expect(failure.err == error.ApplicationUnavailable);
+    try std.testing.expect(group.worker_failed.load(.acquire));
+    try std.testing.expect(group.failure_count() >= 1);
+    try std.testing.expectError(
+        error.ClusterStopped,
+        group.publish("topic", "message", true),
+    );
 }
 
 test "cluster: workers own disjoint slabs and configure independently" {
