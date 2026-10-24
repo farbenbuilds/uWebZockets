@@ -44,7 +44,7 @@ follow-ups.
 ### Changed
 
 - `build.zig.zon` pins `farbenbuilds/libxev` at
-  `bf3b4a20bae85510462656dcbaabaae2eb731ce2` on the `uwz/zig-0.16`
+  `1c450622dce072fcd3f819e6cb1890b705166675` on the `uwz/zig-0.16`
   integration branch. The branch is based on upstream
   `9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf` and carries XEV-001 as a
   ledgered fork commit.

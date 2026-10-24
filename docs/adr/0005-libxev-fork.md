@@ -43,7 +43,7 @@ libxev fork.
   compatible with Zig 0.16.0. It carries auditable `uwz(<area>): ...` patch
   commits and was created at the validated
   `9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf` pin. The 2.1.0 release pins
-  commit `bf3b4a20bae85510462656dcbaabaae2eb731ce2` from that branch.
+  commit `1c450622dce072fcd3f819e6cb1890b705166675` from that branch.
 - A future toolchain upgrade creates `uwz/zig-0.17`. A Zig 0.17-only upstream
   `main` is never merged into the 0.16 branch.
 - The integration branch is append-only from first push. Compatible upstream
@@ -95,7 +95,7 @@ implements.
 ## Consequences
 
 - The manifest pins `farbenbuilds/libxev` commit
-  `bf3b4a20bae85510462656dcbaabaae2eb731ce2`; no document or build step may
+  `1c450622dce072fcd3f819e6cb1890b705166675`; no document or build step may
   claim the upstream pin or the overlay is current.
 - The fork integration history is the source of truth for downstream libxev
   behavior. The overlay and audit patch are deleted.
