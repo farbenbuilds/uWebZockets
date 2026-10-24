@@ -12,9 +12,9 @@ pub const Server = @import("router/builder.zig").Server;
 pub const ClusterOptions = @import("router/cluster.zig").ClusterOptions;
 /// Lifecycle state of a thread-per-core worker group.
 pub const ClusterState = @import("router/cluster.zig").ClusterState;
-/// First worker or spawn error reported by a cluster.
+/// First worker, spawn, or cleanup error reported by a cluster.
 pub const WorkerFailure = @import("router/cluster.zig").WorkerFailure;
-/// Startup phase that produced a worker failure.
+/// Phase that produced a worker failure.
 pub const FailurePhase = @import("router/cluster.zig").FailurePhase;
 /// Per-worker acceptance and wakeup outcome of one cluster publish.
 pub const PublishReport = @import("router/cluster.zig").PublishReport;

@@ -45,8 +45,9 @@ sessions, and credential state stay confined to the owning loop.
 
 The compiled `worker_count` is a capacity, not a hard runtime cap. A process may
 select fewer active workers with `ClusterOptions.worker_count`, or use
-`build_cluster_from_environment` to read `UWEBZOCKETS_WORKERS` and default to
-the platform CPU count. Only active workers allocate slabs, inboxes, and thread
+`build_cluster_from_environment` to prefer that option, then
+`UWEBZOCKETS_WORKERS`, then the platform CPU count. Only active workers
+allocate slabs, inboxes, and thread
 handles, so a large capacity does not reserve memory for unused workers.
 `worker_count()` reports the allocated count, `worker_capacity()` reports the
 compiled capacity, `state()` reports the atomic lifecycle, and `worker(2)`
@@ -90,7 +91,9 @@ worker consumes on its event loop. The queue is allocation-free, reports
 `error.ClusterQueueFull` instead of blocking, and keeps the enqueue and dequeue
 positions on separate cache lines to avoid false sharing. `publish_report`
 exposes the accepted and dropped counts instead of hiding a full inbox in a
-single aggregate number.
+single aggregate number. The owning loop drains each message through
+queue-owned scratch, so a cluster publish cannot overwrite a connection's
+fragmented WebSocket assembly buffer.
 
 Lifecycle transitions, release claiming, borrowed thread-slice start/join, and
 first-failure capture live in `src/router/worker_group.zig`. Thread storage

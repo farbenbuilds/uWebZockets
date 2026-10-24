@@ -477,7 +477,9 @@ in [`examples/`](examples/), with walkthroughs in
 
 ## Platform support
 
-- Supported: Linux and macOS on `x86_64` and `aarch64`; built and tested by CI.
+- Supported: Linux and macOS on `x86_64` and `aarch64`; built and
+  cross-compiled by CI. Linux runs the runtime and sanitizer matrix; macOS is
+  compile-checked, with runtime coverage tracked in the roadmap.
 - Native Windows coverage: `x86_64-windows-gnu` now has compile gates plus a
   `windows-2025` runtime job. The 1.9.0 accept and queued-close fixes are
   recorded in

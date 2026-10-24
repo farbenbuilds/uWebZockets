@@ -53,7 +53,7 @@ claim.
 | Task | Resolution |
 | --- | --- |
 | P-1 Multi-core scaling | The shipped `build_cluster` / `enable_https` path is unchanged; every worker still owns one `SSL_CTX` and one loop. No second cluster abstraction or shared TLS state was added |
-| P-2 Uncapped worker scaling | `worker_count` is a compiled capacity. `ClusterOptions.worker_count` selects an explicit count, and `build_cluster_from_environment` resolves `UWEBZOCKETS_WORKERS` or the platform CPU count. Active workers alone allocate slabs, inboxes, and thread handles; the previous fixed dispatch list and 32-worker concern are gone |
+| P-2 Uncapped worker scaling | `worker_count` is a compiled capacity. `ClusterOptions.worker_count` selects an explicit count, and `build_cluster_from_environment` prefers that option, then `UWEBZOCKETS_WORKERS`, then the platform CPU count. Active workers alone allocate slabs, inboxes, and thread handles; the previous fixed dispatch list and 32-worker concern are gone |
 | P-3 HTTP/1.1 pipelining | Every complete request in one read is dispatched in order. Multi-request reads append responses to the bounded ring and flush once; a lone request keeps the direct `sendmsg` path |
 | P-4 WebSocket batching | Unmasking uses the widest compiled vector (128-bit baseline, 256-bit AVX2) with scalar tails. Consecutive frames from one read share a single write flush |
 | P-5 Compressor pooling | Workers pre-open one RFC 7692 `libdeflate` context and, when enabled, one HTTP gzip codec with bounded scratch. `Response.end_gzip` never allocates on the request path |
@@ -78,9 +78,10 @@ path or the shared-nothing ownership model.
 | Boundary | Resolution |
 | --- | --- |
 | Cluster lifecycle was opaque | Atomic `ClusterState`, `state()`, `worker_count()`, and `worker_capacity()` make configured, running, stopped, releasing, and released groups explicit. Lifecycle misuse returns a named error instead of touching drained workers ([ADR 0007](adr/0007-cluster-lifecycle-and-failures.md)) |
-| Worker failure lost its index and cause | `FailurePhase`, `WorkerFailure { index, phase, err }`, `first_failure()`, and `failure_count()` retain the first worker or spawn failure; `run` still returns `error.ClusterWorkerFailed` ([ADR 0007](adr/0007-cluster-lifecycle-and-failures.md)) |
+| Worker failure lost its index and cause | `FailurePhase`, `WorkerFailure { index, phase, err }`, `first_failure()`, and `failure_count()` retain the first worker, spawn, or cleanup failure; `run` still returns `error.ClusterWorkerFailed` ([ADR 0007](adr/0007-cluster-lifecycle-and-failures.md)) |
 | Full inboxes were hidden in one count | `PublishReport { queued, dropped, notify_failed, first_dropped_worker }` and `publish_report()` report per-worker acceptance and wakeup failure; `publish()` keeps its integer return ([ADR 0007](adr/0007-cluster-lifecycle-and-failures.md)) |
-| Concurrent `deinit` could double-free | `begin_release` claims the free path once, and the signal watcher is released before `stopped` is published ([ADR 0007](adr/0007-cluster-lifecycle-and-failures.md)) |
+| Concurrent `deinit` could double-free | `begin_release` claims the free path once and waits for in-flight supervisor calls. Cleanup stops the watcher and drains loops before `stopped`; a surviving watcher is released by `deinit` after the loops are destroyed ([ADR 0007](adr/0007-cluster-lifecycle-and-failures.md)) |
+| Cluster wakeup aliased connection 0's WebSocket buffer | Queue-owned scratch keeps cluster drain separate from fragmented-frame assembly; `pop_copy` checks actual message lengths before copying ([ADR 0007](adr/0007-cluster-lifecycle-and-failures.md)) |
 | Thread lifecycle was inline in the application type | `src/router/worker_group.zig` owns lifecycle policy, release claiming, borrowed thread start/join, and first-failure capture; thread storage and compatibility fields stay in `Cluster` |
 | Cluster configuration used an untyped callback | `Cluster.configure` accepts the named `ConfigureCallback` function pointer |
 

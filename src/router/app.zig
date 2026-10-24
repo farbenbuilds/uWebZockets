@@ -224,6 +224,9 @@ pub fn configured_app_with_route_params(
         static_handlers: [max_static_routes]?*StaticFiles = .{null} ** max_static_routes,
         static_handler_count: u8 = 0,
         cluster_inbox: ?*ClusterInbox = null,
+        /// Cluster signal watcher anchored on this worker's loop, when this
+        /// worker is worker 0 and the cluster installed one.
+        cluster_signal_watcher: ?*core_signal.SignalWatcher = null,
         cluster_wakeup: ?xev.Async = null,
         cluster_completion: xev.Completion = .{},
         cluster_stop_requested: std.atomic.Value(bool) = .init(false),
@@ -607,6 +610,7 @@ pub fn configured_app_with_route_params(
             self.cluster_stop_requested.store(true, .release);
             // Shutdown continues even if the cross-thread wakeup is already closed.
             if (self.cluster_wakeup) |*wakeup| wakeup.notify() catch {};
+            if (self.cluster_signal_watcher) |watcher| watcher.stop();
             if (self.scheduler) |*scheduler| scheduler.stop(&self.loop);
             if (self.watcher) |*watch| watch.stop(self.loop.get_xev_loop());
             if (self.signal_watcher) |*watcher| watcher.stop();
@@ -1545,15 +1549,19 @@ pub fn configured_app_with_route_params(
                 workers: []Self,
                 inboxes: []ClusterInbox,
                 threads: []std.Thread,
+                /// Compatibility field; `run` snapshots it at start. New code
+                /// should use `ClusterOptions.worker_count` or an explicit
+                /// worker-count constructor.
                 active_workers: usize = capacity,
-                /// Compatibility mirror; `state()` is authoritative.
+                /// Compatibility mirror; updated by `run`/`join`.
                 thread_count: usize = 0,
                 /// Compatibility mirror; `first_failure()` is authoritative.
                 worker_failed: std.atomic.Value(bool) = .init(false),
                 startup_options: ClusterOptions = .{},
                 cores: core_affinity.CoreSelection = .{},
                 signal_watcher: ?core_signal.SignalWatcher = null,
-                /// Compatibility mirror; `state()` is authoritative.
+                /// Compatibility mirror; not a synchronization primitive.
+                /// `state()` is authoritative for lifecycle decisions.
                 deinitialized: bool = false,
                 group: worker_group_module.worker_group(Cluster) = .{},
 
@@ -1643,13 +1651,18 @@ pub fn configured_app_with_route_params(
 
                 /// Releases the cluster and returns a typed lifecycle error.
                 ///
-                /// The call is idempotent: a second caller observes the
-                /// `releasing` or `released` state and returns without freeing
-                /// storage another owner still owns.
+                /// The call claims release once. A second caller waits until
+                /// the winning owner publishes `released`, then returns.
                 pub fn deinit_checked(self: *Cluster) cluster_module.ReleaseError!void {
-                    if (!try self.group.begin_release()) return;
-                    // Publish the compatibility mirror before storage moves so
-                    // a concurrent reader never observes a stale usable flag.
+                    if (!try self.group.begin_release()) {
+                        self.group.wait_released();
+                        return;
+                    }
+                    // No new external call can enter after the release claim.
+                    // Wait for calls that entered before it, then free.
+                    self.group.wait_idle();
+                    // Publish the compatibility mirror before storage moves.
+                    // It is informational, not a synchronization primitive.
                     self.deinitialized = true;
                     self.group.set_active(0);
                     self.stop_signal_watcher();
@@ -1677,11 +1690,15 @@ pub fn configured_app_with_route_params(
                 ///
                 /// The callback runs before any thread starts. A callback error
                 /// stops configuration at that worker and leaves earlier route
-                /// registrations in place.
+                /// registrations in place. Do not call `run` or `deinit_checked`
+                /// from the callback; this call already holds an in-flight
+                /// registration and release would wait on it.
                 pub fn configure(
                     self: *Cluster,
                     comptime callback: ConfigureCallback,
                 ) !void {
+                    if (!self.group.enter()) return error.ClusterDeinitialized;
+                    defer self.group.leave();
                     try self.group.require_configured();
                     for (self.workers, 0..) |*app_worker, index| {
                         try callback(app_worker, index);
@@ -1689,12 +1706,21 @@ pub fn configured_app_with_route_params(
                 }
 
                 /// Returns one worker by index, or null outside the active set.
+                ///
+                /// The pointer is borrowed and does not keep the group alive.
+                /// External synchronization is required if another thread can
+                /// call `deinit_checked` while the pointer is retained.
                 pub fn worker(self: *Cluster, index: usize) ?*Self {
+                    switch (self.group.state()) {
+                        .releasing, .released => return null,
+                        .configured, .running, .stopped => {},
+                    }
                     if (index >= self.workers.len) return null;
                     return &self.workers[index];
                 }
 
-                /// Number of workers allocated for this cluster.
+                /// Active worker count, snapshotted by `run`; before the first
+                /// run this is the configured count.
                 pub fn worker_count(self: *const Cluster) usize {
                     return self.group.active_count();
                 }
@@ -1760,6 +1786,8 @@ pub fn configured_app_with_route_params(
                 }
 
                 fn install_worker_tls(self: *Cluster, source: TlsCredentialSource) !void {
+                    if (!self.group.enter()) return error.ClusterDeinitialized;
+                    defer self.group.leave();
                     try self.group.require_configured();
 
                     var created: usize = 0;
@@ -1783,13 +1811,22 @@ pub fn configured_app_with_route_params(
 
                 /// Binds every worker to one shared kernel port.
                 pub fn listen(self: *Cluster, address: []const u8, port: u16) !void {
+                    if (!self.group.enter()) return error.ClusterDeinitialized;
+                    defer self.group.leave();
                     try self.group.require_configured();
 
                     var listening: usize = 0;
                     errdefer {
                         // Best effort: preserve the original bind error while
                         // releasing the listeners created by this call.
-                        for (self.workers[0..listening]) |*app_worker| app_worker.shutdown() catch {};
+                        for (self.workers[0..listening], 0..) |*app_worker, index| {
+                            app_worker.shutdown() catch |err| {
+                                log.warn("worker {d} listen cleanup failed: {s}", .{
+                                    index,
+                                    @errorName(err),
+                                });
+                            };
+                        }
                     }
                     for (self.workers) |*app_worker| {
                         try app_worker.listen_reuse_port(address, port);
@@ -1807,7 +1844,7 @@ pub fn configured_app_with_route_params(
                     topic: []const u8,
                     message: []const u8,
                     is_text: bool,
-                ) !usize {
+                ) cluster_module.PublishError!usize {
                     const report = try self.publish_report(topic, message, is_text);
                     return report.queued;
                 }
@@ -1818,43 +1855,51 @@ pub fn configured_app_with_route_params(
                     topic: []const u8,
                     message: []const u8,
                     is_text: bool,
-                ) !cluster_module.PublishReport {
+                ) cluster_module.PublishError!cluster_module.PublishReport {
+                    if (!self.group.enter()) return error.ClusterDeinitialized;
+                    defer self.group.leave();
                     try self.group.require_publishable();
-                    try cluster_module.validate_message(max_ws_message_size, topic, message);
+                    return ClusterInbox.broadcast(
+                        self.inboxes,
+                        topic,
+                        message,
+                        is_text,
+                        self,
+                        notify_worker,
+                    );
+                }
 
-                    var report: cluster_module.PublishReport = .{};
-                    for (self.inboxes, self.workers, 0..) |*inbox, *app_worker, index| {
-                        inbox.push_validated(topic, message, is_text) catch {
-                            report.dropped += 1;
-                            if (report.first_dropped_worker == null) {
-                                report.first_dropped_worker = index;
-                            }
-                            continue;
-                        };
-                        if (!app_worker.notify_cluster()) report.notify_failed += 1;
-                        report.queued += 1;
-                    }
-                    return report;
+                fn notify_worker(context: *anyopaque, index: usize) bool {
+                    const self: *Cluster = @ptrCast(@alignCast(context));
+                    return self.workers[index].notify_cluster_delivery();
                 }
 
                 /// Runs all workers on native threads and joins them on shutdown.
                 ///
                 /// A spawn failure requests shutdown for the workers already
                 /// started, joins them, and returns the original OS error.
-                /// A worker event-loop failure returns `error.ClusterWorkerFailed`
-                /// and remains available through `first_failure`.
-                pub fn run(self: *Cluster) !void {
+                /// A worker event-loop or post-run cleanup failure returns
+                /// `error.ClusterWorkerFailed` and remains available through
+                /// `first_failure`.
+                pub fn run(self: *Cluster) cluster_module.RunError!void {
                     try self.group.begin_run();
 
-                    // Publish `stopped` only after workers and the anchored
-                    // watcher are fully drained; a supervisor may free worker
-                    // storage as soon as it reads the terminal state.
+                    // Publish `stopped` after cleanup stops the watcher and
+                    // drains every worker loop. If a drain fails, deinit
+                    // releases the surviving watcher after the loops are
+                    // destroyed, so a supervisor still owns a safe free path.
                     defer self.group.finish_run();
 
+                    const spawn_count = self.active_workers;
+                    if (spawn_count == 0 or spawn_count > self.threads.len) {
+                        return error.InvalidWorkerCount;
+                    }
+                    self.group.set_active(spawn_count);
                     self.worker_failed.store(false, .release);
+                    var spawn_error: ?std.Thread.SpawnError = null;
                     self.group.start(
                         self.threads,
-                        self.active_workers,
+                        spawn_count,
                         self,
                         worker_main,
                     ) catch |err| {
@@ -1869,19 +1914,32 @@ pub fn configured_app_with_route_params(
                                 @errorName(err),
                             });
                         }
-                        self.thread_count = self.group.worker_count();
-                        self.worker_failed.store(true, .release);
+                        spawn_error = switch (err) {
+                            error.ThreadQuotaExceeded,
+                            error.SystemResources,
+                            error.OutOfMemory,
+                            error.LockedMemoryLimitExceeded,
+                            error.Unexpected,
+                            => |spawn_err| spawn_err,
+                            // A valid run path cannot reach these lifecycle
+                            // preconditions; keep the terminal type finite.
+                            error.InvalidWorkerCount,
+                            error.WorkerGroupAlreadyRunning,
+                            error.WorkerGroupNotRunning,
+                            => error.Unexpected,
+                        };
                         self.request_shutdown();
-                        self.group.join(self.threads);
-                        self.thread_count = 0;
-                        self.cleanup_workers();
-                        return err;
                     };
 
-                    self.thread_count = self.group.worker_count();
+                    self.thread_count = self.group.started_count();
                     self.group.join(self.threads);
                     self.thread_count = 0;
                     self.cleanup_workers();
+
+                    if (spawn_error) |err| {
+                        self.worker_failed.store(true, .release);
+                        return err;
+                    }
                     if (self.group.failure() != null) {
                         self.worker_failed.store(true, .release);
                         return error.ClusterWorkerFailed;
@@ -1893,7 +1951,7 @@ pub fn configured_app_with_route_params(
                     self.stop_signal_watcher();
                     for (self.workers, 0..) |*app_worker, index| {
                         app_worker.shutdown() catch |err| {
-                            self.group.record_failure(index, .run, err);
+                            self.group.record_failure(index, .cleanup, err);
                             self.worker_failed.store(true, .release);
                             log.warn("worker {d} cleanup failed: {s}", .{
                                 index,
@@ -1911,6 +1969,8 @@ pub fn configured_app_with_route_params(
                 /// no resource to drain. The guard makes the behavior explicit
                 /// at the call site instead of relying on an empty slice.
                 pub fn request_shutdown(self: *Cluster) void {
+                    if (!self.group.enter()) return;
+                    defer self.group.leave();
                     switch (self.group.state()) {
                         .releasing, .released, .stopped => return,
                         .configured, .running => {},
@@ -1925,6 +1985,8 @@ pub fn configured_app_with_route_params(
                 /// `error.SignalWatcherAlreadyInstalled` while any watcher owns
                 /// the process-wide handler state.
                 pub fn catch_shutdown_signals(self: *Cluster) !void {
+                    if (!self.group.enter()) return error.ClusterDeinitialized;
+                    defer self.group.leave();
                     try self.group.require_configured();
                     if (self.signal_watcher != null) return error.SignalWatcherAlreadyInstalled;
                     self.signal_watcher = try core_signal.SignalWatcher.init(
@@ -1933,11 +1995,17 @@ pub fn configured_app_with_route_params(
                         self,
                     );
                     self.signal_watcher.?.start();
+                    if (self.signal_watcher) |*watcher| {
+                        self.workers[0].cluster_signal_watcher = watcher;
+                    }
                 }
 
                 /// Disarms the cluster watcher before worker loops are drained.
                 fn stop_signal_watcher(self: *Cluster) void {
-                    if (self.signal_watcher) |*watcher| watcher.stop();
+                    if (self.signal_watcher) |*watcher| {
+                        watcher.stop();
+                        self.workers[0].cluster_signal_watcher = null;
+                    }
                 }
 
                 /// Drains a stopped watcher while the first worker loop still exists.
@@ -2042,9 +2110,15 @@ pub fn configured_app_with_route_params(
 
         fn notify_cluster(self: *Self) bool {
             const wakeup = if (self.cluster_wakeup) |*value| value else return false;
-            // A full or stopping loop will observe the queue on its next wakeup.
             wakeup.notify() catch return false;
             return true;
+        }
+
+        fn notify_cluster_delivery(self: *Self) bool {
+            // A stopping loop disarms instead of draining its inbox, so a
+            // queued message is not delivered and the wakeup is not counted.
+            if (self.cluster_stop_requested.load(.acquire)) return false;
+            return self.notify_cluster();
         }
 
         fn on_cluster_wakeup(
@@ -2067,12 +2141,7 @@ pub fn configured_app_with_route_params(
             // Non-cluster apps keep the wakeup armed: it is their only
             // request_shutdown delivery path.
             const inbox = self.cluster_inbox orelse return .rearm;
-            var topic_buffer: [@import("../ws/pubsub.zig").max_topic_length]u8 = undefined;
-            // Borrow the first connection's message region instead of sizing a
-            // stack frame by the configured capacity; callbacks on one loop
-            // never interleave, so no connection is using the region here.
-            const message_buffer = self.ws_message_storage[0..max_ws_message_size];
-            while (inbox.pop_copy(&topic_buffer, message_buffer)) |message| {
+            while (inbox.pop_scratch()) |message| {
                 _ = self.pubsub.publish(message.topic, message.payload, message.is_text);
             }
             return .rearm;

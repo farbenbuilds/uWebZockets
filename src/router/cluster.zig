@@ -29,13 +29,17 @@ pub const ClusterOptions = struct {
     worker_count: ?usize = null,
 };
 
+/// Wakes one worker after its inbox accepted a message.
+pub const NotifyCallback = *const fn (context: *anyopaque, index: usize) bool;
+
 /// Per-worker outcome of one cluster publish.
 pub const PublishReport = struct {
     /// Workers whose inbox accepted the message.
     queued: usize = 0,
     /// Workers whose bounded inbox was full.
     dropped: usize = 0,
-    /// Accepted messages whose loop wakeup failed.
+    /// Accepted messages whose loop wakeup failed or was suppressed during
+    /// shutdown.
     notify_failed: usize = 0,
     /// First worker whose inbox was full, when any.
     first_dropped_worker: ?usize = null,
@@ -45,7 +49,10 @@ pub const PublishReport = struct {
         return self.queued + self.dropped;
     }
 
-    /// True when every active worker accepted and was woken.
+    /// True when every active worker accepted and every wakeup was posted.
+    ///
+    /// This is queue/wakeup delivery, not application-level subscriber
+    /// delivery; a worker can still drop the message after dispatch.
     pub fn all_delivered(self: PublishReport) bool {
         return self.dropped == 0 and self.notify_failed == 0;
     }
@@ -60,6 +67,15 @@ pub const MessageError = error{
 
 /// Bounded queue rejection, including a full inbox.
 pub const QueueError = MessageError || error{ClusterQueueFull};
+
+/// Cluster publish rejection, including message argument errors.
+pub const PublishError = MessageError || worker_group.PublishLifecycleError;
+
+/// Cluster run rejection and terminal worker failure.
+pub const RunError = LifecycleError || std.Thread.SpawnError || error{
+    InvalidWorkerCount,
+    ClusterWorkerFailed,
+};
 
 /// Invalid worker-count selection.
 pub const WorkerCountError = error{InvalidWorkerCount};
@@ -126,6 +142,18 @@ pub fn worker_count_from_environment(
     return parse_worker_count(raw, capacity);
 }
 
+/// Resolves the environment-aware worker count with explicit-option priority.
+pub fn resolve_environment_worker_count(
+    environ: *const std.process.Environ.Map,
+    capacity: usize,
+    options: ClusterOptions,
+) WorkerCountError!usize {
+    if (options.worker_count) |count| {
+        return validate_worker_count(count, capacity);
+    }
+    return worker_count_from_environment(environ, capacity);
+}
+
 pub const Message = struct {
     topic: []const u8,
     payload: []const u8,
@@ -148,6 +176,8 @@ pub fn message_queue(comptime max_message_size: usize) type {
 
         topics: [queue_capacity][max_topic_length]u8 = undefined,
         payloads: [queue_capacity][max_message_size]u8 = undefined,
+        scratch_topic: [max_topic_length]u8 = undefined,
+        scratch_payload: [max_message_size]u8 = undefined,
         topic_lengths: [queue_capacity]u8 = .{0} ** queue_capacity,
         payload_lengths: [queue_capacity]usize = .{0} ** queue_capacity,
         text_flags: [queue_capacity]bool = .{false} ** queue_capacity,
@@ -175,11 +205,40 @@ pub fn message_queue(comptime max_message_size: usize) type {
             return self.push_validated(topic, payload, is_text);
         }
 
+        /// Broadcasts one validated message to every queue in `queues`.
+        ///
+        /// Validation runs once before any queue is mutated. A full queue is
+        /// counted, and `notify` runs only for accepted messages. The callback
+        /// returns false when the owning loop wakeup fails.
+        pub fn broadcast(
+            queues: []Self,
+            topic: []const u8,
+            payload: []const u8,
+            is_text: bool,
+            context: *anyopaque,
+            notify: NotifyCallback,
+        ) MessageError!PublishReport {
+            try validate_message(max_message_size, topic, payload);
+
+            var report: PublishReport = .{};
+            for (queues, 0..) |*queue, index| {
+                queue.push_validated(topic, payload, is_text) catch {
+                    report.dropped += 1;
+                    if (report.first_dropped_worker == null) {
+                        report.first_dropped_worker = index;
+                    }
+                    continue;
+                };
+                if (!notify(context, index)) report.notify_failed += 1;
+                report.queued += 1;
+            }
+            return report;
+        }
+
         /// Pushes a message that already passed `validate_message`.
         ///
-        /// The caller owns the precondition; the cluster validates once
-        /// before fan-out so a bad message cannot partially deliver.
-        pub fn push_validated(
+        /// Private to this module so no caller can bypass the bounds checks.
+        fn push_validated(
             self: *Self,
             topic: []const u8,
             payload: []const u8,
@@ -209,7 +268,21 @@ pub fn message_queue(comptime max_message_size: usize) type {
             }
         }
 
+        /// Copies the oldest message into queue-owned scratch, or returns null.
+        ///
+        /// The returned slices stay valid until the next `pop_scratch` call on
+        /// this queue. The consumer uses them synchronously, so no connection
+        /// buffer is borrowed and a fragmented WebSocket frame cannot be
+        /// overwritten between reads.
+        pub fn pop_scratch(self: *Self) ?Message {
+            return self.pop_copy(&self.scratch_topic, &self.scratch_payload);
+        }
+
         /// Copies the oldest message into caller buffers, or returns null.
+        ///
+        /// Returns null when the queue is empty or the oldest message does not
+        /// fit the caller buffers. A message that does not fit stays queued,
+        /// so a caller cannot cause an out-of-bounds copy or lose a message.
         pub fn pop_copy(
             self: *Self,
             topic_buffer: []u8,
@@ -221,15 +294,20 @@ pub fn message_queue(comptime max_message_size: usize) type {
                 const sequence = cell.load(.acquire);
                 const difference = @as(isize, @bitCast(sequence -% (pos +% 1)));
                 if (difference == 0) {
+                    const index = pos % queue_capacity;
+                    const topic_length = self.topic_lengths[index];
+                    const payload_length = self.payload_lengths[index];
+                    if (topic_length > topic_buffer.len or
+                        payload_length > payload_buffer.len)
+                    {
+                        return null;
+                    }
                     if (self.dequeue_pos.cmpxchgWeak(pos, pos +% 1, .monotonic, .monotonic)) |actual| {
                         pos = actual;
                         continue;
                     }
-                    const index = pos % queue_capacity;
-                    const topic_length = self.topic_lengths[index];
-                    const payload_length = self.payload_lengths[index];
-                    std.debug.assert(topic_length <= topic_buffer.len);
-                    std.debug.assert(payload_length <= payload_buffer.len);
+                    // The slot is full until this consumer frees it, so the
+                    // lengths read above remain valid across the claim.
                     @memcpy(topic_buffer[0..topic_length], self.topics[index][0..topic_length]);
                     @memcpy(payload_buffer[0..payload_length], self.payloads[index][0..payload_length]);
                     const is_text = self.text_flags[index];

@@ -6,6 +6,7 @@
 //! `Cluster.threads` field source-compatible.
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 /// Lifecycle of a thread-per-core cluster.
 pub const Lifecycle = enum(u8) {
@@ -31,21 +32,29 @@ pub const LifecycleError = error{
 /// Release claiming failure.
 pub const ReleaseError = error{ClusterRunning};
 
+/// Publish lifecycle rejection; a running or configured group can publish.
+pub const PublishLifecycleError = error{
+    ClusterDeinitialized,
+    ClusterStopped,
+};
+
 /// Phase that produced a worker failure.
 pub const FailurePhase = enum(u8) {
     /// `std.Thread.spawn` failed on the supervisor thread.
     spawn,
     /// The worker's event-loop driver returned an error.
     run,
+    /// Post-run cleanup failed to drain a worker loop or listener.
+    cleanup,
 };
 
 /// First worker error observed by the supervisor.
 pub const WorkerFailure = struct {
     /// Zero-based index of the worker that failed.
     index: usize,
-    /// Startup phase that failed.
+    /// Phase that failed.
     phase: FailurePhase,
-    /// Error returned by thread spawn or the worker event loop.
+    /// Error returned by thread spawn, the worker loop, or cleanup.
     err: anyerror,
 };
 
@@ -63,14 +72,24 @@ pub fn worker_group(comptime Context: type) type {
 
         /// Worker entry point; runs on the spawned thread.
         pub const StartCallback = *const fn (context: *Context, index: usize) void;
+        /// Test-only replacement for `std.Thread.spawn`.
+        pub const SpawnOverride = *const fn (
+            context: *Context,
+            index: usize,
+            callback: StartCallback,
+        ) std.Thread.SpawnError!std.Thread;
 
         lifecycle: std.atomic.Value(Lifecycle) = .init(.configured),
         active: std.atomic.Value(usize) = .init(0),
-        started: usize = 0,
-        running: bool = false,
+        calls: std.atomic.Value(usize) = .init(0),
+        started: std.atomic.Value(usize) = .init(0),
+        running: std.atomic.Value(bool) = .init(false),
         failure_lock: std.atomic.Mutex = .unlocked,
         first_failure: ?WorkerFailure = null,
         failures: usize = 0,
+        /// Test-only spawn replacement; compiled out of production builds.
+        spawn_override: if (builtin.is_test) ?SpawnOverride else void =
+            if (builtin.is_test) null else {},
 
         /// Current lifecycle state.
         pub fn state(self: *const Self) Lifecycle {
@@ -78,8 +97,8 @@ pub fn worker_group(comptime Context: type) type {
         }
 
         /// Number of worker threads started by the last `start` call.
-        pub fn worker_count(self: *const Self) usize {
-            return self.started;
+        pub fn started_count(self: *const Self) usize {
+            return self.started.load(.acquire);
         }
 
         /// Publishes the active worker count for lock-free supervisor reads.
@@ -90,6 +109,46 @@ pub fn worker_group(comptime Context: type) type {
         /// Returns the active worker count without touching worker storage.
         pub fn active_count(self: *const Self) usize {
             return self.active.load(.acquire);
+        }
+
+        /// Registers an external call that may touch worker storage.
+        ///
+        /// A caller that races release either wins before the release claim,
+        /// making release wait, or observes `releasing`/`released`
+        /// and returns false without touching worker storage. The counter and
+        /// the lifecycle live in the cluster object, which outlives the
+        /// worker arrays, so the losing path is still memory-safe.
+        pub fn enter(self: *Self) bool {
+            // SeqCst pairs with begin_release/wait_idle. The store-load pair is
+            // a Dekker handshake: acquire/release alone lets a weakly ordered
+            // target observe neither the increment nor the release claim.
+            _ = self.calls.fetchAdd(1, .seq_cst);
+            return switch (self.lifecycle.load(.seq_cst)) {
+                .configured, .running, .stopped => true,
+                .releasing, .released => {
+                    _ = self.calls.fetchSub(1, .acq_rel);
+                    return false;
+                },
+            };
+        }
+
+        /// Ends an external call registered by `enter`.
+        pub fn leave(self: *Self) void {
+            _ = self.calls.fetchSub(1, .acq_rel);
+        }
+
+        /// Waits for every in-flight external call to leave.
+        pub fn wait_idle(self: *Self) void {
+            while (self.calls.load(.seq_cst) != 0) {
+                std.Thread.yield() catch std.atomic.spinLoopHint();
+            }
+        }
+
+        /// Waits until the winning release owner publishes `released`.
+        pub fn wait_released(self: *Self) void {
+            while (self.state() != .released) {
+                std.Thread.yield() catch std.atomic.spinLoopHint();
+            }
         }
 
         /// Requires a group that has not run and has not been released.
@@ -103,7 +162,7 @@ pub fn worker_group(comptime Context: type) type {
         }
 
         /// Requires a group whose workers can still consume a publish.
-        pub fn require_publishable(self: *const Self) LifecycleError!void {
+        pub fn require_publishable(self: *const Self) PublishLifecycleError!void {
             return switch (self.state()) {
                 .configured, .running => {},
                 .stopped => error.ClusterStopped,
@@ -133,7 +192,7 @@ pub fn worker_group(comptime Context: type) type {
         /// Publishes the stopped state after every worker has joined.
         pub fn finish_run(self: *Self) void {
             std.debug.assert(self.state() == .running);
-            std.debug.assert(!self.running);
+            std.debug.assert(!self.running.load(.acquire));
             self.lifecycle.store(.stopped, .release);
         }
 
@@ -149,12 +208,12 @@ pub fn worker_group(comptime Context: type) type {
                     .configured, .stopped => {
                         // Never release storage while a thread handle is
                         // still joinable, even if the lifecycle is stale.
-                        if (self.running) return error.ClusterRunning;
+                        if (self.running.load(.acquire)) return error.ClusterRunning;
                         if (self.lifecycle.cmpxchgWeak(
                             current,
                             .releasing,
-                            .acq_rel,
-                            .acquire,
+                            .seq_cst,
+                            .seq_cst,
                         ) == null) return true;
                     },
                 }
@@ -164,8 +223,8 @@ pub fn worker_group(comptime Context: type) type {
         /// Publishes the released state after storage is freed.
         pub fn finish_release(self: *Self) void {
             std.debug.assert(self.state() == .releasing);
-            std.debug.assert(!self.running);
-            std.debug.assert(self.started == 0);
+            std.debug.assert(!self.running.load(.acquire));
+            std.debug.assert(self.started.load(.acquire) == 0);
             self.lifecycle.store(.released, .release);
         }
 
@@ -182,30 +241,41 @@ pub fn worker_group(comptime Context: type) type {
             callback: StartCallback,
         ) StartError!void {
             if (self.state() != .running) return error.WorkerGroupNotRunning;
-            if (self.running or self.started != 0) return error.WorkerGroupAlreadyRunning;
+            if (self.running.load(.acquire) or self.started.load(.acquire) != 0) {
+                return error.WorkerGroupAlreadyRunning;
+            }
             if (count == 0 or count > threads.len) return error.InvalidWorkerCount;
 
             self.clear_failure();
-            self.running = true;
+            self.running.store(true, .release);
             for (0..count) |index| {
-                threads[index] = std.Thread.spawn(
-                    .{},
-                    entry,
-                    .{ context, callback, index },
-                ) catch |err| {
+                threads[index] = self.spawn_one(context, callback, index) catch |err| {
                     self.record_failure(index, .spawn, err);
                     return err;
                 };
-                self.started += 1;
+                self.started.store(index + 1, .release);
             }
+        }
+
+        fn spawn_one(
+            self: *Self,
+            context: *Context,
+            callback: StartCallback,
+            index: usize,
+        ) std.Thread.SpawnError!std.Thread {
+            if (comptime builtin.is_test) {
+                if (self.spawn_override) |spawn| return spawn(context, index, callback);
+            }
+            return std.Thread.spawn(.{}, entry, .{ context, callback, index });
         }
 
         /// Joins every started worker and clears the running state.
         pub fn join(self: *Self, threads: []std.Thread) void {
-            std.debug.assert(threads.len >= self.started);
-            for (threads[0..self.started]) |thread| thread.join();
-            self.started = 0;
-            self.running = false;
+            const started = self.started.load(.acquire);
+            std.debug.assert(threads.len >= started);
+            for (threads[0..started]) |thread| thread.join();
+            self.started.store(0, .release);
+            self.running.store(false, .release);
         }
 
         /// Records one failure; the first failure and the total count are kept.

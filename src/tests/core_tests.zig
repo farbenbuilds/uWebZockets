@@ -167,11 +167,6 @@ test "tcp: accept retry delay backs off to a bounded ceiling" {
 
 test "core: accept failures arm and drain a bounded retry timer" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
-    // libxev's io_uring backend reports an unexpected accept errno as fatal
-    // before this retry path can run, so the behavior is only observable on
-    // backends that deliver accept errors as completions.
-    try @import("xev").detect();
-    if (@import("xev").backend() == .io_uring) return error.SkipZigTest;
 
     var pair: [2]std.posix.fd_t = undefined;
     if (std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &pair) != 0) {

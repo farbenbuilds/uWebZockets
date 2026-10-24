@@ -34,9 +34,10 @@ contract: `request_shutdown` after `deinit` remains a documented no-op.
 | `released` | All worker and thread storage is freed |
 
 `worker_count()` returns the active worker count. `worker_capacity()` returns
-the compiled capacity. The public fields `threads`, `thread_count`,
-`worker_failed`, and `deinitialized` remain for source compatibility;
-`state()`, `first_failure()`, and `worker_count()` are authoritative.
+the compiled capacity. The public fields `threads`, `active_workers`,
+`thread_count`, `worker_failed`, and `deinitialized` remain for source
+compatibility; `state()`, `first_failure()`, and `worker_count()` are
+authoritative.
 
 `configure`, `enable_https`, `listen`, and `catch_shutdown_signals` reject a
 released or releasing group with `error.ClusterDeinitialized`, an active group
@@ -50,16 +51,29 @@ drained group is not supported; build a new group instead.
 A second concurrent `run` returns `error.ClusterRunning`. `deinit` claims the
 configured-or-stopped-to-releasing transition with a compare-and-swap before it
 frees anything. A second concurrent `deinit` observes `releasing` or
-`released` and returns without freeing storage another owner still holds.
+`released` and waits for the winner to publish `released` before returning.
 
-`release_signal_watcher` completes before the group publishes `stopped`, so a
-supervisor that reads the terminal state cannot free worker storage while the
-watcher still references the first worker's loop.
+`cleanup_workers` stops the watcher and drains every worker loop before the
+group publishes `stopped`. If the drain fails, the watcher survives `stopped`
+and `deinit` releases it after the loops are destroyed, so the free path is
+still safe but the release is not completed before the terminal state.
+
+Supervisor calls that touch worker storage register an in-flight call before
+the lifecycle check. The increment, lifecycle load, release CAS, and idle load
+use SeqCst so the store-load handshake is a total order on weakly ordered
+targets, not only on x86. `deinit_checked` claims `releasing` through
+`begin_release` and then waits for calls that entered before the claim; a call
+that enters after the claim sees `releasing` or `released` and returns without
+touching worker storage. The counter lives in the cluster object, which
+outlives the worker arrays, so the losing path cannot use freed memory. A
+`configure` callback must not call `run` or release; that call already holds a
+registration and release would wait on it.
 
 ### Failure reporting
 
 A spawn failure records `FailurePhase.spawn`; a worker event-loop failure
-records `FailurePhase.run`. Both retain the worker index and original error.
+records `FailurePhase.run`; a post-run drain failure records
+`FailurePhase.cleanup`. All retain the worker index and original error.
 The first failure wins so a shutdown cascade does not replace the root cause;
 `failure_count()` reports the total. `first_failure()` remains available after
 `run` returns.
@@ -73,13 +87,15 @@ paths. The steady-state request path remains lock-free.
 
 - `queued`: inboxes that accepted the message;
 - `dropped`: inboxes that were full;
-- `notify_failed`: accepted messages whose loop wakeup failed;
+- `notify_failed`: accepted messages whose loop wakeup failed or was suppressed
+  during shutdown;
 - `first_dropped_worker`: the first full inbox index, when any.
 
 `attempted()` returns `queued + dropped`; `all_delivered()` is true only when
-`dropped` and `notify_failed` are zero. `publish()` remains source-compatible
-and returns `report.queued`. Message validation runs once before any inbox is
-mutated, so an invalid topic or oversized payload cannot partially deliver.
+`dropped` and `notify_failed` are zero. `publish()` keeps its `!usize` shape
+and returns `report.queued`; after `run` it returns `ClusterStopped`. Message
+validation runs once before any inbox is mutated, so an invalid topic or
+oversized payload cannot partially deliver.
 
 ### Worker thread manager
 
@@ -94,14 +110,17 @@ are the contract, and the group is not exported from `src/root.zig`.
 ### Typed configuration callback
 
 `Cluster.configure` accepts the named `ConfigureCallback` function pointer with
-a `comptime` parameter instead of `anytype`. Plain route-configuration
-functions keep compiling because their error sets coerce to `anyerror`.
+a `comptime` parameter instead of `anytype`. Concrete route-configuration
+functions keep compiling because their error sets coerce to `anyerror`; a
+generic `anytype` route function must be specialized to the concrete `Worker`
+type because it cannot coerce to a function pointer.
 
 ### Checked release
 
-`deinit_checked()` returns `error.ClusterRunning` while `run` is active and is
-idempotent after release. `deinit()` keeps its existing signature and panics on
-that error for compatibility.
+`deinit_checked()` returns `error.ClusterRunning` while `run` is active and
+claims release once: a later call waits for the winning owner to publish
+`released`. `deinit()` keeps its existing signature and panics on
+`error.ClusterRunning` for compatibility.
 
 ## Alternatives considered
 

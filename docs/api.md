@@ -136,7 +136,7 @@ middleware: `Cors`, `SecurityHeaders`, `Auth`, and `RateLimit`. See
 | Files | `res.send_file()`, `App.static` |
 | Server-Sent Events | `res.sse()` |
 | Redirects and headers | `res.redirect`, `res.append_header`, `end_with_headers` |
-| Callback ABI endings | `end_best_effort`, `end_with_headers_best_effort` (the transport closes a failed peer) |
+| Callback ABI endings | `end_best_effort`, `end_with_headers_best_effort` (aborts the TCP connection or HTTP/2/3 stream on failure) |
 
 ## Asynchronous responses
 
@@ -189,16 +189,22 @@ context. All TLS listeners share the application certificate.
 `App.cluster(worker_count)` and
 `Server.builder(...).build_cluster(allocator, worker_count, options)` return a
 heap-backed thread-per-core manager. `worker_count` is the compiled capacity.
-`build_cluster` keeps that exact count; `build_cluster_from_environment`
-resolves `UWEBZOCKETS_WORKERS`, or the platform CPU count, and
-`ClusterOptions.worker_count` selects a smaller active count explicitly.
+`build_cluster` uses that capacity unless `ClusterOptions.worker_count` selects
+fewer active workers; `build_cluster_from_environment` prefers an explicit
+`ClusterOptions.worker_count`, then `UWEBZOCKETS_WORKERS`, then the platform CPU
+count.
 Configure routes per worker, `listen` once, and `run` joins every worker.
 
-`Cluster.publish` broadcasts through bounded per-worker rings.
+`Cluster.publish` broadcasts through bounded per-worker rings. It keeps its
+`!usize` shape; after `run` it returns `error.ClusterStopped` instead of
+queueing into loops that no longer consume.
 `Cluster.publish_report` returns a named `PublishReport` with `queued`,
-`dropped`, `notify_failed`, and `first_dropped_worker`; `publish` stays
-source-compatible and returns `queued`. Validation happens before any inbox is
-mutated, so a bad topic or oversized payload cannot partially deliver.
+`dropped`, `notify_failed` (including a stopping loop), and
+`first_dropped_worker`; `publish` keeps its `!usize` shape and returns
+`queued`. `all_delivered()` means every worker accepted and every wakeup was
+posted, not that an application subscriber consumed the message. Validation
+happens before any inbox is mutated, so a bad topic or oversized payload cannot
+partially deliver.
 `Cluster.request_shutdown` drains all workers.
 
 ### Cluster lifecycle and failures
@@ -211,7 +217,7 @@ mutated, so a bad topic or oversized payload cannot partially deliver.
 | `configure(callback)` | Typed `ConfigureCallback`, before any thread starts |
 | `first_failure()` | `WorkerFailure { index, phase, err }`, or null |
 | `failure_count()` | Total failures recorded since the last `run` |
-| `run()` | Spawns, joins, and reports `error.ClusterWorkerFailed` |
+| `run()` | Spawns, joins, and returns the named `RunError` |
 | `deinit_checked()` | Typed release claim; `error.ClusterRunning` while active |
 
 ```zig
@@ -246,19 +252,33 @@ Lifecycle-sensitive calls reject `error.ClusterDeinitialized`,
 released or drained worker storage. `run` uses the same names for re-entry.
 The first worker failure wins, so a shutdown cascade does not replace the root
 cause. A spawn failure records phase `spawn`; an event-loop failure records
-phase `run`.
+phase `run`; a post-run drain failure records phase `cleanup`.
 
-The `threads`, `thread_count`, `worker_failed`, and `deinitialized` fields stay
-public and source-compatible. They are compatibility mirrors; `state()`,
-`first_failure()`, and `worker_count()` are authoritative. `Cluster.deinit`
-keeps its panic contract; supervisors that need a typed error call
-`deinit_checked()`.
+The `threads`, `active_workers`, `thread_count`, `worker_failed`, and
+`deinitialized` fields stay public and source-compatible. They are
+compatibility mirrors; `state()`, `first_failure()`, and `worker_count()` are
+authoritative. `Cluster.deinit` keeps its panic contract; supervisors that
+need a typed error call `deinit_checked()`. A concurrent `deinit_checked()` waits for the winning
+releaser to publish `released` before returning.
+
+`uz.cluster.message_queue` is an advanced helper for tests and embedders.
+`broadcast` validates once and reports drops/wakeup failures; `pop_copy` leaves
+a message queued when the caller buffers are too small; `pop_scratch` borrows
+queue-owned scratch until the next call. One consumer owns each queue.
+`Cluster.group` is an implementation detail; direct access can corrupt the
+lifecycle and is not supported.
 
 `state()`, `worker_count()`, `worker_capacity()`, `first_failure()`, and
-`failure_count()` are safe read-only from any thread. `request_shutdown()` is
-safe while the group is running, but serialize it with `deinit_checked()`.
-Route configuration, TLS setup, `listen`, `publish`, `run`,
-`catch_shutdown_signals`, and release are caller-serialized; do not race them.
+`failure_count()` are safe from any thread that holds a mutable `*Cluster`;
+they do not touch worker storage. Supervisor calls that
+touch worker storage register an in-flight call, and release waits for them:
+`request_shutdown()`, `publish()`/`publish_report()`, `configure()`, TLS
+setup, `listen()`, and `catch_shutdown_signals()` cannot race storage
+teardown, provided the `Cluster` value itself stays alive. Those mutating calls,
+including `run()`, remain caller-serialized among themselves; `enter` protects
+release teardown, not lifecycle ordering. Raw `worker()` pointers or public
+fields need external synchronization, and a `Cluster` value must not be copied
+or moved after `catch_shutdown_signals()` or `run()` starts.
 
 `request_shutdown` after `deinit` remains a documented non-erroring no-op: the
 worker slice has already been released, so rebuild the cluster instead of
@@ -293,7 +313,7 @@ single-application APIs, and a cluster listener is TCP/TLS only.
 
 | Error | Cause |
 | --- | --- |
-| `error.ClusterDeinitialized` | An enable call, `listen`, or publish was made after `deinit` |
+| `error.ClusterDeinitialized` | A lifecycle-sensitive call was made after `deinit` |
 | `error.ClusterRunning` | A configuration call was made while `run` was active |
 | `error.ClusterStopped` | A configuration, listen, or publish call was made after `run` returned |
 | `error.AlreadyListening` | `enable_https` was called after `listen` started |
@@ -333,6 +353,8 @@ var server = try uz.Server.builder(init.io)
 | `ResponseView` from the client | Callback return, or `FetchStorage` lifetime |
 | `AsyncResponse` token | Completed exactly once; copyable |
 | `App` value | Must not move after `listen`/`listen_udp`, nor after any context-capturing registration: `openapi`, `datagram`, or the observability install performed by `listen` |
+| `Cluster` value | Single owner; do not copy; must not move after `catch_shutdown_signals`/`run`, and must stay alive through `deinit_checked` |
+| `Cluster.worker(i)` | Borrowed pointer; valid until release begins, and must not be retained across `deinit_checked` |
 
 Slices always borrow connection storage. Copy into bounded application storage
 or use `clone` for work that outlives the callback.
