@@ -268,10 +268,11 @@ pub const Scheduler = struct {
         const target = @max(self.pending_deadline_ms, now);
         const delay = target - now;
         self.pending_deadline_ms = 0;
+        const loop = self.loop orelse return .disarm;
         self.active = true;
         self.armed_deadline_ms = target;
         self.timer.run(
-            self.loop.?,
+            loop,
             &self.completion,
             delay,
             Scheduler,

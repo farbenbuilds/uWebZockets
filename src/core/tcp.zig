@@ -2458,7 +2458,7 @@ pub fn close_server(server: *TcpServer, loop: *Loop) void {
 
     // kqueue and IOCP defer an armed accept until submit. Flush first so the
     // cancel observes an active target instead of dropping its callback.
-    if (xev.submit_before_cancel()) {
+    if (builtin.os.tag == .windows or xev.submit_before_cancel()) {
         xev.submit(loop.get_xev_loop()) catch |err| {
             log.err("accept submit before close failed: {}", .{err});
         };
