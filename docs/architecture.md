@@ -174,7 +174,7 @@ it `.until_done`. All completions are inline members of their owning connection,
 server, transport, or engine; none is heap-allocated, and none outlives the
 storage it borrows. Only `loop.zig` inspects the libxev backend; every other
 module cancels through the backend-aware shim. libxev provenance follows
-[libxev_fork.md](libxev_fork.md): the manifest pins fork commit `2b969cf` on
+[libxev_fork.md](libxev_fork.md): the manifest pins fork commit `cbf01bc` on
 `uwz/zig-0.16`, with XEV-001 and XEV-002 as the downstream patches. The
 [ADR 0004](adr/0004-windows-iocp-accept-and-queued-close.md) overlay is
 historical and removed.

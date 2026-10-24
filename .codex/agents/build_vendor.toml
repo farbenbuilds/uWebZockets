@@ -36,7 +36,7 @@ dependency migrations, and decisions.
   (`scripts/update_zon_files.sh` bridges to zon2nix).
 - libxev provenance: fork `main` is a read-only mirror; `uwz/zig-0.16` is
   append-only from first push and carries XEV-001 and XEV-002. Pin full 40-hex commits and
-  record `uwz(<area>): ...` ledger commits. The manifest pins `2b969cf`; no
+  record `uwz(<area>): ...` ledger commits. The manifest pins `cbf01bc`; no
   local overlay or libxev audit patch remains.
 - `builds/orchestrator.zig`: target routing (native POSIX/Windows, wasm32,
   `all-targets`), `UWEBZOCKETS_DEFAULT_TARGET`, unsupported-target panic.
@@ -126,7 +126,7 @@ dependency migrations, and decisions.
 12. libxev fork policy: keep upstream `mitchellh/libxev` fetch-only and never
     push, comment, or contribute there. Keep fork `main` an exact mirror and
     `uwz/zig-0.16` append-only from first push; the integration branch exists
-    at `2b969cf` with XEV-001. Require `main` to block deletion and
+    at `cbf01bc` with XEV-001. Require `main` to block deletion and
     non-fast-forward updates except the recorded mirror-repair bypass, and
     require `uwz/zig-0.16` review, force-push blocking, and deletion blocking.
     Confirm protection is active. Record every patch in the ledger with ID,

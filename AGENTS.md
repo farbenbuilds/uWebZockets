@@ -150,7 +150,7 @@ Vendored skills are pinned by `skills-lock.json`; do not hand-edit their
   workflows, submodules, binaries, licenses, network/TLS, and memory changes
   with build/vendor, transport/runtime, and verification.
 - The manifest pins `farbenbuilds/libxev` commit
-  `2b969cfcbd22c6d672ec3fe9a4a2d5848714634a` on `uwz/zig-0.16`, based on
+  `cbf01bc432a84cd91a99c1cb1031b46416d044c7` on `uwz/zig-0.16`, based on
   upstream `9ce8e8e`, with XEV-001 and XEV-002 as the downstream patches. The former
   [ADR 0004](docs/adr/0004-windows-iocp-accept-and-queued-close.md) overlay is
   historical; [ADR 0005](docs/adr/0005-libxev-fork.md) governs.

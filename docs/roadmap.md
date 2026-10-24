@@ -145,7 +145,7 @@ compile gates, and a regression test closes a queued write before submission
 and asserts that the pool slot returns. The decision, patch, and rollback path
 are recorded in [ADR 0004](adr/0004-windows-iocp-accept-and-queued-close.md).
 [ADR 0005](adr/0005-libxev-fork.md) selects `farbenbuilds/libxev` as the
-maintained fork. The 2.1.0 release pins commit `2b969cf` on `uwz/zig-0.16`,
+maintained fork. The 2.1.0 release pins commit `cbf01bc` on `uwz/zig-0.16`,
 carries XEV-001 in the fork, and removes the overlay and audit patch;
 [libxev_fork.md](libxev_fork.md) is the policy. The TLS cluster test plumbing already
 binds `getsockname` and `SO_RCVTIMEO` through ws2_32, so those tests execute
