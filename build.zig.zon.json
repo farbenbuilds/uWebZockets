@@ -9,10 +9,10 @@
     "url": "git+https://github.com/ebiggers/libdeflate#92e6a0db9fa848d742f9eb286c92afc60f2c3dda",
     "hash": "sha256-QVF2XL8Qu3mTszKKtx+8BExkTGkpMANXjkAe3XXPUJQ="
   },
-  "libxev-0.0.0-86vtcwIRFADbH4hk-EjROXxlrKIRPQdA41XiTSytYO-F": {
+  "libxev-0.0.0-86vtc9ETFACb96amwdKnz1fDkV20guxITNlImAu3DGiu": {
     "name": "libxev",
-    "url": "git+https://github.com/mitchellh/libxev#9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf",
-    "hash": "sha256-fOU1oxIxfoEgoLuWz7fVX6M+zmqpo7gqZObWiH/aDE0="
+    "url": "git+https://github.com/farbenbuilds/libxev#0fdea269988e3f5ccfe068ab235bbe5dd4fa9ede",
+    "hash": "sha256-7pNG2OQRh8VQNgT08F6dUV8+5DwFvaJR719pbvemT/Y="
   },
   "N-V-__8AABdJVQA4Si44bpY_UYIuBqJm--4p63YluoS15TT-": {
     "name": "lshpack",

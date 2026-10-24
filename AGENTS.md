@@ -149,10 +149,11 @@ Vendored skills are pinned by `skills-lock.json`; do not hand-edit their
   After migration, review `main..uwz/zig-0.16`, and inspect build scripts,
   workflows, submodules, binaries, licenses, network/TLS, and memory changes
   with build/vendor, transport/runtime, and verification.
-- The current manifest still pins upstream `9ce8e8e` and the
-  [ADR 0004](docs/adr/0004-windows-iocp-accept-and-queued-close.md) Windows
-  IOCP overlay remains authoritative until the migration. The integration
-  branch does not exist before that migration.
+- The manifest pins `farbenbuilds/libxev` commit
+  `0fdea269988e3f5ccfe068ab235bbe5dd4fa9ede` on `uwz/zig-0.16`, based on
+  upstream `9ce8e8e`, with XEV-001 as the only downstream patch. The former
+  [ADR 0004](docs/adr/0004-windows-iocp-accept-and-queued-close.md) overlay is
+  historical; [ADR 0005](docs/adr/0005-libxev-fork.md) governs.
 - Canonical policy: [docs/libxev_fork.md](docs/libxev_fork.md). Decision:
   [ADR 0005](docs/adr/0005-libxev-fork.md).
 

@@ -1,7 +1,7 @@
 const std = @import("std");
 const xev = @import("xev");
-const tcp = @import("tcp.zig");
 const Loop = @import("loop.zig").Loop;
+const wheel = @import("timer_wheel.zig");
 
 const log = std.log.scoped(.timer);
 
@@ -109,130 +109,237 @@ fn on_timer_cancel(
     return .disarm;
 }
 
-/// Returns a five-second connection sweeper for a compatible fixed pool.
+/// One persistent libxev timer driving a per-loop hierarchical wheel.
 ///
-/// `PoolType` must expose contiguous `storage`, `is_active`, and connections
-/// with `closing` and `last_active_ms` fields.
-pub fn connection_sweeper(comptime PoolType: type, comptime idle_timeout_ms: u64) type {
-    if (idle_timeout_ms > std.math.maxInt(i64)) {
-        @compileError("idle timeout exceeds the monotonic clock representation");
+/// The scheduler sleeps until the nearest wheel deadline instead of polling.
+/// It is loop-confined: every method except `current_time_ms` must run on the loop that
+/// owns the underlying completion.
+pub const Scheduler = struct {
+    wheel: wheel.Wheel,
+    timer: xev.Timer,
+    completion: xev.Completion = .{},
+    cancel_completion: xev.Completion = .{},
+    /// Separate completion for a stop cancel so it cannot reuse the re-arm
+    /// cancellation still queued for the same loop turn.
+    stop_completion: xev.Completion = .{},
+    io: std.Io,
+    loop: ?*xev.Loop = null,
+    armed_deadline_ms: u64 = 0,
+    /// Deadline requested while the current timer is being canceled.
+    pending_deadline_ms: u64 = 0,
+    rearm_pending: bool = false,
+    active: bool = false,
+    stopping: bool = false,
+    in_callback: bool = false,
+    needs_rearm: bool = false,
+
+    /// Creates a scheduler anchored to the current monotonic millisecond.
+    pub fn init(io: std.Io) !Scheduler {
+        const now = current_ms(io);
+        return .{
+            .wheel = wheel.Wheel.init(now),
+            .timer = try xev.Timer.init(),
+            .io = io,
+        };
     }
 
-    return struct {
-        const Self = @This();
-        const timeout_ms: i64 = @intCast(idle_timeout_ms);
+    /// Releases the libxev timer after `stop` has drained the loop.
+    pub fn deinit(self: *Scheduler) void {
+        self.timer.deinit();
+    }
 
-        timer: xev.Timer,
-        completion: xev.Completion = .{},
-        cancel_completion: xev.Completion = .{},
-        pool: *PoolType,
-        io: std.Io,
-        active: bool = false,
-        stopping: bool = false,
+    /// Returns the wall-independent millisecond clock used by this scheduler.
+    pub fn current_time_ms(self: *const Scheduler) u64 {
+        return current_ms(self.io);
+    }
 
-        /// Initializes an unarmed sweeper borrowing `pool` for its lifetime.
-        pub fn init(io: std.Io, pool: *PoolType) !Self {
-            return Self{
-                .timer = try xev.Timer.init(),
-                .pool = pool,
-                .io = io,
-            };
+    /// Binds the owning loop and arms the first deadline.
+    pub fn start(self: *Scheduler, loop: *Loop) void {
+        self.loop = loop.get_xev_loop();
+        self.stopping = false;
+        self.arm();
+    }
+
+    /// Schedules `node` at an absolute monotonic deadline.
+    pub fn schedule(
+        self: *Scheduler,
+        node: *wheel.TimerNode,
+        deadline_ms: u64,
+        callback: wheel.TimerCallback,
+        ctx: *anyopaque,
+    ) void {
+        self.wheel.insert(node, deadline_ms, callback, ctx);
+        self.arm();
+    }
+
+    /// Schedules `node` after a relative delay.
+    pub fn schedule_after(
+        self: *Scheduler,
+        node: *wheel.TimerNode,
+        delay_ms: u64,
+        callback: wheel.TimerCallback,
+        ctx: *anyopaque,
+    ) void {
+        const deadline = self.current_time_ms() +| delay_ms;
+        self.schedule(node, deadline, callback, ctx);
+    }
+
+    /// Removes `node` if this scheduler owns it.
+    pub fn cancel(self: *Scheduler, node: *wheel.TimerNode) bool {
+        const removed = self.wheel.remove(node);
+        if (removed) self.arm();
+        return removed;
+    }
+
+    /// Stops the driving timer and prevents any later re-arm.
+    pub fn stop(self: *Scheduler, loop: *Loop) void {
+        self.stopping = true;
+        self.loop = loop.get_xev_loop();
+        // A queued re-arm cancellation already owns the timer completion; its
+        // callback observes `stopping` and will not re-arm.
+        if (self.rearm_pending) return;
+        if (!self.active or self.in_callback) return;
+        self.active = false;
+        self.timer.cancel(
+            self.loop.?,
+            &self.completion,
+            &self.stop_completion,
+            Scheduler,
+            self,
+            on_cancel,
+        );
+    }
+
+    /// Arms, resets, or intentionally leaves the one driving timer.
+    fn arm(self: *Scheduler) void {
+        if (self.stopping) return;
+        if (self.in_callback) {
+            self.needs_rearm = true;
+            return;
+        }
+        const loop = self.loop orelse return;
+        const next = self.wheel.next_deadline() orelse return;
+        const now = self.current_time_ms();
+        const deadline = @max(next, now);
+        const delay = deadline - now;
+
+        if (self.rearm_pending) {
+            if (deadline < self.pending_deadline_ms) self.pending_deadline_ms = deadline;
+            return;
         }
 
-        /// Releases timer resources after the sweeper has stopped.
-        pub fn deinit(self: *Self) void {
-            self.timer.deinit();
-        }
-
-        /// Starts periodic idle-connection scans; repeated starts are ignored.
-        pub fn start(self: *Self, loop: *Loop) void {
-            if (self.active or self.stopping) return;
-            self.active = true;
-            // run callback every 5000ms (5 seconds)
-            self.timer.run(
-                loop.get_xev_loop(),
-                &self.completion,
-                5000,
-                Self,
-                self,
-                on_tick,
-            );
-        }
-
-        /// Requests asynchronous cancellation of the periodic scan.
-        pub fn stop(self: *Self, loop: *Loop) void {
-            if (self.stopping) return;
-            self.stopping = true;
-            // A tick callback runs with `active` cleared; the tick observes
-            // `stopping` and disarms instead of re-arming.
-            if (!self.active) return;
+        if (self.active) {
+            if (deadline >= self.armed_deadline_ms) return;
+            // libxev's timer.reset shares the live completion with the cancel
+            // operation, which races a stop issued in the same loop turn.
+            // Cancel first, then arm the earlier deadline from the callback.
+            self.pending_deadline_ms = deadline;
+            self.rearm_pending = true;
+            self.active = false;
             self.timer.cancel(
-                loop.get_xev_loop(),
+                loop,
                 &self.completion,
                 &self.cancel_completion,
-                Self,
+                Scheduler,
                 self,
-                on_cancel,
+                on_rearm_cancel,
             );
+            return;
         }
 
-        // callback triggered by libxev every 5 seconds
-        fn on_tick(
-            user_data: ?*Self,
-            loop: *xev.Loop,
-            completion: *xev.Completion,
-            result: anyerror!void,
-        ) xev.CallbackAction {
-            const self = user_data.?;
-            _ = result catch |err| {
-                self.active = false;
-                if (err == error.Canceled) return .disarm;
-                log.err("sweeper timer error: {}", .{err});
-                return .disarm;
-            };
+        self.active = true;
+        self.armed_deadline_ms = deadline;
+        self.timer.run(loop, &self.completion, delay, Scheduler, self, on_tick);
+    }
 
-            self.active = false;
-            if (self.stopping) return .disarm;
-            const now = std.Io.Clock.now(.awake, self.io);
-            const current_time: i64 = @intCast(@divTrunc(now.nanoseconds, 1000000));
+    fn on_rearm_cancel(
+        user_data: ?*Scheduler,
+        _: *xev.Loop,
+        _: *xev.Completion,
+        result: xev.CancelError!void,
+    ) xev.CallbackAction {
+        const self = user_data.?;
+        self.rearm_pending = false;
+        if (self.stopping) return .disarm;
+        _ = result catch |err| {
+            if (err != error.NotFound) log.debug("timer re-arm cancel error: {}", .{err});
+        };
+        const now = self.current_time_ms();
+        const target = @max(self.pending_deadline_ms, now);
+        const delay = target - now;
+        self.pending_deadline_ms = 0;
+        self.active = true;
+        self.armed_deadline_ms = target;
+        self.timer.run(
+            self.loop.?,
+            &self.completion,
+            delay,
+            Scheduler,
+            self,
+            on_tick,
+        );
+        return .disarm;
+    }
 
-            // sweep through contiguous storage array (data-oriented design)
-            // contiguous memory ensures cpu cache processes all items in microseconds
-            for (self.pool.storage, 0..) |*conn, index| {
-                if (!self.pool.is_active(index) or conn.closing) continue;
-                conn.ws.heartbeat_tick(current_time);
-                if (conn.closing or timeout_ms == 0) continue;
-                if (conn.last_active_ms <= 0) continue;
-
-                const idle_time = current_time - conn.last_active_ms;
-                if (idle_time <= timeout_ms) continue;
-
-                conn.last_active_ms = 0;
-                tcp.close_connection(conn);
+    fn on_tick(
+        user_data: ?*Scheduler,
+        _: *xev.Loop,
+        _: *xev.Completion,
+        result: anyerror!void,
+    ) xev.CallbackAction {
+        const self = user_data.?;
+        self.in_callback = true;
+        defer {
+            self.in_callback = false;
+            if (self.needs_rearm) {
+                self.needs_rearm = false;
+                self.arm();
             }
-
-            // A close callback may have requested shutdown; never re-arm past it.
-            if (self.stopping) return .disarm;
-
-            // Schedule a new relative timeout instead of reusing an expired one.
-            self.timer.run(loop, completion, 5000, Self, self, on_tick);
-            self.active = true;
-            return .disarm;
         }
 
-        fn on_cancel(
-            user_data: ?*Self,
-            _: *xev.Loop,
-            _: *xev.Completion,
-            result: xev.CancelError!void,
-        ) xev.CallbackAction {
-            const self = user_data.?;
-            _ = result catch |err| {
-                if (err != error.NotFound) log.debug("sweeper cancel error: {}", .{err});
-                return .disarm;
-            };
-            self.active = false;
+        result catch |err| {
+            if (err != error.Canceled) {
+                self.active = false;
+                log.err("timer wheel error: {}", .{err});
+            }
             return .disarm;
-        }
-    };
+        };
+
+        self.active = false;
+        if (self.stopping) return .disarm;
+        self.wheel.advance(self.current_time_ms());
+        self.needs_rearm = true;
+        return .disarm;
+    }
+
+    fn on_cancel(
+        user_data: ?*Scheduler,
+        _: *xev.Loop,
+        _: *xev.Completion,
+        result: xev.CancelError!void,
+    ) xev.CallbackAction {
+        const self = user_data.?;
+        _ = result catch |err| {
+            if (err != error.NotFound) log.debug("timer wheel cancel error: {}", .{err});
+            return .disarm;
+        };
+        self.active = false;
+        return .disarm;
+    }
+};
+
+/// Arms `node` on `scheduler` to invoke `resume` after `delay_ms`.
+pub fn sleep(
+    scheduler: *Scheduler,
+    node: *wheel.TimerNode,
+    delay_ms: u64,
+    ctx: *anyopaque,
+    resume_fn: wheel.TimerCallback,
+) void {
+    scheduler.schedule_after(node, delay_ms, resume_fn, ctx);
+}
+
+fn current_ms(io: std.Io) u64 {
+    const now = std.Io.Clock.now(.awake, io);
+    return @intCast(@max(@divTrunc(now.nanoseconds, std.time.ns_per_ms), 0));
 }

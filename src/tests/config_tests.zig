@@ -242,13 +242,14 @@ test "config: default slab carries the router region at the end" {
     // moving 681_711_744 to this total. TRACE adds one 8-byte handler slot per
     // node, moving 681_717_376 to 681_727_616. The HTTP gzip pool pointer adds
     // eight bytes per connection, moving the total to 681_735_808. The
-    // incremental parser scan cursor adds two usize fields per connection,
-    // moving the total to 681_752_192.
-    try std.testing.expectEqual(@as(usize, 681_752_192), total);
+    // incremental parser scan cursor adds two usize fields per connection.
+    // The timing wheel adds one idle node and nine parking slots per
+    // connection, moving the total to 683_382_400.
+    try std.testing.expectEqual(@as(usize, 683_382_400), total);
     // The default route-param extras stride is zero: the region extends the
     // slab by exactly one router region's bytes.
     try std.testing.expectEqual(@as(usize, 0), try config.extra_route_param_stride());
-    try std.testing.expectEqual(@as(usize, 680_878_080), total - router_bytes);
+    try std.testing.expectEqual(@as(usize, 682_508_288), total - router_bytes);
 }
 
 test "config: slab bytes grow with each router capacity knob" {
