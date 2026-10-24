@@ -111,9 +111,11 @@ fn on_timer_cancel(
 
 /// One persistent libxev timer driving a per-loop hierarchical wheel.
 ///
-/// The scheduler sleeps until the nearest wheel deadline instead of polling.
-/// It is loop-confined: every method except `current_time_ms` must run on the loop that
-/// owns the underlying completion.
+/// The driving timer uses a bounded tick so a deadline scheduled after the
+/// current arm is noticed without resetting or canceling a live completion.
+/// Repeating ticks use the backend's `.rearm` action, never a nested `run`.
+/// It is loop-confined: every method except `current_time_ms` must run on the
+/// loop that owns the underlying completion.
 pub const Scheduler = struct {
     wheel: wheel.Wheel,
     timer: xev.Timer,
@@ -123,8 +125,6 @@ pub const Scheduler = struct {
     armed_deadline_ms: u64 = 0,
     active: bool = false,
     stopping: bool = false,
-    in_callback: bool = false,
-    needs_rearm: bool = false,
 
     /// Creates a scheduler anchored to the current monotonic millisecond.
     pub fn init(io: std.Io) !Scheduler {
@@ -193,25 +193,13 @@ pub const Scheduler = struct {
         // queued-cancel completion race without delaying shutdown.
     }
 
-    /// Arms, resets, or intentionally leaves the one driving timer.
+    /// Arms the one driving timer when deadlines exist.
     fn arm(self: *Scheduler) void {
-        if (self.stopping) return;
-        if (self.in_callback) {
-            self.needs_rearm = true;
-            return;
-        }
+        if (self.stopping or self.active) return;
         const loop = self.loop orelse return;
-        const next = self.wheel.next_deadline() orelse return;
-        const now = self.current_time_ms();
-        const deadline = @max(next, now);
-        const delay = deadline - now;
-
-        // A single one-millisecond tick bounds how late an earlier deadline
-        // scheduled after this arm can be noticed. It avoids Timer.reset and
-        // cancel/rearm races on IOCP and keeps one completion per scheduler.
-        const tick_ms = if (delay == 0) 1 else @min(delay, 1);
+        if (self.wheel.next_deadline() == null) return;
         self.active = true;
-        self.armed_deadline_ms = deadline;
+        self.armed_deadline_ms = self.wheel.next_deadline().?;
         self.timer.run(loop, &self.completion, tick_ms, Scheduler, self, on_tick);
     }
 
@@ -222,28 +210,23 @@ pub const Scheduler = struct {
         result: anyerror!void,
     ) xev.CallbackAction {
         const self = user_data.?;
-        self.in_callback = true;
-        defer {
-            self.in_callback = false;
-            if (self.needs_rearm) {
-                self.needs_rearm = false;
-                self.arm();
-            }
-        }
-
         result catch |err| {
-            if (err != error.Canceled) {
-                self.active = false;
-                log.err("timer wheel error: {}", .{err});
-            }
+            self.active = false;
+            if (err != error.Canceled) log.err("timer wheel error: {}", .{err});
             return .disarm;
         };
-
-        self.active = false;
-        if (self.stopping) return .disarm;
+        if (self.stopping) {
+            self.active = false;
+            return .disarm;
+        }
         self.wheel.advance(self.current_time_ms());
-        self.needs_rearm = true;
-        return .disarm;
+        if (self.wheel.next_deadline() == null) {
+            self.active = false;
+            return .disarm;
+        }
+        // Re-arm through the backend so a new timer is never queued from
+        // inside its own completion callback.
+        return .rearm;
     }
 };
 
@@ -257,6 +240,13 @@ pub fn sleep(
 ) void {
     scheduler.schedule_after(node, delay_ms, resume_fn, ctx);
 }
+
+/// Maximum time between wheel advances while deadlines exist.
+///
+/// Five milliseconds keeps the idle timer cheap enough on IOCP, where a 1 ms
+/// re-arm can outrun the submission queue, while staying below a scheduler
+/// quantum for connection deadlines and parked `/delay` responses.
+pub const tick_ms: u64 = 5;
 
 fn current_ms(io: std.Io) u64 {
     const now = std.Io.Clock.now(.awake, io);

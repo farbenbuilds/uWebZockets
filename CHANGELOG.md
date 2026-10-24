@@ -18,10 +18,11 @@ follow-ups.
   deadlines beyond the level-3 range wait in an overflow list and enter the
   wheel when they come into range.
 - `core/timer.zig` `Scheduler`: one persistent libxev timer per worker loop.
-  It wakes on a bounded one-millisecond tick while deadlines exist, advances
-  and cascades the wheel, and never resets or reuses a completion. `stop`
-  lets the tick disarm instead of canceling. The old five-second pool sweep is
-  gone for idle connections.
+  It wakes on a bounded five-millisecond tick while deadlines exist, advances
+  and cascades the wheel, and re-arms through the backend action instead of
+  calling `run` inside its own callback. It never resets or reuses a
+  completion, and `stop` lets the tick disarm instead of canceling. The old
+  five-second pool sweep is gone for idle connections.
 - `AsyncResponse.sleep` and `AsyncResponse.sleep_complete`: zero-allocation
   request parking backed by connection-owned timer nodes. HTTP/1 uses slot 0
   and HTTP/2 maps one slot per stream; an expired or reused generation fails
