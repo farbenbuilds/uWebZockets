@@ -272,9 +272,11 @@ and tail latency hold up on lossy paths.
 - `src/core/timer_wheel.zig` is the per-worker deadline engine: four levels
   (256 x 1 ms, 64 x 256 ms, 64 x 16.4 s, 64 x 17.5 min) with intrusive nodes
   embedded in pooled connections. `src/core/timer.zig` drives it with one
-  persistent libxev timer that sleeps to the nearest deadline and resets when
-  an earlier one is scheduled. Keep-alive, incomplete-header, and deferred
-  response deadlines share that timer; there is no periodic pool sweep.
+  persistent libxev timer that wakes on a bounded one-millisecond tick while
+  deadlines exist. Keep-alive, incomplete-header, and deferred response
+  deadlines share that timer; there is no periodic pool sweep. The 1 ms tick
+  is the safe cross-backend choice on IOCP, where resetting or canceling and
+  reusing the same timer completion races queued callbacks.
 
 ### Client
 

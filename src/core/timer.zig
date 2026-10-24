@@ -118,16 +118,12 @@ pub const Scheduler = struct {
     wheel: wheel.Wheel,
     timer: xev.Timer,
     completion: xev.Completion = .{},
-    cancel_completion: xev.Completion = .{},
-    /// Separate completion for a stop cancel so it cannot reuse the re-arm
-    /// cancellation still queued for the same loop turn.
+    /// Dedicated stop cancellation. The driving completion is never reused for
+    /// a reset or a second operation.
     stop_completion: xev.Completion = .{},
     io: std.Io,
     loop: ?*xev.Loop = null,
     armed_deadline_ms: u64 = 0,
-    /// Deadline requested while the current timer is being canceled.
-    pending_deadline_ms: u64 = 0,
-    rearm_pending: bool = false,
     active: bool = false,
     stopping: bool = false,
     in_callback: bool = false,
@@ -195,9 +191,6 @@ pub const Scheduler = struct {
     pub fn stop(self: *Scheduler, loop: *Loop) void {
         self.stopping = true;
         self.loop = loop.get_xev_loop();
-        // A queued re-arm cancellation already owns the timer completion; its
-        // callback observes `stopping` and will not re-arm.
-        if (self.rearm_pending) return;
         if (!self.active or self.in_callback) return;
         self.active = false;
         self.timer.cancel(
@@ -223,63 +216,13 @@ pub const Scheduler = struct {
         const deadline = @max(next, now);
         const delay = deadline - now;
 
-        if (self.rearm_pending) {
-            if (deadline < self.pending_deadline_ms) self.pending_deadline_ms = deadline;
-            return;
-        }
-
-        if (self.active) {
-            if (deadline >= self.armed_deadline_ms) return;
-            // libxev's timer.reset shares the live completion with the cancel
-            // operation, which races a stop issued in the same loop turn.
-            // Cancel first, then arm the earlier deadline from the callback.
-            self.pending_deadline_ms = deadline;
-            self.rearm_pending = true;
-            self.active = false;
-            self.timer.cancel(
-                loop,
-                &self.completion,
-                &self.cancel_completion,
-                Scheduler,
-                self,
-                on_rearm_cancel,
-            );
-            return;
-        }
-
+        // A single one-millisecond tick bounds how late an earlier deadline
+        // scheduled after this arm can be noticed. It avoids Timer.reset and
+        // cancel/rearm races on IOCP and keeps one completion per scheduler.
+        const tick_ms = if (delay == 0) 1 else @min(delay, 1);
         self.active = true;
         self.armed_deadline_ms = deadline;
-        self.timer.run(loop, &self.completion, delay, Scheduler, self, on_tick);
-    }
-
-    fn on_rearm_cancel(
-        user_data: ?*Scheduler,
-        _: *xev.Loop,
-        _: *xev.Completion,
-        result: xev.CancelError!void,
-    ) xev.CallbackAction {
-        const self = user_data.?;
-        self.rearm_pending = false;
-        if (self.stopping) return .disarm;
-        _ = result catch |err| {
-            if (err != error.NotFound) log.debug("timer re-arm cancel error: {}", .{err});
-        };
-        const now = self.current_time_ms();
-        const target = @max(self.pending_deadline_ms, now);
-        const delay = target - now;
-        self.pending_deadline_ms = 0;
-        const loop = self.loop orelse return .disarm;
-        self.active = true;
-        self.armed_deadline_ms = target;
-        self.timer.run(
-            loop,
-            &self.completion,
-            delay,
-            Scheduler,
-            self,
-            on_tick,
-        );
-        return .disarm;
+        self.timer.run(loop, &self.completion, tick_ms, Scheduler, self, on_tick);
     }
 
     fn on_tick(
