@@ -94,9 +94,12 @@ follow-ups.
 - The v2.0.0 quiet-host performance evidence (2.1-C1), receive-side UDP GRO
   (2.1-C2), cross-process listener handoff (2.1-C4), and optional API
   follow-ups (2.1-C5) are carried to 2.2.0 and later; see `TODO.md`.
-- The native Windows runtime job and the XEV-001 regression are CI-gated and
-  were not run on this Linux host. The fork commit is reachable and the
-  cross-target compile gate passes.
+- The native Windows runtime job compiles the full tree and runs XEV-001 and
+  XEV-002, but it is not green as of 2026-10-24: the Windows cross-target
+  compile gate passes while the runtime suite still reports client connect
+  mapping, one timer assertion, the static-file `std.Io` positional read, and
+  three TLS cluster handshake failures. Windows remains compile-only; the raw
+  run and remaining test list are carried in `TODO.md` 2.2-C4.
 
 ## [2.0.6] - 2026-10-23
 
