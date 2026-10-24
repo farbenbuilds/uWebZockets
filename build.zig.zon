@@ -11,10 +11,11 @@
         },
 
         // farbenbuilds/libxev — downstream integration branch uwz/zig-0.16.
-        // Base 9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf plus XEV-001.
+        // Base 9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf plus XEV-001 and
+        // XEV-002.
         .libxev = .{
-            .url = "git+https://github.com/farbenbuilds/libxev#0fdea269988e3f5ccfe068ab235bbe5dd4fa9ede",
-            .hash = "libxev-0.0.0-86vtc9ETFACb96amwdKnz1fDkV20guxITNlImAu3DGiu",
+            .url = "git+https://github.com/farbenbuilds/libxev#bf3b4a20bae85510462656dcbaabaae2eb731ce2",
+            .hash = "libxev-0.0.0-86vtc1QVFAAe7UUlnWeQpgNmEA_bCQMbezc3M3f4Gff4",
         },
 
         // google/boringssl — Google LLC

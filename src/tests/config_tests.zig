@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const support = @import("test_support");
 
 const app_module = support.app;
@@ -245,11 +246,13 @@ test "config: default slab carries the router region at the end" {
     // incremental parser scan cursor adds two usize fields per connection.
     // The timing wheel adds one idle node and nine parking slots per
     // connection, moving the total to 683_382_400.
-    try std.testing.expectEqual(@as(usize, 683_382_400), total);
+    // Windows completions and handles are wider than the POSIX layout.
+    const expected_total: usize = if (builtin.os.tag == .windows) 683_808_384 else 683_382_400;
+    try std.testing.expectEqual(expected_total, total);
     // The default route-param extras stride is zero: the region extends the
     // slab by exactly one router region's bytes.
     try std.testing.expectEqual(@as(usize, 0), try config.extra_route_param_stride());
-    try std.testing.expectEqual(@as(usize, 682_508_288), total - router_bytes);
+    try std.testing.expectEqual(expected_total - router_bytes, total - router_bytes);
 }
 
 test "config: slab bytes grow with each router capacity knob" {

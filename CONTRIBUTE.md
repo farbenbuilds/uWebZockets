@@ -93,7 +93,7 @@ project overrides take precedence over vendored defaults.
   transport abstractions (POSIX and Windows IOCP via `libxev`).
 - Submit non-libxev dependency fixes to the upstream project rather than
   rewriting vendored files without an auditable patch. libxev is the
-  exception: the `uwz/zig-0.16` integration branch exists and carries XEV-001;
+  exception: the `uwz/zig-0.16` integration branch exists and carries XEV-001 and XEV-002;
   the manifest pins a full fork commit. Never send patches to
   `mitchellh/libxev`; see [docs/libxev_fork.md](docs/libxev_fork.md).
 
@@ -178,7 +178,7 @@ a stale artifact cannot hide a dependency problem.
 
 The maintained downstream fork is <https://github.com/farbenbuilds/libxev>,
 and that relationship is policy now. The `uwz/zig-0.16` integration branch
-exists at `0fdea26` and carries XEV-001; the manifest pins that full commit and
+exists at `bf3b4a2` and carries XEV-001 and XEV-002; the manifest pins that full commit and
 the ADR 0004 IOCP overlay is removed. Upstream `mitchellh/libxev` is fetch-only:
 do not push, open issues or pull requests, comment, or send patches there.
 

@@ -5,7 +5,7 @@
 | Component | Version or revision | License |
 | --- | --- | --- |
 | zslay | 0.2.1 | MIT |
-| libxev | 0fdea269988e3f5ccfe068ab235bbe5dd4fa9ede (farbenbuilds fork, base 9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf) | MIT |
+| libxev | bf3b4a20bae85510462656dcbaabaae2eb731ce2 (farbenbuilds fork, base 9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf) | MIT |
 | BoringSSL | 0.20261020.0 (d3bf4795ad5b79d646cddf2fec687da5b9b502db) | ISC-style and component licenses |
 | Fiat Crypto (via BoringSSL) | BoringSSL revision above | Apache-2.0 |
 | lsquic | 4.10.2 | MIT and bundled component licenses |
@@ -32,9 +32,9 @@ completed test connections. The upstream sources remain unchanged.
 
 `build.zig.zon` pins the maintained downstream fork
 <https://github.com/farbenbuilds/libxev> at the full commit
-`0fdea269988e3f5ccfe068ab235bbe5dd4fa9ede` on `uwz/zig-0.16`. The branch is
-based on upstream `9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf` and carries one
-ledgered commit, XEV-001, which clears the IOCP accept socket after `AcceptEx`
+`bf3b4a20bae85510462656dcbaabaae2eb731ce2` on `uwz/zig-0.16`. The branch is
+based on upstream `9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf` and carries two
+ledgered commits, XEV-001 and XEV-002, which clear the IOCP accept socket after `AcceptEx`
 transfers it to the completion on both success and error paths. No local
 overlay or `patches/libxev_iocp_accept_socket.patch` remains.
 `scripts/check_libxev_fork.sh` verifies the full commit, all four dependency

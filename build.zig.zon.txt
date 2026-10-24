@@ -1,5 +1,5 @@
 git+https://github.com/ebiggers/libdeflate#92e6a0db9fa848d742f9eb286c92afc60f2c3dda
-git+https://github.com/farbenbuilds/libxev#0fdea269988e3f5ccfe068ab235bbe5dd4fa9ede
+git+https://github.com/farbenbuilds/libxev#bf3b4a20bae85510462656dcbaabaae2eb731ce2
 git+https://github.com/google/boringssl#d3bf4795ad5b79d646cddf2fec687da5b9b502db
 git+https://github.com/litespeedtech/ls-hpack#fda48e02491d865cce00612be8cc10c2622b8e55
 git+https://github.com/litespeedtech/ls-qpack#91567706c41c0d97ab8dc576873ecd472d7869fa

@@ -230,10 +230,10 @@ on ignored developer certificates.
 ## libxev provenance
 
 `build.zig.zon` pins the maintained fork <https://github.com/farbenbuilds/libxev>
-at the full commit `0fdea269988e3f5ccfe068ab235bbe5dd4fa9ede` on
+at the full commit `bf3b4a20bae85510462656dcbaabaae2eb731ce2` on
 `uwz/zig-0.16`. The branch is based on upstream
-`9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf` and carries XEV-001, the Windows
-IOCP `AcceptEx` ownership fix, as a ledgered commit
+`9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf` and carries XEV-001 (Windows IOCP `AcceptEx` ownership) and XEV-002
+(Winsock error mapping), as a ledgered commit
 ([ADR 0005](docs/adr/0005-libxev-fork.md)). The overlay and audit patch are
 deleted.
 

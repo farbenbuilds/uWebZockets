@@ -2187,6 +2187,9 @@ pub const TcpServer = struct {
     accept_fail_streak: u8 = 0,
     closing: bool = false,
     close_complete: bool = false,
+    accept_cancel_active: bool = false,
+    accept_cancel_requested: bool = false,
+    accept_target_done: bool = false,
     accept_retry_active: bool = false,
     accept_retry_cancel_active: bool = false,
 };
@@ -2426,6 +2429,7 @@ pub fn accept_start(server: *TcpServer, loop: *Loop) void {
 
 fn arm_accept(server: *TcpServer, loop: *xev.Loop) void {
     if (server.closing) return;
+    server.accept_target_done = false;
     server.listener.accept(
         loop,
         &server.accept_completion,
@@ -2461,18 +2465,19 @@ pub fn close_server(server: *TcpServer, loop: *Loop) void {
     }
 
     if (server.accept_completion.state() == .active) {
+        server.accept_cancel_active = true;
+        server.accept_cancel_requested = true;
         core_loop.cancel(
             loop.get_xev_loop(),
             &server.accept_completion,
             &server.accept_cancel_completion,
-            void,
-            null,
+            TcpServer,
+            server,
             on_accept_cancel_complete,
         );
     }
     if (builtin.os.tag == .windows) {
-        close_socket(xev.tcp_fd(server.listener));
-        server.close_complete = true;
+        finish_windows_listener_close(server);
         return;
     }
     server.listener.close(
@@ -2488,18 +2493,35 @@ pub fn close_server(server: *TcpServer, loop: *Loop) void {
 pub fn deinit_server(server: *TcpServer) void {
     std.debug.assert(!server.accept_retry_active);
     std.debug.assert(!server.accept_retry_cancel_active);
+    std.debug.assert(!server.accept_cancel_active);
     server.accept_retry_timer.deinit();
 }
 
+/// Closes a Windows listener only after its accept cancel and target callback
+/// have drained. Closing the descriptor first makes the still-queued AcceptEx
+/// completion fail with WSAENOTSOCK instead of the expected cancellation.
+fn finish_windows_listener_close(server: *TcpServer) void {
+    if (builtin.os.tag != .windows) return;
+    if (!server.closing or server.close_complete) return;
+    if (server.accept_cancel_active) return;
+    if (server.accept_completion.state() == .active) return;
+    if (server.accept_cancel_requested and !server.accept_target_done) return;
+    close_socket(xev.tcp_fd(server.listener));
+    server.close_complete = true;
+}
+
 fn on_accept_cancel_complete(
-    _: ?*void,
+    user_data: ?*TcpServer,
     _: *xev.Loop,
     _: *xev.Completion,
     result: xev.CancelError!void,
 ) xev.CallbackAction {
+    const server = user_data orelse return .disarm;
+    server.accept_cancel_active = false;
     _ = result catch |err| {
         if (err != error.NotFound) log.debug("accept cancel error: {}", .{err});
     };
+    finish_windows_listener_close(server);
     return .disarm;
 }
 
@@ -2512,21 +2534,31 @@ fn on_accept_complete(
     _ = completion;
 
     const server = user_data.?;
+    server.accept_target_done = true;
     const accepted_socket = result catch |err| {
-        if (server.closing) return .disarm;
-        return accept_failed(server, loop, err);
+        if (server.closing) {
+            finish_windows_listener_close(server);
+            return .disarm;
+        }
+        const action = accept_failed(server, loop, err);
+        if (action == .rearm) server.accept_target_done = false;
+        return action;
     };
 
     server.accept_fail_streak = 0;
 
     if (server.closing) {
         close_unregistered_socket(accepted_socket);
+        finish_windows_listener_close(server);
         return .disarm;
     }
 
     request_quickack(xev.tcp_fd(accepted_socket));
     set_nodelay(xev.tcp_fd(accepted_socket));
     server.on_connection(accepted_socket, server.user_data);
+    // The completion will be re-armed by the backend; the next target callback
+    // owns the done flag again.
+    server.accept_target_done = false;
     return .rearm;
 }
 
