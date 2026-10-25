@@ -129,6 +129,22 @@ See [client.md](client.md) for the full contract.
   start. The fallback moves blocking file operations to a small thread pool;
   throughput-sensitive deployments should still prefer io_uring.
 
+## Timers and macOS kqueue
+
+- Before 2.1.6, a macOS server with a pending idle deadline could serve zero
+  requests per second because the scheduler returned `.rearm` and kqueue
+  repeated the expired absolute timeout. 2.1.6 disarms each tick and arms a
+  fresh relative timer; upgrade before measuring kqueue throughput.
+- The libxev kqueue duplicate-completion path is separate from the scheduler
+  fix. XEV-003, XEV-004, and XEV-005 are merged into the maintained fork and
+  pinned by 2.1.6, so the cluster signal-watcher panic and invalid-state log
+  are fixed for this release. The measurements and mechanisms are recorded in
+  [libxev_kqueue_findings.md](libxev_kqueue_findings.md).
+- A 2.1.6 server log containing `libxev_kqueue: invalid state` or a `queue.zig`
+  assertion is a regression; keep the raw log with the benchmark artifacts and
+  report it. Cancellation of a completion whose result is already queued is
+  still ordered after that callback; close paths must wait for the callback.
+
 ## HTTP/3
 
 - Extended CONNECT, WebTransport, push, and application datagrams are rejected

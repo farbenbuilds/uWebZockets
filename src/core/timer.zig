@@ -113,7 +113,7 @@ fn on_timer_cancel(
 ///
 /// The driving timer uses a bounded tick so a deadline scheduled after the
 /// current arm is noticed without resetting or canceling a live completion.
-/// Repeating ticks use the backend's `.rearm` action, never a nested `run`.
+/// Each tick disarms the completed completion and arms a fresh relative timer.
 /// It is loop-confined: every method except `current_time_ms` must run on the
 /// loop that owns the underlying completion.
 pub const Scheduler = struct {
@@ -122,7 +122,6 @@ pub const Scheduler = struct {
     completion: xev.Completion = .{},
     io: std.Io,
     loop: ?*xev.Loop = null,
-    armed_deadline_ms: u64 = 0,
     active: bool = false,
     stopping: bool = false,
 
@@ -138,6 +137,7 @@ pub const Scheduler = struct {
 
     /// Releases the libxev timer after `stop` has drained the loop.
     pub fn deinit(self: *Scheduler) void {
+        std.debug.assert(!self.active);
         self.timer.deinit();
     }
 
@@ -189,24 +189,32 @@ pub const Scheduler = struct {
         self.stopping = true;
         self.loop = loop.get_xev_loop();
         // The driving timer is not canceled. It wakes on its bounded tick and
-        // returns .disarm after observing `stopping`, which avoids IOCP's
-        // queued-cancel completion race without delaying shutdown.
+        // disarms after observing `stopping`; shutdown waits at most one tick.
+        // This avoids IOCP's queued-cancel completion race.
     }
 
     /// Arms the one driving timer when deadlines exist.
     fn arm(self: *Scheduler) void {
-        if (self.stopping or self.active) return;
         const loop = self.loop orelse return;
+        self.arm_on(loop, &self.completion);
+    }
+
+    fn arm_on(self: *Scheduler, loop: *xev.Loop, completion: *xev.Completion) void {
+        std.debug.assert(completion == &self.completion);
+        if (self.stopping or self.active) return;
         if (self.wheel.next_deadline() == null) return;
         self.active = true;
-        self.armed_deadline_ms = self.wheel.next_deadline().?;
-        self.timer.run(loop, &self.completion, tick_ms, Scheduler, self, on_tick);
+        const now_ns: u64 = @intCast(@max(
+            std.Io.Clock.now(.awake, self.io).nanoseconds,
+            0,
+        ));
+        self.timer.run(loop, completion, tick_delay_ms(now_ns), Scheduler, self, on_tick);
     }
 
     fn on_tick(
         user_data: ?*Scheduler,
-        _: *xev.Loop,
-        _: *xev.Completion,
+        loop: *xev.Loop,
+        completion: *xev.Completion,
         result: anyerror!void,
     ) xev.CallbackAction {
         const self = user_data.?;
@@ -220,13 +228,13 @@ pub const Scheduler = struct {
             return .disarm;
         }
         self.wheel.advance(self.current_time_ms());
-        if (self.wheel.next_deadline() == null) {
-            self.active = false;
-            return .disarm;
-        }
-        // Re-arm through the backend so a new timer is never queued from
-        // inside its own completion callback.
-        return .rearm;
+        // The timer completion is dead when its callback runs. Clear the active
+        // guard before reuse so a deadline scheduled during advance cannot arm
+        // a second completion, then arm the next relative tick once.
+        self.active = false;
+        if (self.stopping or self.wheel.next_deadline() == null) return .disarm;
+        self.arm_on(loop, completion);
+        return .disarm;
     }
 };
 
@@ -247,6 +255,20 @@ pub fn sleep(
 /// re-arm can outrun the submission queue, while staying below a scheduler
 /// quantum for connection deadlines and parked `/delay` responses.
 pub const tick_ms: u64 = 5;
+
+/// Returns a tick delay that does not cross a libxev timespec second.
+///
+/// libxev adds the delay to the cached nanosecond field without carrying into
+/// seconds. An arm in the last five milliseconds of a second can therefore
+/// become a roughly one-second wait. Keep each arm inside the current second;
+/// the next tick resumes the normal cadence. Remove this when the maintained
+/// fork normalizes the timer timespec.
+pub fn tick_delay_ms(now_ns: u64) u64 {
+    const nsec = now_ns % std.time.ns_per_s;
+    const remaining_ms = (std.time.ns_per_s - nsec) / std.time.ns_per_ms;
+    if (remaining_ms <= 1) return 0;
+    return @min(tick_ms, remaining_ms - 1);
+}
 
 fn current_ms(io: std.Io) u64 {
     const now = std.Io.Clock.now(.awake, io);

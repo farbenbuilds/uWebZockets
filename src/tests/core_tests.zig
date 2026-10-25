@@ -86,6 +86,18 @@ fn mark_fired(ctx: *anyopaque) void {
     fired.* = true;
 }
 
+const StopSchedulerContext = struct {
+    scheduler: *timer.Scheduler,
+    event_loop: *loop.Loop,
+    fired: bool = false,
+};
+
+fn stop_scheduler(ctx: *anyopaque) void {
+    const state: *StopSchedulerContext = @ptrCast(@alignCast(ctx));
+    state.scheduler.stop(state.event_loop);
+    state.fired = true;
+}
+
 test "core: timer scheduler fires one wheel deadline and drains" {
     var event_loop = try loop.init();
     defer loop.deinit(&event_loop);
@@ -105,6 +117,92 @@ test "core: timer scheduler fires one wheel deadline and drains" {
     try event_loop.xev_loop.run(.until_done);
 }
 
+test "core: scheduler tick delay stays inside the current second" {
+    const ns_per_ms = std.time.ns_per_ms;
+    try std.testing.expectEqual(timer.tick_ms, timer.tick_delay_ms(0));
+    try std.testing.expectEqual(timer.tick_ms, timer.tick_delay_ms(994 * ns_per_ms));
+    try std.testing.expectEqual(@as(u64, 4), timer.tick_delay_ms(995 * ns_per_ms));
+    try std.testing.expectEqual(@as(u64, 2), timer.tick_delay_ms(997 * ns_per_ms));
+    try std.testing.expectEqual(@as(u64, 1), timer.tick_delay_ms(998 * ns_per_ms));
+    try std.testing.expectEqual(@as(u64, 0), timer.tick_delay_ms(999 * ns_per_ms));
+    try std.testing.expectEqual(@as(u64, 0), timer.tick_delay_ms(std.time.ns_per_s - 1));
+}
+
+test "core: scheduler advances at the next timer interval" {
+    var event_loop = try loop.init();
+    defer loop.deinit(&event_loop);
+
+    var scheduler = try timer.Scheduler.init(std.testing.io);
+    defer scheduler.deinit();
+
+    // Keep the two measured ticks away from a libxev second boundary; the
+    // scheduler deliberately shortens an arm there for the timespec guard.
+    while (@mod(std.Io.Clock.now(.awake, std.testing.io).nanoseconds, std.time.ns_per_s) >
+        std.time.ns_per_s / 2)
+    {
+        try std.Io.sleep(std.testing.io, .{
+            .nanoseconds = 10 * std.time.ns_per_ms,
+        }, .awake);
+    }
+
+    var fired = false;
+    var node: support.timer_wheel.TimerNode = .{};
+    timer.sleep(&scheduler, &node, 60_000, &fired, mark_fired);
+    scheduler.start(&event_loop);
+
+    try event_loop.xev_loop.run(.once);
+    const first_tick = std.Io.Clock.now(.awake, std.testing.io).nanoseconds;
+    try event_loop.xev_loop.run(.once);
+    const second_tick = std.Io.Clock.now(.awake, std.testing.io).nanoseconds;
+    try std.testing.expect(scheduler.active);
+
+    scheduler.stop(&event_loop);
+    try event_loop.xev_loop.run(.until_done);
+    try std.testing.expect(!scheduler.active);
+
+    const interval_ns = second_tick - first_tick;
+    const min_interval_ns = timer.tick_ms * std.time.ns_per_ms / 2;
+    const max_interval_ns = std.time.ns_per_s;
+    try std.testing.expect(interval_ns >= min_interval_ns);
+    try std.testing.expect(interval_ns < max_interval_ns);
+    try std.testing.expect(!fired);
+}
+
+test "core: scheduler does not rearm after a callback stops it" {
+    var event_loop = try loop.init();
+    defer loop.deinit(&event_loop);
+
+    var scheduler = try timer.Scheduler.init(std.testing.io);
+    defer scheduler.deinit();
+
+    var callback_state = StopSchedulerContext{
+        .scheduler = &scheduler,
+        .event_loop = &event_loop,
+    };
+    var due: support.timer_wheel.TimerNode = .{};
+    var future: support.timer_wheel.TimerNode = .{};
+    var future_fired = false;
+    timer.sleep(&scheduler, &due, 1, &callback_state, stop_scheduler);
+    timer.sleep(&scheduler, &future, 60_000, &future_fired, mark_fired);
+    scheduler.start(&event_loop);
+
+    // epoll's `.once` may only submit a timer queued in the same call, so drain
+    // a bounded number of ticks instead of assuming the first call runs the due
+    // node.
+    var spins: usize = 0;
+    while (!callback_state.fired and spins < 16) : (spins += 1) {
+        try event_loop.xev_loop.run(.once);
+    }
+    const active_after_callback = scheduler.active;
+    scheduler.stop(&event_loop);
+    try event_loop.xev_loop.run(.until_done);
+
+    try std.testing.expect(callback_state.fired);
+    try std.testing.expect(!active_after_callback);
+    try std.testing.expect(!scheduler.active);
+    try std.testing.expect(!future_fired);
+}
+
 test "core: timer scheduler stop after a reset drains without the old deadline" {
     var event_loop = try loop.init();
     defer loop.deinit(&event_loop);
@@ -118,7 +216,7 @@ test "core: timer scheduler stop after a reset drains without the old deadline" 
     var late: support.timer_wheel.TimerNode = .{};
     var early: support.timer_wheel.TimerNode = .{};
     timer.sleep(&scheduler, &late, 60_000, &late_fired, mark_fired);
-    // This earlier deadline queues the old timer's cancellation.
+    // Both nodes enter the wheel while the single driver is already armed.
     timer.sleep(&scheduler, &early, 30_000, &early_fired, mark_fired);
     const started = std.Io.Clock.now(.awake, std.testing.io).nanoseconds;
     scheduler.stop(&event_loop);
@@ -513,6 +611,76 @@ test "tcp: set_nodelay enables TCP_NODELAY on a socket" {
     );
     try std.testing.expectEqual(@as(c_int, 0), rc);
     try std.testing.expectEqual(@as(c_int, 1), value);
+}
+
+test "tcp: set_nodelay tolerates a reset peer" {
+    if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SkipZigTest;
+
+    const listener_fd = std.c.socket(std.posix.AF.INET, std.posix.SOCK.STREAM, 0);
+    if (listener_fd < 0) return error.SkipZigTest;
+    defer _ = std.c.close(listener_fd);
+
+    var address: std.posix.sockaddr.in = .{
+        .family = std.posix.AF.INET,
+        .port = 0,
+        .addr = std.mem.nativeToBig(u32, 0x7f000001),
+        .zero = [_]u8{0} ** 8,
+    };
+    if (std.c.bind(listener_fd, @ptrCast(&address), @sizeOf(@TypeOf(address))) != 0) {
+        return error.SkipZigTest;
+    }
+    if (std.c.listen(listener_fd, 1) != 0) return error.SkipZigTest;
+
+    var address_length: std.posix.socklen_t = @sizeOf(@TypeOf(address));
+    if (std.c.getsockname(listener_fd, @ptrCast(&address), &address_length) != 0) {
+        return error.SkipZigTest;
+    }
+
+    const client_fd = std.c.socket(std.posix.AF.INET, std.posix.SOCK.STREAM, 0);
+    if (client_fd < 0) return error.SkipZigTest;
+    var client_open = true;
+    defer if (client_open) {
+        _ = std.c.close(client_fd);
+    };
+    if (std.c.connect(client_fd, @ptrCast(&address), address_length) != 0) {
+        return error.SkipZigTest;
+    }
+
+    const accepted_fd = std.c.accept(listener_fd, null, null);
+    if (accepted_fd < 0) return error.SkipZigTest;
+    defer _ = std.c.close(accepted_fd);
+
+    var linger = std.posix.linger{ .onoff = 1, .linger = 0 };
+    try std.posix.setsockopt(
+        client_fd,
+        std.posix.SOL.SOCKET,
+        std.posix.SO.LINGER,
+        std.mem.asBytes(&linger),
+    );
+    try std.testing.expectEqual(@as(c_int, 0), std.c.close(client_fd));
+    client_open = false;
+
+    var poll_fds = [_]std.posix.pollfd{
+        .{ .fd = accepted_fd, .events = std.posix.POLL.IN, .revents = 0 },
+    };
+    try std.testing.expectEqual(@as(usize, 1), try std.posix.poll(&poll_fds, 1000));
+    try std.testing.expect(poll_fds[0].revents &
+        (std.posix.POLL.ERR | std.posix.POLL.HUP) != 0);
+
+    // Production requests the option before reading the reset, so poll first
+    // to observe the state without consuming it.
+    tcp.set_nodelay(accepted_fd);
+
+    var received: [1]u8 = undefined;
+    try std.testing.expectError(error.ConnectionResetByPeer, std.posix.read(accepted_fd, &received));
+}
+
+test "tcp: set_nodelay tolerates an invalid descriptor" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    // std.posix.setsockopt treats EBADF as unreachable, so a vanished peer
+    // could trap the accept path. The raw best-effort call must not.
+    tcp.set_nodelay(@as(tcp.SocketFd, -1));
 }
 
 test "tcp: listener sets TCP_DEFER_ACCEPT" {

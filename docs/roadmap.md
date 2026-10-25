@@ -85,6 +85,20 @@ path or the shared-nothing ownership model.
 | Thread lifecycle was inline in the application type | `src/router/worker_group.zig` owns lifecycle policy, release claiming, borrowed thread start/join, and first-failure capture; thread storage and compatibility fields stay in `Cluster` |
 | Cluster configuration used an untyped callback | `Cluster.configure` accepts the named `ConfigureCallback` function pointer |
 
+## Closed in 2.1.6
+
+The 2.1.6 patch release removes the absolute-timer replay that starved kqueue
+and could spin the other absolute-timer backends, pins the libxev kqueue
+dispatch fixes, and makes local benchmark evidence fail closed without changing
+a public API or a wire format.
+
+| Boundary | Resolution |
+| --- | --- |
+| The expired timer deadline could starve the loop | `timer.Scheduler` disarms the completed timer and arms a fresh relative five-millisecond tick instead of returning `.rearm`; a stopping scheduler does not re-arm. The spin was observed on macOS kqueue and the mechanism is shared by every absolute-timer backend. Each arm stays inside the current second until libxev normalizes timer timespecs. The per-worker deadline wheel is unchanged |
+| `set_nodelay` trapped after a reset peer | The raw `setsockopt` result is ignored as a documented best-effort operation, so Darwin `EINVAL` cannot reach the `std.posix` unreachable branch during accept |
+| Benchmark samples could pass with missing data | The HTTP/2 runner fails on missing request counters, invalid p99 values, non-TLSv1.3 samples, exit status 143 on the TLS cluster, an empty RSS sampler, an occupied port, or a listener owned by another process. The HTTP runner fails on invalid rates, socket errors, non-2xx responses, or shutdown and log failures. Both write a completion sentinel; the HTTP/2 runner also persists cohort medians |
+| kqueue rearm and queue defects | [libxev_kqueue_findings.md](libxev_kqueue_findings.md) records the investigation. XEV-003, XEV-004, and XEV-005 are merged into `farbenbuilds/libxev` and pinned at `c49f6dfb`; the exact XEV-005 tree passed 65/65 macOS kqueue tests in Debug and ReleaseSafe |
+
 ## Carried into 2.2.0
 
 - Quiet-host evidence for the v2.0.0 and v2.1.0 pipeline, WebSocket,
@@ -173,6 +187,7 @@ are recorded in [ADR 0004](adr/0004-windows-iocp-accept-and-queued-close.md).
 [ADR 0005](adr/0005-libxev-fork.md) selects `farbenbuilds/libxev` as the
 maintained fork. The 2.1.0 release pins commit `cbf01bc` on `uwz/zig-0.16`,
 carries XEV-001 in the fork, and removes the overlay and audit patch;
+2.1.6 advances the pin to `c49f6dfb` with XEV-003 through XEV-005.
 [dependency_forks.md](dependency_forks.md) is the policy. The TLS cluster test plumbing already
 binds `getsockname` and `SO_RCVTIMEO` through ws2_32, so those tests execute
 rather than skip. Windows remains compile-only in the support claim until the
