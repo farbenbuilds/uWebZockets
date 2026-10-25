@@ -3,8 +3,6 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
-## [Unreleased]
-
 ## [2.1.5] - 2026-10-25
 
 API-hardening release for the thread-per-core manager. It makes cluster
