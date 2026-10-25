@@ -4,7 +4,7 @@
     "formula": "candidate_median_rps >= baseline_median_rps * minimum_baseline_ratio",
     "minimum_baseline_ratio": 0.9,
     "passed": true,
-    "threshold_rps": 143797.464
+    "threshold_rps": 98441.973
   },
   "methodology": {
     "build_optimize": "ReleaseFast",
@@ -25,43 +25,43 @@
   },
   "provenance": {
     "baseline_flake_lock_sha256": "a83b090e14e3b52a5ee5453f5dace3dbb2d7264991fef5409ed8c764551ceb5a",
-    "baseline_sha": "f1cd472e20f5565eee90232e1fe03a313c0d01ac",
+    "baseline_sha": "f6756a297c47ce34d2f4d22da33b3cc4453f9bf5",
     "candidate_flake_lock_sha256": "a83b090e14e3b52a5ee5453f5dace3dbb2d7264991fef5409ed8c764551ceb5a",
-    "candidate_sha": "f1cd472e20f5565eee90232e1fe03a313c0d01ac",
+    "candidate_sha": "f6756a297c47ce34d2f4d22da33b3cc4453f9bf5",
     "event_name": "schedule",
     "git_ref": "refs/heads/main",
     "repository": "farbenbuilds/uWebZockets",
     "run_attempt": 1,
-    "run_id": 40077135119,
-    "workflow_run_url": "https://github.com/farbenbuilds/uWebZockets/actions/runs/40077135119"
+    "run_id": 40176894022,
+    "workflow_run_url": "https://github.com/farbenbuilds/uWebZockets/actions/runs/40176894022"
   },
-  "record_id": "40077135119-1-f1cd472e20f5",
-  "recorded_at": "2026-10-24T08:18:14Z",
+  "record_id": "40176894022-1-f6756a297c47",
+  "recorded_at": "2026-10-25T08:49:24Z",
   "results": {
     "baseline": {
-      "median_rps": 159774.96,
+      "median_rps": 109379.97,
       "samples_rps": [
-        156952.96,
-        160590.4,
-        159774.96
+        109478.79,
+        109379.97,
+        101143.91
       ]
     },
     "candidate": {
-      "median_rps": 153248.35,
+      "median_rps": 108208.14,
       "samples_rps": [
-        153248.35,
-        155417.17,
-        134792.77
+        104332.3,
+        112643.05,
+        108208.14
       ]
     },
-    "candidate_to_baseline_ratio": 0.9591512337102135
+    "candidate_to_baseline_ratio": 0.9892866125306123
   },
   "runner": {
     "architecture": "X64",
-    "cpu_model": "Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz",
-    "image": "ubuntu24/20261012.334.1",
+    "cpu_model": "AMD EPYC 7763 64-Core Processor",
+    "image": "ubuntu24/20261023.334.3",
     "kernel": "Linux 6.17.0-1022-azure #22-Ubuntu SMP Mon Jul 27 17:24:03 UTC 2026 x86_64 GNU/Linux",
-    "name": "GitHub Actions 1000004967",
+    "name": "GitHub Actions 1000005322",
     "os": "Linux"
   },
   "schema_version": 1,
