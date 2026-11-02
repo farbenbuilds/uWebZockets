@@ -187,8 +187,13 @@ observations. Review fixes bound unsolicited grants and preserve receive callbac
 results/errors; coordinator composition remains open.
 The [independent file/early peers](m2_h2_combined_file_peer.md) retain producer
 facts while checking bounded file generation, close ownership and END-before-
-reset order. All four peer preparation slices are now recorded; actual ordinary
-coordinator composition and combined acceptance remain open.
+reset order. All four peer preparation slices are recorded and provide the
+reviewed factories used by the coordinator integration below.
+The [ordinary coordinator composition](m2_h2_combined_coordinator_ordinary.md)
+now supports caller-ordered subsets of all 37 ordinary handlers with fresh
+connections, retained observations and one final collection. Representative
+actual runs pass after a private deadline fix; disconnect/shutdown, default/all40
+and native acceptance remain open.
 The [independent H2 client preparation](evidence/m2_h2_client/README.md) preserves
 pinned tools and reviewed bounded helpers; its checks are pure and provide no
 uWebZockets, socket or live-upload evidence.

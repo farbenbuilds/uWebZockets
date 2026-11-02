@@ -78,7 +78,12 @@ coordinator composition and native adoption remain open.
 The [independent file/early peers](m2_h2_combined_file_peer.md) preserve the
 producer-to-file-to-early chain and separate peer diagnostics from client facts.
 Four focused checks pass, with historical RED/history gaps explicitly retained;
-ordinary coordinator composition is the next required integration step.
+these constructors prepare ordinary coordinator composition.
+The [ordinary coordinator composition](m2_h2_combined_coordinator_ordinary.md)
+now implements that step with actual representative runs, per-connection
+summaries, retained output/binding and private close-time checks. It supports
+37 ordinary selections; actual default/all40, lifecycle children and native
+adoption remain required.
 The [HTTP/3 source checkpoint](m2_h3_source_authentication.md)
 authenticates the cached QPACK file against the retained exact-pin bundle.
 The combined H2 run and full H2 gates, HTTP/3,
