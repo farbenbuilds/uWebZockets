@@ -86,11 +86,14 @@ summaries, retained output/binding and private close-time checks. It supports
 The [disconnect coordinator composition](m2_h2_combined_coordinator_disconnect.md)
 adds strict termination and replacement anywhere among those cases, with private
 time bounds and copied local accounting. All 38 selections are supported;
-representative actual runs pass. Shutdown children, actual default/all40 and
-native adoption remain required.
+representative actual runs pass. Its successor below adds shutdown children.
 The [independent shutdown peer](m2_h2_combined_shutdown_peer.md) now provides a
 shared constructor for that next step, preserving standalone controls and
-rejecting DATA before upload metadata. Shutdown composition remains open.
+rejecting DATA before upload metadata.
+The [shutdown coordinator composition](m2_h2_combined_coordinator_shutdown.md)
+adds fresh idle/main children and active termination, with eight actual schedules
+and reviewed final-state guards. Full catalogue/default selection support is
+distinct from the still-required actual all40 run and native adoption.
 The [HTTP/3 source checkpoint](m2_h3_source_authentication.md)
 authenticates the cached QPACK file against the retained exact-pin bundle.
 The combined H2 run and full H2 gates, HTTP/3,

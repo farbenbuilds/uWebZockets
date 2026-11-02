@@ -196,10 +196,14 @@ actual runs pass after a private deadline fix.
 The [disconnect coordinator composition](m2_h2_combined_coordinator_disconnect.md)
 extends support to 38 cases, preserving strict termination, independent transport
 state and shared case accounting across replacement. Representative runs and
-review pass; shutdown, actual default/all40 and native acceptance remain open.
+review pass, providing the replacement semantics used by shutdown below.
 The [independent shutdown peer](m2_h2_combined_shutdown_peer.md) prepares that
 next composition with serialized active facts and bounded storage. Review fixed
-DATA-before-metadata acceptance; the coordinator shutdown step remains open.
+DATA-before-metadata acceptance.
+The [shutdown coordinator composition](m2_h2_combined_coordinator_shutdown.md)
+now implements idle/main children and canonical active termination. Eight actual
+representative schedules pass after final-state fixes; all40/default selections
+are supported, while actual all40 aggregation and native acceptance remain open.
 The [independent H2 client preparation](evidence/m2_h2_client/README.md) preserves
 pinned tools and reviewed bounded helpers; its checks are pure and provide no
 uWebZockets, socket or live-upload evidence.
