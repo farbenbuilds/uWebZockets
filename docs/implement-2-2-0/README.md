@@ -184,7 +184,7 @@ repeated rejected sends.
 The [independent producer/pressure peers](m2_h2_combined_producer_peer.md) earn
 diagnostic and binding facts from serialized peer progress, with separate client
 observations. Review fixes bound unsolicited grants and preserve receive callback
-results/errors; coordinator composition remains open.
+results/errors; these peers support the coordinator composition below.
 The [independent file/early peers](m2_h2_combined_file_peer.md) retain producer
 facts while checking bounded file generation, close ownership and END-before-
 reset order. All four peer preparation slices are recorded and provide the
@@ -192,8 +192,11 @@ reviewed factories used by the coordinator integration below.
 The [ordinary coordinator composition](m2_h2_combined_coordinator_ordinary.md)
 now supports caller-ordered subsets of all 37 ordinary handlers with fresh
 connections, retained observations and one final collection. Representative
-actual runs pass after a private deadline fix; disconnect/shutdown, default/all40
-and native acceptance remain open.
+actual runs pass after a private deadline fix.
+The [disconnect coordinator composition](m2_h2_combined_coordinator_disconnect.md)
+extends support to 38 cases, preserving strict termination, independent transport
+state and shared case accounting across replacement. Representative runs and
+review pass; shutdown, actual default/all40 and native acceptance remain open.
 The [independent H2 client preparation](evidence/m2_h2_client/README.md) preserves
 pinned tools and reviewed bounded helpers; its checks are pure and provide no
 uWebZockets, socket or live-upload evidence.

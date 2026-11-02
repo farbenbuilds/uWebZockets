@@ -82,8 +82,12 @@ these constructors prepare ordinary coordinator composition.
 The [ordinary coordinator composition](m2_h2_combined_coordinator_ordinary.md)
 now implements that step with actual representative runs, per-connection
 summaries, retained output/binding and private close-time checks. It supports
-37 ordinary selections; actual default/all40, lifecycle children and native
-adoption remain required.
+37 ordinary selections.
+The [disconnect coordinator composition](m2_h2_combined_coordinator_disconnect.md)
+adds strict termination and replacement anywhere among those cases, with private
+time bounds and copied local accounting. All 38 selections are supported;
+representative actual runs pass. Shutdown children, actual default/all40 and
+native adoption remain required.
 The [HTTP/3 source checkpoint](m2_h3_source_authentication.md)
 authenticates the cached QPACK file against the retained exact-pin bundle.
 The combined H2 run and full H2 gates, HTTP/3,
