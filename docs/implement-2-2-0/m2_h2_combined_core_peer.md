@@ -40,6 +40,10 @@ peer uses at most 8201 parser bytes, a 257-byte echo, ten pending packets and
 16384 pending bytes; measured queued bytes peak at 593 in these schedules.
 These Python fixture bounds are not native allocation or performance claims.
 
+The [capacity correction](m2_h2_combined_core_capacity.md) later enforces the
+parser cap before mutation on rejected input. It preserves the positive maxima
+above and adds repeated-rejection byte/high-water checks absent at this checkpoint.
+
 A genuine constructor regression first accepted a forged prior head count of
 six after the five-request buffered case. Exact earned-count validation fixes
 it; the failing source and result remain archived. The initial missing-API RED

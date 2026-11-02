@@ -46,9 +46,9 @@ not captured; a repeated failure is retained separately. Reused frozen source
 and recopied authority files match their published identities. Missing-API RED,
 intermediate validation errors and current behavioral regressions remain distinct.
 
-Spec, quality and structural re-review approve this lifecycle preparation. A
-separate shared-core peer capacity fix is queued before producer work; this
-approval does not close that finding. Ownership, TLS, close and process facts
-remain synthetic. Native/build/compliance verification, producer/file peers,
+Spec, quality and structural re-review approve this lifecycle preparation. The
+[shared-core capacity successor](m2_h2_combined_core_capacity.md) closes the
+separately recorded parser finding before producer work. Ownership, TLS, close
+and process facts remain synthetic. Native/build/compliance verification, producer/file peers,
 arbitrary coordinator subsets, disconnect/shutdown composition, actual default/
 all40 aggregation and production adoption remain required. M2 remains open.

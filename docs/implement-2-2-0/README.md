@@ -177,7 +177,10 @@ proofs prepare composition without expanding coordinator acceptance.
 The [disconnect/reuse peer constructors](m2_h2_combined_lifecycle_peer.md) keep
 replacement orchestration in the driver and validate intermediate state with
 strict types. Review-driven regressions enforce the lifecycle parser's storage
-cap before mutation; a separate shared-peer capacity follow-up remains queued.
+cap before mutation. The
+[shared-peer capacity correction](m2_h2_combined_core_capacity.md) closes the
+separate follow-up, preserving exact retained bytes and high-water mark across
+repeated rejected sends.
 The [independent H2 client preparation](evidence/m2_h2_client/README.md) preserves
 pinned tools and reviewed bounded helpers; its checks are pure and provide no
 uWebZockets, socket or live-upload evidence.
