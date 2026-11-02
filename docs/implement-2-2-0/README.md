@@ -174,6 +174,10 @@ The [shared buffered/large peer](m2_h2_combined_core_peer.md) removes duplicate
 serialization from the coordinator test and upload driver, preserving exact
 large-body, carried-credit and lifecycle checks. Its caller-order driver
 proofs prepare composition without expanding coordinator acceptance.
+The [disconnect/reuse peer constructors](m2_h2_combined_lifecycle_peer.md) keep
+replacement orchestration in the driver and validate intermediate state with
+strict types. Review-driven regressions enforce the lifecycle parser's storage
+cap before mutation; a separate shared-peer capacity follow-up remains queued.
 The [independent H2 client preparation](evidence/m2_h2_client/README.md) preserves
 pinned tools and reviewed bounded helpers; its checks are pure and provide no
 uWebZockets, socket or live-upload evidence.

@@ -64,6 +64,10 @@ The [shared buffered/large peer](m2_h2_combined_core_peer.md) provides fresh
 bounded connection factories used by both existing drivers. Both upload orders
 and the undeclared large upload pass; coordinator multi-case/default acceptance
 and native adoption remain required.
+The [disconnect/reuse peer constructors](m2_h2_combined_lifecycle_peer.md) expose
+independent connection state and shared case evidence without dispatching the
+client. Exact-type and pre-mutation parser-bound fixes pass focused checks;
+coordinator composition and the separate shared-peer capacity fix remain open.
 The [HTTP/3 source checkpoint](m2_h3_source_authentication.md)
 authenticates the cached QPACK file against the retained exact-pin bundle.
 The combined H2 run and full H2 gates, HTTP/3,
