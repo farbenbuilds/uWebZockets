@@ -56,6 +56,10 @@ stale-control isolation across nine uploads. The
 including held final collection, private comparison snapshots and fresh idle
 state. Default/subset/aggregate orchestration, case/close/runner integration,
 runtime closure and the actual two-child run remain open.
+The [first coordinator lifecycle](m2_h2_combined_coordinator_ready.md) executes
+explicit empty or one buffered-request child with retained observed facts and
+supplied teardown validation. Other/default selections fail before effects;
+full coordinator and combined acceptance remain open.
 The [HTTP/3 source checkpoint](m2_h3_source_authentication.md)
 authenticates the cached QPACK file against the retained exact-pin bundle.
 The combined H2 run and full H2 gates, HTTP/3,

@@ -166,6 +166,10 @@ connection credit and stale-control isolation across nine uploads. The
 including held final collection, private comparison snapshots and fresh idle
 state. Default/subset/aggregate orchestration, case/close/runner integration,
 runtime closure and the actual combined run remain open.
+The [first coordinator lifecycle](m2_h2_combined_coordinator_ready.md) executes
+explicit empty selection or one buffered-request child through final capture
+and supplied teardown facts. It rejects other selections and default all40
+before effects; this checkpoint does not close combined acceptance.
 The [independent H2 client preparation](evidence/m2_h2_client/README.md) preserves
 pinned tools and reviewed bounded helpers; its checks are pure and provide no
 uWebZockets, socket or live-upload evidence.
