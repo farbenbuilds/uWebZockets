@@ -159,7 +159,10 @@ add three more, reaching 34, with exact hash-only output, canonical grants,
 paired completion and retained binding diagnostics. The
 [file/early-final schedules](m2_h2_combined_file_early.md) add two more, reaching
 36, with exact range generation, retained file diagnostics and END-before-reset
-ordering. The other four schedules, full case/close/runner integration,
+ordering. The [disconnect/reuse schedules](m2_h2_combined_disconnect_reuse.md)
+add two more, reaching 38, with staged supplied-close replacement, independent
+connection credit and stale-control isolation across nine uploads. Both
+shutdown schedules, full case/close/runner integration,
 runtime closure and the actual combined run remain open.
 The [independent H2 client preparation](evidence/m2_h2_client/README.md) preserves
 pinned tools and reviewed bounded helpers; its checks are pure and provide no

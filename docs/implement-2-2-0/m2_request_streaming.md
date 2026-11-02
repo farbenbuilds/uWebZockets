@@ -48,7 +48,11 @@ with precise callback diagnostics and INTERNAL_ERROR completion. The
 with exact hash-only output, canonical grants, paired completion and retained
 binding diagnostics. The [file/early-final schedules](m2_h2_combined_file_early.md)
 add two more, with exact range generation, retained file diagnostics and
-END-before-reset ordering. The other four schedules, full case/close/runner integration, runtime closure and the actual
+END-before-reset ordering. The
+[disconnect/reuse schedules](m2_h2_combined_disconnect_reuse.md) add two more,
+with staged supplied-close replacement, independent connection credit and
+stale-control isolation across nine uploads. Both shutdown schedules, full
+case/close/runner integration, runtime closure and the actual
 two-child run remain open.
 The [HTTP/3 source checkpoint](m2_h3_source_authentication.md)
 authenticates the cached QPACK file against the retained exact-pin bundle.
