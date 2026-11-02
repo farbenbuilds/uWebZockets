@@ -75,6 +75,10 @@ The [independent producer/pressure peers](m2_h2_combined_producer_peer.md) separ
 peer diagnostics and binding from client observations. Producer and file/early
 covering checks pass after grant-bound and callback-contract fixes; actual
 coordinator composition and native adoption remain open.
+The [independent file/early peers](m2_h2_combined_file_peer.md) preserve the
+producer-to-file-to-early chain and separate peer diagnostics from client facts.
+Four focused checks pass, with historical RED/history gaps explicitly retained;
+ordinary coordinator composition is the next required integration step.
 The [HTTP/3 source checkpoint](m2_h3_source_authentication.md)
 authenticates the cached QPACK file against the retained exact-pin bundle.
 The combined H2 run and full H2 gates, HTTP/3,

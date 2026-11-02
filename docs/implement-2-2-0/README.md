@@ -185,6 +185,10 @@ The [independent producer/pressure peers](m2_h2_combined_producer_peer.md) earn
 diagnostic and binding facts from serialized peer progress, with separate client
 observations. Review fixes bound unsolicited grants and preserve receive callback
 results/errors; coordinator composition remains open.
+The [independent file/early peers](m2_h2_combined_file_peer.md) retain producer
+facts while checking bounded file generation, close ownership and END-before-
+reset order. All four peer preparation slices are now recorded; actual ordinary
+coordinator composition and combined acceptance remain open.
 The [independent H2 client preparation](evidence/m2_h2_client/README.md) preserves
 pinned tools and reviewed bounded helpers; its checks are pure and provide no
 uWebZockets, socket or live-upload evidence.
