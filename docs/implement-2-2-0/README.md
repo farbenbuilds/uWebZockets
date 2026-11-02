@@ -170,6 +170,10 @@ The [first coordinator lifecycle](m2_h2_combined_coordinator_ready.md) executes
 explicit empty selection or one buffered-request child through final capture
 and supplied teardown facts. It rejects other selections and default all40
 before effects; this checkpoint does not close combined acceptance.
+The [shared buffered/large peer](m2_h2_combined_core_peer.md) removes duplicate
+serialization from the coordinator test and upload driver, preserving exact
+large-body, carried-credit and lifecycle checks. Its caller-order driver
+proofs prepare composition without expanding coordinator acceptance.
 The [independent H2 client preparation](evidence/m2_h2_client/README.md) preserves
 pinned tools and reviewed bounded helpers; its checks are pure and provide no
 uWebZockets, socket or live-upload evidence.
