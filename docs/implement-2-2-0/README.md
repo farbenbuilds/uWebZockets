@@ -161,8 +161,10 @@ paired completion and retained binding diagnostics. The
 36, with exact range generation, retained file diagnostics and END-before-reset
 ordering. The [disconnect/reuse schedules](m2_h2_combined_disconnect_reuse.md)
 add two more, reaching 38, with staged supplied-close replacement, independent
-connection credit and stale-control isolation across nine uploads. Both
-shutdown schedules, full case/close/runner integration,
+connection credit and stale-control isolation across nine uploads. The
+[shutdown schedules](m2_h2_combined_shutdown.md) complete all 40 source IDs,
+including held final collection, private comparison snapshots and fresh idle
+state. Default/subset/aggregate orchestration, case/close/runner integration,
 runtime closure and the actual combined run remain open.
 The [independent H2 client preparation](evidence/m2_h2_client/README.md) preserves
 pinned tools and reviewed bounded helpers; its checks are pure and provide no

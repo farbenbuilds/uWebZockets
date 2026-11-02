@@ -51,9 +51,11 @@ add two more, with exact range generation, retained file diagnostics and
 END-before-reset ordering. The
 [disconnect/reuse schedules](m2_h2_combined_disconnect_reuse.md) add two more,
 with staged supplied-close replacement, independent connection credit and
-stale-control isolation across nine uploads. Both shutdown schedules, full
-case/close/runner integration, runtime closure and the actual
-two-child run remain open.
+stale-control isolation across nine uploads. The
+[shutdown schedules](m2_h2_combined_shutdown.md) complete all 40 source IDs,
+including held final collection, private comparison snapshots and fresh idle
+state. Default/subset/aggregate orchestration, case/close/runner integration,
+runtime closure and the actual two-child run remain open.
 The [HTTP/3 source checkpoint](m2_h3_source_authentication.md)
 authenticates the cached QPACK file against the retained exact-pin bundle.
 The combined H2 run and full H2 gates, HTTP/3,
