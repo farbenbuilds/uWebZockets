@@ -71,6 +71,10 @@ coordinator composition remains open. The
 [shared-peer capacity correction](m2_h2_combined_core_capacity.md) closes that
 separate parser finding before producer work while preserving buffered and
 large-upload checks.
+The [independent producer/pressure peers](m2_h2_combined_producer_peer.md) separate
+peer diagnostics and binding from client observations. Producer and file/early
+covering checks pass after grant-bound and callback-contract fixes; actual
+coordinator composition and native adoption remain open.
 The [HTTP/3 source checkpoint](m2_h3_source_authentication.md)
 authenticates the cached QPACK file against the retained exact-pin bundle.
 The combined H2 run and full H2 gates, HTTP/3,

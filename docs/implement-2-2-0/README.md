@@ -181,6 +181,10 @@ cap before mutation. The
 [shared-peer capacity correction](m2_h2_combined_core_capacity.md) closes the
 separate follow-up, preserving exact retained bytes and high-water mark across
 repeated rejected sends.
+The [independent producer/pressure peers](m2_h2_combined_producer_peer.md) earn
+diagnostic and binding facts from serialized peer progress, with separate client
+observations. Review fixes bound unsolicited grants and preserve receive callback
+results/errors; coordinator composition remains open.
 The [independent H2 client preparation](evidence/m2_h2_client/README.md) preserves
 pinned tools and reviewed bounded helpers; its checks are pure and provide no
 uWebZockets, socket or live-upload evidence.
