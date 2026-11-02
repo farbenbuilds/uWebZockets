@@ -88,6 +88,9 @@ adds strict termination and replacement anywhere among those cases, with private
 time bounds and copied local accounting. All 38 selections are supported;
 representative actual runs pass. Shutdown children, actual default/all40 and
 native adoption remain required.
+The [independent shutdown peer](m2_h2_combined_shutdown_peer.md) now provides a
+shared constructor for that next step, preserving standalone controls and
+rejecting DATA before upload metadata. Shutdown composition remains open.
 The [HTTP/3 source checkpoint](m2_h3_source_authentication.md)
 authenticates the cached QPACK file against the retained exact-pin bundle.
 The combined H2 run and full H2 gates, HTTP/3,

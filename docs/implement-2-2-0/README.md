@@ -197,6 +197,9 @@ The [disconnect coordinator composition](m2_h2_combined_coordinator_disconnect.m
 extends support to 38 cases, preserving strict termination, independent transport
 state and shared case accounting across replacement. Representative runs and
 review pass; shutdown, actual default/all40 and native acceptance remain open.
+The [independent shutdown peer](m2_h2_combined_shutdown_peer.md) prepares that
+next composition with serialized active facts and bounded storage. Review fixed
+DATA-before-metadata acceptance; the coordinator shutdown step remains open.
 The [independent H2 client preparation](evidence/m2_h2_client/README.md) preserves
 pinned tools and reviewed bounded helpers; its checks are pure and provide no
 uWebZockets, socket or live-upload evidence.
