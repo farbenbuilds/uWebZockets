@@ -128,6 +128,9 @@ growth. Factory binding, actual default/all40 and native acceptance remain open.
 The [first observer binding](m2_h2_combined_binding.md) now executes eight IDs
 across four partial compositions with independent receipts and actual retained
 comparisons. Remaining families, default/all40 and native acceptance stay open.
+The [all40 source execution](m2_h2_combined_all40.md) now completes both explicit
+and omitted-default invocations with independent full receipts, both large
+uploads and retained final facts. Broad review/native/adoption gates remain open.
 The [HTTP/3 source checkpoint](m2_h3_source_authentication.md)
 authenticates the cached QPACK file against the retained exact-pin bundle.
 The combined H2 run and full H2 gates, HTTP/3,

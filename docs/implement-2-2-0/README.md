@@ -238,6 +238,9 @@ prepare factory binding; actual default/all40 and native acceptance remain open.
 The [first observer binding](m2_h2_combined_binding.md) executes four partial
 canonical compositions, including two children and six connections in its main
 proof. Eight IDs complete; remaining families and default/all40 remain open.
+The [all40 source execution](m2_h2_combined_all40.md) now completes explicit and
+omitted-default runs with 41 connections, 802 heads and retained client facts.
+Broad combined review, native execution and production adoption remain required.
 The [independent H2 client preparation](evidence/m2_h2_client/README.md) preserves
 pinned tools and reviewed bounded helpers; its checks are pure and provide no
 uWebZockets, socket or live-upload evidence.
