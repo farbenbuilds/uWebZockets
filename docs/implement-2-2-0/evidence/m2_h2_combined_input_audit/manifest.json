@@ -1,0 +1,90 @@
+{
+  "scope": "Combined interface and native-input availability audit; no native preparation or execution",
+  "base_commit": "58bc6d6a525e01380ccc7bf3802e695c07877e89",
+  "archive": "combined-input-audit.tar.gz",
+  "archive_bytes": 5794648,
+  "archive_sha256": "4c4d93bdec76e4b302a38e5811062b48100df0b617f479fe17eac1bdaa6105c8",
+  "safe_regular_members": 144,
+  "inventory_entries": 143,
+  "utf8_members": 143,
+  "binary_members": {
+    "packet/epoll-registration-rollback.bundle": {
+      "size": 1471282,
+      "sha256": "6f9f27199b2cc4bf47e7f04fd3d1862362899be283d84ec1e97c614b69a03580"
+    }
+  },
+  "packet_files": 121,
+  "packet_files_embedded": 120,
+  "packet_files_referenced": 1,
+  "external_packet_members": {
+    "packet/raw/base-objects.stdout": {
+      "packet_member": "packet/raw/base-objects.stdout",
+      "expected": {
+        "size": 102708085,
+        "sha256": "86a11dc6c4f13c49b0675ff2547160680b76e1d48ff82a43f89286fb92d34044"
+      },
+      "storage": "Retained original raw locally; losslessly reproducible from immutable repository Git blobs",
+      "base_commit": "30f27ab80f0471437c34adcdf7b2d42f58227b74",
+      "reachable_from": "58bc6d6a525e01380ccc7bf3802e695c07877e89",
+      "ancestry_argv": [
+        "git",
+        "merge-base",
+        "--is-ancestor",
+        "30f27ab80f0471437c34adcdf7b2d42f58227b74",
+        "58bc6d6a525e01380ccc7bf3802e695c07877e89"
+      ],
+      "ancestry_exit": 0,
+      "ordered_queries": "packet/final-candidate-reconstruction.json files order; base_commit:path plus newline",
+      "argv": [
+        "git",
+        "--no-optional-locks",
+        "-C",
+        "/workspaces/uWebZockets",
+        "cat-file",
+        "--batch"
+      ],
+      "stdin_sha256": "61602cbbbf969ef4695eed1f0ff9827ff3ead4f73f3407e27af5725c7eb307a2",
+      "exit": 0,
+      "stderr": "",
+      "reproduced_stdout_bytes": 102708085,
+      "reproduced_stdout_sha256": "86a11dc6c4f13c49b0675ff2547160680b76e1d48ff82a43f89286fb92d34044"
+    }
+  },
+  "root_evidence_files": 23,
+  "current_helpers": 3,
+  "max_helper_nesting": 3,
+  "physical_paths": 20893,
+  "authority_archives": 10,
+  "authority_inventory_entries": 10290,
+  "interface_joins": 7,
+  "exact_source_spans": 50,
+  "candidate_expected": 1031,
+  "candidate_matching": 4,
+  "candidate_missing": 1027,
+  "candidate_reconstruction_origins": 1031,
+  "libxev_expected": 93,
+  "libxev_matching": 0,
+  "historical_fixture_binaries_matching": 0,
+  "historical_fixture_binaries_required": 2,
+  "current_source_modules": 45,
+  "preceding_files_unchanged": 19808,
+  "retained_identity_entries": 119,
+  "physical_identity_rows": 118,
+  "unique_resolved_files": 113,
+  "ordered_codec_files": 42,
+  "source_review": "Spec and quality approved; see verbatim evidence/task-5e3c1-review-report.md",
+  "discovery_logging": "Initial readonly discovery has explicitly qualified incomplete raw retention",
+  "root_audit_correction": "Preserved failed expectation optimized; actual receipt label is -O",
+  "full_tree_restored": false,
+  "native_ready": false,
+  "native_executed": false,
+  "milestone_complete": false,
+  "remaining": [
+    "Exact candidate and isolated dependency reconstruction",
+    "Native EOF contract resolution",
+    "Native provider and fresh runtime closure",
+    "Fresh builds and native all40",
+    "Full project/platform gates and production adoption",
+    "All remaining original milestones"
+  ]
+}

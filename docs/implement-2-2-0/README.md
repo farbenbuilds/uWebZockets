@@ -269,3 +269,8 @@ Push each subsequent commit to the `fork` remote. The local branch tracks
 repository URL. The Codespace account has write access to the fork and read
 access to the original repository. Earlier original-repository HTTP 403
 results remain historical evidence; remote delivery is now available.
+
+The [combined H2 input audit](m2_h2_combined_input_audit.md) binds seven interface
+contracts and exact native-input availability. Candidate/dependency reconstruction,
+the active EOF contract, fresh runtime/build/native evidence and adoption remain
+required; this metadata checkpoint does not complete M2.

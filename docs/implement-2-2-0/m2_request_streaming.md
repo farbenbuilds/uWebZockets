@@ -329,3 +329,9 @@ mode pass; final79 covering results pass after the independently reviewed
 three-callsite source-failure correction. Portability, layout and reconstruction
 evidence retains exact source identities. Actual owned100000000-byte H2/TLS proof,
 physical lifecycle/full gates and production adoption remain required next.
+
+The [combined H2 contract and input audit](m2_h2_combined_input_audit.md) authenticates
+50 source excerpts and 20,893 indexed paths. It identifies exact reconstruction
+origins and native runtime mismatches without reconstructing or executing native
+code. The active EOF policy, fresh native all40, project/platform gates and
+production adoption remain open.
