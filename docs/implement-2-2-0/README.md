@@ -212,6 +212,10 @@ The [shared pause/control peer](m2_h2_combined_pause_peer.md) now earns prefix,
 resume and stale-control facts from serialized traffic. Four covering checks,
 direct proofs, strict audits and independent source review pass; its actual
 four-case chain remains distinct from the required all40 coordinator result.
+The [shared admission peer](m2_h2_combined_admission_peer.md) preserves nine
+admission/recovery schedules with traffic-earned metadata and delivered-prefix
+barriers. Current checks and the actual shared chain with 100 heads prepare the next
+aggregate phase; full all40 execution and native adoption remain required.
 The [independent H2 client preparation](evidence/m2_h2_client/README.md) preserves
 pinned tools and reviewed bounded helpers; its checks are pure and provide no
 uWebZockets, socket or live-upload evidence.

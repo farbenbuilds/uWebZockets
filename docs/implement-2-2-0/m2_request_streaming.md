@@ -102,6 +102,10 @@ The [shared pause/control peer](m2_h2_combined_pause_peer.md) provides the next
 four cases with independently earned metadata/DATA/resume facts, bounded
 storage, and preserved driver controls. Current normal/optimized checks and
 independent review pass; the actual four-case chain is standalone evidence.
+The [shared admission peer](m2_h2_combined_admission_peer.md) adds nine reusable
+admission/recovery schedules, preserving exact refusal diagnostics and requiring
+delivery of the accepted-prefix status before the offending byte. Its actual
+nine-case chain and current checks remain standalone preparation for all40.
 The [HTTP/3 source checkpoint](m2_h3_source_authentication.md)
 authenticates the cached QPACK file against the retained exact-pin bundle.
 The combined H2 run and full H2 gates, HTTP/3,
