@@ -114,6 +114,10 @@ The [shared credit/trailer peer](m2_h2_combined_credit_peer.md) adds independent
 earned prefix/padding/trailer facts and separate delivered credit scopes. Its
 actual shared chain reaches 81 heads with final68; full all40/native/adoption
 acceptance remains open.
+The [shared metadata/concurrency peer](m2_h2_combined_metadata_peer.md) adds
+independent metadata/helper/trailer and concurrent-route facts, with driver-side
+retention snapshots at the original health boundaries. Its actual two-case
+chain reaches 87 heads with final68; full all40/native/adoption remains required.
 The [HTTP/3 source checkpoint](m2_h3_source_authentication.md)
 authenticates the cached QPACK file against the retained exact-pin bundle.
 The combined H2 run and full H2 gates, HTTP/3,

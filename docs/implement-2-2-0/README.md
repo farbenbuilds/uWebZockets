@@ -224,6 +224,10 @@ The [shared credit/trailer peer](m2_h2_combined_credit_peer.md) now earns the
 accepted prefix from DATA, validates padding/trailers, and requires delivered
 connection and stream grants before the final byte. Its actual two-case chain
 and current checks remain preparation for all40 and native acceptance.
+The [shared metadata/concurrency peer](m2_h2_combined_metadata_peer.md) now earns
+metadata/helper/body facts independently and keeps client-retention assertions
+at their original driver boundaries. Its two-case chain and current checks
+prepare later all40 coordination; native/adoption gates remain open.
 The [independent H2 client preparation](evidence/m2_h2_client/README.md) preserves
 pinned tools and reviewed bounded helpers; its checks are pure and provide no
 uWebZockets, socket or live-upload evidence.
