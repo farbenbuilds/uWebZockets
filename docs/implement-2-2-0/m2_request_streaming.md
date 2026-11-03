@@ -110,6 +110,10 @@ The [shared Continue/quota peer](m2_h2_combined_continue_peer.md) adds delivered
 Continue barriers, two-slot quota recovery and failed-begin rollback through
 the same standalone/shared constructor. Its actual chain reaches 91 heads with
 final68; actual all40 coordination and native adoption remain required.
+The [shared credit/trailer peer](m2_h2_combined_credit_peer.md) adds independently
+earned prefix/padding/trailer facts and separate delivered credit scopes. Its
+actual shared chain reaches 81 heads with final68; full all40/native/adoption
+acceptance remains open.
 The [HTTP/3 source checkpoint](m2_h3_source_authentication.md)
 authenticates the cached QPACK file against the retained exact-pin bundle.
 The combined H2 run and full H2 gates, HTTP/3,

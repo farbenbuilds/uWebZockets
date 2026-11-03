@@ -220,6 +220,10 @@ The [shared Continue/quota peer](m2_h2_combined_continue_peer.md) requires actua
 informational delivery before DATA and earns slot/refusal/rollback facts from
 traffic. Current checks and its actual four-case chain prepare later all40
 coordination; the native and adoption gates remain open.
+The [shared credit/trailer peer](m2_h2_combined_credit_peer.md) now earns the
+accepted prefix from DATA, validates padding/trailers, and requires delivered
+connection and stream grants before the final byte. Its actual two-case chain
+and current checks remain preparation for all40 and native acceptance.
 The [independent H2 client preparation](evidence/m2_h2_client/README.md) preserves
 pinned tools and reviewed bounded helpers; its checks are pure and provide no
 uWebZockets, socket or live-upload evidence.
