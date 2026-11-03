@@ -274,3 +274,8 @@ The [combined H2 input audit](m2_h2_combined_input_audit.md) binds seven interfa
 contracts and exact native-input availability. Candidate/dependency reconstruction,
 the active EOF contract, fresh runtime/build/native evidence and adoption remain
 required; this metadata checkpoint does not complete M2.
+
+The [exact H2 native source preparation](m2_h2_native_source_preparation.md)
+reconstructs and verifies the 1,031-file candidate and 93-file isolated libxev
+input. Both review findings are resolved with a fresh before/after preservation
+proof. Runtime helpers, builds, native all40 and adoption remain required.

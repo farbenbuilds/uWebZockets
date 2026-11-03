@@ -335,3 +335,8 @@ The [combined H2 contract and input audit](m2_h2_combined_input_audit.md) authen
 origins and native runtime mismatches without reconstructing or executing native
 code. The active EOF policy, fresh native all40, project/platform gates and
 production adoption remain open.
+
+The [exact native source preparation](m2_h2_native_source_preparation.md) now
+provides complete authenticated candidate and isolated dependency exports.
+Final review resolves the directory-preservation findings; historical limits
+remain explicit. Native provider/runtime/build/testing and adoption remain open.
