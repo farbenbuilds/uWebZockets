@@ -204,6 +204,10 @@ The [shutdown coordinator composition](m2_h2_combined_coordinator_shutdown.md)
 now implements idle/main children and canonical active termination. Eight actual
 representative schedules pass after final-state fixes; all40/default selections
 are supported, while actual all40 aggregation and native acceptance remain open.
+The [shared core delayed peer](m2_h2_combined_core_async_peer.md) removes the
+duplicate standalone implementation and preserves clock/final behavior. Fourteen
+current focused checks and actual retained-output/partial-final proofs pass;
+remaining peer extraction and actual all40 execution stay required.
 The [independent H2 client preparation](evidence/m2_h2_client/README.md) preserves
 pinned tools and reviewed bounded helpers; its checks are pure and provide no
 uWebZockets, socket or live-upload evidence.

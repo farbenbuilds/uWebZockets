@@ -94,6 +94,10 @@ The [shutdown coordinator composition](m2_h2_combined_coordinator_shutdown.md)
 adds fresh idle/main children and active termination, with eight actual schedules
 and reviewed final-state guards. Full catalogue/default selection support is
 distinct from the still-required actual all40 run and native adoption.
+The [shared core delayed peer](m2_h2_combined_core_async_peer.md) now supplies
+delayed traffic through the same bounded implementation as buffered and large
+requests, with complete current check receipts. This is standalone preparation
+for actual all40 execution, not that aggregate result.
 The [HTTP/3 source checkpoint](m2_h3_source_authentication.md)
 authenticates the cached QPACK file against the retained exact-pin bundle.
 The combined H2 run and full H2 gates, HTTP/3,
