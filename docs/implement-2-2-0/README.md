@@ -208,6 +208,10 @@ The [shared core delayed peer](m2_h2_combined_core_async_peer.md) removes the
 duplicate standalone implementation and preserves clock/final behavior. Fourteen
 current focused checks and actual retained-output/partial-final proofs pass;
 remaining peer extraction and actual all40 execution stay required.
+The [shared pause/control peer](m2_h2_combined_pause_peer.md) now earns prefix,
+resume and stale-control facts from serialized traffic. Four covering checks,
+direct proofs, strict audits and independent source review pass; its actual
+four-case chain remains distinct from the required all40 coordinator result.
 The [independent H2 client preparation](evidence/m2_h2_client/README.md) preserves
 pinned tools and reviewed bounded helpers; its checks are pure and provide no
 uWebZockets, socket or live-upload evidence.
