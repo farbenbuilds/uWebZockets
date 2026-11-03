@@ -216,6 +216,10 @@ The [shared admission peer](m2_h2_combined_admission_peer.md) preserves nine
 admission/recovery schedules with traffic-earned metadata and delivered-prefix
 barriers. Current checks and the actual shared chain with 100 heads prepare the next
 aggregate phase; full all40 execution and native adoption remain required.
+The [shared Continue/quota peer](m2_h2_combined_continue_peer.md) requires actual
+informational delivery before DATA and earns slot/refusal/rollback facts from
+traffic. Current checks and its actual four-case chain prepare later all40
+coordination; the native and adoption gates remain open.
 The [independent H2 client preparation](evidence/m2_h2_client/README.md) preserves
 pinned tools and reviewed bounded helpers; its checks are pure and provide no
 uWebZockets, socket or live-upload evidence.

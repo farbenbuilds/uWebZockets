@@ -106,6 +106,10 @@ The [shared admission peer](m2_h2_combined_admission_peer.md) adds nine reusable
 admission/recovery schedules, preserving exact refusal diagnostics and requiring
 delivery of the accepted-prefix status before the offending byte. Its actual
 nine-case chain and current checks remain standalone preparation for all40.
+The [shared Continue/quota peer](m2_h2_combined_continue_peer.md) adds delivered
+Continue barriers, two-slot quota recovery and failed-begin rollback through
+the same standalone/shared constructor. Its actual chain reaches 91 heads with
+final68; actual all40 coordination and native adoption remain required.
 The [HTTP/3 source checkpoint](m2_h3_source_authentication.md)
 authenticates the cached QPACK file against the retained exact-pin bundle.
 The combined H2 run and full H2 gates, HTTP/3,
