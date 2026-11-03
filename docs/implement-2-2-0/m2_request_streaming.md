@@ -122,6 +122,9 @@ The [shared terminal peer](m2_h2_combined_terminal_peer.md) consolidates six
 cancellation/reset/application-failure schedules while preserving exact driver
 boundaries and separate reset directions. Its actual mixed chain reaches 135
 heads with final68; independent receipts/full all40/native/adoption remain open.
+The [passive wire observer](m2_h2_combined_wire_oracle.md) now prepares actual
+byte-derived aggregate receipts, with a reviewed guard before HPACK literal
+growth. Factory binding, actual default/all40 and native acceptance remain open.
 The [HTTP/3 source checkpoint](m2_h3_source_authentication.md)
 authenticates the cached QPACK file against the retained exact-pin bundle.
 The combined H2 run and full H2 gates, HTTP/3,

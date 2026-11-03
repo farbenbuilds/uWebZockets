@@ -232,6 +232,9 @@ The [shared terminal peer](m2_h2_combined_terminal_peer.md) now drives six
 cancellation/reset/failure cases with distinct reset directions and driver-side
 retirement/debt checks. Its actual mixed chain and ten current checks prepare
 independent aggregate receipts and all40; native/adoption gates remain open.
+The [passive wire observer](m2_h2_combined_wire_oracle.md) adds independent
+byte-derived receipts and a reviewed HPACK growth guard. Its focused checks
+prepare factory binding; actual default/all40 and native acceptance remain open.
 The [independent H2 client preparation](evidence/m2_h2_client/README.md) preserves
 pinned tools and reviewed bounded helpers; its checks are pure and provide no
 uWebZockets, socket or live-upload evidence.
