@@ -340,3 +340,8 @@ The [exact native source preparation](m2_h2_native_source_preparation.md) now
 provides complete authenticated candidate and isolated dependency exports.
 Final review resolves the directory-preservation findings; historical limits
 remain explicit. Native provider/runtime/build/testing and adoption remain open.
+
+The [private nonterminal wire checkpoint](m2_h2_wire_checkpoint.md) passes
+serialized normal/optimized tests and fresh independent review. Its immutable
+prefix supports later native closing receipts; it adds no accepted TLS EOF
+outcome or native/M2 completion claim.

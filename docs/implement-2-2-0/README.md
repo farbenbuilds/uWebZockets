@@ -279,3 +279,8 @@ The [exact H2 native source preparation](m2_h2_native_source_preparation.md)
 reconstructs and verifies the 1,031-file candidate and 93-file isolated libxev
 input. Both review findings are resolved with a fresh before/after preservation
 proof. Runtime helpers, builds, native all40 and adoption remain required.
+
+The [nonterminal H2 wire checkpoint](m2_h2_wire_checkpoint.md) preserves an
+immutable pre-shutdown prefix without changing ordinary poison or sealing.
+Focused source tests and independent review pass; native closing/provider,
+build/runtime validation and adoption remain open.
