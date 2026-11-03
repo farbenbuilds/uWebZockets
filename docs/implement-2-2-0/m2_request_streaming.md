@@ -125,6 +125,9 @@ heads with final68; independent receipts/full all40/native/adoption remain open.
 The [passive wire observer](m2_h2_combined_wire_oracle.md) now prepares actual
 byte-derived aggregate receipts, with a reviewed guard before HPACK literal
 growth. Factory binding, actual default/all40 and native acceptance remain open.
+The [first observer binding](m2_h2_combined_binding.md) now executes eight IDs
+across four partial compositions with independent receipts and actual retained
+comparisons. Remaining families, default/all40 and native acceptance stay open.
 The [HTTP/3 source checkpoint](m2_h3_source_authentication.md)
 authenticates the cached QPACK file against the retained exact-pin bundle.
 The combined H2 run and full H2 gates, HTTP/3,

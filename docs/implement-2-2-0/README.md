@@ -235,6 +235,9 @@ independent aggregate receipts and all40; native/adoption gates remain open.
 The [passive wire observer](m2_h2_combined_wire_oracle.md) adds independent
 byte-derived receipts and a reviewed HPACK growth guard. Its focused checks
 prepare factory binding; actual default/all40 and native acceptance remain open.
+The [first observer binding](m2_h2_combined_binding.md) executes four partial
+canonical compositions, including two children and six connections in its main
+proof. Eight IDs complete; remaining families and default/all40 remain open.
 The [independent H2 client preparation](evidence/m2_h2_client/README.md) preserves
 pinned tools and reviewed bounded helpers; its checks are pure and provide no
 uWebZockets, socket or live-upload evidence.
