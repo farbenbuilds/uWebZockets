@@ -228,6 +228,10 @@ The [shared metadata/concurrency peer](m2_h2_combined_metadata_peer.md) now earn
 metadata/helper/body facts independently and keeps client-retention assertions
 at their original driver boundaries. Its two-case chain and current checks
 prepare later all40 coordination; native/adoption gates remain open.
+The [shared terminal peer](m2_h2_combined_terminal_peer.md) now drives six
+cancellation/reset/failure cases with distinct reset directions and driver-side
+retirement/debt checks. Its actual mixed chain and ten current checks prepare
+independent aggregate receipts and all40; native/adoption gates remain open.
 The [independent H2 client preparation](evidence/m2_h2_client/README.md) preserves
 pinned tools and reviewed bounded helpers; its checks are pure and provide no
 uWebZockets, socket or live-upload evidence.

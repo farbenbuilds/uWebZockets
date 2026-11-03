@@ -118,6 +118,10 @@ The [shared metadata/concurrency peer](m2_h2_combined_metadata_peer.md) adds
 independent metadata/helper/trailer and concurrent-route facts, with driver-side
 retention snapshots at the original health boundaries. Its actual two-case
 chain reaches 87 heads with final68; full all40/native/adoption remains required.
+The [shared terminal peer](m2_h2_combined_terminal_peer.md) consolidates six
+cancellation/reset/application-failure schedules while preserving exact driver
+boundaries and separate reset directions. Its actual mixed chain reaches 135
+heads with final68; independent receipts/full all40/native/adoption remain open.
 The [HTTP/3 source checkpoint](m2_h3_source_authentication.md)
 authenticates the cached QPACK file against the retained exact-pin bundle.
 The combined H2 run and full H2 gates, HTTP/3,
