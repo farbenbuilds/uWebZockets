@@ -50,6 +50,7 @@ dossier in the same PR.
 | Horizon | Work | Where |
 | --- | --- | --- |
 | Open patch | 2.5.5: XEV-006/XEV-007, scheduler fail-stop, macOS runtime, H2/TLS matrix, lsquic sync | Section 11.1 |
+| Release preflight | Install `caldoai/skills --skill untangle-codebase` and wire it into the agent roster before 2.5.5 work | Section 11.1.0 |
 | Toolchain | Zig 0.17: install `zig-0-17`, remove `zig-0.16`, update skill lock and agent prompts | Section 11, R-6.1 |
 | Module track | `uz.sql`, `uz.s3`, `uz.jobs`, `uz.memory_cache`, `uz.sessions`, `uz.jwt`, `uz.proto`, `uz.metrics`, `uz.trace` | Section 17 |
 | Agent surface | MCP server over Streamable HTTP, tools derived from OpenAPI/JSON-RPC | Section 18 |
@@ -138,6 +139,13 @@ Rules:
   checks in section 11, R-6.1. Do not hand-edit a vendored `SKILL.md`. Do not
   confuse the `zig-0.16` skill with the `uwz/zig-0.16` libxev integration
   branch; the branch is renamed only when the 0.17 fork branch lands.
+- **2.5.5 release preflight.** Install the codebase-understanding skill before
+  starting the patch:
+  ```sh
+  npx skills add caldoai/skills --skill untangle-codebase
+  ```
+  Then wire it into the architect, developer, reviewer, and integrator prompts.
+  The full checklist is section 11.1.0.
 
 ### 1.3 Repository gates after every code change
 
@@ -2059,6 +2067,55 @@ section is the execution tracker for the patch.
 > `CI_CD_PIPELINE.md` are binding for every change. Zero hot-path allocation,
 > shared-nothing worker isolation, pure functions, explicit named types,
 > bounded startup memory, no emojis, and no weakening of any gate.
+
+---
+
+#### 11.1.0 Release preflight: install `untangle-codebase`
+
+Before starting the 2.5.5 milestones, every developer and agent must install
+the codebase-understanding skill and wire it into the agent system:
+
+```sh
+npx skills add caldoai/skills --skill untangle-codebase
+```
+
+Integration requirements:
+
+- [ ] Add `untangle-codebase` to the project skill roster and `AGENTS.md`
+      Skill Library; do not hand-edit the vendored `SKILL.md`.
+- [ ] Load it in the agent prompts that plan, implement, review, or integrate
+      codebase-wide changes: `.opencode/agents/architect.md`,
+      `developer.md`, `reviewer.md`, `integrator.md`, and the matching
+      `.codex/agents/*.toml` files. Add it to a domain specialist only when the
+      task spans that module and the skill helps the pass.
+- [ ] Update `CONTRIBUTE.md` so a new contributor knows the skill exists and
+      how to install it with `npx skills add`.
+- [ ] Let the CLI update `skills-lock.json`; verify
+      `.agents/skills/untangle-codebase/SKILL.md` and
+      `npx skills list --json` show the skill.
+- [ ] Run one untangle pass over the repository before milestone work. Keep the
+      generated report outside the repository (OS temp or maintainer-local
+      notes) unless a later task explicitly asks for a tracked report.
+- [ ] Commit the skill install and agent wiring as a release-preflight commit;
+      do not mix it with protocol, module, or dependency-pin commits.
+- [ ] If the skill's advice conflicts with `AGENTS.md`,
+      `CODING_CONVENTION.md`, or a project ADR, the project rule wins.
+
+Verification:
+
+```sh
+npx skills list --json
+test -f .agents/skills/untangle-codebase/SKILL.md
+rg -n 'untangle-codebase' AGENTS.md CONTRIBUTE.md .opencode/agents .codex/agents
+git diff -- skills-lock.json .agents/skills .opencode/agents .codex/agents
+```
+
+Acceptance:
+
+- [ ] `untangle-codebase` is installed and pinned in `skills-lock.json`.
+- [ ] The architect, developer, reviewer, and integrator prompts reference it.
+- [ ] One untangle pass has been run and its output location is recorded.
+- [ ] The skill install is committed separately from the 2.5.5 code changes.
 
 ---
 
@@ -7117,6 +7174,8 @@ End of Part II.
 
 ### v2.5.5 checklist (Follow-up Closure)
 
+- [ ] 11.1.0 preflight: `untangle-codebase` installed, `skills-lock.json` and
+      agent prompts updated, one untangle pass recorded.
 - [ ] M0 baseline: main at the v2.5.0 release commit; 2.1.6 immutable;
       current libxev pin; clean worktree.
 - [ ] M1 XEV-006: timer timespec carry fixed in the libxev fork; scheduler
