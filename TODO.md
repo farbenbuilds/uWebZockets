@@ -50,6 +50,7 @@ dossier in the same PR.
 | Horizon | Work | Where |
 | --- | --- | --- |
 | Open patch | 2.5.5: XEV-006/XEV-007, scheduler fail-stop, macOS runtime, H2/TLS matrix, lsquic sync | Section 11.1 |
+| Toolchain | Zig 0.17: install `zig-0-17`, remove `zig-0.16`, update skill lock and agent prompts | Section 11, R-6.1 |
 | Module track | `uz.sql`, `uz.s3`, `uz.jobs`, `uz.memory_cache`, `uz.sessions`, `uz.jwt`, `uz.proto`, `uz.metrics`, `uz.trace` | Section 17 |
 | Agent surface | MCP server over Streamable HTTP, tools derived from OpenAPI/JSON-RPC | Section 18 |
 | Hardening | v3.0.0-v3.9.0 security boundary closure | Section 16 |
@@ -65,7 +66,7 @@ dossier in the same PR.
 | Docs, API reference, first run | Section 8, 17.13 | P8 |
 | Four-axis quality budget | Section 1.4, 6, 17.15 | P9 |
 | Windows runtime evidence | Sections 7.2, 16.5 | P10 |
-| Zig 0.17 upgrade | Section 11 (R-6), 11.1 | P11 |
+| Zig 0.17 upgrade | Section 11 (R-6, R-6.1), 11.1 | P11 |
 | Client completeness | Section 16.11 | P12 |
 | Handler I/O and streaming bodies | Sections 8, 17.3 | P13 |
 | Typed handler layer | Section 17.18 | P14 |
@@ -76,7 +77,9 @@ dossier in the same PR.
 **Non-negotiables:** keep the `farbenbuilds/libxev` fork; Zig 0.16 now and
 0.17 later; zero request-path allocation; fixed capacity and explicit
 exhaustion; per-worker ownership; shared-nothing; C ABI core-only; optional
-modules; no new build-time Python/CMake/Ninja/Go/Perl; no weakened gate.
+modules; no new build-time Python/CMake/Ninja/Go/Perl; no weakened gate. Before
+the Zig 0.17 upgrade, install `zig-0-17` and remove `zig-0.16` exactly as
+section 11, R-6.1 requires.
 
 ---
 
@@ -123,6 +126,18 @@ Rules:
   `http_protocol` for wire/clients, `crypto_tls` for secrets and verification,
   `dx_router` for the service surface, and `verification` for vectors and
   integration tests. The architect must name one module owner in the scope.
+- **Zig toolchain skill refresh is mandatory.** Before any Zig 0.17 upgrade
+  work, install the 0.17 skill and remove the 0.16 skill:
+  ```sh
+  npx skills add https://github.com/zigcc/skills --skill zig-0-17
+  npx skills remove zig-0.16 -y
+  ```
+  Then update `skills-lock.json`, `.opencode/agents/*.md`,
+  `.codex/agents/*.toml`, `AGENTS.md`, `CONTRIBUTE.md`, and every agent prompt
+  that names the old skill. Verify with `npx skills list --json` and the
+  checks in section 11, R-6.1. Do not hand-edit a vendored `SKILL.md`. Do not
+  confuse the `zig-0.16` skill with the `uwz/zig-0.16` libxev integration
+  branch; the branch is renamed only when the 0.17 fork branch lands.
 
 ### 1.3 Repository gates after every code change
 
@@ -1915,8 +1930,73 @@ manifest, CI workflows, agents, skills, and documentation. The 2.5.0 upgrade
 moves the whole repository to 0.17.0; it is a platform change, not part of the
 gRPC protocol work.
 
+#### R-6.1 Skill refresh (mandatory before toolchain edits)
+
+The repository vendors project skills in `.agents/skills/` and pins them in
+`skills-lock.json`. The Zig 0.16 skill must be **replaced** by the 0.17 skill,
+not kept alongside it. This is a prerequisite for the toolchain upgrade and is
+reviewed with the same care as a dependency pin.
+
+Run from the repository root:
+
+```sh
+npx skills add https://github.com/zigcc/skills --skill zig-0-17
+npx skills list --json
+npx skills remove zig-0.16 -y
+npx skills list --json
+```
+
+Rules:
+
+- Install `zig-0-17` first and verify `.agents/skills/zig-0-17/SKILL.md` exists
+  before removing the old skill.
+- Remove `zig-0.16` with the CLI. Do not leave both skills installed and do not
+  hand-edit a vendored `SKILL.md`.
+- Let the CLI update `skills-lock.json`. If it does not, stop and report the
+  tool defect; do not hand-edit the lock as a silent workaround.
+- Keep the scope project-local. Do not install into the global user scope
+  unless the maintainer explicitly asks.
+- Update every agent prompt that names the old skill:
+  `.opencode/agents/*.md`, `.codex/agents/*.toml`, `AGENTS.md`,
+  `CONTRIBUTE.md`, and any other active instruction file. The agent roster
+  currently names `zig-0.16` in the transport, protocol, build, crypto, FFI,
+  and verification instructions.
+- Do not confuse the `zig-0.16` **skill** with the `uwz/zig-0.16` **libxev
+  integration branch**. The branch remains until `uwz/zig-0.17` exists, all
+  four dependency views are repinned, and the dependency policy review is
+  complete.
+- Commit the skill refresh with the toolchain pin and agent-instruction
+  updates. Do not mix it with protocol or feature commits.
+
+Verification:
+
+```sh
+test -f .agents/skills/zig-0-17/SKILL.md
+test ! -e .agents/skills/zig-0.16
+npx skills list --json
+rg -n '"zig-0\.16"' skills-lock.json && exit 1
+rg -n 'zig-0\.16' .opencode/agents .codex/agents AGENTS.md CONTRIBUTE.md || true
+git diff -- skills-lock.json .agents/skills .opencode/agents .codex/agents
+```
+
+The last `rg` must show only `uwz/zig-0.16` branch references, never a skill
+load instruction. `npx skills list --json` must show `zig-0-17` and no
+`zig-0.16` entry.
+
+Acceptance:
+
+- [ ] `zig-0-17` is installed and pinned in `skills-lock.json`.
+- [ ] `zig-0.16` is absent from `.agents/skills/`, `skills-lock.json`, and all
+      agent prompts.
+- [ ] The skill update is committed with the Zig 0.17 toolchain pin.
+- [ ] Offline/CI restore uses `npx skills experimental_install
+      --frozen-lockfile` after the lock is committed.
+- [ ] No vendored `SKILL.md` was hand-edited.
+
 **Requirements:**
 
+- [ ] Complete R-6.1: install `zig-0-17`, remove `zig-0.16`, update
+      `skills-lock.json`, and update every agent prompt that names the skill.
 - [ ] Read the 0.17.0 release notes and inventory every breaking change that
       affects this repository: `std.Io`, `@cImport`, build APIs, allocator
       interfaces, threading, networking, and the C ABI shim.
@@ -1946,6 +2026,8 @@ gRPC protocol work.
 
 **Acceptance:**
 
+- [ ] R-6.1 is green: `zig-0-17` is installed and pinned, `zig-0.16` is absent
+      from the skill tree, lock file, and agent prompts.
 - [ ] `zig version` reports 0.17.0 in the pinned Nix shell and in CI.
 - [ ] Every gate in section 1.3 passes, plus the sanitizer, MSan,
       cross-target, package-consumer, fuzz, Windows runtime, Autobahn,
@@ -7029,6 +7111,9 @@ End of Part II.
 - [ ] Unary and streaming modes (R-4) map cancellation and status correctly.
 - [ ] `unary-grpc` and `unary-grpc-tls` (R-5) pass all iterations.
 - [ ] `docs/proto.md` and `docs/grpc.md` are published.
+- [ ] R-6.1: `zig-0-17` installed, `zig-0.16` removed, `skills-lock.json` and
+      agent prompts updated.
+- [ ] R-6: Zig 0.17.0 toolchain pin and migration gates are green.
 
 ### v2.5.5 checklist (Follow-up Closure)
 
