@@ -1550,7 +1550,7 @@ is [docs/releases/2.2.0.md](docs/releases/2.2.0.md).
   check passes; `patches/` and `vendor/lsquic_overlay` are absent. The cold
   build, h1spec 33/33 run, and HTTP/3 cross-implementation run were recorded
   during implementation; the exact-mirror sync, fresh final-pin protocol runs,
-  and h1spec license resolution remain release-owner actions.
+  and h1spec test-only submodule attribution remain release-owner actions.
 - **M7 release metadata.** Version surfaces, C ABI macros, documentation
   headers, changelog, and the 2.2.0 release record are synchronized.
 

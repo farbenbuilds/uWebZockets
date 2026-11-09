@@ -84,9 +84,10 @@ the C ABI layout, and the v2.1.6 release are unchanged.
   sidecar representations. The operator-controlled filesystem boundary and the
   remaining substitution race are documented in
   [SECURITY.md](SECURITY.md).
-- The pinned h1spec compliance source still has no license notice. Its previous
-  MIT attribution is unverified and remains a release-owner item in
-  [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+- The pinned h1spec test-only submodule still has no license notice. Its
+  previous MIT attribution is unverified and remains a maintainer item before
+  redistributing the submodule itself; it is not compiled into the library or
+  included in the package paths. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## [2.1.6] - 2026-10-26
 

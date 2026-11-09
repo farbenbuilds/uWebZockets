@@ -16,8 +16,11 @@
 | h1spec | 999ba9e8f318b1c0ebbff1278b98bc5833f1af18 (farbenbuilds fork, base f0a5650a20c575fbea0f7179a3a9cfa50f20ba6e) | Unverified; maintainer confirmation required |
 
 The pinned h1spec compliance source contains no license notice. Its previous
-MIT attribution is unverified. The maintainer must resolve the attribution and
-inclusion before release; the 2.2.0 release record carries the open item.
+MIT attribution is unverified. h1spec is a test-only submodule: it is not
+compiled into `libuWebZockets`, linked into a consumer artifact, or included in
+the package `.paths`. The maintainer must confirm attribution before
+redistributing the submodule itself; the 2.2.0 release record carries the open
+item.
 
 The zslay, libxev, and zlib license texts are in the licenses directory, and
 the C and C++ license texts are in `licenses/vendor`. Sources are selected by
