@@ -1521,10 +1521,10 @@ is [docs/releases/2.2.0.md](docs/releases/2.2.0.md).
   HTTP/2 resets are retained in a bounded FIFO and no longer close healthy
   siblings. The transport matrix covers 1-byte, 16 KiB, and 64 KiB chunks.
 - **S-1 request streaming.** `StreamingRequest`, `BodySink`, `BodyRoute`,
-  `BodyState`, and the pure HTTP/1 head/body decoder are shipped. HTTP/1.1 and
-  TLS HTTP/1.1 bind the sink live through `App.post_stream`, `put_stream`, and
-  `patch_stream`; live 1 MiB uploads pass on both with a 16 KiB buffered cap.
-  HTTP/2 and HTTP/3 remain buffered and return 501 for a streaming route.
+  `BodyState`, and the pure HTTP/1 head/body decoder are shipped. HTTP/1.1, TLS HTTP/1.1,
+  HTTP/2, and HTTP/3 bind the sink live through `App.post_stream`,
+  `put_stream`, and `patch_stream`; live 1 MiB uploads pass on H1/TLS with a
+  16 KiB buffered cap. H1/TLS pause/resume; H2/H3 are ready-only.
 - **S-2 incremental multipart.** `StreamingParser` and `MultipartSink` accept
   arbitrary chunk boundaries with caller-owned storage, bounded carry, strict
   RFC 7578 metadata, explicit payload acknowledgement, and pause/resume.
@@ -1563,10 +1563,10 @@ These items are deliberately outside the 2.2.0 release. They remain tracked
 with dated restoration criteria in
 [docs/releases/2.2.0.md](docs/releases/2.2.0.md#limits-and-dated-restoration-criteria).
 
-- **HTTP/2 and HTTP/3 request-body streaming (M2-1 remainder).** The contract
-  is live on HTTP/1.1/TLS. Bind it to H2 DATA and H3 stream input, including
-  admission, flow-control pause/resume, trailers, and a 100 MB bounded-memory
-  proof on each transport.
+- **HTTP/2 and HTTP/3 request-body pause/resume (M2-1 remainder).** The sink is
+  live on every transport, but H2/H3 reset a paused sink instead of withholding
+  flow control. Add H2 DATA/H3 stream backpressure, trailers, and the 100 MB
+  bounded-memory proof in 2.3.0.
 - **WebTransport activation (M4).** Publish the required maintained-fork
   server APIs and pass a compatible draft-16 client gate before flipping
   capability bits.

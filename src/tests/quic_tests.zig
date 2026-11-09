@@ -10,6 +10,7 @@ const datagram_ring = support.datagram_ring;
 const HeaderSet = stream.HeaderSet;
 const Request = support.http_request.Request;
 const Response = support.http_response.Response;
+const h3_radix = support.radix;
 const StreamStatus = support.http_response.StreamStatus;
 const stream_pattern = @import("stream_pattern.zig");
 
@@ -447,6 +448,8 @@ const FakeStream = struct {
     write_shutdown: bool = false,
     premature_shutdown: bool = false,
     write_after_shutdown: bool = false,
+    read_data: []const u8 = &.{},
+    read_offset: usize = 0,
 };
 
 /// Stand-in lsquic stream entry points receiving a `FakeStream` handle.
@@ -461,10 +464,13 @@ const FakeStreamIo = struct {
     }
 
     fn read(raw: ?*c.lsquic_stream, buffer: ?*anyopaque, length: usize) callconv(.c) isize {
-        _ = raw;
-        _ = buffer;
-        _ = length;
-        return 0;
+        const state = from(raw);
+        if (state.read_offset == state.read_data.len) return 0;
+        const count = @min(length, state.read_data.len - state.read_offset);
+        const destination: [*]u8 = @ptrCast(buffer orelse return -1);
+        @memcpy(destination[0..count], state.read_data[state.read_offset..][0..count]);
+        state.read_offset += count;
+        return @intCast(count);
     }
 
     fn wantwrite(raw: ?*c.lsquic_stream, want: c_int) callconv(.c) c_int {
@@ -1061,10 +1067,10 @@ const WideCaptureSink = struct {
 };
 
 test "quic: captures beyond 16 resolve from engine storage" {
-    const radix = support.radix;
-    const capacities = radix.Capacities{ .max_route_params = 20 };
-    var bundle = radix.Bundle(capacities){};
-    var router = try radix.Router.init(bundle.storage());
+    const local_radix = support.radix;
+    const capacities = local_radix.Capacities{ .max_route_params = 20 };
+    var bundle = local_radix.Bundle(capacities){};
+    var router = try local_radix.Router.init(bundle.storage());
     const pattern = "/:p0/:p1/:p2/:p3/:p4/:p5/:p6/:p7/:p8/:p9/:p10/:p11/:p12/:p13/:p14/:p15/:p16/:p17/:p18/:p19";
     const path = "/a0/a1/a2/a3/a4/a5/a6/a7/a8/a9/a10/a11/a12/a13/a14/a15/a16/a17/a18/a19";
     var sink = WideCaptureSink{};
@@ -1328,4 +1334,79 @@ test "quic: request headers spill into engine extras" {
     }
     try std.testing.expectEqual(@as(usize, 64), accepted);
     try std.testing.expect(!add_test_header(&strict, "x-overflow", "v"));
+}
+
+fn header_release(_: *anyopaque, _: *HeaderSet) void {}
+
+const H3SinkState = struct {
+    begins: usize = 0,
+    ends: usize = 0,
+    bytes: usize = 0,
+
+    fn begin(context: *anyopaque, _: *const support.streaming_request.StreamingRequest, _: support.request_body.BodyControl) !support.request_body.BodyBinding {
+        const self: *H3SinkState = @ptrCast(@alignCast(context));
+        self.begins += 1;
+        return .{ .context = self, .readiness = .ready };
+    }
+
+    fn chunk(context: *anyopaque, input: []const u8) !support.request_body.BodyProgress {
+        const self: *H3SinkState = @ptrCast(@alignCast(context));
+        self.bytes += input.len;
+        return .{ .consumed = input.len, .readiness = .ready };
+    }
+
+    fn end(context: *anyopaque, _: *const support.streaming_request.StreamingRequest, response: *Response) !void {
+        const self: *H3SinkState = @ptrCast(@alignCast(context));
+        self.ends += 1;
+        try response.end("200 OK", "ok");
+    }
+
+    fn cancel(_: *anyopaque, _: support.request_body.BodyCancelReason) void {}
+};
+
+test "quic: HTTP/3 request-head sink consumes stream bytes without body collection" {
+    var sink = H3SinkState{};
+    var route = support.request_body.BodyRoute{
+        .sink = .{
+            .context = &sink,
+            .begin = H3SinkState.begin,
+            .chunk = H3SinkState.chunk,
+            .end = H3SinkState.end,
+            .cancel = H3SinkState.cancel,
+        },
+        .limits = .{ .max_body_bytes = 64, .max_active = 1 },
+        .middleware_policy = .headers_only,
+    };
+    var bundle: h3_radix.DefaultBundle = .{};
+    var router = h3_radix.Router.init(bundle.storage()) catch unreachable;
+    try router.route_stream(.post, "/upload", &route);
+
+    var owner: u8 = 0;
+    var request_storage: [stream.header_capacity]u8 = undefined;
+    var headers = HeaderSet{};
+    headers.reset(&owner, header_release, &request_storage, &.{}, &.{}, stream.default_capacities);
+    try std.testing.expect(add_test_header(&headers, ":method", "POST"));
+    try std.testing.expect(add_test_header(&headers, ":scheme", "https"));
+    try std.testing.expect(add_test_header(&headers, ":authority", "localhost"));
+    try std.testing.expect(add_test_header(&headers, ":path", "/upload"));
+    try std.testing.expect(add_test_header(&headers, "content-length", "5"));
+    try std.testing.expect(headers.process_header(null));
+
+    var fake = FakeStream{ .read_data = "hello" };
+    var body_storage: [16]u8 = undefined;
+    var header_storage: [stream.response_header_capacity]u8 = undefined;
+    var quic = test_quic_stream(&fake, &body_storage, &header_storage);
+    quic.router = &router;
+    quic.attach_headers(&headers);
+    quic.on_read();
+    quic.on_write();
+
+    try std.testing.expectEqual(@as(usize, 1), sink.begins);
+    try std.testing.expectEqual(@as(usize, 1), sink.ends);
+    try std.testing.expectEqual(@as(usize, 5), sink.bytes);
+    try std.testing.expectEqual(@as(usize, 1), fake.headers);
+    try std.testing.expect(fake.write_bytes > 0);
+    try std.testing.expectEqual(@as(usize, 0), fake.closes);
+    try std.testing.expectEqual(@as(usize, 1), fake.shutdowns);
+    try std.testing.expect(!quic.streaming_active);
 }

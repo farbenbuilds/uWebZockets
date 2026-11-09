@@ -97,7 +97,7 @@ _ = try app.any("/health", health);
 | `route_context` / `get_context` | `fn (*anyopaque, *Request, *Response) void` | Explicit caller-owned state |
 | `route_async` / `get_async` | `fn (*Request, AsyncResponse) void` | Work completed later |
 | `route_async_context` / `get_async_context` | `fn (*anyopaque, *Request, AsyncResponse) void` | Deferred work with state |
-| `post_stream` / `put_stream` / `patch_stream` | `BodyRoute` sink callbacks | HTTP/1.1 and TLS request-body streaming |
+| `post_stream` / `put_stream` / `patch_stream` | `BodyRoute` sink callbacks | Request-body streaming on H1/TLS/H2/H3 |
 
 Path patterns: exact segments stay on the radix fast path, `:name` captures one
 nonempty segment, and a terminal `*name` captures the remainder. Static routes
@@ -137,9 +137,9 @@ middleware: `Cors`, `SecurityHeaders`, `Auth`, and `RateLimit`. See
 
 Request body streaming has an accepted [design contract](adr/0008-request-body-streaming.md).
 `App.post_stream`, `put_stream`, and `patch_stream` bind a `BodyRoute` sink on
-HTTP/1.1 and TLS HTTP/1.1; the sink receives chunks as they arrive and uses
-`BodyControl` to pause/resume. HTTP/2 and HTTP/3 streaming routes return 501;
-their live binding remains 2.3.0 work. See the
+HTTP/1.1, TLS HTTP/1.1, HTTP/2, and HTTP/3; the sink receives chunks as they
+arrive. HTTP/1/TLS use `BodyControl` to pause/resume; H2/H3 are ready-only and
+reset a paused stream. H2/H3 flow-control pause remains 2.3.0 work. See the
 [2.2.0 release record](releases/2.2.0.md#limits-and-dated-restoration-criteria).
 
 | Group | API |

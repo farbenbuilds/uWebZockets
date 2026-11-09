@@ -245,8 +245,8 @@ descriptor only after the head is accepted. Plaintext HTTP/1 keeps the kernel
 `sendfile` path. Static mounts use `cache.zig` validators, `negotiate.zig` for
 content coding, and `static_files.zig` for sidecar freshness and representation
 selection. `body_decoder.zig`, `request_body.zig`, `streaming_request.zig`, and
-`multipart_streaming.zig` are the pure request-body foundation. HTTP/1.1 and
-TLS bind the sink live; H2/H3 binding is the 2.3.0 milestone.
+`multipart_streaming.zig` are the pure request-body foundation. HTTP/1.1, TLS, HTTP/2, and HTTP/3 bind the sink live; H2/H3 flow-control
+pause is the 2.3.0 milestone.
 
 ### HTTP/2
 

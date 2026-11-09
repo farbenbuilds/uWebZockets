@@ -221,10 +221,10 @@ incremental RFC 7578 parser and part-sink adapter. `src/http/file_transfer.zig`
 owns one bounded file window per transport; `src/http/negotiate.zig` selects
 identity, gzip, or br from every `Accept-Encoding` field; and
 `src/http/static_files.zig` combines validators, ranges, freshness checks, and
-sidecar selection. The request-streaming types are bound live on HTTP/1.1 and
-TLS HTTP/1.1 through `App.post_stream`, `put_stream`, and `patch_stream`.
-HTTP/2 and HTTP/3 still buffer request bodies; their live binding is the 2.3.0
-request-streaming milestone.
+sidecar selection. The request-streaming types are bound live on HTTP/1.1, TLS HTTP/1.1,
+HTTP/2, and HTTP/3 through `App.post_stream`, `put_stream`, and
+`patch_stream`. H1/TLS support pause/resume; H2/H3 are ready-only. H2/H3
+flow-control pause remains the 2.3.0 request-streaming milestone.
 
 ## Client
 

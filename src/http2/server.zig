@@ -32,6 +32,12 @@ pub const RequestFn = *const fn (*anyopaque, *Request, u32) anyerror!void;
 pub const WsDataFn = *const fn (*anyopaque, u32, []u8, bool) bool;
 /// Reports that one stream slot closed with its HTTP/2 error code.
 pub const StreamClosedFn = *const fn (*anyopaque, u32, u16) void;
+/// Offers a completed request head before body collection; true means a sink owns it.
+pub const RequestHeadFn = *const fn (*anyopaque, *Request, u32, ?u64) anyerror!bool;
+/// Delivers one DATA event to a streaming sink; the sink must accept it fully.
+pub const BodyChunkFn = *const fn (*anyopaque, u32, []const u8, bool) anyerror!void;
+/// Cancels an active streaming body after reset or connection teardown.
+pub const BodyCancelFn = *const fn (*anyopaque, u32) void;
 
 /// Synchronous transport and request callbacks used by a server session.
 ///
@@ -50,6 +56,9 @@ pub const Callbacks = struct {
     request_fn: RequestFn,
     ws_data_fn: ?WsDataFn = null,
     stream_closed_fn: ?StreamClosedFn = null,
+    request_head_fn: ?RequestHeadFn = null,
+    body_chunk_fn: ?BodyChunkFn = null,
+    body_cancel_fn: ?BodyCancelFn = null,
     /// Largest nonempty frame payload that can fit an otherwise empty transport.
     max_frame_payload: usize = connection_module.maximum_frame_size,
 };
@@ -513,6 +522,7 @@ pub fn server_session(comptime max_streams: usize) type {
         pending_body_offsets: [max_streams]usize = .{0} ** max_streams,
         expected_content_lengths: [max_streams]?usize = .{null} ** max_streams,
         headers_ready: [max_streams]bool = .{false} ** max_streams,
+        streaming: [max_streams]bool = .{false} ** max_streams,
         // Tracks whether the initial header block was seen, so a second HEADERS
         // section is treated as trailers instead of a fresh request.
         initial_seen: [max_streams]bool = .{false} ** max_streams,
@@ -636,6 +646,7 @@ pub fn server_session(comptime max_streams: usize) type {
             @memset(&self.pending_body_offsets, 0);
             @memset(&self.expected_content_lengths, null);
             @memset(&self.headers_ready, false);
+            @memset(&self.streaming, false);
             @memset(&self.initial_seen, false);
             @memset(&self.dispatched, false);
             @memset(&self.callback_active, false);
@@ -1261,6 +1272,28 @@ pub fn server_session(comptime max_streams: usize) type {
             };
             self.headers_ready[index] = true;
             self.finish_header_block();
+            if (decoded.protocol == null) {
+                if (callbacks.request_head_fn) |head_fn| {
+                    const stream_id = self.connection.streams.stream_ids[index];
+                    if (stream_id != 0 and try head_fn(
+                        callbacks.context,
+                        &self.requests[index],
+                        stream_id,
+                        self.expected_content_lengths[index],
+                    )) {
+                        self.streaming[index] = true;
+                        if (end_stream) {
+                            const chunk_fn = callbacks.body_chunk_fn orelse {
+                                try self.send_reset(stream_id, .internal_error, callbacks);
+                                return;
+                            };
+                            try chunk_fn(callbacks.context, stream_id, "", true);
+                            try self.finish_remote(index, stream_id, callbacks);
+                        }
+                        return;
+                    }
+                }
+            }
             if (end_stream or decoded.protocol != null) try self.dispatch(index, callbacks);
             if (end_stream) {
                 const stream_id = self.connection.streams.stream_ids[index];
@@ -1335,6 +1368,20 @@ pub fn server_session(comptime max_streams: usize) type {
                 return;
             }
 
+            if (self.streaming[index]) {
+                const chunk_fn = callbacks.body_chunk_fn orelse {
+                    try self.send_reset(stream_id, .internal_error, callbacks);
+                    return;
+                };
+                chunk_fn(callbacks.context, stream_id, event.bytes, event.end_stream) catch {
+                    if (self.connection.streams.find(stream_id) != null) {
+                        try self.send_reset(stream_id, .enhance_your_calm, callbacks);
+                    }
+                    return;
+                };
+                if (event.end_stream) try self.finish_remote(index, stream_id, callbacks);
+                return;
+            }
             if (self.body_lengths[index] > self.request_body_limit or
                 event.bytes.len > self.request_body_limit - self.body_lengths[index])
             {
@@ -1807,6 +1854,7 @@ pub fn server_session(comptime max_streams: usize) type {
             self.dispatched[index] = false;
             self.callback_active[index] = false;
             self.response_started[index] = false;
+            self.streaming[index] = false;
             self.stream_write_retry_required[index] = false;
             self.clear_pending_response(index);
             if (self.header_stream_index == index) {

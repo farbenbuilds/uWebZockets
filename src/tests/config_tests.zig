@@ -232,13 +232,13 @@ test "config: default slab carries the router region at the end" {
     try std.testing.expectEqual(@as(usize, 874_112), router_bytes);
 
     const total = comptime config.slab_bytes() catch @compileError("default slab layout overflow");
-    // Per-connection file slots, stream ids, and the request-streaming state
-    // (metadata view, body decoder, and body lifecycle) are inline.
+    // Per-connection file slots, stream ids, HTTP/1 streaming state, and the
+    // per-stream HTTP/2 body sink state are inline.
     // Five kqueue completions save 80 bytes per connection versus Linux.
     const expected_total: usize = switch (builtin.os.tag) {
-        .macos => 684_570_240,
-        .windows => 685_151_872,
-        else => 684_660_352,
+        .macos => 687_462_016,
+        .windows => 688_043_648,
+        else => 687_552_128,
     };
     comptime std.debug.assert(total == expected_total);
     try std.testing.expectEqual(expected_total, total);

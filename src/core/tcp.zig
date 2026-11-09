@@ -65,6 +65,16 @@ const tls_record_overhead = 64;
 /// HTTP/2 session type sized for one TCP connection's stream capacity.
 pub const Http2Session = http2_server.server_session(max_http2_streams);
 
+/// Per-stream HTTP/2 request-body sink state; ready-only, bounded by the slab.
+const H2BodyState = struct {
+    conn: *TcpConnection = undefined,
+    index: u16 = 0,
+    active: bool = false,
+    route: ?*const request_body.BodyRoute = null,
+    request: streaming_request_module.StreamingRequest = undefined,
+    state: request_body.BodyState = .{},
+};
+
 /// Per-stream context for one asynchronous HTTP/2 response.
 const Http2AsyncContext = struct {
     connection: *TcpConnection = undefined,
@@ -150,6 +160,7 @@ pub const TcpConnection = struct {
     h2_response_status: [max_http2_streams]u16 = .{0} ** max_http2_streams,
     h2_files: [max_http2_streams]file_transfer.FileTransfer = .{file_transfer.FileTransfer{}} ** max_http2_streams,
     h2_file_stream_ids: [max_http2_streams]u32 = .{0} ** max_http2_streams,
+    h2_body_states: [max_http2_streams]H2BodyState = .{H2BodyState{}} ** max_http2_streams,
 
     // One wheel node per connection for keep-alive/header deadlines and the
     // parking slots used by deferred responses. All storage is in the pooled
@@ -614,6 +625,7 @@ pub const TcpConnection = struct {
         const still_closing = streams.active[index] and streams.stream_ids[index] == stream_id;
         if (!still_closing and streams.active[index]) return;
 
+        self.cancel_http2_body(index, .peer_closed);
         self.h2_response_status[index] = 0;
         self.clear_http2_producer(index);
         if (self.h2_async_contexts[index].stream_id != stream_id) return;
@@ -686,6 +698,176 @@ pub const TcpConnection = struct {
                 .status = status,
             } },
         });
+    }
+
+    /// Offers a completed H2 head to a route-level sink; false keeps buffering.
+    fn begin_http2_body(
+        context: *anyopaque,
+        request: *Request,
+        stream_id: u32,
+        declared: ?u64,
+    ) anyerror!bool {
+        const self: *TcpConnection = @ptrCast(@alignCast(context));
+        if (self.closing or self.close_when_drained) return error.ConnectionClosed;
+        const index = self.h2.connection.streams.find(stream_id) orelse return error.StreamClosed;
+        const state = &self.h2_body_states[index];
+        if (state.active) {
+            self.h2.reset_stream(stream_id, .internal_error, self.http2_callbacks()) catch {};
+            return true;
+        }
+        const method = radix.HttpMethod.parse(request.method) orelse return false;
+        if (method != .post and method != .put and method != .patch) return false;
+        const matched = self.router.match_request(request, method) orelse return false;
+        const handler = matched.handler orelse return false;
+        const route_ptr = switch (handler) {
+            .streaming => |pointer| pointer,
+            else => return false,
+        };
+        const route: *const request_body.BodyRoute = @ptrCast(@alignCast(route_ptr));
+        if (route.middleware_policy == .reject_legacy and self.router.has_middleware()) {
+            self.h2.reset_stream(stream_id, .refused_stream, self.http2_callbacks()) catch {};
+            return true;
+        }
+        var active: usize = 0;
+        for (&self.h2_body_states) |*candidate| {
+            if (candidate.active) active += 1;
+        }
+        if (active >= route.limits.max_active) {
+            self.h2.reset_stream(stream_id, .refused_stream, self.http2_callbacks()) catch {};
+            return true;
+        }
+        state.* = .{
+            .conn = self,
+            .index = index,
+            .route = route,
+            .request = streaming_request_module.StreamingRequest.from_request(request),
+        };
+        const control = state.state.arm(.{
+            .context = state,
+            .resume_fn = h2_body_resume,
+            .cancel_fn = h2_body_cancel_control,
+        }, route.limits, declared) catch {
+            self.h2.reset_stream(stream_id, .enhance_your_calm, self.http2_callbacks()) catch {};
+            return true;
+        };
+        const binding = route.sink.begin(route.sink.context, &state.request, control) catch {
+            _ = state.state.reject_begin();
+            state.route = null;
+            self.h2.reset_stream(stream_id, .internal_error, self.http2_callbacks()) catch {};
+            return true;
+        };
+        state.active = true;
+        if (state.state.accept_begin(binding)) |terminal| {
+            state.active = false;
+            switch (terminal) {
+                .cancel => |cancellation| route.sink.cancel(route.sink.context, cancellation.reason),
+                .end => {},
+            }
+            _ = state.state.finish_terminal();
+            state.route = null;
+            self.h2.reset_stream(stream_id, .cancel, self.http2_callbacks()) catch {};
+            return true;
+        }
+        return true;
+    }
+
+    /// Delivers one H2 DATA event; ready-only sinks keep the stream bounded.
+    fn h2_body_chunk(
+        context: *anyopaque,
+        stream_id: u32,
+        bytes: []const u8,
+        end_stream: bool,
+    ) anyerror!void {
+        const self: *TcpConnection = @ptrCast(@alignCast(context));
+        const index = self.h2.connection.streams.find(stream_id) orelse return error.StreamClosed;
+        const state = &self.h2_body_states[index];
+        if (!state.active) return error.StreamClosed;
+        const route = state.route orelse return error.StreamClosed;
+        if (bytes.len != 0) {
+            state.state.observe(bytes.len) catch {
+                self.cancel_http2_body(index, .body_too_large);
+                return error.BodyTooLarge;
+            };
+            state.state.start_chunk(bytes.len) catch {
+                self.cancel_http2_body(index, .invalid_body);
+                return error.InvalidBody;
+            };
+            const progress = route.sink.chunk(route.sink.context, bytes) catch {
+                self.cancel_http2_body(index, .sink_failure);
+                return error.SinkFailed;
+            };
+            if (progress.consumed != bytes.len or progress.readiness != .ready) {
+                self.cancel_http2_body(index, .sink_failure);
+                return error.SinkPaused;
+            }
+            _ = state.state.accept_chunk(progress) catch {
+                self.cancel_http2_body(index, .invalid_body);
+                return error.InvalidBody;
+            };
+        }
+        if (end_stream) {
+            _ = state.state.take_end(true, 0) catch {
+                self.cancel_http2_body(index, .invalid_body);
+                return error.InvalidBody;
+            };
+            var response = self.http2_response(stream_id);
+            response.request_body_complete = false;
+            route.sink.end(route.sink.context, &state.request, &response) catch {
+                self.cancel_http2_body(index, .sink_failure);
+                return error.SinkFailed;
+            };
+            _ = state.state.finish_terminal();
+            state.active = false;
+            state.route = null;
+        }
+    }
+
+    fn h2_body_resume(_: *anyopaque) error{BodyDeliveryFailed}!void {
+        return error.BodyDeliveryFailed;
+    }
+
+    fn h2_body_cancel_control(context: *anyopaque) void {
+        const state: *H2BodyState = @ptrCast(@alignCast(context));
+        state.conn.cancel_http2_body(state.index, .cancelled);
+    }
+
+    fn h2_body_cancel_stream(context: *anyopaque, stream_id: u32) void {
+        const self: *TcpConnection = @ptrCast(@alignCast(context));
+        const index = self.h2.connection.streams.find(stream_id) orelse return;
+        self.cancel_http2_body(index, .peer_closed);
+    }
+
+    fn cancel_http2_body(self: *TcpConnection, index: u16, reason: request_body.BodyCancelReason) void {
+        if (index >= self.h2_body_states.len) return;
+        const state = &self.h2_body_states[index];
+        if (!state.active) return;
+        state.active = false;
+        if (state.route) |route| {
+            if (state.state.request_cancel(reason)) |terminal| {
+                switch (terminal) {
+                    .cancel => |cancellation| route.sink.cancel(route.sink.context, cancellation.reason),
+                    .end => {},
+                }
+            }
+            _ = state.state.finish_terminal();
+            state.route = null;
+        }
+    }
+
+    fn http2_response(self: *TcpConnection, stream_id: u32) Response {
+        return .{ .target = .{ .http2 = .{
+            .context = self,
+            .router = self.router,
+            .stream_id = stream_id,
+            .end_fn = end_http2_response,
+            .begin_fn = begin_http2_response,
+            .write_fn = write_http2_response,
+            .finish_fn = finish_http2_response,
+            .abort_fn = abort_http2_response,
+            .begin_stream_fn = begin_http2_stream,
+            .stream_file_fn = begin_http2_file,
+            .compression_pool = self.http_compression,
+        } } };
     }
 
     fn dispatch_http2_request(
@@ -2532,7 +2714,10 @@ pub fn close_connection(conn: *TcpConnection) void {
     conn.cancel_timers();
     conn.async_response_state.cancel();
     for (&conn.h2_async_states) |*state| state.cancel();
-    for (0..max_http2_streams) |index| conn.clear_http2_producer(@intCast(index));
+    for (0..max_http2_streams) |index| {
+        conn.cancel_http2_body(@intCast(index), .shutdown);
+        conn.clear_http2_producer(@intCast(index));
+    }
 
     if (conn.ws.initialized) conn.ws.deinit();
     conn.release_file_body();

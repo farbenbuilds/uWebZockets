@@ -6,6 +6,8 @@ const http_response = @import("../http/response.zig");
 const Response = http_response.Response;
 const Http3Target = http_response.Http3Target;
 const file_transfer = @import("../http/file_transfer.zig");
+const request_body = @import("../http/request_body.zig");
+const streaming_request_module = @import("../http/streaming_request.zig");
 const Router = @import("../router/radix.zig").Router;
 const radix = @import("../router/radix.zig");
 const validation = @import("validation.zig");
@@ -389,6 +391,11 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
         stream_producer: ?http_response.StreamProducer = null,
         async_response_state: http_response.AsyncResponseState = .{},
         file_transfer_state: file_transfer.FileTransfer = .{},
+        streaming_active: bool = false,
+        streaming_route: ?*const request_body.BodyRoute = null,
+        streaming_request: streaming_request_module.StreamingRequest = undefined,
+        body_state: request_body.BodyState = .{},
+        streaming_scratch: [8192]u8 = undefined,
 
         /// Reinitializes a pooled stream with borrowed transport and storage.
         ///
@@ -458,10 +465,15 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
             header_set.claimed = true;
             self.header_set = header_set;
             self.request_phase = .body;
+            _ = self.start_streaming_request();
         }
 
         /// Drains readable request bytes and dispatches a complete request.
         pub fn on_read(self: *Self) void {
+            if (self.streaming_active) {
+                self.stream_request_body();
+                return;
+            }
             if (self.header_set == null or self.dispatched) {
                 self.close_now();
                 return;
@@ -626,6 +638,7 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
         /// Cancels deferred dispatch and returns pooled state to its owner.
         pub fn on_close(self: *Self) void {
             self.async_response_state.cancel();
+            self.cancel_streaming_body(.peer_closed);
             self.clear_stream_producer();
             if (self.header_set) |header_set| header_set.release();
             self.header_set = null;
@@ -633,6 +646,138 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
             const callback = self.release_fn orelse return;
             self.release_fn = null;
             callback(self.owner, self);
+        }
+
+        /// Starts a route-level H3 body sink before request-body collection.
+        fn start_streaming_request(self: *Self) bool {
+            if (self.body_storage.len == 0) return false;
+            const header_set = self.header_set orelse return false;
+            const method = radix.HttpMethod.parse(header_set.request.method) orelse return false;
+            if (method != .post and method != .put and method != .patch) return false;
+            header_set.request.extra_param_names = self.extra_param_names;
+            header_set.request.extra_param_values = self.extra_param_values;
+            header_set.request.extra_param_count = 0;
+            const matched = self.router.match_request(&header_set.request, method) orelse return false;
+            const handler = matched.handler orelse return false;
+            const route_ptr = switch (handler) {
+                .streaming => |pointer| pointer,
+                else => return false,
+            };
+            const route: *const request_body.BodyRoute = @ptrCast(@alignCast(route_ptr));
+            if (route.middleware_policy == .reject_legacy and self.router.has_middleware()) {
+                self.queue_error("501 Not Implemented", "Streaming route requires headers-only middleware");
+                return true;
+            }
+            self.streaming_request = streaming_request_module.StreamingRequest.from_request(&header_set.request);
+            self.streaming_route = route;
+            const control = self.body_state.arm(.{
+                .context = self,
+                .resume_fn = streaming_resume,
+                .cancel_fn = streaming_cancel_control,
+            }, route.limits, header_set.content_length) catch {
+                self.queue_error("413 Payload Too Large", "Payload Too Large");
+                return true;
+            };
+            const binding = route.sink.begin(route.sink.context, &self.streaming_request, control) catch {
+                _ = self.body_state.reject_begin();
+                self.streaming_route = null;
+                self.queue_error("500 Internal Server Error", "Upload begin failed");
+                return true;
+            };
+            self.streaming_active = true;
+            if (self.body_state.accept_begin(binding)) |terminal| {
+                self.streaming_active = false;
+                switch (terminal) {
+                    .cancel => |cancellation| route.sink.cancel(route.sink.context, cancellation.reason),
+                    .end => {},
+                }
+                _ = self.body_state.finish_terminal();
+                self.streaming_route = null;
+                self.queue_error("400 Bad Request", "Upload canceled");
+            }
+            return true;
+        }
+
+        fn stream_request_body(self: *Self) void {
+            const route = self.streaming_route orelse return;
+            while (true) {
+                const read_length = io.read(self.stream, &self.streaming_scratch, self.streaming_scratch.len);
+                if (read_length < 0) {
+                    if (std.c.errno(read_length) != .AGAIN) self.close_now();
+                    return;
+                }
+                if (read_length == 0) {
+                    self.finish_streaming_body();
+                    return;
+                }
+                const bytes = self.streaming_scratch[0..@intCast(read_length)];
+                self.body_state.observe(bytes.len) catch {
+                    self.fail_streaming_body(.body_too_large);
+                    return;
+                };
+                self.body_state.start_chunk(bytes.len) catch {
+                    self.fail_streaming_body(.invalid_body);
+                    return;
+                };
+                const progress = route.sink.chunk(route.sink.context, bytes) catch {
+                    self.fail_streaming_body(.sink_failure);
+                    return;
+                };
+                if (progress.consumed != bytes.len or progress.readiness != .ready) {
+                    self.fail_streaming_body(.sink_failure);
+                    return;
+                }
+                _ = self.body_state.accept_chunk(progress) catch {
+                    self.fail_streaming_body(.invalid_body);
+                    return;
+                };
+            }
+        }
+
+        fn finish_streaming_body(self: *Self) void {
+            const route = self.streaming_route orelse return;
+            _ = self.body_state.take_end(true, 0) catch {
+                self.fail_streaming_body(.invalid_body);
+                return;
+            };
+            var response = Response{ .target = .{ .http3 = self.target() }, .request_body_complete = false };
+            route.sink.end(route.sink.context, &self.streaming_request, &response) catch {
+                self.fail_streaming_body(.sink_failure);
+                return;
+            };
+            _ = self.body_state.finish_terminal();
+            self.streaming_active = false;
+            self.streaming_route = null;
+        }
+
+        fn fail_streaming_body(self: *Self, reason: request_body.BodyCancelReason) void {
+            self.cancel_streaming_body(reason);
+            const status = if (reason == .body_too_large) "413 Payload Too Large" else "400 Bad Request";
+            self.queue_error(status, "Upload failed");
+        }
+
+        fn cancel_streaming_body(self: *Self, reason: request_body.BodyCancelReason) void {
+            if (!self.streaming_active) return;
+            self.streaming_active = false;
+            if (self.streaming_route) |route| {
+                if (self.body_state.request_cancel(reason)) |terminal| {
+                    switch (terminal) {
+                        .cancel => |cancellation| route.sink.cancel(route.sink.context, cancellation.reason),
+                        .end => {},
+                    }
+                }
+                _ = self.body_state.finish_terminal();
+                self.streaming_route = null;
+            }
+        }
+
+        fn streaming_resume(_: *anyopaque) error{BodyDeliveryFailed}!void {
+            return error.BodyDeliveryFailed;
+        }
+
+        fn streaming_cancel_control(context: *anyopaque) void {
+            const self: *Self = @ptrCast(@alignCast(context));
+            self.cancel_streaming_body(.cancelled);
         }
 
         fn dispatch(self: *Self) void {

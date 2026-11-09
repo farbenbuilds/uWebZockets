@@ -3561,3 +3561,133 @@ test "http2: begin_stream carries pending headers into the response block" {
         response_field(decoded, "content-type") orelse return error.MissingContentType,
     );
 }
+
+const SinkState = struct {
+    session: *TestSession = undefined,
+    route: support.request_body.BodyRoute = undefined,
+    state: support.request_body.BodyState = .{},
+    begins: usize = 0,
+    ends: usize = 0,
+    bytes: usize = 0,
+    output: [256]u8 = undefined,
+    output_length: usize = 0,
+
+    fn callbacks(self: *SinkState) http2_server.Callbacks {
+        return .{
+            .context = self,
+            .write_fn = write,
+            .request_fn = dispatch,
+            .request_head_fn = head,
+            .body_chunk_fn = chunk,
+            .body_cancel_fn = cancel,
+        };
+    }
+
+    fn write(context: *anyopaque, parts: []const []const u8) !void {
+        const self: *SinkState = @ptrCast(@alignCast(context));
+        for (parts) |part| {
+            if (part.len > self.output.len - self.output_length) return error.OutputTooSmall;
+            @memcpy(self.output[self.output_length..][0..part.len], part);
+            self.output_length += part.len;
+        }
+    }
+
+    fn dispatch(_: *anyopaque, _: *Request, _: u32) !void {}
+
+    fn head(context: *anyopaque, request: *Request, _: u32, declared: ?u64) !bool {
+        const self: *SinkState = @ptrCast(@alignCast(context));
+        if (!std.mem.eql(u8, request.method, "POST")) return false;
+        if (!std.mem.eql(u8, request.path, "/upload")) return false;
+        const control = try self.state.arm(.{
+            .context = self,
+            .resume_fn = resume_body,
+            .cancel_fn = cancel_control,
+        }, self.route.limits, declared);
+        const binding = try self.route.sink.begin(self.route.sink.context, &request_view(self), control);
+        self.begins += 1;
+        _ = self.state.accept_begin(binding);
+        return true;
+    }
+
+    fn request_view(_: *SinkState) support.streaming_request.StreamingRequest {
+        return .{
+            .method = "POST",
+            .target = "/upload",
+            .path = "/upload",
+            .protocol = "HTTP/1.1",
+            .query = "",
+            .headers = .{ .names = &.{}, .values = &.{} },
+            .params = .{ .names = &.{}, .values = &.{} },
+        };
+    }
+
+    fn chunk(context: *anyopaque, _: u32, input: []const u8, end_stream: bool) !void {
+        const self: *SinkState = @ptrCast(@alignCast(context));
+        if (input.len != 0) {
+            try self.state.observe(input.len);
+            try self.state.start_chunk(input.len);
+            const progress = try self.route.sink.chunk(self.route.sink.context, input);
+            _ = try self.state.accept_chunk(progress);
+            self.bytes += progress.consumed;
+        }
+        if (end_stream) {
+            const terminal = try self.state.take_end(true, 0);
+            var response: Response = undefined;
+            try self.route.sink.end(self.route.sink.context, &self.request_view(), &response);
+            _ = terminal;
+            _ = self.state.finish_terminal();
+            self.ends += 1;
+        }
+    }
+
+    fn cancel(_: *anyopaque, _: u32) void {}
+    fn resume_body(_: *anyopaque) error{BodyDeliveryFailed}!void {
+        return error.BodyDeliveryFailed;
+    }
+    fn cancel_control(_: *anyopaque) void {}
+    fn sink_begin(context: *anyopaque, _: *const support.streaming_request.StreamingRequest, _: support.request_body.BodyControl) !support.request_body.BodyBinding {
+        return .{ .context = context, .readiness = .ready };
+    }
+    fn sink_chunk(_: *anyopaque, input: []const u8) !support.request_body.BodyProgress {
+        return .{ .consumed = input.len, .readiness = .ready };
+    }
+    fn sink_end(_: *anyopaque, _: *const support.streaming_request.StreamingRequest, _: *Response) !void {}
+    fn sink_cancel(_: *anyopaque, _: support.request_body.BodyCancelReason) void {}
+};
+
+test "http2 server: request-head callback streams DATA without body collection" {
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var state = SinkState{ .session = &fixture.session };
+    state.route = .{
+        .sink = .{
+            .context = &state,
+            .begin = SinkState.sink_begin,
+            .chunk = SinkState.sink_chunk,
+            .end = SinkState.sink_end,
+            .cancel = SinkState.sink_cancel,
+        },
+        .limits = .{ .max_body_bytes = 1024, .max_active = 1 },
+        .middleware_policy = .headers_only,
+    };
+
+    var block: [160]u8 = undefined;
+    var block_length: usize = 0;
+    block_length = try append_hpack_literal(&block, block_length, ":method", "POST");
+    block_length = try append_hpack_literal(&block, block_length, ":scheme", "https");
+    block_length = try append_hpack_literal(&block, block_length, ":path", "/upload");
+    block_length = try append_hpack_literal(&block, block_length, ":authority", "example.com");
+
+    var input: [512]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x4, 1, block[0..block_length]);
+    try append_frame(&input, &input_length, .data, 0, 1, "hello");
+    try append_frame(&input, &input_length, .data, 0x1, 1, "");
+    try fixture.session.receive(input[0..input_length], state.callbacks());
+
+    try std.testing.expectEqual(@as(usize, 1), state.begins);
+    try std.testing.expectEqual(@as(usize, 1), state.ends);
+    try std.testing.expectEqual(@as(usize, 5), state.bytes);
+}
