@@ -553,6 +553,13 @@ test "http: append_header rejects field splitting" {
         error.InvalidHeaders,
         res.append_header("X-Trace", "value\r\nX-Injected: yes"),
     );
+    try std.testing.expectError(
+        error.InvalidHeaders,
+        res.append_header("X-Trace\r\nX-Injected: yes", "value"),
+    );
+    try std.testing.expectError(error.InvalidHeaders, res.append_header("", "value"));
+    try std.testing.expectError(error.InvalidHeaders, res.append_header("X Trace", "value"));
+    try std.testing.expectError(error.InvalidHeaders, res.append_header("X:Y", "value"));
     try std.testing.expectEqual(@as(usize, 0), res.pending_header_length);
     try std.testing.expect(!res.is_started());
 
@@ -1251,6 +1258,31 @@ test "http: extra header overflow fails closed" {
     _ = parser.consume(&p, &req, wire[0..length]);
     try std.testing.expectEqual(parser.ParserState.error_headers_too_large, p.state);
     try std.testing.expectEqual(@as(usize, 4), p.extra_header_count);
+}
+
+test "http: mismatched extra header arrays fail closed" {
+    var wire: [8 * 1024]u8 = undefined;
+    const head = "GET / HTTP/1.1\r\nHost: example.test\r\n";
+    @memcpy(wire[0..head.len], head);
+    var length = head.len;
+    for (0..69) |index| {
+        const line = try std.fmt.bufPrint(wire[length..], "X-Over-{d:0>3}: v\r\n", .{index});
+        length += line.len;
+    }
+    wire[length] = '\r';
+    wire[length + 1] = '\n';
+    length += 2;
+
+    var names: [4][]const u8 = undefined;
+    var values: [0][]const u8 = .{};
+    var p = parser.HttpParser{
+        .extra_header_names = &names,
+        .extra_header_values = &values,
+    };
+    var req = Request{};
+    _ = parser.consume(&p, &req, wire[0..length]);
+    try std.testing.expectEqual(parser.ParserState.error_headers_too_large, p.state);
+    try std.testing.expectEqual(@as(usize, 0), p.extra_header_count);
 }
 
 test "http: parser reset clears extras for the next request" {

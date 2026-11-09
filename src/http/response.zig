@@ -686,9 +686,11 @@ pub const Response = struct {
     /// Queues one validated response field before the response starts.
     pub fn append_header(self: *Response, name: []const u8, value: []const u8) !void {
         if (self.state != .idle) return error.ResponseAlreadyStarted;
-        // `valid_headers` validates field syntax, but a CR/LF inside one value
-        // would parse as an extra well-formed field; reject the split here so
-        // every singular header helper stays injection-safe.
+        // `valid_headers` validates a whole field block, so a CR/LF in either
+        // slice would parse as an extra well-formed field. Validate the name as
+        // one token and reject line breaks in the value before joining them.
+        if (name.len == 0) return error.InvalidHeaders;
+        for (name) |byte| if (!is_tchar(byte)) return error.InvalidHeaders;
         if (std.mem.indexOfAny(u8, value, "\r\n") != null) return error.InvalidHeaders;
         var line_buffer: [1024]u8 = undefined;
         // Bound each slice first so the concatenated length cannot wrap.

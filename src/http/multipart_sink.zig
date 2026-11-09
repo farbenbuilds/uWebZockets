@@ -54,7 +54,9 @@ pub const MultipartSink = struct {
             return error.InvalidMultipartState;
         }
         self.parser.finish() catch |err| {
-            self.cancel(.sink_failure);
+            // A truncated or malformed entity is invalid input, not a sink
+            // callback failure; keep the cancellation reason truthful.
+            self.cancel(.invalid_body);
             return err;
         };
         std.debug.assert(!self.part_active);

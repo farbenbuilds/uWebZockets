@@ -191,6 +191,7 @@ test "multipart sink: failed finish cancels the accepted part once" {
     var sink = try make_adapter(&recorder, &buffers);
     try consume_all(&sink, input);
     try std.testing.expectError(error.IncompleteMultipartBody, sink.finish());
+    try std.testing.expectEqual(body.BodyCancelReason.invalid_body, recorder.reason.?);
     sink.cancel(.peer_closed);
     try std.testing.expectEqual(@as(usize, 1), recorder.cancels);
     try std.testing.expectEqual(@as(usize, 0), recorder.ends);

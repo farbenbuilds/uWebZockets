@@ -436,7 +436,11 @@ fn consume_internal(parser: *HttpParser, req: *Request, buffer: []u8, head_resul
                             }
 
                             if (req.header_count >= req.header_names.len) {
-                                if (parser.extra_header_count >= parser.extra_header_names.len) {
+                                const extra_capacity = @min(
+                                    parser.extra_header_names.len,
+                                    parser.extra_header_values.len,
+                                );
+                                if (parser.extra_header_count >= extra_capacity) {
                                     parser.state = .error_headers_too_large;
                                     return buffer.len;
                                 }

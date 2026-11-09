@@ -848,7 +848,12 @@ pub fn server_session(comptime max_streams: usize) type {
             try self.send_headers(stream_id, block, terminal, callbacks);
             self.response_started[index] = true;
             self.stream_write_retry_required[index] = false;
-            if (terminal) try self.finish_local(index, callbacks);
+            if (terminal) {
+                // The terminal HEADERS are committed; the only finish_local
+                // failure is StreamClosed, so the caller's descriptor
+                // ownership stays unambiguous and the stream is already gone.
+                self.finish_local(index, callbacks) catch {};
+            }
         }
 
         /// Writes one atomic streaming DATA frame within transport and flow credit.

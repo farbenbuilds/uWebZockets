@@ -180,7 +180,8 @@ test "http decoder: invalid progress preserves counters" {
 
 test "http decoder: malformed chunk framing fails closed" {
     const inputs = [_][]const u8{
-        "\r\n", "Z\r\n", "-1\r\n", "10000000000000000\r\n", "1\rX", "1;x\n\r\n", "1\r\nxXX", "0\r\nHost: x\r\n\r\n", "0\r\nTransfer-Encoding: chunked\r\n\r\n", "0\r\nContent-Length: 0\r\n\r\n", "0\r\nX : v\r\n\r\n", "0\r\nX: \x7f\r\n\r\n",
+        "\r\n",    "Z\r\n",     "-1\r\n",    "10000000000000000\r\n", "1\rX",                    "1;x\n\r\n",         "1\r\nxXX", "0\r\nHost: x\r\n\r\n", "0\r\nTransfer-Encoding: chunked\r\n\r\n", "0\r\nContent-Length: 0\r\n\r\n", "0\r\nX : v\r\n\r\n", "0\r\nX: \x7f\r\n\r\n",
+        "1;\r\nx", "1;=x\r\nx", "1;x=\r\nx", "1;x;=y\r\nx",           "1;x=\"unterminated\r\nx", "1;x=\"a\nb\"\r\nx",
     };
     for (inputs) |input| {
         var state = decoder.init(.chunked, .{});
@@ -191,6 +192,22 @@ test "http decoder: malformed chunk framing fails closed" {
                 else => return error.MalformedFramingAccepted,
             }
         }
+    }
+}
+
+test "http decoder: valid chunk extensions accept tokens and quoted values" {
+    for ([_][]const u8{
+        "1;x\r\nx\r\n0\r\n\r\n",
+        "1;x=y\r\nx\r\n0\r\n\r\n",
+        "1; x = y \r\nx\r\n0\r\n\r\n",
+        "1;x;y=z\r\nx\r\n0\r\n\r\n",
+        "1;x=\"a b\"\r\nx\r\n0\r\n\r\n",
+        "1;x=\"a\\\"b\"\r\nx\r\n0\r\n\r\n",
+    }) |input| {
+        var state = decoder.init(.chunked, .{});
+        try std.testing.expectEqualStrings("x", decoder.next(&state, input).data);
+        try decoder.accept_payload(&state, 1);
+        try std.testing.expectEqual(decoder.Event.end, decoder.next(&state, input));
     }
 }
 

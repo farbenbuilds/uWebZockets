@@ -684,6 +684,24 @@ test "static sidecars: root and nested indexes preserve source HTML MIME" {
     }
 }
 
+test "static sidecars: percent-encoded trailing slash selects the nested index" {
+    var fixture = Fixture{};
+    try fixture.init(true);
+    defer fixture.deinit();
+    try fixture.tmp.dir.createDirPath(std.testing.io, "nested");
+    try create_file(fixture.tmp.dir, "nested/index.html", identity, timestamp);
+    try create_file(fixture.tmp.dir, "nested/index.html.gz", gzip, timestamp);
+    var request = request_for("GET", "nested%2f", "gzip,identity;q=0");
+    var capture = FileCapture{};
+    defer close_capture(&capture);
+    var output = response.Response{ .target = .{ .http3 = capture.target(true) } };
+    try fixture.files.serve(&request, &output);
+    try expect_payload(&capture, gzip);
+    try std.testing.expectEqualStrings("text/html; charset=utf-8", header_value(capture.headers[0..capture.headers_len], "Content-Type").?);
+    close_capture(&capture);
+    try std.testing.expectEqual(fixture.effects.opens, fixture.effects.closes);
+}
+
 test "static sidecars: symlink components and encoded traversal stay confined" {
     var fixture = Fixture{};
     try fixture.init(true);

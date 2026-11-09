@@ -136,6 +136,60 @@ fn valid_trailers(trailers: []const u8, max_bytes: usize) bool {
     return true;
 }
 
+/// RFC 9112 section 7.1 chunk-ext grammar: `*( ";" name [ "=" value ] )`.
+/// The caller has already consumed the first semicolon.
+fn valid_chunk_extensions(input: []const u8) bool {
+    var index: usize = 0;
+    while (index < input.len) {
+        skip_bws(input, &index);
+        const name_start = index;
+        while (index < input.len and is_tchar(input[index])) index += 1;
+        if (index == name_start) return false;
+        skip_bws(input, &index);
+        if (index < input.len and input[index] == '=') {
+            index += 1;
+            skip_bws(input, &index);
+            if (index == input.len) return false;
+            if (input[index] == '"') {
+                index += 1;
+                var closed = false;
+                while (index < input.len) {
+                    const byte = input[index];
+                    index += 1;
+                    if (byte == '"') {
+                        closed = true;
+                        break;
+                    }
+                    if (byte == '\\') {
+                        if (index == input.len) return false;
+                        index += 1;
+                        continue;
+                    }
+                    if (!field_byte(byte)) return false;
+                }
+                if (!closed) return false;
+            } else {
+                const value_start = index;
+                while (index < input.len and is_tchar(input[index])) index += 1;
+                if (index == value_start) return false;
+            }
+            skip_bws(input, &index);
+        }
+        if (index == input.len) return true;
+        if (input[index] != ';') return false;
+        index += 1;
+    }
+    return false;
+}
+
+fn skip_bws(input: []const u8, index: *usize) void {
+    while (index.* < input.len and (input[index.*] == ' ' or input[index.*] == '\t')) index.* += 1;
+}
+
+fn field_byte(byte: u8) bool {
+    return byte == '\t' or (byte >= 0x20 and byte != 0x7f);
+}
+
 fn line_too_long(decoder: *const BodyDecoder, end: usize) bool {
     if (decoder.limits.buffered) return false;
     const length = std.math.add(usize, decoder.line_prefix_bytes, end - decoder.line_start) catch return true;
@@ -187,7 +241,7 @@ fn chunk_extension(decoder: *BodyDecoder, buffer: []const u8) ?Event {
     record_scan_work(decoder, offset + 1);
     const end = search_start + offset;
     if (line_too_long(decoder, end)) return fail(decoder, .error_invalid);
-    if (!simd.valid_http_field_value(buffer[decoder.mark..end])) return fail(decoder, .error_invalid);
+    if (!valid_chunk_extensions(buffer[decoder.mark..end])) return fail(decoder, .error_invalid);
     if (end + 1 == buffer.len) {
         decoder.scan = end;
         return .need_more;

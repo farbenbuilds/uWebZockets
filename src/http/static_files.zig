@@ -73,7 +73,7 @@ pub fn static_files(comptime file_capacity: usize) type {
             var path = try normalize_path(captured, &self.path_buffer);
             if (path.len == 0) {
                 path = self.options.index orelse return error.FileNotFound;
-            } else if (captured[captured.len - 1] == '/') {
+            } else if (path[path.len - 1] == '/') {
                 const index = self.options.index orelse return error.FileNotFound;
                 // normalize_path trims leading separators, so `path` may be a
                 // subslice; rebuild the index path from its real offset instead
