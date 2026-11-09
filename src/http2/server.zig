@@ -1193,6 +1193,16 @@ pub fn server_session(comptime max_streams: usize) type {
                     try self.send_reset(stream_id, .protocol_error, callbacks);
                     return;
                 }
+                if (self.streaming[index]) {
+                    const stream_id = self.connection.streams.stream_ids[index];
+                    const chunk_fn = callbacks.body_chunk_fn orelse {
+                        try self.send_reset(stream_id, .internal_error, callbacks);
+                        return;
+                    };
+                    try chunk_fn(callbacks.context, stream_id, "", true);
+                    try self.finish_remote(index, stream_id, callbacks);
+                    return;
+                }
                 try self.dispatch(index, callbacks);
                 const trailer_stream_id = self.connection.streams.stream_ids[index];
                 if (trailer_stream_id != 0) {
