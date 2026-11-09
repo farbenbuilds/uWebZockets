@@ -345,3 +345,8 @@ The [private nonterminal wire checkpoint](m2_h2_wire_checkpoint.md) passes
 serialized normal/optimized tests and fresh independent review. Its immutable
 prefix supports later native closing receipts; it adds no accepted TLS EOF
 outcome or native/M2 completion claim.
+
+The [native receive-provenance and closing helper](m2_h2_native_closing.md) now
+has focused normal/optimized source evidence and independent approval. Its
+qualified receipt is local-only and retains ordinary poison and unpaid debt.
+Actual native provider/runtime/process/TLS evidence and M2 acceptance remain open.

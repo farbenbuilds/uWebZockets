@@ -284,3 +284,8 @@ The [nonterminal H2 wire checkpoint](m2_h2_wire_checkpoint.md) preserves an
 immutable pre-shutdown prefix without changing ordinary poison or sealing.
 Focused source tests and independent review pass; native closing/provider,
 build/runtime validation and adoption remain open.
+
+The [native H2 receive-provenance and closing helper](m2_h2_native_closing.md)
+passes focused source tests and independent review. Its bounded receipt keeps
+TLS EOF provenance, parser tails and unpaid debt explicit. Native provider,
+build/runtime validation, actual all40 and adoption remain required.
