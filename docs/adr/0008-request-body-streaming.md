@@ -20,7 +20,7 @@ M1 must finish before this decision's transport implementation starts.
 
 ## Compatibility revision, 2026-10-26
 
-A [compiler proof](../implement-2-2-0/evidence/m2_compatibility/README.md) shows
+A compiler proof recorded during the 2.2.0 review showed
 that adding BodyNotBuffered to an existing inferred helper error set breaks
 unchanged buffered consumers. Preserve Request/OwnedRequest, their layouts,
 helpers, error sets and clone semantics. New sink callbacks receive a distinct
@@ -39,8 +39,9 @@ and native validation first. The user confirmed this scope on 2026-10-27.
 Eligibility does not establish runtime support, and the Windows release-job
 gate remains in force. Disabled configurations, generic loops, pure decoders,
 body registries, and BodyState retain their existing contracts. The
-[isolated guard checkpoint](../implement-2-2-0/m2_upload_platform.md) records
-verification; production transport integration remains separate.
+isolated platform guard is verified; production transport integration is
+deferred to 2.3.0 and recorded in the
+[2.2.0 release record](../releases/2.2.0.md#limits-and-dated-restoration-criteria).
 route_body returns BodyStreamingDisabled when the feature was not enabled.
 It borrows an immutable BodyRoute whose lifetime covers the App:
 

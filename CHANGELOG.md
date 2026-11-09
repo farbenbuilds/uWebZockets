@@ -3,46 +3,90 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
-## [Unreleased]
+## [2.2.0] - 2026-11-10
 
-- Add a standalone incremental multipart parser with caller-owned working
-  buffers, explicit payload acknowledgement, bounded carry, strict metadata,
-  and unchanged buffered multipart helpers.
-- Add multipart part-sink callbacks with partial-write backpressure, committed
-  begin/end pauses, and once-only active-part cancellation.
-- Separate HTTP/1 header admission from pure bounded body framing while
-  preserving the existing buffered parser contract.
-- Add bounded Content-Length file streaming for HTTP/1, including TLS, with
-  caller-provided scratch and transport-owned descriptor cleanup.
-- Extend bounded file responses to HTTP/2 with per-stream ownership, exact
-  framing, flow-control bounds, and TLS reset isolation under output pressure.
-- Add HTTP/3 known-length file responses with copied partial-write storage and
-  once-only descriptor cleanup across completion, faults, resets, and reuse.
-- Stream large static files through bounded framed transports, retain legacy
-  small custom-target fallback, and fix App.static's Zig 0.16 trim API call.
+Minor release that closes the response-streaming and static-asset gaps carried
+from 2.1.x. Large files now leave the fixed user buffer on TLS, HTTP/2, and
+HTTP/3; static mounts can select fresh precompressed representations; and
+blocked HTTP/2 resets no longer close healthy sibling streams. The release
+also ships the pure request-body and incremental-multipart contracts that
+2.3.0 will bind to live request transports. Public buffered request behavior,
+the C ABI layout, and the v2.1.6 release are unchanged.
 
-- Prove bounded 100 KiB TLS/plaintext producer responses and true POST echo,
-  including request-storage pinning; document the explicit intake capacity and
-  dated external profile, kTLS, and splice boundaries.
+### Added
 
-- Add pure, constant-storage content-coding negotiation with explicit refusal
-  handling, and correct the shared RFC 9110 qvalue fractional bounds.
+- Bounded known-length file responses through `Response.stream_file` and
+  `FileSource` on HTTP/1, TLS HTTP/1, HTTP/2, and HTTP/3. The transport owns
+  the descriptor after acceptance and closes it exactly once on completion,
+  reset, or failure. HEAD and empty files send headers without body reads.
+- Static sidecar selection for `.gz` and `.br` representations, including
+  `Vary`, `Content-Encoding`, representation-specific validators, freshness
+  checks, and encoded-range semantics. Enable with
+  `App.static(prefix, root, .{ .precompressed = true })`.
+- Pure content-coding negotiation over every `Accept-Encoding` field with
+  explicit refusal, wildcard weights, duplicate handling, and no allocation.
+- An incremental RFC 7578 multipart parser with caller-owned working storage,
+  bounded carry, explicit payload acknowledgement, strict metadata, and a
+  part-sink adapter with pause, resume, and once-only cancellation.
+- A metadata-only `StreamingRequest`, the `BodySink`/`BodyRoute` contract, the
+  `BodyState` lifecycle, and the pure HTTP/1 head/body decoder. These are the
+  request-streaming foundation; live transport activation is deferred to
+  2.3.0.
+- A bounded HTTP/2 reset FIFO so an output-blocked reset no longer closes
+  healthy sibling streams.
+- A Woff2 MIME mapping for static assets.
+- A 100 KiB TLS/plaintext producer-response proof and a true POST echo proof
+  with request-storage pinning.
+
+### Changed
+
+- `Response.begin_stream`, `begin_chunked`, `begin_json`, and `sse` refuse to
+  start a streaming response before the request body is complete. Buffered
+  handlers remain source-compatible because the default is complete.
+- HTTP/2 flushes retained resets before new HEADERS or DATA, and pending
+  resets are bounded by the configured stream capacity.
+- The timing wheel scans every overflow entry for the earliest migration time,
+  so one large clock advance cannot skip an earlier due timer behind a later
+  list head.
+- The Nix development shell fetches the pinned zon2nix compiler from the
+  maintainer's GitHub mirror while preserving the exact commit and NAR hash.
 
 ### Fixed
 
-- Timing-wheel overflow ordering no longer skips an earlier due timer behind
-  a later entry when advancing directly across a large interval.
-- Response producers fail closed when they return `.done` without successfully
-  calling `end_chunks`. HTTP/2 resets only the affected stream; HTTP/3 returns
-  500 before headers or closes an already-started stream. A producer that
-  finishes the response is disarmed even if it subsequently returns `.pending`.
-- HTTP/2 retains reset frames during output backpressure, so a failed producer
-  does not close healthy sibling streams when the write queue is full. Reset
-  storage is bounded by the configured stream limit and adds 80 bytes per
-  connection at the default eight-stream capacity.
-- The Nix development shell fetches the pinned zon2nix compiler from its
-  maintainer's GitHub mirror, avoiding a fetch-time HTTP 403. The full commit,
-  NAR hash, and nested dependency graph are preserved.
+- Response producers that return `.done` without successfully calling
+  `end_chunks` now fail closed. HTTP/2 resets only the affected stream; HTTP/3
+  returns 500 before headers or closes an already-started stream. A producer
+  that finishes the response is disarmed even if it later returns `.pending`.
+- HTTP/2 retains reset frames during output backpressure instead of closing
+  the connection.
+- Large static assets no longer return 413 on TLS, HTTP/2, or HTTP/3 when they
+  exceed the route scratch buffer.
+- `App.static` uses the Zig 0.16 `trimEnd` API.
+- The shared RFC 9110 qvalue parser accepts one-digit fractional weights and
+  rejects overlong values consistently.
+
+### Limits
+
+- Live request-body streaming remains deferred to 2.3.0. The contract, pure
+  decoder, body state machine, and multipart sink are shipped and tested, but
+  no live transport calls the sink yet; `Request.body` remains buffered.
+- WebTransport, receive-side UDP GRO, the HttpArena `async` adapter, quiet-host
+  performance evidence, cluster/timer ownership extraction, and final fork
+  archives remain dated boundaries. See
+  [the 2.2.0 release record](docs/releases/2.2.0.md#limits-and-dated-restoration-criteria).
+- kTLS remains a standalone helper owned by v3.5.0 SB-31. `io_uring_prep_splice`
+  remains conditional on measured benefit; plaintext `sendfile` is unchanged.
+
+### Security
+
+- Static mounts now reject non-regular sidecar candidates and stable special
+  files before reads, and keep no-symlink path confinement for source and
+  sidecar representations. The operator-controlled filesystem boundary and the
+  remaining substitution race are documented in
+  [SECURITY.md](SECURITY.md).
+- The pinned h1spec compliance source still has no license notice. Its previous
+  MIT attribution is unverified and remains a release-owner item in
+  [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## [2.1.6] - 2026-10-26
 

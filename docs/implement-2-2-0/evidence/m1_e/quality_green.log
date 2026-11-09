@@ -1,3 +1,0 @@
-1/2 negotiate_tests.test.negotiate: qvalue permits an empty fractional part...OK
-2/2 negotiate_tests.test.negotiate: qvalue limits the fractional part to three digits...OK
-All 2 tests passed.

@@ -72,6 +72,6 @@ pending.
 
 
 Live WebTransport/application-datagram activation remains disabled under the
-[2026-10-26 M4 delivery declaration](implement-2-2-0/m4_webtransport.md), with
-2026-11-02 reassessment and explicit restoration gates. Raw backend datagram
-primitives do not imply listener advertisement or session support.
+[2.2.0 release record](releases/2.2.0.md#limits-and-dated-restoration-criteria),
+with explicit restoration gates. Raw backend datagram primitives do not imply
+listener advertisement or session support.

@@ -1,1 +1,0 @@
-/tmp/uwz-deno-2.9.4/deno run --allow-net=127.0.0.1:8000 http_test.ts 127.0.0.1 8000

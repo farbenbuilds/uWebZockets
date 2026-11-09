@@ -2,7 +2,7 @@
 
 This reviewed consumer supplies additional M1 correctness evidence. Run it on
 an exact saved revision after sidecar source is frozen; retain actual linking
-and live results in the [milestone report](../../docs/implement-2-2-0/m1_streaming_static_tls.md).
+and live results in the [2.2.0 release record](../../docs/releases/2.2.0.md).
 The canonical protocol and repository gates still apply.
 It makes no throughput or official HttpArena activation claim.
 

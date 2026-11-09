@@ -2,7 +2,7 @@
 
 ## Scope
 
-µWebZockets 2.1.6 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
+µWebZockets 2.2.0 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
 server library with bounded HPACK protocol storage. It combines an
 event-driven cross-platform transport (POSIX and Windows IOCP), fixed-capacity
 protocol state, a data-oriented router, and C libraries for TLS, compression, and QUIC.
@@ -209,6 +209,18 @@ duplicate, or malformed fields. `RateLimit` is a fixed-state token bucket over
 caller-owned storage: refill math is pure and clamped, a full table evicts the
 oldest key and starts it empty so key rotation cannot reset a budget, and the
 handler reads the monotonic clock at the middleware boundary.
+
+2.2.0 adds the streaming and static-asset modules. `src/http/body_decoder.zig`
+is the pure HTTP/1 head/body framing state machine; `src/http/streaming_request.zig`
+and `src/http/request_body.zig` define the metadata-only request view, sink
+callbacks, admission limits, and generation-checked `BodyControl`.
+`src/http/multipart_streaming.zig` and `src/http/multipart_sink.zig` provide the
+incremental RFC 7578 parser and part-sink adapter. `src/http/file_transfer.zig`
+owns one bounded file window per transport; `src/http/negotiate.zig` selects
+identity, gzip, or br from every `Accept-Encoding` field; and
+`src/http/static_files.zig` combines validators, ranges, freshness checks, and
+sidecar selection. The pure request-streaming types are not yet called by a
+live transport; that binding is the 2.3.0 request-streaming milestone.
 
 ## Client
 

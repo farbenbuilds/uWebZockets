@@ -65,8 +65,8 @@ dispatch returns 501, while headers alone do not admit a session. They do not
 establish WebTransport, server push, or
 application-datagram support. ADR 0001 accepts implementation through the
 maintained lsquic fork, but this statement remains true until that work and its
-compliance gate land. The [2026-10-26 delivery declaration](docs/implement-2-2-0/m4_webtransport.md)
-records restoration owners and the 2026-11-02 reassessment. RFC 10008 is the
+compliance gate land. The [2.2.0 release record](docs/releases/2.2.0.md#limits-and-dated-restoration-criteria)
+records restoration owners and the dated reassessment. RFC 10008 is the
 separate HTTP `QUERY` method supported
 by the router. Live transports reject QUERY requests without a syntactically
 valid `Content-Type` before the route handler runs.

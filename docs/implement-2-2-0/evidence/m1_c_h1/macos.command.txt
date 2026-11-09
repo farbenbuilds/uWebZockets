@@ -1,3 +1,0 @@
-Working directory: /workspaces/uWebZockets
-/home/codespace/.nix-profile/bin/nix --extra-experimental-features 'nix-command flakes' develop --no-update-lock-file /home/codespace/.codex/worktrees/05f7/uWebZockets -c zig build test-compile -Dtarget=aarch64-macos -Doptimize=ReleaseSafe -j2 --cache-dir /tmp/uwz-frozen-m1a-cache --summary all > /tmp/uwz-m1c-macos-aarch64-green.log 2>&1
-The clean 9bcdb48 checkout supplies only the Nix environment; compilation uses the original cwd and recorded source snapshot. No explicit global-cache override. Agent-confirmed terminal session29408 exit0.

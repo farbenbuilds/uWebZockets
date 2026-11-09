@@ -1,1 +1,0 @@
-zig build test -Dsanitize=true -Doptimize=ReleaseSafe -j2 --cache-dir /tmp/uwz-frozen-m1a-cache --summary all

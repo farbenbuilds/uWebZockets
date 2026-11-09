@@ -72,7 +72,7 @@ option. Completed CONNECT dispatch returns `501 Not Implemented`; headers alone
 do not admit a long-lived session and ordinary body completion/bounds apply.
 WebTransport models draft-16 only, without deployed interoperability. Live
 activation was re-declared on 2026-10-26 with
-[dated restoration criteria](implement-2-2-0/m4_webtransport.md).
+[dated restoration criteria](releases/2.2.0.md#limits-and-dated-restoration-criteria).
 
 [adr/0001-http3-datagram-and-webtransport.md](adr/0001-http3-datagram-and-webtransport.md)
 records the exact backend blockers and the accepted implementation plan. The

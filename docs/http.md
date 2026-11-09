@@ -272,8 +272,10 @@ refusals and absent/empty distinctions without copying field values.
 ## Request and response helpers
 
 The accepted [request-streaming design](adr/0008-request-body-streaming.md)
-defines the upcoming opt-in sink contract. Its transport implementation is
-pending; current handlers still receive buffered request bodies.
+defines the opt-in sink contract shipped as `StreamingRequest`, `BodySink`,
+`BodyRoute`, and `BodyState`. Live transport binding is deferred to 2.3.0;
+current handlers still receive buffered request bodies. See the
+[2.2.0 release record](releases/2.2.0.md#limits-and-dated-restoration-criteria).
 
 Framework modules expose zero-allocation query/form parsing with SIMD slicing
 and compile-time capacities, streaming chunked JSON (`Response.begin_json`),
@@ -288,9 +290,10 @@ request path. For the full helper inventory, see [api.md](api.md).
 
 The standalone [incremental multipart parser](multipart.md) accepts arriving
 chunks with bounded caller storage and explicit payload acknowledgement. It
-does not depend on the pending request-streaming transport adapters.
-The [head/body decoder checkpoint](implement-2-2-0/m2_body_decoder.md) records
-the pure framing foundation and its buffered compatibility proof.
+does not depend on the deferred request-streaming transport adapters.
+The [2.2.0 release record](releases/2.2.0.md#limits-and-dated-restoration-criteria)
+records the pure framing foundation, its buffered compatibility proof, and the
+deferred live transport binding.
 
 ## Integration with another parser
 

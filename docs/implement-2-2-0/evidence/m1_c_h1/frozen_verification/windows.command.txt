@@ -1,1 +1,0 @@
-zig build test-compile -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSafe -j2 --cache-dir /tmp/uwz-frozen-m1a-cache --summary all

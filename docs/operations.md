@@ -221,7 +221,7 @@ try server.run();
 path as an explicit `shutdown()` call: active connections close, producers and
 tokens are cancelled, completions drain, recurring timers stop, and the loop
 exits. Drain application requests externally before shutdown; pending responses
-are not automatically completed. See the [rolling-restart boundary](implement-2-2-0/m6_optional_api_decisions.md).
+are not automatically completed. See the [rolling-restart boundary](releases/2.2.0.md#limits-and-dated-restoration-criteria).
 It must be called before `run`; once shutdown
 has started it returns `error.ApplicationUnavailable`. A second call returns
 `error.SignalWatcherAlreadyInstalled`, because the signal disposition and

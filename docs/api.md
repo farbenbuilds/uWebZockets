@@ -128,8 +128,10 @@ middleware: `Cors`, `SecurityHeaders`, `Auth`, and `RateLimit`. See
 
 ## Response
 
-Request body streaming has an accepted [design contract](adr/0008-request-body-streaming.md).
-Implementation is pending; the current request API remains buffered.
+Request body streaming has an accepted [design contract](adr/0008-request-body-streaming.md)
+and shipped pure types. Live transport binding is deferred to 2.3.0; the
+current request API remains buffered. See the
+[2.2.0 release record](releases/2.2.0.md#limits-and-dated-restoration-criteria).
 
 | Group | API |
 | --- | --- |
@@ -179,8 +181,8 @@ The timing wheel's exact range is 67,108,863 milliseconds, about 18.64 hours.
 Longer deadlines wait on an intrusive overflow list and re-enter the wheel when
 they come into range. The active scheduler uses a bounded 5 ms driving tick;
 that is not a wall-clock callback-latency guarantee. The
-[timer acceptance audit](implement-2-2-0/m6_evidence_platform.md) records remaining
-overflow fast-forward and response-token requirements.
+[2.2.0 release record](releases/2.2.0.md#limits-and-dated-restoration-criteria)
+records the remaining timer and response-token requirements.
 
 `ServerConfig.idle_timeout_ms` bounds a drained keep-alive connection.
 `ServerConfig.header_read_timeout_ms` bounds an incomplete HTTP/1 request head
@@ -409,7 +411,7 @@ WebTransport, and client modules are Zig-only. See
 [operations.md](operations.md#c-abi).
 
 
-The [2026-10-26 C5 decisions](implement-2-2-0/m6_optional_api_decisions.md) retain
-shared TCP credentials, opt-in TRACE without automatic reflection, and the
-current C single-endpoint surface. They define the consumer requirements and
+The [2.2.0 release record](releases/2.2.0.md#limits-and-dated-restoration-criteria)
+retains shared TCP credentials, opt-in TRACE without automatic reflection, and
+the current C single-endpoint surface. It defines the consumer requirements and
 ownership tests needed to reopen those boundaries.

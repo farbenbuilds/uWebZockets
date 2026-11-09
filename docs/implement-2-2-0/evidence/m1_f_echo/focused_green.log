@@ -1,4 +1,0 @@
-1/3 tls_echo_tests.test.tls echo: default intake rejects a 100 KiB declaration before dispatch...OK
-2/3 tls_echo_tests.test.tls echo: POST binary and chunked bodies survive keepalive and a bounded pipeline...OK
-3/3 tls_echo_tests.test.tls echo: plaintext POST control returns the actual 100 KiB body...OK
-All 3 tests passed.

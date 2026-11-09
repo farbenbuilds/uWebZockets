@@ -1,1 +1,0 @@
-Immutable sourceee4bf1c9180533cd429c75ed427d8766f467e17d at05f7. Canonical Nix matrix session57636 exit0;713/713sanitizer and20/20ReleaseSafe/Windows/Mac. Default build13045 exit0;47/47. Pinned HTTP3 wrapper69615 exit0. Exact nested Nix/curl/aioquic launch is in http3_driver.sh; all commands and statuses retained. No live static-file endpoint tested by this existing gate.

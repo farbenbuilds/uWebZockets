@@ -1,1 +1,0 @@
-ZIG_GLOBAL_CACHE_DIR=/tmp/uwz-zig-cache /home/codespace/.nix-profile/bin/nix --extra-experimental-features 'nix-command flakes' develop --no-update-lock-file . -c sh -c 'cd tests/static_interop && zig build -j2 -Doptimize=ReleaseSafe --cache-dir /tmp/uwz-frozen-m1a-cache --summary all'

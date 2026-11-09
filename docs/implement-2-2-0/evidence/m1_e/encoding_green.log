@@ -1,9 +1,0 @@
-1/8 negotiate_tests.test.negotiate: qvalue permits an empty fractional part...OK
-2/8 negotiate_tests.test.negotiate: qvalue limits the fractional part to three digits...OK
-3/8 negotiate_tests.test.negotiate: content coding selection preserves weights and explicit refusals...OK
-4/8 negotiate_tests.test.negotiate: content coding selection only considers available representations...OK
-5/8 negotiate_tests.test.negotiate: duplicate coding refusals cannot be undone...OK
-6/8 negotiate_tests.test.negotiate: coding refusals beyond media entry capacity are honored...OK
-7/8 negotiate_tests.test.negotiate: malformed known coding weights fail closed...OK
-8/8 negotiate_tests.test.negotiate: shared qvalue parser follows the complete RFC grammar...OK
-All 8 tests passed.

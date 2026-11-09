@@ -1,5 +1,0 @@
-warning: Git tree '/workspaces/uWebZockets' is dirty
-warning: updating lock file "/workspaces/uWebZockets/flake.lock":
-• Updated input 'zon2nix/zig/nixpkgs':
-    'https://releases.nixos.org/nixos/unstable/nixos-26.11pre1080855.7a0f122f5090/nixexprs.tar.xz?narHash=sha256-EvoKOTtoIJ7Xflls2Nfo5WDcqjFJB0kuzwOz0nLWs0w%3D' (2026-09-28)
-  → follows 'zon2nix/nixpkgs'

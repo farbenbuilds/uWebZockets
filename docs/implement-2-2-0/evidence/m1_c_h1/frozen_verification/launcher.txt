@@ -1,3 +1,0 @@
-Working directory: /home/codespace/.codex/worktrees/05f7/uWebZockets
-/home/codespace/.nix-profile/bin/nix --extra-experimental-features 'nix-command flakes' develop --no-update-lock-file . -c sh /tmp/uwz-m1c-verify.sh 9ac0566f1af87f50eebe56be6bd605f1adc671f3
-Observed terminal session62578 exit0.

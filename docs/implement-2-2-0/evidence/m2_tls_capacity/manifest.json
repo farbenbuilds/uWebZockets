@@ -1,8 +1,0 @@
-{
-  "archive": "tls-capacity-contract.tar.gz",
-  "sha256": "b07d2c5cf02b62d15197aae153823f090ea7cab3d197c7a50503533695caf36c",
-  "bytes": 18392,
-  "members": 9,
-  "inventory_entries": 8,
-  "status": "source-reviewed design clarification only;concrete TLS implementation and runtime unverified"
-}

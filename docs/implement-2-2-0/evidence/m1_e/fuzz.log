@@ -1,9 +1,0 @@
-======= FUZZING REPORT =======
-Step: run test
-Fuzz test: "fuzz_main.test.fuzz: protocol parsers preserve bounded state" (3bb67d5208640e1a)
-Runs: 0 -> 103733
-Unique runs: 0 -> 3710
-Coverage: 0/11901 -> 1308/11901 (10.99%)
-------------------------------
-Values are accumulated across multiple runs when preserving the cache.
-==============================

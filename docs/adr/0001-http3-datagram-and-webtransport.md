@@ -5,7 +5,8 @@
 - Revision: 2026-10-24, deferral lifted by
   [ADR 0006](0006-dependency-forks.md)
 - Delivery amendment: 2026-10-26, activation re-declared under M4-3;
-  reassess 2026-11-02 ([restoration record](../implement-2-2-0/m4_webtransport.md))
+  reassess with the next authorized maintained-fork review
+  ([2.2.0 release record](../releases/2.2.0.md#limits-and-dated-restoration-criteria))
 - Deciders: QUIC/HTTP3 engineering, build/vendor, verification
 - Pinned dependency: `farbenbuilds/lsquic` commit
   `85bd081c9103c077a7cc98271d09334d0f1043d4` on `uwz/main`, based on
@@ -142,7 +143,7 @@ No new public API is required beyond the existing `App.datagram*` surface.
 v2.2.0 retains ownership of the implementation and capability change. Its
 2026-10-26 delivery declaration preserves the accepted design while recording
 the publication, backend, and compatible-client barriers; see the
-[dated M4 restoration criteria](../implement-2-2-0/m4_webtransport.md).
+[dated M4 restoration criteria](../releases/2.2.0.md#limits-and-dated-restoration-criteria).
 
 ## Consequences
 

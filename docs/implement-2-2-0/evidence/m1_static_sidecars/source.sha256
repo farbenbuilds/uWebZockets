@@ -1,4 +1,0 @@
-e51c7b2ba60377a0291f98782d790d5a8a3a870f7f53b1e6c2c60e814c26757c  src/http/static_files.zig
-fa5d43dfabd97cd79259d43c7ea85fadab81b55f46712442d3a3496f239830bd  src/tests/static_sidecar_tests.zig
-b68a74e25aac75b41335621891bd794e0d74023515e34785893338c0ed4a0287  src/tests/static_files_tests.zig
-53c80299318f21ec9914e1e587791f42fad4c07dc2e60323310e2f6c5a4bbed6  src/tests/main.zig
