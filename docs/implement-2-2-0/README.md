@@ -297,10 +297,15 @@ credentials. Native provider/runtime/build/all40 and adoption remain required.
 
 The [native H2 connection constructor](m2_h2_native_connection.md) now has
 reviewed ordinary I/O/close behavior and exact C4 pretraffic binding. Its
-intermediate-close regression uses the real coordinator. Strict disconnect,
-active hooks, real provider/runtime/native proof and adoption remain open.
+intermediate-close regression uses the real coordinator. Real provider/runtime/
+native proof and adoption remain open.
 
 The [native H2 strict-disconnect slice](m2_h2_native_disconnect.md) adds public
 unwrap, raw EOF, returned-handle closure and exact replacement gating. A
 post-open coordinator registration anchors the original lifecycle context.
-Active hooks, native provider/runtime/all40 validation and adoption remain open.
+Native provider/runtime/all40 validation and adoption remain open.
+
+The [active-shutdown source slice](m2_h2_native_active.md) adds phase-aware
+signal/termination hooks, one-shot cleanup and live receipt validation. Its
+51 source groups and corrected cold-import checks pass review; repository unit
+gates pass 852 tests. Actual provider/native all40 and adoption remain open.

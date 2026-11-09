@@ -358,11 +358,18 @@ process cleanup, combined native all40 and production adoption remain open.
 
 The [native connection-construction slice](m2_h2_native_connection.md) passes
 focused source checks and review after a canonical close-deadline correction.
-It preserves private environment boundaries. Strict disconnect and active
-termination are the next required transport slices; M2 remains open.
+It preserves private environment boundaries. Subsequent source slices cover
+strict disconnect and active termination; real provider/native integration
+remains required. M2 remains open.
 
 The [strict-disconnect slice](m2_h2_native_disconnect.md) now implements
 returned-handle closure and replacement gating with an explicit canonical
 context anchor. Source evidence includes the original foreign-context defect
-and correction. Active shutdown hooks and actual combined native execution
+and correction. Real runtime integration and actual combined native execution
 remain required; M2 remains open.
+
+The [active transport source slice](m2_h2_native_active.md) now covers owned
+signal evidence, closing provenance, normal release, failure cleanup and live
+final receipt aggregation. Source checks and corrected import guards pass
+review. Actual runtime ownership, native candidates and combined all40 remain
+required before adoption; M2 remains open.
