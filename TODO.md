@@ -1541,6 +1541,10 @@ is [docs/releases/2.2.0.md](docs/releases/2.2.0.md).
 - **C6 timer boundaries.** The wheel range, overflow behavior, parking-slot
   ownership, and second-sleep misuse are documented. The overflow scan now
   examines every entry so a large advance cannot skip an earlier deadline.
+- **C8 limiter ownership.** The rate-limit bucket table, open-addressed index,
+  and LRU moved to `src/http/rate_limit.zig`; `middleware` keeps the public
+  names as re-exports and the zero-allocation contract. Connection parking
+  extraction remains a 2.3.0 item.
 - **C9/C10/C11 dependency baseline.** The maintained libxev, lsquic, and h1spec
   pins are full commits; all four dependency views agree; the mirror checks pass;
   `patches/` and `vendor/lsquic_overlay` are absent. The cold build, h1spec
@@ -1566,9 +1570,10 @@ with dated restoration criteria in
 - **Receive-side UDP GRO (C2).** Expose ancillary segment sizes and pass the
   pinned HTTP/3 gates.
 - **HttpArena `async` adapter (C3).** Update and validate the external adapter.
-- **Cluster runtime and timer/limiter ownership (M5).** Extract the nested
-  cluster runtime and the connection parking/rate-limit state without changing
-  public behavior.
+- **Cluster runtime and timer/limiter ownership (M5).** The rate-limit table,
+  index, and LRU now live in `src/http/rate_limit.zig`. Extract the nested
+  cluster runtime and the connection parking state without changing public
+  behavior.
 - **Fork archives and platform closure (C13/M6-6).** Retain final archives,
   resolve pins from a second machine, and run the native Windows release job.
 - **kTLS integration and splice.** Keep the standalone helper and the

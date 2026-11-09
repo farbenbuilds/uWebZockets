@@ -125,7 +125,7 @@ the pure request-body and multipart foundations. The full record is
 | Quiet-host performance evidence | No designated quiet host was available. Run the v2.0/v2.1 pipeline, WebSocket, `json-comp`, and `latency-1m` contracts on a named host before publishing numbers |
 | Receive-side UDP GRO | The loop still reads one datagram at a time. Restore when ancillary control messages expose `UDP_GRO` segment sizes and the pinned HTTP/3 gates pass |
 | HttpArena `async` adapter | The external adapter change and official run are outside this repository. Restore through the adapter owner |
-| Cluster and timer/limiter ownership | The nested cluster runtime and connection parking/rate-limit state remain in their current owners. Extract them in 2.3.0 without changing public behavior |
+| Cluster and timer/limiter ownership | The rate-limit table, index, and LRU moved to `src/http/rate_limit.zig` with unchanged `middleware` re-exports. The nested cluster runtime and connection parking state remain in their current owners; extract them in 2.3.0 without changing public behavior |
 | Fork archives and platform closure | Current pins are full maintained-fork commits and pass local provenance checks. Final archives, second-machine resolution, and the native Windows release job remain release-owner actions |
 | kTLS and splice | kTLS stays with v3.5.0 SB-31. Splice remains conditional on measured benefit; plaintext `sendfile` is unchanged |
 

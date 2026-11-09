@@ -202,13 +202,15 @@ memory growth. Chunk headers, bodies, and terminators are copied into that ring
 as parts, so no per-connection chunk scratch allocation or fixed 8 KiB chunk
 ceiling is needed.
 
-`src/http/middleware.zig` also carries the built-in `Auth` and `RateLimit`
-handlers. `Auth` compares Basic and Bearer credentials in constant time after
-decoding Basic into bounded stack storage, and fails closed on missing,
-duplicate, or malformed fields. `RateLimit` is a fixed-state token bucket over
-caller-owned storage: refill math is pure and clamped, a full table evicts the
-oldest key and starts it empty so key rotation cannot reset a budget, and the
-handler reads the monotonic clock at the middleware boundary.
+`src/http/middleware.zig` carries the built-in `Auth` handler and re-exports
+the rate-limit surface from `src/http/rate_limit.zig`. `Auth` compares Basic
+and Bearer credentials in constant time after decoding Basic into bounded stack
+storage, and fails closed on missing, duplicate, or malformed fields.
+`RateLimit` is a fixed-state token bucket over caller-owned storage: refill math
+is pure and clamped, a full table evicts the oldest key and starts it empty so
+key rotation cannot reset a budget, and the handler reads the monotonic clock at
+the middleware boundary. The dedicated module owns the bucket table, index, and
+LRU; the public `middleware` names remain re-exports.
 
 2.2.0 adds the streaming and static-asset modules. `src/http/body_decoder.zig`
 is the pure HTTP/1 head/body framing state machine; `src/http/streaming_request.zig`

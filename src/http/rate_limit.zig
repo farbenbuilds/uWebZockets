@@ -1,0 +1,618 @@
+//! Fixed-capacity token-bucket rate limiting.
+//!
+//! The caller owns the bucket table, the optional open-addressed index and LRU,
+//! and the `std.Io` used for the monotonic clock. Every operation is
+//! allocation-free and lock-free; the middleware boundary owns the clock read.
+
+const std = @import("std");
+const Request = @import("request.zig").Request;
+const Response = @import("response.zig").Response;
+const radix = @import("../router/radix.zig");
+
+/// One caller-owned token bucket slot.
+///
+/// `last_refill_ns == 0` marks a free slot; the handler stores the monotonic
+/// timestamp from `RateLimit.io` after every use.
+pub const RateLimitBucket = struct {
+    key: u64 = 0,
+    tokens: u32 = 0,
+    last_refill_ns: i128 = 0,
+};
+
+/// Derives the bucket key for one request.
+pub const RateLimitKeyFn = *const fn (request: *const Request) u64;
+
+/// Rate, burst, and key source for `rate_limit`.
+pub const RateLimitOptions = struct {
+    /// Tokens refilled per second; zero disables refill.
+    rate_per_second: u32,
+    /// Bucket capacity; zero uses `rate_per_second` with a minimum of one.
+    burst: u32 = 0,
+    /// Request header hashed with FNV-1a when present. Must be a
+    /// server-derived value (for example `x-forwarded-for` behind a trusted
+    /// proxy); an attacker-controlled header lets a client rotate keys.
+    key_header: ?[]const u8 = null,
+    /// Shared key used when no function or header value applies.
+    key_constant: u64 = 0,
+    /// Highest-precedence key source.
+    key_fn: ?RateLimitKeyFn = null,
+};
+
+/// Outcome of one token-bucket step.
+pub const RateLimitDecision = struct {
+    allowed: bool,
+    tokens: u32,
+    last_refill_ns: i128,
+    retry_after_seconds: u64,
+};
+
+/// Empty/open-addressing marker for an index entry.
+const no_index = std.math.maxInt(u32);
+
+/// One open-addressed key entry in a `RateLimitTable`.
+pub const RateLimitIndexSlot = struct {
+    key: u64 = 0,
+    bucket: u32 = no_index,
+    used: bool = false,
+    tombstone: bool = false,
+};
+
+/// Per-bucket LRU link. `order` is a monotonic touch sequence; the head is
+/// always the exact-oldest bucket.
+pub const RateLimitLink = struct {
+    next: u32 = no_index,
+    prev: u32 = no_index,
+    order: u64 = 0,
+};
+
+/// Caller-owned O(1) index and LRU over a fixed token-bucket table.
+///
+/// `slots.len` must be at least `2 * buckets.len`; `links.len` must equal
+/// `buckets.len`. The table rebuilds its index at construction so a restored
+/// or pre-seeded bucket array keeps the documented placement and eviction
+/// order. Exactly one `RateLimit` owns a live table.
+pub const RateLimitTable = struct {
+    buckets: []RateLimitBucket,
+    slots: []RateLimitIndexSlot,
+    links: []RateLimitLink,
+    head: u32 = no_index,
+    tail: u32 = no_index,
+    free_head: u32 = no_index,
+    live: usize = 0,
+    tombstones: usize = 0,
+    /// Monotonic touch sequence used to order the LRU in O(1).
+    sequence: u64 = 0,
+    /// Test/diagnostic counter for probe work; never used for decisions.
+    probe_count: usize = 0,
+
+    pub const InitError = error{
+        InvalidIndexCapacity,
+        DuplicateRateLimitKey,
+    };
+
+    /// Builds the lookup index and LRU from the caller-owned buckets.
+    pub fn init(
+        buckets: []RateLimitBucket,
+        slots: []RateLimitIndexSlot,
+        links: []RateLimitLink,
+    ) InitError!RateLimitTable {
+        if (buckets.len != 0 and slots.len < buckets.len * 2) {
+            return error.InvalidIndexCapacity;
+        }
+        if (links.len != buckets.len) return error.InvalidIndexCapacity;
+        var table = RateLimitTable{
+            .buckets = buckets,
+            .slots = slots,
+            .links = links,
+        };
+        try table.rebuild();
+        return table;
+    }
+
+    /// Rebuilds the index and free list from the current bucket contents.
+    pub fn rebuild(self: *RateLimitTable) InitError!void {
+        @memset(self.slots, .{});
+        self.head = no_index;
+        self.tail = no_index;
+        self.free_head = no_index;
+        self.live = 0;
+        self.tombstones = 0;
+        self.sequence = 0;
+
+        for (self.buckets, 0..) |bucket, index| {
+            if (bucket.last_refill_ns == 0) {
+                self.links[index] = .{ .next = self.free_head };
+                self.free_head = @intCast(index);
+                continue;
+            }
+            const slot = self.find_insert_slot(bucket.key) orelse
+                return error.InvalidIndexCapacity;
+            if (slot.duplicate) return error.DuplicateRateLimitKey;
+            self.slots[slot.index] = .{
+                .key = bucket.key,
+                .bucket = @intCast(index),
+                .used = true,
+            };
+            self.link_ordered(@intCast(index), bucket.last_refill_ns);
+            self.live += 1;
+        }
+        self.assign_orders();
+    }
+
+    /// Inserts a bucket into the rebuilt LRU by (timestamp, index) order.
+    ///
+    /// Construction is the only O(n) path; live touches use `append_tail`.
+    fn link_ordered(self: *RateLimitTable, bucket_index: u32, timestamp: i128) void {
+        var position = self.tail;
+        while (position != no_index) {
+            const other = self.buckets[position];
+            if (other.last_refill_ns < timestamp) break;
+            if (other.last_refill_ns == timestamp and position < bucket_index) break;
+            position = self.links[position].prev;
+        }
+        const link = &self.links[bucket_index];
+        link.prev = position;
+        link.next = if (position == no_index) self.head else self.links[position].next;
+        if (link.next != no_index) {
+            self.links[link.next].prev = bucket_index;
+        } else {
+            self.tail = bucket_index;
+        }
+        if (position == no_index) {
+            self.head = bucket_index;
+        } else {
+            self.links[position].next = bucket_index;
+        }
+    }
+
+    fn assign_orders(self: *RateLimitTable) void {
+        var position = self.head;
+        while (position != no_index) : (position = self.links[position].next) {
+            self.sequence += 1;
+            self.links[position].order = self.sequence;
+        }
+    }
+
+    /// Returns the bucket index for `key`, inserting or evicting as needed.
+    ///
+    /// A hit refreshes the LRU position. A free-capacity insert is O(1)
+    /// expected. A full-table miss evicts the exact oldest bucket; equal
+    /// timestamps keep the lowest bucket index first.
+    pub fn locate(self: *RateLimitTable, key: u64) ?BucketSlot {
+        if (self.slots.len == 0) return null;
+        // Bound probe cost after churn. Rebuilding before a mutation keeps
+        // the bucket and index views consistent for the caller.
+        if (self.tombstones > self.slots.len / 4) {
+            self.reindex() catch return null;
+        }
+        var index = bucket_home(key, self.slots.len);
+        var insert_at: ?usize = null;
+        var probes: usize = 0;
+        while (probes < self.slots.len) : (probes += 1) {
+            self.probe_count += 1;
+            const slot = self.slots[index];
+            if (slot.used) {
+                if (slot.key == key) {
+                    self.touch(slot.bucket);
+                    return .{ .index = slot.bucket, .matched = true, .evicted = false };
+                }
+            } else if (slot.tombstone) {
+                if (insert_at == null) insert_at = index;
+            } else {
+                break;
+            }
+            index = if (index + 1 == self.slots.len) 0 else index + 1;
+        }
+        if (probes >= self.slots.len) {
+            self.rebuild() catch return null;
+            return self.locate(key);
+        }
+
+        const target = insert_at orelse index;
+        var bucket_index: u32 = undefined;
+        var evicted = false;
+        if (self.free_head != no_index) {
+            bucket_index = self.free_head;
+            self.free_head = self.links[bucket_index].next;
+            self.live += 1;
+        } else if (self.live < self.buckets.len) {
+            self.rebuild() catch return null;
+            return self.locate(key);
+        } else {
+            bucket_index = self.head;
+            if (bucket_index == no_index) return null;
+            evicted = true;
+            self.remove_index(self.buckets[bucket_index].key);
+            self.unlink(bucket_index);
+            self.live += 1;
+        }
+
+        self.slots[target] = .{
+            .key = key,
+            .bucket = bucket_index,
+            .used = true,
+        };
+        self.append_tail(bucket_index);
+
+        return .{ .index = bucket_index, .matched = false, .evicted = evicted };
+    }
+
+    /// Rebuilds only the lookup index, preserving live LRU order.
+    fn reindex(self: *RateLimitTable) InitError!void {
+        @memset(self.slots, .{});
+        self.tombstones = 0;
+        for (self.buckets, 0..) |bucket, index| {
+            if (bucket.last_refill_ns == 0) continue;
+            const slot = self.find_insert_slot(bucket.key) orelse
+                return error.InvalidIndexCapacity;
+            if (slot.duplicate) return error.DuplicateRateLimitKey;
+            self.slots[slot.index] = .{
+                .key = bucket.key,
+                .bucket = @intCast(index),
+                .used = true,
+            };
+        }
+    }
+
+    const InsertSlot = struct { index: usize, duplicate: bool };
+
+    fn find_insert_slot(self: *RateLimitTable, key: u64) ?InsertSlot {
+        if (self.slots.len == 0) return null;
+        var index = bucket_home(key, self.slots.len);
+        var insert_at: ?usize = null;
+        var probes: usize = 0;
+        while (probes < self.slots.len) : (probes += 1) {
+            self.probe_count += 1;
+            const slot = self.slots[index];
+            if (slot.used) {
+                if (slot.key == key) return .{ .index = index, .duplicate = true };
+            } else if (slot.tombstone) {
+                if (insert_at == null) insert_at = index;
+            } else {
+                return .{ .index = insert_at orelse index, .duplicate = false };
+            }
+            index = if (index + 1 == self.slots.len) 0 else index + 1;
+        }
+        return if (insert_at) |position| .{ .index = position, .duplicate = false } else null;
+    }
+
+    fn touch(self: *RateLimitTable, bucket_index: u32) void {
+        self.unlink(bucket_index);
+        self.append_tail(bucket_index);
+    }
+
+    fn append_tail(self: *RateLimitTable, bucket_index: u32) void {
+        self.sequence +%= 1;
+        if (self.sequence == 0) self.sequence = 1;
+        self.links[bucket_index] = .{
+            .next = no_index,
+            .prev = self.tail,
+            .order = self.sequence,
+        };
+        if (self.tail != no_index) {
+            self.links[self.tail].next = bucket_index;
+        } else {
+            self.head = bucket_index;
+        }
+        self.tail = bucket_index;
+    }
+
+    fn unlink(self: *RateLimitTable, bucket_index: u32) void {
+        const link = self.links[bucket_index];
+        if (link.prev != no_index) {
+            self.links[link.prev].next = link.next;
+        } else {
+            self.head = link.next;
+        }
+        if (link.next != no_index) {
+            self.links[link.next].prev = link.prev;
+        } else {
+            self.tail = link.prev;
+        }
+        self.links[bucket_index] = .{};
+    }
+
+    fn remove_index(self: *RateLimitTable, key: u64) void {
+        var index = bucket_home(key, self.slots.len);
+        var probes: usize = 0;
+        while (probes < self.slots.len) : (probes += 1) {
+            const slot = &self.slots[index];
+            if (!slot.used and !slot.tombstone) return;
+            if (slot.used and slot.key == key) {
+                slot.used = false;
+                slot.tombstone = true;
+                slot.bucket = no_index;
+                self.tombstones += 1;
+                if (self.live != 0) self.live -= 1;
+                return;
+            }
+            index = if (index + 1 == self.slots.len) 0 else index + 1;
+        }
+    }
+};
+
+/// Fixed-state token-bucket rate-limit middleware.
+///
+/// The caller owns the bucket table and the `std.Io` used to read the
+/// monotonic clock (`.awake`, which is `CLOCK_MONOTONIC` on Linux). Mutating
+/// the caller-owned buckets and reading the clock is the documented purpose of
+/// this boundary handler; it performs no allocation and takes no locks. A full
+/// table evicts the bucket with the smallest `last_refill_ns` and starts the
+/// evicted key empty, so rotating keys cannot reset a budget; an empty table
+/// fails closed.
+pub const RateLimit = struct {
+    options: RateLimitOptions,
+    buckets: []RateLimitBucket,
+    io: std.Io,
+    /// True when the table was empty at construction, so every occupied slot
+    /// sits on its key's linear-probe path. Restored/pre-seeded tables keep
+    /// the compatibility scan so their placement is never misread.
+    probe_ready: bool = false,
+    /// Optional O(1) index. Null keeps the documented linear compatibility
+    /// path for callers that only pass buckets.
+    table: ?RateLimitTable = null,
+
+    pub fn handler(context: *anyopaque, request: *Request, response: *Response) radix.MiddlewareResult {
+        const self: *RateLimit = @ptrCast(@alignCast(context));
+        if (self.buckets.len == 0) {
+            reject_limited(response, retry_after_seconds(self.options.rate_per_second));
+            return .stop;
+        }
+        const now_ns = std.Io.Clock.now(.awake, self.io).nanoseconds;
+        const key = rate_limit_key(self.options, request);
+        const slot = if (self.table) |*table|
+            table.locate(key)
+        else
+            locate_bucket(self.buckets, key, self.probe_ready);
+        const found = slot orelse {
+            reject_limited(response, retry_after_seconds(self.options.rate_per_second));
+            return .stop;
+        };
+        const bucket = &self.buckets[found.index];
+        if (!found.matched) {
+            // An evicted slot starts empty: a client that rotates an
+            // attacker-controlled key must not reset its own budget. A free
+            // slot starts full so a new peer is not punished for table churn.
+            const seeded = if (found.evicted) 0 else effective_burst(self.options.rate_per_second, self.options.burst);
+            bucket.* = .{
+                .key = key,
+                .tokens = @intCast(seeded),
+                .last_refill_ns = now_ns,
+            };
+        }
+        const decision = rate_limit_step(
+            self.options.rate_per_second,
+            self.options.burst,
+            bucket.tokens,
+            bucket.last_refill_ns,
+            now_ns,
+        );
+        bucket.tokens = decision.tokens;
+        bucket.last_refill_ns = decision.last_refill_ns;
+        if (!decision.allowed) {
+            reject_limited(response, decision.retry_after_seconds);
+            return .stop;
+        }
+        return .continue_dispatch;
+    }
+};
+
+/// Builds caller-owned token-bucket rate limiting over the supplied clock.
+///
+/// The bucket table is mutable limiter state and must be owned by exactly one
+/// `RateLimit`. Sharing a live table between instances can mix the probe and
+/// legacy placement modes.
+pub fn rate_limit(io: std.Io, options: RateLimitOptions, buckets: []RateLimitBucket) RateLimit {
+    var probe_ready = true;
+    for (buckets) |bucket| {
+        if (bucket.last_refill_ns != 0) {
+            probe_ready = false;
+            break;
+        }
+    }
+    return .{
+        .options = options,
+        .buckets = buckets,
+        .io = io,
+        .probe_ready = probe_ready,
+    };
+}
+
+/// Builds a rate limiter with caller-owned O(1) index and LRU storage.
+///
+/// `slots.len` must be at least twice `buckets.len` and `links.len` must equal
+/// `buckets.len`. Construction rebuilds the index from the buckets, so a
+/// restored table keeps its placement and exact-oldest tie break.
+pub fn rate_limit_indexed(
+    io: std.Io,
+    options: RateLimitOptions,
+    buckets: []RateLimitBucket,
+    slots: []RateLimitIndexSlot,
+    links: []RateLimitLink,
+) RateLimitTable.InitError!RateLimit {
+    const table = try RateLimitTable.init(buckets, slots, links);
+    return .{
+        .options = options,
+        .buckets = buckets,
+        .io = io,
+        .probe_ready = false,
+        .table = table,
+    };
+}
+
+/// Refills one token bucket from monotonic time and charges one token.
+///
+/// Pure: the handler passes caller-owned bucket fields and the current
+/// timestamp, so identical inputs produce identical decisions. `tokens` is
+/// clamped to the effective burst and `last_refill_ns` keeps sub-token
+/// remainder so refill stays continuous rather than windowed.
+pub fn rate_limit_step(
+    rate_per_second: u32,
+    burst: u32,
+    tokens: u32,
+    last_refill_ns: i128,
+    now_ns: i128,
+) RateLimitDecision {
+    const capacity = effective_burst(rate_per_second, burst);
+    var available: u64 = @min(@as(u64, tokens), capacity);
+    var baseline = last_refill_ns;
+
+    if (now_ns <= baseline) {
+        baseline = now_ns;
+    } else if (available >= capacity) {
+        // A full bucket does not bank idle time.
+        baseline = now_ns;
+    } else if (rate_per_second != 0) {
+        // A baseline outside the i128 range refills completely.
+        const elapsed = std.math.sub(i128, now_ns, baseline) catch std.math.maxInt(i128);
+        const fill_ns: i128 = @as(i128, capacity) * std.time.ns_per_s;
+        if (elapsed >= fill_ns) {
+            available = capacity;
+            baseline = now_ns;
+        } else {
+            // Clamp before scaling so the baseline advance cannot overflow and
+            // a burst cannot over-refill past the missing tokens.
+            const missing = capacity - available;
+            const accrued_u128 = @min(
+                @as(u128, missing),
+                @as(u128, @intCast(elapsed)) * rate_per_second / std.time.ns_per_s,
+            );
+            const accrued: u64 = @intCast(accrued_u128);
+            baseline += @intCast(accrued_u128 * std.time.ns_per_s / rate_per_second);
+            available = @min(capacity, available + accrued);
+        }
+    }
+
+    if (available == 0) {
+        return .{
+            .allowed = false,
+            .tokens = 0,
+            .last_refill_ns = baseline,
+            .retry_after_seconds = retry_after_seconds(rate_per_second),
+        };
+    }
+    return .{
+        .allowed = true,
+        .tokens = @intCast(available - 1),
+        .last_refill_ns = baseline,
+        .retry_after_seconds = 0,
+    };
+}
+
+/// Returns the RFC 9110 Retry-After delay for an exhausted bucket.
+///
+/// An integer rate of at least one token per second reaches its next token
+/// within one second, the header's resolution. A zero rate never refills, so
+/// there is no meaningful retry delay and the caller omits the header.
+fn retry_after_seconds(rate_per_second: u32) u64 {
+    if (rate_per_second == 0) return 0;
+    return 1;
+}
+
+/// Bucket capacity after the burst default and the one-token minimum.
+fn effective_burst(rate_per_second: u32, burst: u32) u64 {
+    const configured = if (burst == 0) rate_per_second else burst;
+    return @max(1, @as(u64, configured));
+}
+
+/// Location of a request key inside the caller-owned bucket table.
+const BucketSlot = struct {
+    index: usize,
+    matched: bool,
+    /// True when the slot was occupied and evicted for this key.
+    evicted: bool,
+};
+
+/// Finds `key`, else a free slot, else the oldest slot for eviction.
+fn locate_bucket(buckets: []const RateLimitBucket, key: u64, probe_ready: bool) ?BucketSlot {
+    if (buckets.len == 0) return null;
+    if (!probe_ready) return locate_bucket_linear(buckets, key);
+
+    var index = bucket_home(key, buckets.len);
+    var oldest_index: usize = index;
+    var oldest_ns: i128 = std.math.maxInt(i128);
+    var visited: usize = 0;
+    while (visited < buckets.len) : (visited += 1) {
+        const bucket = buckets[index];
+        if (bucket.last_refill_ns == 0) {
+            return .{ .index = index, .matched = false, .evicted = false };
+        }
+        if (bucket.key == key) {
+            return .{ .index = index, .matched = true, .evicted = false };
+        }
+        if (bucket.last_refill_ns < oldest_ns) {
+            oldest_ns = bucket.last_refill_ns;
+            oldest_index = index;
+        }
+        index = if (index + 1 == buckets.len) 0 else index + 1;
+    }
+    return .{ .index = oldest_index, .matched = false, .evicted = true };
+}
+
+/// Exact legacy scan for pre-populated tables.
+fn locate_bucket_linear(buckets: []const RateLimitBucket, key: u64) ?BucketSlot {
+    var free: ?usize = null;
+    var oldest_index: usize = 0;
+    var oldest_ns: i128 = std.math.maxInt(i128);
+    for (buckets, 0..) |bucket, index| {
+        if (bucket.last_refill_ns == 0) {
+            if (free == null) free = index;
+            continue;
+        }
+        if (bucket.key == key) return .{ .index = index, .matched = true, .evicted = false };
+        if (bucket.last_refill_ns < oldest_ns) {
+            oldest_ns = bucket.last_refill_ns;
+            oldest_index = index;
+        }
+    }
+    if (free) |index| return .{ .index = index, .matched = false, .evicted = false };
+    return .{ .index = oldest_index, .matched = false, .evicted = true };
+}
+
+/// Maps a key to its first probe slot with a splitmix64 finalizer.
+fn bucket_home(key: u64, len: usize) usize {
+    var value = key;
+    value ^= value >> 30;
+    value *%= 0xbf58476d1ce4e5b9;
+    value ^= value >> 27;
+    value *%= 0x94d049bb133111eb;
+    value ^= value >> 31;
+    return @intCast(value % len);
+}
+
+/// Resolves the bucket key: custom function, hashed header, or constant.
+fn rate_limit_key(options: RateLimitOptions, request: *const Request) u64 {
+    if (options.key_fn) |key_fn| return key_fn(request);
+    const header_name = options.key_header orelse return options.key_constant;
+    const value = request.get_header(header_name) orelse return options.key_constant;
+    return fnv1a_64(value);
+}
+
+/// Hashes bytes with 64-bit FNV-1a, the stable derivation for header keys.
+pub fn fnv1a_64(bytes: []const u8) u64 {
+    var hash: u64 = 0xcbf29ce484222325;
+    for (bytes) |byte| {
+        hash ^= byte;
+        hash *%= 0x100000001b3;
+    }
+    return hash;
+}
+
+fn reject_limited(response: *Response, retry_after: u64) void {
+    if (retry_after != 0) {
+        var buffer: [20]u8 = undefined;
+        const value = std.fmt.bufPrint(&buffer, "{d}", .{retry_after}) catch {
+            fail_response(response);
+            return;
+        };
+        response.append_header("Retry-After", value) catch {
+            fail_response(response);
+            return;
+        };
+    }
+    response.end_best_effort("429 Too Many Requests", "");
+}
+
+fn fail_response(response: *Response) void {
+    response.end_best_effort("500 Internal Server Error", "");
+}
