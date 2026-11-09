@@ -1,0 +1,127 @@
+{
+  "scope": "Qualified partial recovery: restored inputs and historical data; rejected Debug compilation",
+  "version": "2.1.6",
+  "archive": "input_recovery.tar.gz",
+  "archive_bytes": 881729,
+  "archive_sha256": "d1a2fc0813096c109985c7a604263afd4071e93a3c3b447cadb48352e709222d",
+  "inventory_entries": 415,
+  "safe_regular_utf8_members": 416,
+  "logical_files": {
+    "RECOVERY_INDEX.json": 1414,
+    "PUBLICATION_INDEX.json": 48,
+    "ROOT_RECORD_INDEX.json": 20
+  },
+  "encoding": "Lossless UTF-8/base64 content objects with per-path bytes, SHA-256 and mode",
+  "indices": [
+    "RECOVERY_INDEX.json",
+    "PUBLICATION_INDEX.json",
+    "ROOT_RECORD_INDEX.json"
+  ],
+  "historical_native_checkpoint_commit": "7eff98b",
+  "historical_native_archive_sha256": "3fd73226474f685d4813033ba3cdee2c3cfff17f1d2906310e4680eafbeabba6",
+  "source_inventory_rows": 21,
+  "source_inventory_sha256": "e2a83e86e23aed670bb16632f98d4393dbf67e7ddea127c9ae245f07007a0a6c",
+  "separate_launcher_sha256": "4e6faf371c940f322c5221eb48cd165c09fdd2044adc010c82e5a9d6c3d7edaa",
+  "restored_components": {
+    "revised": {
+      "/workspaces/uWebZockets/.uwz-work/evidence/h2-streaming/integration-owned/combined-cases/coordinator.py": {
+        "old": {
+          "path": "/workspaces/uWebZockets/.uwz-work/evidence/h2-streaming/integration-owned/combined-cases/coordinator.py",
+          "resolved": "/workspaces/uWebZockets/.uwz-work/evidence/h2-streaming/integration-owned/combined-cases/coordinator.py",
+          "bytes": 23073,
+          "sha256": "6585ad2323ce38a75948c7c365ceb7b9589c06e1c6010ae01ba35de0f11e6b32"
+        },
+        "new": {
+          "bytes": 23518,
+          "sha256": "4c00e7ae957d2ca488dd14b9814c91f3068a5aa61758ab9a43fb81483a200bb0"
+        }
+      },
+      "/workspaces/uWebZockets/.uwz-work/evidence/h2-streaming/integration-owned/combined-cases/shutdown_cases.py": {
+        "old": {
+          "path": "/workspaces/uWebZockets/.uwz-work/evidence/h2-streaming/integration-owned/combined-cases/shutdown_cases.py",
+          "resolved": "/workspaces/uWebZockets/.uwz-work/evidence/h2-streaming/integration-owned/combined-cases/shutdown_cases.py",
+          "bytes": 7689,
+          "sha256": "2856e200fa463b26c79e4e0b74cc9ead4863f9a1dd6372c0e8249fb9b163e15c"
+        },
+        "new": {
+          "bytes": 10562,
+          "sha256": "c03bc49a65760d3fa99cf45078b893ecebbc4dd3602de6ced4017207b1f08eb7"
+        }
+      }
+    },
+    "unchanged_c8_paths": 5036,
+    "direct_inputs": 8,
+    "source_inventory": {
+      "path": ".uwz-work/evidence/h2-streaming/native_provider/source.sha256",
+      "rows": 12,
+      "sha256": "25049aab57483c0d8604c07471c04d8bc8937b3810534dbc2a5bdcb465e9ef44"
+    },
+    "trees": {
+      "candidate": {
+        "files": 1031,
+        "directories": 208
+      },
+      "libxev": {
+        "files": 93,
+        "directories": 20
+      },
+      "fixture": {
+        "files": 25,
+        "directories": 1
+      },
+      "sdk": {
+        "files": 19542,
+        "directories": 1284
+      },
+      "zslay": {
+        "files": 14,
+        "directories": 3
+      }
+    },
+    "bytecode_absences": 480
+  },
+  "restored_historical_receipts": 4,
+  "restored_historical_captures": 8,
+  "component_audit": "Passed only for source/input and historical data identities; archived binary declarations",
+  "materialization_exit": 0,
+  "new_debug_compiler_exit": 0,
+  "new_debug_stream_bytes": [
+    0,
+    0
+  ],
+  "recovery_debug_exit": 1,
+  "recovery_stop": "Compiler binary differs; stop",
+  "required_debug": {
+    "bytes": 72174904,
+    "sha256": "4c89d63f760f467315e83d8c40021f49335b432490e9a06f8cf3f604e69bb476"
+  },
+  "observed_rejected_debug": {
+    "bytes": 72162616,
+    "sha256": "6d3953c9a85481fa234f94b239d886c677168c3a6d28dc24127953126296a927"
+  },
+  "release_compile_executed": false,
+  "retry_executed": false,
+  "historical_binary_references_satisfied": false,
+  "binary_bytes_included": false,
+  "output_promoted": false,
+  "recovery_native_runs": 0,
+  "original_preservation_audit_passed": false,
+  "original_failed_audit_retained": true,
+  "temporary_loss_cause": "Undetermined",
+  "binary_difference_cause": "Unproved",
+  "host_detection": "Plausible unbound input, not proven cause",
+  "bounded_copy_search": {
+    "safe_metadata_rows": 78993,
+    "exact_size_candidates": 0,
+    "separately_authorized_literal_cache_target": "Absent",
+    "global_absence_proved": false
+  },
+  "prior_project_tests": "Retained prior baseline only: 852/852 tests, 22/22 steps; warm compiler cache; not rerun",
+  "publication_execution": "Archive/docs/helper checks only; no compiler, native or recovery replay",
+  "publication_controls": "Sealed pre-publication source/executed/control records; build/audit outputs retained locally outside archive",
+  "full_recovery_complete": false,
+  "production_adoption": false,
+  "production_pin_changed": false,
+  "platform_or_performance_claim": false,
+  "milestone_complete": false
+}

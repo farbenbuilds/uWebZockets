@@ -400,7 +400,14 @@ receipts and captures. Earlier failed attempts remain available.
 
 A subsequent preservation audit failed because the temporary source, binary
 and original receipt roots were absent. The safe workspace evidence survives;
-the disappearance cause remains undetermined. Physical recovery is a separate
-open step, with no new native run claimed. Production source/dependency
+the disappearance cause remains undetermined. The
+[partial input recovery checkpoint](m2_h2_input_recovery.md) now restores exact
+source/dependency/fixture inputs and the four historical receipts/eight captures.
+Its source/data component audit passes within that scope. A new Debug compile
+returns zero with empty streams, then fails the historical binary-equality
+guard. ReleaseSafe compilation and native replay were not attempted; historical
+receipt binary references remain unsatisfied. The original full preservation
+audit remains failed and the binary difference has no demonstrated cause.
+Production source/dependency
 adoption, H3 streaming, multipart transport integration, early data and the
 remaining ownership/platform/release gates still keep M2 open.

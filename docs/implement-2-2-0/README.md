@@ -13,7 +13,7 @@ results and release actions are recorded only when actually performed.
 | --- | --- | --- | --- |
 | M0 | Freeze the 2.1.6 baseline | Complete | [Baseline](m0_baseline.md) |
 | M1 | Response streaming, static delivery, TLS payloads | TLS closure successor verified; adoption and external profiles open | [Streaming, static, TLS](m1_streaming_static_tls.md) |
-| M2 | Request streaming and incremental multipart | Combined native H2 matrix reviewed; temporary recovery, H3 and production adoption open | [Request streaming](m2_request_streaming.md) |
+| M2 | Request streaming and incremental multipart | Combined native H2 matrix reviewed; partial input recovery stopped at binary equality; H3 and adoption open | [Request streaming](m2_request_streaming.md) |
 | M3 | Dependency provenance gates and archives | In progress | [Dependency provenance](m3_dependency_provenance.md) |
 | M4 | Live WebTransport and compliance | Delivery re-declared; activation gated | [WebTransport](m4_webtransport.md) |
 | M5 | Cluster, timer, and limiter ownership | Awaiting feature stabilization | [Structural ownership](m5_structural_ownership.md) |
@@ -333,3 +333,10 @@ per run, with normal cleanup and independent evidence review. Its safe receipts
 and captures are preserved. A later input-preservation audit failed after the
 temporary build and execution roots disappeared; cause and physical recovery
 remain open. This checkpoint does not establish production adoption or full M2.
+
+The [partial input recovery checkpoint](m2_h2_input_recovery.md) restores exact
+source, dependency, fixture and historical receipt/capture inputs. A new Debug
+compile exits successfully but fails the required historical byte-equality
+guard; ReleaseSafe and native replay were not attempted. The original full
+preservation audit remains failed, and both loss and binary-difference causes
+remain unproved. The component audit has a narrower source/data scope.
