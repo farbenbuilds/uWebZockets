@@ -1546,10 +1546,11 @@ is [docs/releases/2.2.0.md](docs/releases/2.2.0.md).
   names as re-exports and the zero-allocation contract. Connection parking
   extraction remains a 2.3.0 item.
 - **C9/C10/C11 dependency baseline.** The maintained libxev, lsquic, and h1spec
-  pins are full commits; all four dependency views agree; the mirror checks pass;
-  `patches/` and `vendor/lsquic_overlay` are absent. The cold build, h1spec
-  33/33 run, and HTTP/3 cross-implementation run were recorded during the
-  release review.
+  pins are full commits; all four dependency views agree; the local provenance
+  check passes; `patches/` and `vendor/lsquic_overlay` are absent. The cold
+  build, h1spec 33/33 run, and HTTP/3 cross-implementation run were recorded
+  during implementation; the exact-mirror sync, fresh final-pin protocol runs,
+  and h1spec license resolution remain release-owner actions.
 - **M7 release metadata.** Version surfaces, C ABI macros, documentation
   headers, changelog, and the 2.2.0 release record are synchronized.
 

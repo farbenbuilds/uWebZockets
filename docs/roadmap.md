@@ -126,7 +126,7 @@ the pure request-body and multipart foundations. The full record is
 | Receive-side UDP GRO | The loop still reads one datagram at a time. Restore when ancillary control messages expose `UDP_GRO` segment sizes and the pinned HTTP/3 gates pass |
 | HttpArena `async` adapter | The external adapter change and official run are outside this repository. Restore through the adapter owner |
 | Cluster and timer/limiter ownership | The rate-limit table, index, and LRU moved to `src/http/rate_limit.zig` with unchanged `middleware` re-exports. The nested cluster runtime and connection parking state remain in their current owners; extract them in 2.3.0 without changing public behavior |
-| Fork archives and platform closure | Current pins are full maintained-fork commits and pass local provenance checks. Final archives, second-machine resolution, and the native Windows release job remain release-owner actions |
+| Fork archives and platform closure | Current pins are full maintained-fork commits and pass local provenance checks. The exact-mirror run reports upstream lsquic advanced, and the pinned h1spec tree still has no license notice. Final archives, mirror sync, second-machine resolution, and the native Windows release job remain release-owner actions |
 | kTLS and splice | kTLS stays with v3.5.0 SB-31. Splice remains conditional on measured benefit; plaintext `sendfile` is unchanged |
 
 ## Deliberate boundaries
