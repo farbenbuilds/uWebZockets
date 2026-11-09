@@ -13,7 +13,7 @@ results and release actions are recorded only when actually performed.
 | --- | --- | --- | --- |
 | M0 | Freeze the 2.1.6 baseline | Complete | [Baseline](m0_baseline.md) |
 | M1 | Response streaming, static delivery, TLS payloads | TLS closure successor verified; adoption and external profiles open | [Streaming, static, TLS](m1_streaming_static_tls.md) |
-| M2 | Request streaming and incremental multipart | H1/TLS and 40 H2 case IDs proved across checkpoints; combined matrix, H3 and adoption remain open | [Request streaming](m2_request_streaming.md) |
+| M2 | Request streaming and incremental multipart | Component proofs, combined source matrix and fresh builds recorded; native combined matrix, H3 and adoption open | [Request streaming](m2_request_streaming.md) |
 | M3 | Dependency provenance gates and archives | In progress | [Dependency provenance](m3_dependency_provenance.md) |
 | M4 | Live WebTransport and compliance | Delivery re-declared; activation gated | [WebTransport](m4_webtransport.md) |
 | M5 | Cluster, timer, and limiter ownership | Awaiting feature stabilization | [Structural ownership](m5_structural_ownership.md) |
@@ -314,3 +314,9 @@ The [native source rehydration checkpoint](m2_h2_native_rehydration.md) restores
 the exact 1,031-file candidate and 93-file libxev override from archived inputs.
 Source tests, preservation and independent review pass. Runtime closure, fresh
 binaries, actual provider/native all40 and adoption remain open.
+
+The [corrected native build checkpoint](m2_h2_native_builds.md) compiles fresh
+Debug and ReleaseSafe fixtures with independently approved runtime dependencies.
+Review closes the dependency-enrollment finding, and independent input/output
+checks pass. The binaries have not been executed; actual provider/native all40,
+H3, production adoption and remaining milestone gates stay open.

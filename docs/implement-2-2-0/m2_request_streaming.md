@@ -378,3 +378,9 @@ The [complete native source export](m2_h2_native_rehydration.md) is now restored
 and independently checked, including archived supplements and read-only modes.
 It does not establish runtime or native execution readiness. Fresh builds and
 actual combined all40 remain required; M2 remains open.
+
+The [native build checkpoint](m2_h2_native_builds.md) now records fresh Debug
+and ReleaseSafe outputs under corrected prior-approval controls. Both builds,
+their input rechecks and independent review pass. No target binary ran in this
+checkpoint; real provider ownership, combined native all40, H3 and adoption
+remain required.

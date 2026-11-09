@@ -1,0 +1,71 @@
+{
+  "scope": "Corrected C8 runtime/input closure and fresh builds; no native execution",
+  "base_commit": "1b846fcf2cb9bac7d4ef7866c4bb531c0c7dde35",
+  "archive": "native_builds.tar.gz",
+  "archive_sha256": "e3b8fe1c3c0a5f99a8144752eddab62f5568dcf6c9f7a51719bd669f3b6874a0",
+  "archive_bytes": 9677125,
+  "safe_regular_utf8_members": 1489,
+  "inventory_entries": 1488,
+  "packet_files": 1411,
+  "accepted_preflight_sha256": "e78cbbc2f1665e6999a5502f2817be531909a80d72e1dbd0fd22055dc93bb53c",
+  "counts": {
+    "files": 5038,
+    "direct": 8,
+    "candidate": {
+      "files": 1031,
+      "directories": 208
+    },
+    "libxev": {
+      "files": 93,
+      "directories": 20
+    },
+    "fixture": {
+      "files": 25,
+      "directories": 1
+    },
+    "sdk": {
+      "files": 19542,
+      "directories": 1284
+    },
+    "zslay": {
+      "files": 14,
+      "directories": 3
+    },
+    "bytecode_absences": 480
+  },
+  "accepted_builds": {
+    "debug": {
+      "binary": {
+        "path": "/tmp/uwz-h2-native-c8-fix1/debug/profile",
+        "resolved": "/tmp/uwz-h2-native-c8-fix1/debug/profile",
+        "bytes": 72174904,
+        "sha256": "4c89d63f760f467315e83d8c40021f49335b432490e9a06f8cf3f604e69bb476"
+      },
+      "status": 0,
+      "exact_historical_recipe_remap": true
+    },
+    "release": {
+      "binary": {
+        "path": "/tmp/uwz-h2-native-c8-fix1/release/profile",
+        "resolved": "/tmp/uwz-h2-native-c8-fix1/release/profile",
+        "bytes": 31072272,
+        "sha256": "94510b8b95880b084f5a2250fd825db181cc9f1320d36f59130f3bdcf64d2f10"
+      },
+      "status": 0,
+      "exact_historical_recipe_remap": true
+    }
+  },
+  "approved_elf_nodes": 44,
+  "original_runtime_acceptance": "unestablished; P1 fixed and fresh builds repeated",
+  "private_originals_included": false,
+  "toolchain_bytes_embedded": false,
+  "repository_gate_scope": "Tracked 1b846fc baseline; separate from reconstructed candidate",
+  "sdk_historical_directory_state": "unproved; seven current extra directories recorded",
+  "root_audit_setup_failures": "Python real-prefix omission, then reused restoration receipt; retained",
+  "root_initial_restore_stdout": "superseded; original JSON receipt retained",
+  "target_executed": false,
+  "native_all40_executed": false,
+  "clean_machine_reproduction": false,
+  "production_pin_changed": false,
+  "milestone_complete": false
+}
