@@ -91,6 +91,9 @@ the C ABI layout, and the v2.1.6 release are unchanged.
   [the 2.2.0 release record](docs/releases/2.2.0.md#limits-and-dated-restoration-criteria).
 - kTLS remains a standalone helper owned by v3.5.0 SB-31. `io_uring_prep_splice`
   remains conditional on measured benefit; plaintext `sendfile` is unchanged.
+- Framed file responses use bounded synchronous positional reads on the owning
+  loop. Asynchronous disk I/O remains a future optimization; plaintext
+  `sendfile` is unaffected.
 
 ### Security
 

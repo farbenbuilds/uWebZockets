@@ -210,6 +210,20 @@ pub fn static_files(comptime file_capacity: usize) type {
                 source_owned = false;
                 return source;
             }
+            // Identity is the only possible choice when the client sent no
+            // Accept-Encoding field; skip two sidecar opens in that case.
+            var headers = request.header_entries();
+            var has_encoding = false;
+            while (headers.next()) |entry| {
+                if (std.ascii.eqlIgnoreCase(entry.name, "accept-encoding")) {
+                    has_encoding = true;
+                    break;
+                }
+            }
+            if (!has_encoding) {
+                source_owned = false;
+                return source;
+            }
             var gzip = try self.open_sidecar(path, ".gz", stat.mtime.nanoseconds, .gzip);
             defer if (gzip) |candidate| candidate.file.close(self.io);
             var br = try self.open_sidecar(path, ".br", stat.mtime.nanoseconds, .br);
