@@ -1423,7 +1423,7 @@ pub const TcpConnection = struct {
                 } else if (head.buffered_failure != null) {
                     _ = http_parser.commit_head(&self.parser, &self.req, head);
                 } else switch (self.parser.state) {
-                    .body, .chunk_size, .chunk_ext, .chunk_data, .chunk_crlf, .chunk_trailer => {},
+                    .body, .chunk_size, .chunk_ext, .chunk_data, .chunk_crlf, .chunk_trailer, .error_invalid, .error_headers_too_large, .error_too_large => {},
                     else => {
                         self.handle_expect_continue();
                         return;
