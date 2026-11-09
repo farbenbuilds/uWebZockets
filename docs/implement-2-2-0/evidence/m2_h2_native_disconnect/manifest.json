@@ -1,0 +1,119 @@
+{
+  "scope": "C6b strict disconnect and replacement gating; source-only delta",
+  "base_commit": "9e2b536e002aac168fefe28771e975cf9e073f6e",
+  "archive": "native-disconnect.tar.gz",
+  "archive_bytes": 12888039,
+  "archive_sha256": "a699c83b373b1ed0c4d976a179ac4d2d7c9453344211e87ce1d6b89fc1f4a4b8",
+  "safe_regular_utf8_members": 5780,
+  "inventory_entries": 5779,
+  "current_native_sources": {
+    "test_native_transport.py": {
+      "size": 51176,
+      "sha256": "e90ab753b524e8d6ef906ad856938b2f0630c43f7e6e6d36696b008276e73cdb"
+    },
+    "test_native_post.py": {
+      "size": 19598,
+      "sha256": "3186c2360b676ee9a62a06787cafc40bae6be9ca6662001d7b7027c0b77303d9"
+    },
+    "test_native_closing.py": {
+      "size": 28897,
+      "sha256": "dd942f50e0b2c03c9ccf8fef5de11599849350fe388c75221d266005dc8e12c1"
+    },
+    "native_post.py": {
+      "size": 7081,
+      "sha256": "0ba8cd7bee70cf666f303756de2389e4d79608bbad46a6bb6e6ad85479db076c"
+    },
+    "native_closing.py": {
+      "size": 21814,
+      "sha256": "7c42cd04d5aba362b6b381b2d31e3feb07654de690159764dd0b7bae600d1007"
+    },
+    "native_transport.py": {
+      "size": 23734,
+      "sha256": "e09b73926fbd87ff4bb278f0952acb61fcdd93d2da1af9c3ec3ebdd97774a02e"
+    },
+    "test_native_imports.py": {
+      "size": 4819,
+      "sha256": "1d9baac7ff2aa10eea930ee6a24522109c97a7e8fc5852660f0dd541187378b3"
+    }
+  },
+  "parent_archive_sha256": "c0bdf2032aedfeea034e08edc4b2ab170f122931df10e419bc9f12a57f9f96f9",
+  "canonical_extension": {
+    "path": ".uwz-work/evidence/h2-streaming/integration-owned/combined-cases/coordinator.py",
+    "size": 23073,
+    "sha256": "6585ad2323ce38a75948c7c365ceb7b9589c06e1c6010ae01ba35de0f11e6b32",
+    "unchanged_modules": 45,
+    "maximum_nesting": 4,
+    "baseline_maximum_nesting": 4,
+    "unchanged_inherited_deep_controls": 2,
+    "new_controls_exceeding_three": 0,
+    "baseline_sha256": "75ccc55642de0733108c15838e9dce2a3770ae0144f652f9e2960c0d3acaac53"
+  },
+  "unchanged_canonical_modules": 45,
+  "source_authority_member": "SOURCE_AUTHORITY.json",
+  "historical119_restoration_authority_unchanged": true,
+  "raw_files_embedded": 5520,
+  "prior_safe_transport_paths_preserved": 6429,
+  "private_original_environments_included": false,
+  "environment_controls": "Exact three baseline controls, optionally followed by exact local pending-source manifest path",
+  "tool_snapshot_copies_added": 0,
+  "collector_restore_precedes_dependency_snapshot": true,
+  "focused_groups": 32,
+  "all40_source_runs": [
+    {
+      "children": 2,
+      "dispatched": 40,
+      "invocation": "explicit",
+      "invocation_calls": [
+        {
+          "positional": 1,
+          "selection_keyword": false
+        }
+      ],
+      "observed": {
+        "connections": 41,
+        "final_collections": 2,
+        "heads": 802,
+        "incoming_resets": 13,
+        "informationals": 2,
+        "receive_bytes": 51312051,
+        "receive_calls": 31433,
+        "request_flow": 200091899,
+        "settings": 46,
+        "small": 789
+      },
+      "receipts": 41,
+      "run": "c6b-fix1-all40-explicit"
+    },
+    {
+      "children": 2,
+      "dispatched": 40,
+      "invocation": "omitted_default",
+      "invocation_calls": [
+        {
+          "positional": 0,
+          "selection_keyword": false
+        }
+      ],
+      "observed": {
+        "connections": 41,
+        "final_collections": 2,
+        "heads": 802,
+        "incoming_resets": 13,
+        "informationals": 2,
+        "receive_bytes": 51312051,
+        "receive_calls": 31433,
+        "request_flow": 200091899,
+        "settings": 46,
+        "small": 789
+      },
+      "receipts": 41,
+      "run": "c6b-fix1-all40-omitted"
+    }
+  ],
+  "canonical_transition_proven": "Strict release permits actual replacement connect; expected second-connection sentinel",
+  "completed_native_run": false,
+  "native_compiled": false,
+  "native_executed": false,
+  "complete_transport": false,
+  "milestone_complete": false
+}
