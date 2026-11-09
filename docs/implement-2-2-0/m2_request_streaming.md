@@ -133,9 +133,10 @@ and omitted-default invocations with independent full receipts, both large
 uploads and retained final facts. Broad review/native/adoption gates remain open.
 The [HTTP/3 source checkpoint](m2_h3_source_authentication.md)
 authenticates the cached QPACK file against the retained exact-pin bundle.
-The combined H2 run and full H2 gates, HTTP/3,
-multipart transport composition, production adoption and final acceptance remain
-open. The sections below preserve design decisions and component history.
+The [four combined native H2 runs](m2_h2_native_matrix.md) pass historical
+execution review. Temporary-input recovery, full H2 gates, HTTP/3, multipart
+transport composition, production adoption and final acceptance remain open.
+The sections below preserve design decisions and component history.
 
 The architect mapped body-cap admission, borrowed headers/captures, middleware
 metadata, callback ownership, informational responses, and flow control across
@@ -390,3 +391,16 @@ provider's missing pre-shutdown fact handoff through two canonical harness
 files. Legacy behavior and baseline-versus-hook source full40 remain equal.
 The reviewed revision must be explicitly authorized for the real provider;
 native full40, H3 and adoption remain open.
+
+The [combined native H2 matrix](m2_h2_native_matrix.md) now passes all 40 cases
+in four actual Linux TLS/H2 runs: Debug and ReleaseSafe, each with explicit
+selection and a genuinely omitted selection argument. The eight owned children
+exit normally with complete cleanup; independent review accepts the preserved
+receipts and captures. Earlier failed attempts remain available.
+
+A subsequent preservation audit failed because the temporary source, binary
+and original receipt roots were absent. The safe workspace evidence survives;
+the disappearance cause remains undetermined. Physical recovery is a separate
+open step, with no new native run claimed. Production source/dependency
+adoption, H3 streaming, multipart transport integration, early data and the
+remaining ownership/platform/release gates still keep M2 open.

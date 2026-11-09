@@ -13,7 +13,7 @@ results and release actions are recorded only when actually performed.
 | --- | --- | --- | --- |
 | M0 | Freeze the 2.1.6 baseline | Complete | [Baseline](m0_baseline.md) |
 | M1 | Response streaming, static delivery, TLS payloads | TLS closure successor verified; adoption and external profiles open | [Streaming, static, TLS](m1_streaming_static_tls.md) |
-| M2 | Request streaming and incremental multipart | Component proofs, combined source matrix and fresh builds recorded; native combined matrix, H3 and adoption open | [Request streaming](m2_request_streaming.md) |
+| M2 | Request streaming and incremental multipart | Combined native H2 matrix reviewed; temporary recovery, H3 and production adoption open | [Request streaming](m2_request_streaming.md) |
 | M3 | Dependency provenance gates and archives | In progress | [Dependency provenance](m3_dependency_provenance.md) |
 | M4 | Live WebTransport and compliance | Delivery re-declared; activation gated | [WebTransport](m4_webtransport.md) |
 | M5 | Cluster, timer, and limiter ownership | Awaiting feature stabilization | [Structural ownership](m5_structural_ownership.md) |
@@ -326,3 +326,10 @@ the actual canonical capture before close/signal. Its optional callback,
 mutation guards and source compatibility pass independent review. A same-seed
 repository replay passes 852 tests after one unattributed SIGTERM interruption.
 The revised harness still requires the four actual native acceptance runs.
+
+The [combined native H2 matrix](m2_h2_native_matrix.md) records all four actual
+Debug/ReleaseSafe, explicit/omitted runs: 40 cases and two fresh owned children
+per run, with normal cleanup and independent evidence review. Its safe receipts
+and captures are preserved. A later input-preservation audit failed after the
+temporary build and execution roots disappeared; cause and physical recovery
+remain open. This checkpoint does not establish production adoption or full M2.
