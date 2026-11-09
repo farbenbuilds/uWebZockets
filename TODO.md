@@ -2,7 +2,7 @@
 
 > Target Audience: the maintainer, systems engineers, and autonomous coding
 > agents.
-> Current release: 2.1.6 (2026-10-26). Open patch: 2.5.5 (Section 11.1).
+> Current release: 2.2.0 (2026-11-10). Open patch: 2.5.5 (Section 11.1).
 > Historical note: the v1.9.0 and v2.0 sections are closure context; use the
 > current repository state and milestone checkboxes, not the old release
 > target, to decide what is open.

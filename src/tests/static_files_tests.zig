@@ -138,6 +138,13 @@ pub const FileCapture = struct {
     }
 };
 
+test "static files: init rejects an index that request normalization would rewrite" {
+    try std.testing.expectError(
+        error.InvalidStaticIndex,
+        support.static_files.static_files(8).init(std.testing.io, ".", .{ .index = "/index.html" }),
+    );
+}
+
 test "static files: oversized framed response hands off selected file and stable scratch" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();

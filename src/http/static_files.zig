@@ -44,7 +44,12 @@ pub fn static_files(comptime file_capacity: usize) type {
         pub fn init(io: std.Io, root: []const u8, options: Options) !Self {
             if (options.index) |index| {
                 var index_buffer: [1024]u8 = undefined;
-                _ = try normalize_path(index, &index_buffer);
+                const normalized = try normalize_path(index, &index_buffer);
+                // Reject a configured index that request normalization would
+                // rewrite; accepting it would fail only after a live request.
+                if (normalized.len != index.len or !std.mem.eql(u8, normalized, index)) {
+                    return error.InvalidStaticIndex;
+                }
             }
             const directory = try std.Io.Dir.cwd().openDir(io, root, .{
                 .access_sub_paths = true,

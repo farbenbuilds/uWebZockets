@@ -162,6 +162,7 @@ fn valid_chunk_extensions(input: []const u8) bool {
                     }
                     if (byte == '\\') {
                         if (index == input.len) return false;
+                        if (!field_byte(input[index])) return false;
                         index += 1;
                         continue;
                     }

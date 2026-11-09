@@ -180,8 +180,8 @@ test "http decoder: invalid progress preserves counters" {
 
 test "http decoder: malformed chunk framing fails closed" {
     const inputs = [_][]const u8{
-        "\r\n",    "Z\r\n",     "-1\r\n",    "10000000000000000\r\n", "1\rX",                    "1;x\n\r\n",         "1\r\nxXX", "0\r\nHost: x\r\n\r\n", "0\r\nTransfer-Encoding: chunked\r\n\r\n", "0\r\nContent-Length: 0\r\n\r\n", "0\r\nX : v\r\n\r\n", "0\r\nX: \x7f\r\n\r\n",
-        "1;\r\nx", "1;=x\r\nx", "1;x=\r\nx", "1;x;=y\r\nx",           "1;x=\"unterminated\r\nx", "1;x=\"a\nb\"\r\nx",
+        "\r\n",    "Z\r\n",     "-1\r\n",    "10000000000000000\r\n", "1\rX",                    "1;x\n\r\n",         "1\r\nxXX",            "0\r\nHost: x\r\n\r\n",  "0\r\nTransfer-Encoding: chunked\r\n\r\n", "0\r\nContent-Length: 0\r\n\r\n", "0\r\nX : v\r\n\r\n", "0\r\nX: \x7f\r\n\r\n",
+        "1;\r\nx", "1;=x\r\nx", "1;x=\r\nx", "1;x;=y\r\nx",           "1;x=\"unterminated\r\nx", "1;x=\"a\nb\"\r\nx", "1;x=\"a\\\nb\"\r\nx", "1;x=\"a\\\x00b\"\r\nx", "1;x=\"a\\\x7fb\"\r\nx",
     };
     for (inputs) |input| {
         var state = decoder.init(.chunked, .{});
