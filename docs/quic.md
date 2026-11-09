@@ -40,6 +40,10 @@ bodies come from startup-allocated contiguous pools.
   stay unique, `:protocol` is accepted only on CONNECT requests that carry
   `:authority`, and connection-specific fields are rejected as malformed with
   a stream-scoped `H3_MESSAGE_ERROR`.
+- Known-length file responses use `Response.stream_file`. The stream copies
+  accepted bytes into its existing bounded body storage before a partial write,
+  owns one descriptor per active stream, and closes it exactly once on
+  completion, reset, or reuse.
 
 ## Observability
 

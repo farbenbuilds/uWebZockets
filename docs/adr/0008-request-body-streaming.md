@@ -1,10 +1,10 @@
 # 0008. Bounded request body streaming
 
-- Status: Accepted
+- Status: Accepted; live transport binding deferred
 - Date: 2026-10-26
 - Revision: typed request view and platform activation guard, 2026-10-27
+- Release: 2.2.0 ships the contract and pure lifecycle; 2.3.0 owns live binding
 - Deciders: transport, HTTP, router, QUIC, and root integrator
-- Release: 2.2.0
 
 ## Context
 
@@ -17,6 +17,16 @@ Choose the route-level sink recommended by the milestone plan. Keep framing
 and lifecycle validation pure; transport drivers call application sinks and
 perform I/O. The full-body APIs remain the default and remain compatible.
 M1 must finish before this decision's transport implementation starts.
+
+## 2.2.0 delivery note
+
+2.2.0 ships the public `StreamingRequest`, `BodySink`, `BodyRoute`,
+`BodyControl`, `BodyState`, pure HTTP/1 body decoder, and the incremental
+multipart sink. No live transport calls the sink yet, so `Request.body` remains
+buffered and source-compatible. The 2.3.0 milestone owns HTTP/1/TLS, HTTP/2,
+and HTTP/3 binding, admission, `Expect: 100-continue`, pause/resume, trailers,
+and the 100 MB bounded-memory proof. See the
+[2.2.0 release record](../releases/2.2.0.md#limits-and-dated-restoration-criteria).
 
 ## Compatibility revision, 2026-10-26
 

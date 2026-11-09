@@ -29,6 +29,11 @@ is the standard encrypted one.
 - Partial DATA and trailers.
 - Connection-level and stream-level flow control.
 - Async response tokens and drain-driven producers, exactly as on HTTP/1.1.
+- Known-length file responses through `Response.stream_file`, bounded by both
+  flow-control windows and the configured output queue.
+- A bounded FIFO of blocked RST_STREAM intents. It is flushed before later
+  HEADERS or DATA so an output-pressured reset does not close healthy sibling
+  streams.
 
 No dynamic allocation happens on the steady-state path. `uz.http2` also exposes
 the frame and connection primitives directly, and `uz.http2_hpack` exposes a

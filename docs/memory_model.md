@@ -56,7 +56,10 @@ into these regions, in order:
 `max_body_size`, rounded to a 16-byte boundary. Write queues start on a cache
 line. `required_bytes` and `carve` share one offset computation, so sizing and
 partitioning cannot drift apart. Pool storage is zeroed during initialization;
-every other region is written before it is read.
+every other region is written before it is read. File-transfer state is inline
+in each connection slot: it holds one descriptor, offset, remaining length, and
+a borrowed worker-local scratch pointer per active HTTP/1 or HTTP/2 response.
+It never stores file bytes, so large files do not grow the slab.
 
 `App.init` and `App.init_configured` allocate this block once and free it once;
 `App.init_from_slab` accepts caller-owned storage with the same contract. Each

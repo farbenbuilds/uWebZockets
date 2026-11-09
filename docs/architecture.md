@@ -235,6 +235,19 @@ certificates. Request bytes accumulate in the connection's bounded request
 buffer, the strict parser proves completeness, and the router dispatches
 through middleware to a handler.
 
+### Streaming and static delivery
+
+Response producers stay drain-driven: a producer writes bounded chunks and
+returns `.pending` when the transport refuses more output. `file_transfer.zig`
+owns one bounded read window per active file response and copies accepted bytes
+into the transport's existing storage; `Response.stream_file` transfers the
+descriptor only after the head is accepted. Plaintext HTTP/1 keeps the kernel
+`sendfile` path. Static mounts use `cache.zig` validators, `negotiate.zig` for
+content coding, and `static_files.zig` for sidecar freshness and representation
+selection. `body_decoder.zig`, `request_body.zig`, `streaming_request.zig`, and
+`multipart_streaming.zig` are the pure request-body foundation; live transport
+binding is the 2.3.0 milestone.
+
 ### HTTP/2
 
 `src/core/tcp.zig` embeds one eight-stream server session per connection and

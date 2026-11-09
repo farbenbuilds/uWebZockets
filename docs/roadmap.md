@@ -232,8 +232,9 @@ Candidates for the next minor releases, in rough dependency order:
 
 1. **WebSocket client** over the existing client transport, using the zslay
    client role for framing and masking.
-2. **Incremental request bodies** for HTTP/1.1: a bounded, async body reader
-   that lets large uploads bypass `max_body_size` per connection.
+2. **Live request-body streaming:** bind the 2.2.0 `BodySink`/`BodyState`
+   contract to HTTP/1.1, TLS, HTTP/2, and HTTP/3 so large uploads bypass
+   `max_body_size` with bounded memory.
 3. **Configurable HTTP/2 stream and tunnel counts** through connection-type
    specialization.
 4. **HTTP/3 counter parity** by threading the metrics registry into the engine.

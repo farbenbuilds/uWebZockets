@@ -1997,9 +1997,11 @@ Integration requirements:
 - [x] Let the CLI update `skills-lock.json`; verify
       `.agents/skills/untangle-codebase/SKILL.md` and
       `npx skills list --json` show the skill.
-- [ ] Run one untangle pass over the repository before milestone work. Keep the
-      generated report outside the repository (OS temp or maintainer-local
-      notes) unless a later task explicitly asks for a tracked report.
+- [x] Run one untangle pass over the repository before milestone work. The
+      2.2.0 pass is recorded at
+      `/tmp/nix-shell.gay4pM/opencode/untangle-2.2.0.md` (outside the repository).
+      The rate-limit extraction is landed; the remaining oversized-file
+      ownership debt is tracked for 2.3.0.
 - [x] Commit the skill install and agent wiring as a release-preflight commit;
       do not mix it with protocol, module, or dependency-pin commits.
 - [x] If the skill's advice conflicts with `AGENTS.md`,
@@ -2018,7 +2020,7 @@ Acceptance:
 
 - [x] `untangle-codebase` is installed and pinned in `skills-lock.json`.
 - [x] The architect, developer, reviewer, and integrator prompts reference it.
-- [ ] One untangle pass has been run and its output location is recorded.
+- [x] One untangle pass has been run and its output location is recorded.
 - [x] The skill install is committed separately from the 2.5.5 code changes.
 
 ---
