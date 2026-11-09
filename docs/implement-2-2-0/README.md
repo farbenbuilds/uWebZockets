@@ -309,3 +309,8 @@ The [active-shutdown source slice](m2_h2_native_active.md) adds phase-aware
 signal/termination hooks, one-shot cleanup and live receipt validation. Its
 51 source groups and corrected cold-import checks pass review; repository unit
 gates pass 852 tests. Actual provider/native all40 and adoption remain open.
+
+The [native source rehydration checkpoint](m2_h2_native_rehydration.md) restores
+the exact 1,031-file candidate and 93-file libxev override from archived inputs.
+Source tests, preservation and independent review pass. Runtime closure, fresh
+binaries, actual provider/native all40 and adoption remain open.

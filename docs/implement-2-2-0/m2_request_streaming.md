@@ -373,3 +373,8 @@ signal evidence, closing provenance, normal release, failure cleanup and live
 final receipt aggregation. Source checks and corrected import guards pass
 review. Actual runtime ownership, native candidates and combined all40 remain
 required before adoption; M2 remains open.
+
+The [complete native source export](m2_h2_native_rehydration.md) is now restored
+and independently checked, including archived supplements and read-only modes.
+It does not establish runtime or native execution readiness. Fresh builds and
+actual combined all40 remain required; M2 remains open.
