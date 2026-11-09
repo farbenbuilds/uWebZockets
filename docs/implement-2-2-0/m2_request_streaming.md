@@ -355,3 +355,8 @@ The [native fixture-capture parser](m2_h2_native_post.md) now has reviewed
 canonical post-fact validation, diagnostic handling and safe public environment
 evidence. Its source proofs establish semantic checks; actual deinitialization,
 process cleanup, combined native all40 and production adoption remain open.
+
+The [native connection-construction slice](m2_h2_native_connection.md) passes
+focused source checks and review after a canonical close-deadline correction.
+It preserves private environment boundaries. Strict disconnect and active
+termination are the next required transport slices; M2 remains open.

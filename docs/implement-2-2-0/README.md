@@ -294,3 +294,8 @@ The [native H2 fixture-capture parser](m2_h2_native_post.md) checks the complete
 75-marker log and canonical post-shutdown facts. The diagnostic fix and privacy
 preparation are independently reviewed; public evidence omits private ambient
 credentials. Native provider/runtime/build/all40 and adoption remain required.
+
+The [native H2 connection constructor](m2_h2_native_connection.md) now has
+reviewed ordinary I/O/close behavior and exact C4 pretraffic binding. Its
+intermediate-close regression uses the real coordinator. Strict disconnect,
+active hooks, real provider/runtime/native proof and adoption remain open.

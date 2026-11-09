@@ -1,0 +1,54 @@
+{
+  "scope": "C6a connection construction, ordinary I/O and ordinary close; source-only delta",
+  "base_commit": "ad43ddba05de35705c11384e6af858082a744550",
+  "archive": "native-connection.tar.gz",
+  "archive_bytes": 9341067,
+  "archive_sha256": "c0bdf2032aedfeea034e08edc4b2ab170f122931df10e419bc9f12a57f9f96f9",
+  "safe_regular_utf8_members": 4159,
+  "inventory_entries": 4158,
+  "current_native_sources": {
+    "test_native_transport.py": {
+      "size": 23692,
+      "sha256": "4f1bfcb66fc122c16a29b39c665a58006c8c5ffc6938758a441afcb249671789"
+    },
+    "test_native_post.py": {
+      "size": 19598,
+      "sha256": "3186c2360b676ee9a62a06787cafc40bae6be9ca6662001d7b7027c0b77303d9"
+    },
+    "test_native_closing.py": {
+      "size": 28897,
+      "sha256": "dd942f50e0b2c03c9ccf8fef5de11599849350fe388c75221d266005dc8e12c1"
+    },
+    "native_post.py": {
+      "size": 7081,
+      "sha256": "0ba8cd7bee70cf666f303756de2389e4d79608bbad46a6bb6e6ad85479db076c"
+    },
+    "native_closing.py": {
+      "size": 21814,
+      "sha256": "7c42cd04d5aba362b6b381b2d31e3feb07654de690159764dd0b7bae600d1007"
+    },
+    "native_transport.py": {
+      "size": 16426,
+      "sha256": "88b97b4437612f273356741b0f91e2412d453412163a574d2e31d596ba332ecc"
+    },
+    "test_native_imports.py": {
+      "size": 4819,
+      "sha256": "1d9baac7ff2aa10eea930ee6a24522109c97a7e8fc5852660f0dd541187378b3"
+    }
+  },
+  "parent_public_native_paths": 6482,
+  "parent_archive_sha256": "d19281da19d04c3afbc3bb97ef614b21efa3746f0dc405dfb982d7cc959fbe92",
+  "raw_files_embedded": 3923,
+  "tool_snapshot_files_referenced": 2506,
+  "tool_snapshot_bytes_referenced": 306418672,
+  "focused_groups": 15,
+  "canonical_transition_proven": "Intermediate close succeeds and reaches expected second-connect sentinel",
+  "whole_two_case_run_completed": false,
+  "private_original_environments_included": false,
+  "deferred_collector_issue": "Snapshot dependencies after restoration before future runs that change restored bytes",
+  "active_receive_cleanup_owner": "Required downstream C6c/provider work; C4 does not own socket closure",
+  "native_compiled": false,
+  "native_executed": false,
+  "complete_transport": false,
+  "milestone_complete": false
+}
