@@ -384,3 +384,9 @@ and ReleaseSafe outputs under corrected prior-approval controls. Both builds,
 their input rechecks and independent review pass. No target binary ran in this
 checkpoint; real provider ownership, combined native all40, H3 and adoption
 remain required.
+
+The [collection-handoff source revision](m2_h2_collection_handoff.md) fixes the
+provider's missing pre-shutdown fact handoff through two canonical harness
+files. Legacy behavior and baseline-versus-hook source full40 remain equal.
+The reviewed revision must be explicitly authorized for the real provider;
+native full40, H3 and adoption remain open.

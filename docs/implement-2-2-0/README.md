@@ -320,3 +320,9 @@ Debug and ReleaseSafe fixtures with independently approved runtime dependencies.
 Review closes the dependency-enrollment finding, and independent input/output
 checks pass. The binaries have not been executed; actual provider/native all40,
 H3, production adoption and remaining milestone gates stay open.
+
+The [final-collection handoff](m2_h2_collection_handoff.md) gives the provider
+the actual canonical capture before close/signal. Its optional callback,
+mutation guards and source compatibility pass independent review. A same-seed
+repository replay passes 852 tests after one unattributed SIGTERM interruption.
+The revised harness still requires the four actual native acceptance runs.
