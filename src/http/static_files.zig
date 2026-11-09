@@ -64,6 +64,13 @@ pub fn static_files(comptime file_capacity: usize) type {
                 error.InvalidStaticPath, error.AccessDenied, error.SymLinkLoop => response.end_best_effort("403 Forbidden", ""),
                 error.FileNotFound, error.NotDir => response.end_best_effort("404 Not Found", ""),
                 error.FileTooLarge => response.end_best_effort("413 Content Too Large", ""),
+                // A file head or first window can be refused before any bytes
+                // are queued. Treat it as bounded backpressure, not a 500.
+                error.WouldBlock => response.end_with_headers_best_effort(
+                    "503 Service Unavailable",
+                    "Retry-After: 1\r\n",
+                    "",
+                ),
                 else => response.end_best_effort("500 Internal Server Error", ""),
             };
         }

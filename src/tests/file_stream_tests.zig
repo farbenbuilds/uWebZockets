@@ -278,6 +278,45 @@ const Pipeline = struct {
     }
 };
 
+test "file stream: direct buffered begin validates scratch and range bounds" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const file = try create_file(tmp.dir, "asset", "body");
+    defer file.close(std.testing.io);
+    var ring: [128]u8 = undefined;
+    var scratch: [16]u8 = undefined;
+    var fixture = TestConnection{};
+    try fixture.init(&ring);
+    defer fixture.deinit();
+    const conn = &fixture.connection;
+
+    const empty = response.FileSource{
+        .io = std.testing.io,
+        .file = file,
+        .buffer = &.{},
+        .offset = 0,
+        .length = 4,
+    };
+    try std.testing.expectError(
+        error.InvalidFileSource,
+        conn.begin_buffered_file_response("200 OK", "", "", empty, false),
+    );
+
+    const overflow = response.FileSource{
+        .io = std.testing.io,
+        .file = file,
+        .buffer = &scratch,
+        .offset = std.math.maxInt(u64),
+        .length = 1,
+    };
+    try std.testing.expectError(
+        error.InvalidFileSource,
+        conn.begin_buffered_file_response("200 OK", "", "", overflow, false),
+    );
+    try std.testing.expect(!conn.dispatch_suspended);
+    try std.testing.expect(conn.buffered_file.file == null);
+}
+
 test "file stream: a ring-filling final body drains before the next pipelined head" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();

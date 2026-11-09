@@ -904,7 +904,7 @@ pub fn connection(comptime max_streams: usize) type {
             return .closed;
         }
 
-        fn was_locally_reset(self: *const Self, stream_id: u32) bool {
+        pub fn was_locally_reset(self: *const Self, stream_id: u32) bool {
             for (self.local_reset_stream_ids) |candidate| {
                 if (candidate == stream_id) return true;
             }

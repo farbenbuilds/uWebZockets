@@ -71,7 +71,12 @@ the C ABI layout, and the v2.1.6 release are unchanged.
 - A truncated multipart entity reports `invalid_body` to the part sink rather
   than `sink_failure`.
 - The HTTP/2 terminal file-head path keeps descriptor ownership unambiguous
-  when the peer has already closed the stream.
+  when the peer has already closed the stream, and an H2 WebSocket close
+  callback's final frame is queued before the stream reset.
+- Direct `begin_buffered_file_response` callers now get the same empty-scratch
+  and range-overflow validation as `Response.stream_file`.
+- A static file head refused by bounded output pressure returns a retryable
+  503 instead of an internal error.
 - The shared RFC 9110 qvalue parser accepts one-digit fractional weights and
   rejects overlong values consistently.
 

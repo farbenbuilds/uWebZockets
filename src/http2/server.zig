@@ -1664,21 +1664,35 @@ pub fn server_session(comptime max_streams: usize) type {
                 _ = try self.flush_pending_resets(callbacks);
                 return;
             }
+            if (self.connection.was_locally_reset(stream_id)) return;
             if (self.pending_reset_count == max_streams) {
                 _ = try self.flush_pending_resets(callbacks);
                 if (self.pending_reset_count == max_streams) return error.PendingResetCapacityReached;
             }
-            const tail = (self.pending_reset_head + self.pending_reset_count) % max_streams;
-            self.pending_resets[tail] = .{ .stream_id = stream_id, .code = code };
-            self.pending_reset_count += 1;
 
+            // Run the close callback before queueing the reset. An H2 WebSocket
+            // close callback may still send a final frame on this stream; the
+            // reset must follow it, never precede it (RFC 9113 section 6.4).
+            var reset_by_callback = false;
             if (self.connection.streams.find(stream_id)) |index| {
                 self.notify_stream_closed(stream_id, index, callbacks);
+                reset_by_callback = self.connection.was_locally_reset(stream_id);
                 _ = self.connection.reset_local(index);
                 self.clear_stream(index);
             } else {
                 self.connection.record_local_reset(stream_id);
             }
+
+            // A close callback may have reset this stream itself. Retain one
+            // reset intent, not a duplicate frame after the callback.
+            if (reset_by_callback) {
+                _ = try self.flush_pending_resets(callbacks);
+                return;
+            }
+
+            const tail = (self.pending_reset_head + self.pending_reset_count) % max_streams;
+            self.pending_resets[tail] = .{ .stream_id = stream_id, .code = code };
+            self.pending_reset_count += 1;
             _ = try self.flush_pending_resets(callbacks);
         }
 

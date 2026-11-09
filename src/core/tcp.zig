@@ -1834,6 +1834,8 @@ pub const TcpConnection = struct {
         if (self.file_body != null or self.buffered_file.file != null or self.stream_producer != null) {
             return error.FileBodyAlreadyActive;
         }
+        if (source.buffer.len == 0) return error.InvalidFileSource;
+        _ = std.math.add(u64, source.offset, source.length) catch return error.InvalidFileSource;
         if (source.length != 0 and !self.suppress_response_body and
             (self.write_queue.len == 0 or (self.ssl != null and self.write_queue.len <= tls_record_overhead)))
         {
