@@ -289,3 +289,8 @@ The [native H2 receive-provenance and closing helper](m2_h2_native_closing.md)
 passes focused source tests and independent review. Its bounded receipt keeps
 TLS EOF provenance, parser tails and unpaid debt explicit. Native provider,
 build/runtime validation, actual all40 and adoption remain required.
+
+The [native H2 fixture-capture parser](m2_h2_native_post.md) checks the complete
+75-marker log and canonical post-shutdown facts. The diagnostic fix and privacy
+preparation are independently reviewed; public evidence omits private ambient
+credentials. Native provider/runtime/build/all40 and adoption remain required.

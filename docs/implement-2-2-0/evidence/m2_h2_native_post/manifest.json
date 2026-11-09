@@ -1,0 +1,350 @@
+{
+  "scope": "Pure native fixture capture and canonical post facts; source-only",
+  "base_commit": "ed1647336f8136630a910cf0ef4baf98d7a1b6de",
+  "archive": "native-post.tar.gz",
+  "archive_bytes": 12562384,
+  "archive_sha256": "d19281da19d04c3afbc3bb97ef614b21efa3746f0dc405dfb982d7cc959fbe92",
+  "safe_regular_utf8_members": 6712,
+  "inventory_entries": 6711,
+  "native_packet_files": 6482,
+  "reference_files": 193,
+  "root_evidence_files": 36,
+  "current_native_sources": {
+    "test_native_post.py": {
+      "size": 19598,
+      "sha256": "3186c2360b676ee9a62a06787cafc40bae6be9ca6662001d7b7027c0b77303d9"
+    },
+    "test_native_closing.py": {
+      "size": 28897,
+      "sha256": "dd942f50e0b2c03c9ccf8fef5de11599849350fe388c75221d266005dc8e12c1"
+    },
+    "native_post.py": {
+      "size": 7081,
+      "sha256": "0ba8cd7bee70cf666f303756de2389e4d79608bbad46a6bb6e6ad85479db076c"
+    },
+    "native_closing.py": {
+      "size": 21814,
+      "sha256": "7c42cd04d5aba362b6b381b2d31e3feb07654de690159764dd0b7bae600d1007"
+    },
+    "test_native_imports.py": {
+      "size": 4774,
+      "sha256": "db84e11d46985e7fb93b17f09a5d416f1da510e4541847041b34c426ad6b8158"
+    }
+  },
+  "public_environment_substitutions": 25,
+  "public_environment_disclosure": {
+    "transformation": "Replace full private environment records with validated allowlisted records; preserve historical seed absence.",
+    "public_bytes_equal_full_originals": false,
+    "original_records_retained_privately": true,
+    "original_count": 25,
+    "projections_with_three_controls": 16,
+    "projections_with_two_controls": 9,
+    "substitutions": [
+      {
+        "original_member": "native/evidence/native-post/final-audit-proof/environment.nul",
+        "replacement": "final-audit-proof/environment.nul",
+        "retained_controls": [
+          "PYTHONDONTWRITEBYTECODE",
+          "PYTHONHASHSEED",
+          "PYTHONPATH"
+        ],
+        "absent_controls": [],
+        "original_private_unpublished": true
+      },
+      {
+        "original_member": "native/evidence/native-post/final-imports-normal/environment.nul",
+        "replacement": "final-imports-normal/environment.nul",
+        "retained_controls": [
+          "PYTHONDONTWRITEBYTECODE",
+          "PYTHONHASHSEED",
+          "PYTHONPATH"
+        ],
+        "absent_controls": [],
+        "original_private_unpublished": true
+      },
+      {
+        "original_member": "native/evidence/native-post/final-imports-optimized/environment.nul",
+        "replacement": "final-imports-optimized/environment.nul",
+        "retained_controls": [
+          "PYTHONDONTWRITEBYTECODE",
+          "PYTHONHASHSEED",
+          "PYTHONPATH"
+        ],
+        "absent_controls": [],
+        "original_private_unpublished": true
+      },
+      {
+        "original_member": "native/evidence/native-post/final-normal/environment.nul",
+        "replacement": "final-normal/environment.nul",
+        "retained_controls": [
+          "PYTHONDONTWRITEBYTECODE",
+          "PYTHONHASHSEED",
+          "PYTHONPATH"
+        ],
+        "absent_controls": [],
+        "original_private_unpublished": true
+      },
+      {
+        "original_member": "native/evidence/native-post/final-optimized/environment.nul",
+        "replacement": "final-optimized/environment.nul",
+        "retained_controls": [
+          "PYTHONDONTWRITEBYTECODE",
+          "PYTHONHASHSEED",
+          "PYTHONPATH"
+        ],
+        "absent_controls": [],
+        "original_private_unpublished": true
+      },
+      {
+        "original_member": "native/evidence/native-post/fix1-audit-proof/environment.nul",
+        "replacement": "fix1-audit-proof/environment.nul",
+        "retained_controls": [
+          "PYTHONDONTWRITEBYTECODE",
+          "PYTHONHASHSEED",
+          "PYTHONPATH"
+        ],
+        "absent_controls": [],
+        "original_private_unpublished": true
+      },
+      {
+        "original_member": "native/evidence/native-post/fix1-final-normal/environment.nul",
+        "replacement": "fix1-final-normal/environment.nul",
+        "retained_controls": [
+          "PYTHONDONTWRITEBYTECODE",
+          "PYTHONHASHSEED",
+          "PYTHONPATH"
+        ],
+        "absent_controls": [],
+        "original_private_unpublished": true
+      },
+      {
+        "original_member": "native/evidence/native-post/fix1-final-optimized/environment.nul",
+        "replacement": "fix1-final-optimized/environment.nul",
+        "retained_controls": [
+          "PYTHONDONTWRITEBYTECODE",
+          "PYTHONHASHSEED",
+          "PYTHONPATH"
+        ],
+        "absent_controls": [],
+        "original_private_unpublished": true
+      },
+      {
+        "original_member": "native/evidence/native-post/fix1-graph-update/environment.nul",
+        "replacement": "fix1-graph-update/environment.nul",
+        "retained_controls": [
+          "PYTHONDONTWRITEBYTECODE",
+          "PYTHONHASHSEED",
+          "PYTHONPATH"
+        ],
+        "absent_controls": [],
+        "original_private_unpublished": true
+      },
+      {
+        "original_member": "native/evidence/native-post/fix1-green-diagnostics-corrected/environment.nul",
+        "replacement": "fix1-green-diagnostics-corrected/environment.nul",
+        "retained_controls": [
+          "PYTHONDONTWRITEBYTECODE",
+          "PYTHONHASHSEED",
+          "PYTHONPATH"
+        ],
+        "absent_controls": [],
+        "original_private_unpublished": true
+      },
+      {
+        "original_member": "native/evidence/native-post/fix1-green-diagnostics/environment.nul",
+        "replacement": "fix1-green-diagnostics/environment.nul",
+        "retained_controls": [
+          "PYTHONDONTWRITEBYTECODE",
+          "PYTHONHASHSEED",
+          "PYTHONPATH"
+        ],
+        "absent_controls": [],
+        "original_private_unpublished": true
+      },
+      {
+        "original_member": "native/evidence/native-post/fix1-imports-normal/environment.nul",
+        "replacement": "fix1-imports-normal/environment.nul",
+        "retained_controls": [
+          "PYTHONDONTWRITEBYTECODE",
+          "PYTHONHASHSEED",
+          "PYTHONPATH"
+        ],
+        "absent_controls": [],
+        "original_private_unpublished": true
+      },
+      {
+        "original_member": "native/evidence/native-post/fix1-imports-optimized/environment.nul",
+        "replacement": "fix1-imports-optimized/environment.nul",
+        "retained_controls": [
+          "PYTHONDONTWRITEBYTECODE",
+          "PYTHONHASHSEED",
+          "PYTHONPATH"
+        ],
+        "absent_controls": [],
+        "original_private_unpublished": true
+      },
+      {
+        "original_member": "native/evidence/native-post/fix1-red-diagnostics/environment.nul",
+        "replacement": "fix1-red-diagnostics/environment.nul",
+        "retained_controls": [
+          "PYTHONDONTWRITEBYTECODE",
+          "PYTHONHASHSEED",
+          "PYTHONPATH"
+        ],
+        "absent_controls": [],
+        "original_private_unpublished": true
+      },
+      {
+        "original_member": "native/evidence/native-post/graph-query/environment.nul",
+        "replacement": "graph-query/environment.nul",
+        "retained_controls": [
+          "PYTHONDONTWRITEBYTECODE",
+          "PYTHONPATH"
+        ],
+        "absent_controls": [
+          "PYTHONHASHSEED"
+        ],
+        "original_private_unpublished": true
+      },
+      {
+        "original_member": "native/evidence/native-post/graph-update/environment.nul",
+        "replacement": "graph-update/environment.nul",
+        "retained_controls": [
+          "PYTHONDONTWRITEBYTECODE",
+          "PYTHONHASHSEED",
+          "PYTHONPATH"
+        ],
+        "absent_controls": [],
+        "original_private_unpublished": true
+      },
+      {
+        "original_member": "native/evidence/native-post/green-boundaries/environment.nul",
+        "replacement": "green-boundaries/environment.nul",
+        "retained_controls": [
+          "PYTHONDONTWRITEBYTECODE",
+          "PYTHONHASHSEED",
+          "PYTHONPATH"
+        ],
+        "absent_controls": [],
+        "original_private_unpublished": true
+      },
+      {
+        "original_member": "native/evidence/native-post/green-core/environment.nul",
+        "replacement": "green-core/environment.nul",
+        "retained_controls": [
+          "PYTHONDONTWRITEBYTECODE",
+          "PYTHONPATH"
+        ],
+        "absent_controls": [
+          "PYTHONHASHSEED"
+        ],
+        "original_private_unpublished": true
+      },
+      {
+        "original_member": "native/evidence/native-post/green-fields/environment.nul",
+        "replacement": "green-fields/environment.nul",
+        "retained_controls": [
+          "PYTHONDONTWRITEBYTECODE",
+          "PYTHONPATH"
+        ],
+        "absent_controls": [
+          "PYTHONHASHSEED"
+        ],
+        "original_private_unpublished": true
+      },
+      {
+        "original_member": "native/evidence/native-post/green-imports/environment.nul",
+        "replacement": "green-imports/environment.nul",
+        "retained_controls": [
+          "PYTHONDONTWRITEBYTECODE",
+          "PYTHONPATH"
+        ],
+        "absent_controls": [
+          "PYTHONHASHSEED"
+        ],
+        "original_private_unpublished": true
+      },
+      {
+        "original_member": "native/evidence/native-post/red-allowance/environment.nul",
+        "replacement": "red-allowance/environment.nul",
+        "retained_controls": [
+          "PYTHONDONTWRITEBYTECODE",
+          "PYTHONPATH"
+        ],
+        "absent_controls": [
+          "PYTHONHASHSEED"
+        ],
+        "original_private_unpublished": true
+      },
+      {
+        "original_member": "native/evidence/native-post/red-api/environment.nul",
+        "replacement": "red-api/environment.nul",
+        "retained_controls": [
+          "PYTHONDONTWRITEBYTECODE",
+          "PYTHONPATH"
+        ],
+        "absent_controls": [
+          "PYTHONHASHSEED"
+        ],
+        "original_private_unpublished": true
+      },
+      {
+        "original_member": "native/evidence/native-post/red-capacity/environment.nul",
+        "replacement": "red-capacity/environment.nul",
+        "retained_controls": [
+          "PYTHONDONTWRITEBYTECODE",
+          "PYTHONPATH"
+        ],
+        "absent_controls": [
+          "PYTHONHASHSEED"
+        ],
+        "original_private_unpublished": true
+      },
+      {
+        "original_member": "native/evidence/native-post/red-capture/environment.nul",
+        "replacement": "red-capture/environment.nul",
+        "retained_controls": [
+          "PYTHONDONTWRITEBYTECODE",
+          "PYTHONPATH"
+        ],
+        "absent_controls": [
+          "PYTHONHASHSEED"
+        ],
+        "original_private_unpublished": true
+      },
+      {
+        "original_member": "native/evidence/native-post/red-nesting/environment.nul",
+        "replacement": "red-nesting/environment.nul",
+        "retained_controls": [
+          "PYTHONDONTWRITEBYTECODE",
+          "PYTHONPATH"
+        ],
+        "absent_controls": [
+          "PYTHONHASHSEED"
+        ],
+        "original_private_unpublished": true
+      }
+    ]
+  },
+  "private_originals_embedded": false,
+  "fixture_markers": 75,
+  "body_records": 67,
+  "output_records": 4,
+  "focused_groups": 9,
+  "semantic_field_mutations": 1485,
+  "diagnostic_placement_cases": 380,
+  "capture_bytes_limit": 65536,
+  "fixture_bytes_bound": 62144,
+  "component_boundary_vector_bytes": 61150,
+  "capacity_numbers_are_native_measurements": false,
+  "source_review": "Original P2 and approved fix retained verbatim",
+  "privacy_review": "Preparation approved; archive application verified separately",
+  "credential_scan_scope": "Known currently captured authentication values only; not comprehensive historical audit",
+  "historical_limits": [
+    "Nine earliest environment records omit the unrecorded seed",
+    "First exploratory Graphify query lacks transitive tool snapshot"
+  ],
+  "native_compiled": false,
+  "native_executed": false,
+  "milestone_complete": false
+}

@@ -350,3 +350,8 @@ The [native receive-provenance and closing helper](m2_h2_native_closing.md) now
 has focused normal/optimized source evidence and independent approval. Its
 qualified receipt is local-only and retains ordinary poison and unpaid debt.
 Actual native provider/runtime/process/TLS evidence and M2 acceptance remain open.
+
+The [native fixture-capture parser](m2_h2_native_post.md) now has reviewed
+canonical post-fact validation, diagnostic handling and safe public environment
+evidence. Its source proofs establish semantic checks; actual deinitialization,
+process cleanup, combined native all40 and production adoption remain open.
