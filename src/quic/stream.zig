@@ -395,7 +395,6 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
         streaming_route: ?*const request_body.BodyRoute = null,
         streaming_request: streaming_request_module.StreamingRequest = undefined,
         body_state: request_body.BodyState = .{},
-        streaming_scratch: [8192]u8 = undefined,
 
         /// Reinitializes a pooled stream with borrowed transport and storage.
         ///
@@ -701,7 +700,8 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
         fn stream_request_body(self: *Self) void {
             const route = self.streaming_route orelse return;
             while (true) {
-                const read_length = io.read(self.stream, &self.streaming_scratch, self.streaming_scratch.len);
+                const scratch = self.body_storage[0..@min(self.body_storage.len, 8192)];
+                const read_length = io.read(self.stream, scratch.ptr, scratch.len);
                 if (read_length < 0) {
                     if (std.c.errno(read_length) != .AGAIN) self.close_now();
                     return;
@@ -710,7 +710,7 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
                     self.finish_streaming_body();
                     return;
                 }
-                const bytes = self.streaming_scratch[0..@intCast(read_length)];
+                const bytes = scratch[0..@intCast(read_length)];
                 self.body_state.observe(bytes.len) catch {
                     self.fail_streaming_body(.body_too_large);
                     return;
