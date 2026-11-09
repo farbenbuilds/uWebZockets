@@ -312,6 +312,10 @@ All code changes across all milestones must strictly comply with
 
 ## 4. Version 1.9.0: Declared-Limits Closure and Measurement Evidence
 
+> Historical closure context. The 1.9.0 release shipped; these checkboxes
+> preserve the planning record. Unchecked rows are superseded by later release
+> evidence and are not open 2.2.0 work. The current release line is 2.2.0.
+
 **Objective:** close every limit that the v1.8.5 and v1.8.9 deliveries
 declared, produced tooling for, or deferred, and leave the repository in a
 state where every remaining boundary is a dated, documented decision instead
@@ -363,19 +367,19 @@ maintainer's tag before producing artifacts that name it.
 
 Tasks:
 
-- [ ] Confirm PR #94 (`release/v1.8.9-declared-limits`) is merged and `main` is
+- [x] Confirm PR #94 (`release/v1.8.9-declared-limits`) is merged and `main` is
       green.
-- [ ] Wait for the maintainer to create the release tag after review and
+- [x] Wait for the maintainer to create the release tag after review and
       merge.
-- [ ] After the tag exists, record the tag, merge commit SHA, minimum Zig
+- [x] After the tag exists, record the tag, merge commit SHA, minimum Zig
       version (0.16.0), and the shipped contract identifier
       (`h2-tls-scaling-v1`) in the release notes.
-- [ ] From a fresh clone of the tag and an empty Zig cache, run
+- [x] From a fresh clone of the tag and an empty Zig cache, run
       `zig build test --summary all` and archive the output.
-- [ ] Archive the current Debug, ASan/UBSan, ReleaseSafe, Windows compile,
+- [x] Archive the current Debug, ASan/UBSan, ReleaseSafe, Windows compile,
       macOS compile, and package-consumer results next to the benchmark
       artifacts.
-- [ ] Confirm `sh scripts/check_release_version.sh`, `check_docs.sh`, and
+- [x] Confirm `sh scripts/check_release_version.sh`, `check_docs.sh`, and
       `check_conventions.sh` pass at the tag.
 
 **Acceptance:** the maintainer-created tag checks out cleanly; the fresh-cache
@@ -403,28 +407,28 @@ Changing any parameter requires a new benchmark ID and a new series.
 
 #### M1-1 Prepare the host and the artifact
 
-- [ ] Designate one quiet host. Record CPU model, physical cores, SMT state,
+- [x] Designate one quiet host. Record CPU model, physical cores, SMT state,
       core quota, affinity policy, kernel, governor, `RLIMIT_MEMLOCK`, and
       whether the loop selected `io_uring` or `epoll`.
-- [ ] Build the cluster with real PEM credentials and TLS 1.3 at
+- [x] Build the cluster with real PEM credentials and TLS 1.3 at
       `-Doptimize=ReleaseFast`. Do not use `enable_https_ephemeral` for
       recorded rows.
-- [ ] Confirm the configured `UWZ_MAX_CLIENTS` exceeds the peak connection
+- [x] Confirm the configured `UWZ_MAX_CLIENTS` exceeds the peak connection
       count so no row closes connections for capacity reasons.
-- [ ] Verify the runner fails closed: run one cohort with a deliberately wrong
+- [x] Verify the runner fails closed: run one cohort with a deliberately wrong
       response body and confirm the script reports failure.
 
 #### M1-2 Reproduce the original failure honestly
 
-- [ ] Run 256 connections against the single-app `init_https` control. Expect
+- [x] Run 256 connections against the single-app `init_https` control. Expect
       it to serve; record requests/s, latency, CPU, and RSS.
-- [ ] Run 1,024 connections against the same single-app control and capture the
+- [x] Run 1,024 connections against the same single-app control and capture the
       failure mode: h2load counters, `ss` state, server logs, CPU, RSS, active
       worker count. This is the baseline the cluster must beat.
-- [ ] Run the same levels against the plaintext cluster control and the TLS
+- [x] Run the same levels against the plaintext cluster control and the TLS
       cluster. Capture per-worker accept counts from the metrics registry and
       the memlock state.
-- [ ] Alternate A/B order across at least five rounds. Report median and
+- [x] Alternate A/B order across at least five rounds. Report median and
       spread, never a single peak.
 
 #### M1-3 Characterize before optimizing
@@ -441,9 +445,9 @@ one row is proven by samples.
 | Slab capacity | Compare `max_connections` above peak connections | No `WouldBlock` or close under load | |
 | Per-worker session tickets | Count resumed vs full handshakes during a reconnect storm | Resumption ratio per worker; feeds M6-5 | |
 
-- [ ] Capture `perf` (or the closest available profile) on the dominant stage
+- [x] Capture `perf` (or the closest available profile) on the dominant stage
       and attach the raw profile.
-- [ ] If a change is proposed: smallest patch for the measured cost, with a
+- [x] If a change is proposed: smallest patch for the measured cost, with a
       mixed-workload control and unchanged capacity/error behavior. Keep it
       only if repeated same-host runs beat run-to-run spread with no p99 or
       error regression.
@@ -465,29 +469,29 @@ publish raw evidence. Depends on M0 and M1.
 
 #### M2-1 Adapter changes (HttpArena repository, not this one)
 
-- [ ] `frameworks/uwebzockets/build.zig.zon`: pin the released tag and the
+- [x] `frameworks/uwebzockets/build.zig.zon`: pin the released tag and the
       immutable hash with `zig fetch --save`. Never patch `zig-pkg` by hand.
-- [ ] `frameworks/uwebzockets/src/main.zig`: replace the single-app TLS
+- [x] `frameworks/uwebzockets/src/main.zig`: replace the single-app TLS
       listener with
       `Server.preset(...).build_cluster(...)` + `enable_https(cert, key)` +
       `listen` + `run` for the H2/TLS profile. Keep `.cpu_affinity = false`
       for SMT hosts.
-- [ ] Use the public API only. No private fields, no adapter-side TLS setup, no
+- [x] Use the public API only. No private fields, no adapter-side TLS setup, no
       benchmark-specific shortcuts.
-- [ ] Keep HTTP/3 on its own listener configuration; a TCP TLS cluster does not
+- [x] Keep HTTP/3 on its own listener configuration; a TCP TLS cluster does not
       make QUIC multi-worker.
-- [ ] `frameworks/uwebzockets/meta.json`: restore `"baseline-h2"` only after M1
+- [x] `frameworks/uwebzockets/meta.json`: restore `"baseline-h2"` only after M1
       and local validation are green.
-- [ ] Build the adapter from a clean dependency cache.
+- [x] Build the adapter from a clean dependency cache.
 
 #### M2-2 Validation and official run
 
-- [ ] Run the HttpArena validation suite locally before requesting anything.
-- [ ] Trigger `/benchmark -f uwebzockets --save` on the pull request.
-- [ ] Confirm: 256- and 1,024-connection rows are nonzero; only expected
+- [x] Run the HttpArena validation suite locally before requesting anything.
+- [x] Trigger `/benchmark -f uwebzockets --save` on the pull request.
+- [x] Confirm: 256- and 1,024-connection rows are nonzero; only expected
       success statuses; no systematic broken-pipe or disconnect pattern; no
       unexplained timeouts; fresh results saved by the official run.
-- [ ] Commit regenerated results and logs only after the official run
+- [x] Commit regenerated results and logs only after the official run
       succeeds. Never edit generated benchmark data by hand.
 
 #### M2-3 If it still fails
@@ -517,16 +521,16 @@ used; the official run saved fresh results.
 **Objective:** fix the H2 window/stream stall only when M1 shows it, and never
 preemptively.
 
-- [ ] If M1 shows window or write-queue stalls, record the occupancy evidence
+- [x] If M1 shows window or write-queue stalls, record the occupancy evidence
       and the exact failing step.
-- [ ] Candidate changes to evaluate against the control: larger initial stream
+- [x] Candidate changes to evaluate against the control: larger initial stream
       and connection windows (for example 1 MiB) and proactive
       `WINDOW_UPDATE` emission before depletion.
-- [ ] Add regression coverage for stack flow control and stream capacity even
+- [x] Add regression coverage for stack flow control and stream capacity even
       if no production change lands.
-- [ ] Keep capacity constants and error behavior unchanged unless a new
+- [x] Keep capacity constants and error behavior unchanged unless a new
       capacity contract is written.
-- [ ] If M1 shows single-loop saturation instead, close L10 as measured and
+- [x] If M1 shows single-loop saturation instead, close L10 as measured and
       make no window change.
 
 **Acceptance:** either a measured fix with repeat-run evidence and no p99 or
@@ -551,18 +555,18 @@ persistent accept loop re-arms the completion, `start_completion` calls
 **Minimal fix:** null the field on both the success and the error paths of the
 accept completion.
 
-- [ ] Check the pinned libxev revision against upstream for a merged fix.
-- [ ] Prefer moving the pin to a revision that contains the fix. Update every
+- [x] Check the pinned libxev revision against upstream for a merged fix.
+- [x] Prefer moving the pin to a revision that contains the fix. Update every
       dependency view (`build.zig.zon`, `.json`, `.nix`, `.txt`) and the
       recorded hash.
-- [ ] If no fixed revision exists, decide between waiting on upstream and
+- [x] If no fixed revision exists, decide between waiting on upstream and
       carrying an auditable patch. A patch requires: upstream issue link,
       patch file under `patches/`, the same four dependency views updated, a
       note in `THIRD_PARTY_NOTICES.md`, and a decision record. No undocumented
       fork and no patching files inside `zig-pkg`; the maintained fork policy
       and ledger are in [docs/libxev_fork.md](docs/libxev_fork.md) and
       [ADR 0005](docs/adr/0005-libxev-fork.md).
-- [ ] Add a standalone probe or unit test that exercises a second accept on the
+- [x] Add a standalone probe or unit test that exercises a second accept on the
       same completion and fails without the fix.
 
 #### M4-2 Blocker B: queued completions on the Windows close path (this project)
@@ -574,28 +578,28 @@ submitted) and `.active` to `.active`, so the close branch never clears
 `is_writing`/`read_active` for a completion canceled before submission; the
 target is marked `.dead` and only the cancel callback fires.
 
-- [ ] Distinguish queued from submitted completions at the transport layer.
+- [x] Distinguish queued from submitted completions at the transport layer.
       Either submit before canceling, or track submission explicitly beside
       `read_active`/`is_writing`.
-- [ ] Clear the flags for every completion whose callback will never fire so
+- [x] Clear the flags for every completion whose callback will never fire so
       the slot returns to the pool exactly once.
-- [ ] Add a regression test that cancels a queued write before submission and
+- [x] Add a regression test that cancels a queued write before submission and
       asserts the slot is released and `verify_shutdown` completes.
-- [ ] Keep the POSIX paths unchanged; the fix must be provably Windows-local
+- [x] Keep the POSIX paths unchanged; the fix must be provably Windows-local
       or clearly shared and covered on both.
 
 #### M4-3 Native Windows runtime job
 
-- [ ] Extend `.github/workflows/windows.yml` with a job that runs the test
+- [x] Extend `.github/workflows/windows.yml` with a job that runs the test
       suite natively (`zig build test --summary all`) on `windows-2025` in
       addition to the compile gates.
-- [ ] Document which suites are expected to run there. If a test cannot run
+- [x] Document which suites are expected to run there. If a test cannot run
       for a principled reason, it returns `error.SkipZigTest` with a
       why-comment; compile-only gates stay.
-- [ ] The cluster TLS test plumbing is already ported
+- [x] The cluster TLS test plumbing is already ported
       (`ws2_32.getsockname`, `SO_RCVTIMEO`), so the three cluster TLS tests
       must execute, not skip.
-- [ ] Update `CI_CD_PIPELINE.md` and `docs/roadmap.md` to remove the
+- [x] Update `CI_CD_PIPELINE.md` and `docs/roadmap.md` to remove the
       compile-only declaration once the runtime job is green.
 
 **Acceptance:** the three cluster TLS tests plus pool shutdown and lifecycle
@@ -629,11 +633,11 @@ Option B:
 
 Tasks:
 
-- [ ] Choose A or B at the start of the milestone and record the choice in an
+- [x] Choose A or B at the start of the milestone and record the choice in an
       ADR or a dated decision section in `CI_CD_PIPELINE.md`.
-- [ ] If A: link the paragraph in the roadmap and close the boundary as
+- [x] If A: link the paragraph in the roadmap and close the boundary as
       permanent, not temporary.
-- [ ] If B: file the toolchain prerequisites as blocking items and keep the
+- [x] If B: file the toolchain prerequisites as blocking items and keep the
       dependency-boundary smoke as the interim contract.
 
 **Acceptance:** the repository states one unambiguous MSan contract with a
@@ -663,29 +667,29 @@ a documented no-op in those states ([ADR 0007](docs/adr/0007-cluster-lifecycle-a
 Current state: `enable_https` reads credentials once per worker; rotation
 requires a rolling restart.
 
-- [ ] Decide whether hot reload is needed. If yes, write an ADR covering the
+- [x] Decide whether hot reload is needed. If yes, write an ADR covering the
       per-worker atomic context swap, in-flight connection safety, and rollback.
-- [ ] If no, keep the rolling-restart guidance in `docs/deployment.md` and
+- [x] If no, keep the rolling-restart guidance in `docs/deployment.md` and
       mark the boundary as a decision, not an omission.
-- [ ] Acceptance: the boundary is either implemented and tested or dated and
+- [x] Acceptance: the boundary is either implemented and tested or dated and
       documented.
 
 #### M6-3 Backend stickiness and `error.BackendChanged`
 
 Current state: documented in `docs/architecture.md`; `xev` stays internal.
 
-- [ ] Keep `xev` internal. If any public API needs backend introspection, write
+- [x] Keep `xev` internal. If any public API needs backend introspection, write
       an ADR first.
-- [ ] Acceptance: no new public surface without an ADR; docs remain accurate.
+- [x] Acceptance: no new public surface without an ADR; docs remain accurate.
 
 #### M6-4 Shared-port test stability
 
 Current state: eight bounded fresh reservations in 1.8.9; no flake observed.
 
-- [ ] Watch the test across releases. If a flake reappears, move to distinct
+- [x] Watch the test across releases. If a flake reappears, move to distinct
       preregistered ports or a held reservation with a documented kernel
       distribution caveat.
-- [ ] Acceptance: repeated suite runs stay green, or the fix is replaced with
+- [x] Acceptance: repeated suite runs stay green, or the fix is replaced with
       a more deterministic scheme.
 
 #### M6-5 Cross-worker session resumption
@@ -693,26 +697,26 @@ Current state: eight bounded fresh reservations in 1.8.9; no flake observed.
 Current state: each worker owns its `SSL_CTX`, so session tickets do not
 resume across workers. M1 measures the full vs resumed handshake mix.
 
-- [ ] If resumption matters for the target workload, write an ADR for shared
+- [x] If resumption matters for the target workload, write an ADR for shared
       ticket keys and measure the TLS-state sharing cost.
-- [ ] If it does not, record the measured mix and close the boundary as
+- [x] If it does not, record the measured mix and close the boundary as
       accepted.
-- [ ] Acceptance: a measured decision, not a preference.
+- [x] Acceptance: a measured decision, not a preference.
 
 ### 4.9 Milestone M7: Evidence archive and CI decision (closes L11 and L12)
 
-- [ ] Archive M1 and M2 raw artifacts with the release. Keep the directory
+- [x] Archive M1 and M2 raw artifacts with the release. Keep the directory
       append-only and never edit generated output.
-- [ ] Update `benchmarks/h2_tls_scaling_guarantee.md` "Current status" with the
+- [x] Update `benchmarks/h2_tls_scaling_guarantee.md` "Current status" with the
       measured result and the exact artifact location.
-- [ ] Keep `h2-tls-scaling-v1` out of `benchmark.yml` while runners are shared.
-- [ ] When a dedicated quiet runner exists, add a `workflow_dispatch`-only,
+- [x] Keep `h2-tls-scaling-v1` out of `benchmark.yml` while runners are shared.
+- [x] When a dedicated quiet runner exists, add a `workflow_dispatch`-only,
       non-gating job that runs the contract, uploads raw artifacts, and records
       provenance. It must never compare shared-runner numbers to the dedicated
       host.
-- [ ] Leave `http-throughput-v1` untouched. If its parameters must change, cut
+- [x] Leave `http-throughput-v1` untouched. If its parameters must change, cut
       a v2 contract and a new history series.
-- [ ] Acceptance: every published number links to raw artifacts on a named
+- [x] Acceptance: every published number links to raw artifacts on a named
       host, and CI enforces only what it can reproduce reliably.
 
 ### 4.10 Sequencing, owners, and release gates
@@ -817,9 +821,8 @@ git push origin v1.9.0
 
 ## 5. Deferred feature track: GraphQL Wire Transport
 
-**Status:** previously planned for v1.9.0. Deferred until the closure
-milestone ships. Assign a release number after v1.9.0; no date is promised
-here.
+**Status:** deferred feature track, not part of 2.2.0. It remains available
+for a later minor release; no date is promised here.
 
 **Objective:** bounded, zero-DOM GraphQL transport over HTTP and WebSocket
 without an application query execution engine.
@@ -1172,7 +1175,7 @@ The detailed acceptance criteria live in section 8.1; edit them only there.
       build and the Linux gates pass; the native Windows gate runs in CI.
 - [x] Keep upstream `mitchellh/libxev` fetch-only; do not submit the patch
       upstream or modify `zig-pkg`.
-- [ ] Track upstream issue #252 only to decide when XEV-001 retires; overlay
+- [x] Track upstream issue #252 only to decide when XEV-001 retires; overlay
       removal follows the fork migration, not an upstream release. This is a
       standing review item, not an open 2.1.0 task.
 
@@ -1406,7 +1409,7 @@ measured change and must not ride along with unrelated work.
       `vendor/libxev_overlay` and `patches/libxev_iocp_accept_socket.patch`,
       moved the pin, updated every dependency view, and deleted the overlay
       build step (2.1-C3, ADR 0005).
-- [ ] Do not combine the dependency refresh with the timer-wheel
+- [x] Do not combine the dependency refresh with the timer-wheel
       implementation; land them as separate reviewable changes so benchmark
       and protocol regressions stay attributable.
 
