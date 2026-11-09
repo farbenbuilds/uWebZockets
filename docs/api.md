@@ -97,10 +97,17 @@ _ = try app.any("/health", health);
 | `route_context` / `get_context` | `fn (*anyopaque, *Request, *Response) void` | Explicit caller-owned state |
 | `route_async` / `get_async` | `fn (*Request, AsyncResponse) void` | Work completed later |
 | `route_async_context` / `get_async_context` | `fn (*anyopaque, *Request, AsyncResponse) void` | Deferred work with state |
+| `post_stream` / `put_stream` / `patch_stream` | `BodyRoute` sink callbacks | HTTP/1.1 and TLS request-body streaming |
 
 Path patterns: exact segments stay on the radix fast path, `:name` captures one
 nonempty segment, and a terminal `*name` captures the remainder. Static routes
 win. Malformed patterns fail registration rather than matching ambiguously.
+
+A streaming route borrows a `BodyRoute` for the application lifetime and uses
+`begin`/`chunk`/`end`/`cancel` callbacks. The sink context is application-owned;
+`BodyControl` pauses and resumes delivery. `middleware_policy = .headers_only`
+authorizes global middleware that does not read the body. H2/H3 streaming
+routes return 501; use the buffered helpers there.
 
 `trace` is opt-in: the library does not register a route or synthesize the
 RFC 9110 echo response. A handler that reflects the request must redact
@@ -128,9 +135,11 @@ middleware: `Cors`, `SecurityHeaders`, `Auth`, and `RateLimit`. See
 
 ## Response
 
-Request body streaming has an accepted [design contract](adr/0008-request-body-streaming.md)
-and shipped pure types. Live transport binding is deferred to 2.3.0; the
-current request API remains buffered. See the
+Request body streaming has an accepted [design contract](adr/0008-request-body-streaming.md).
+`App.post_stream`, `put_stream`, and `patch_stream` bind a `BodyRoute` sink on
+HTTP/1.1 and TLS HTTP/1.1; the sink receives chunks as they arrive and uses
+`BodyControl` to pause/resume. HTTP/2 and HTTP/3 streaming routes return 501;
+their live binding remains 2.3.0 work. See the
 [2.2.0 release record](releases/2.2.0.md#limits-and-dated-restoration-criteria).
 
 | Group | API |

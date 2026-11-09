@@ -198,6 +198,13 @@ fn buffered_checkpoint(parser: *const HttpParser, req: *const Request, state: Pa
     };
 }
 
+/// Commits only the borrowed header views needed by a streaming request.
+pub fn commit_streaming_head(parser: *HttpParser, req: *Request) void {
+    req.extra_header_names = parser.extra_header_names[0..parser.extra_header_count];
+    req.extra_header_values = parser.extra_header_values[0..parser.extra_header_count];
+    req.extra_header_count = parser.extra_header_count;
+}
+
 /// Applies the unchanged buffered policy, committing overflow views only after acceptance.
 pub fn commit_head(parser: *HttpParser, req: *Request, result: HeadResult) bool {
     if (result.buffered_failure) |failure| {

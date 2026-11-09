@@ -273,8 +273,10 @@ refusals and absent/empty distinctions without copying field values.
 
 The accepted [request-streaming design](adr/0008-request-body-streaming.md)
 defines the opt-in sink contract shipped as `StreamingRequest`, `BodySink`,
-`BodyRoute`, and `BodyState`. Live transport binding is deferred to 2.3.0;
-current handlers still receive buffered request bodies. See the
+`BodyRoute`, and `BodyState`. HTTP/1.1 and TLS HTTP/1.1 bind it live through
+`App.post_stream`, `put_stream`, and `patch_stream`; a sink receives chunks as
+they arrive and can pause/resume with `BodyControl`. HTTP/2 and HTTP/3 still
+receive buffered bodies and return 501 for a streaming route. See the
 [2.2.0 release record](releases/2.2.0.md#limits-and-dated-restoration-criteria).
 
 Framework modules expose zero-allocation query/form parsing with SIMD slicing

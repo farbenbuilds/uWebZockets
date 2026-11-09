@@ -14,6 +14,7 @@ fn hello(_: *uz.Request, res: *uz.Response) void {
 /// Compiles the documented cluster lifecycle without starting a server.
 fn cluster_surface(init: std.process.Init, allocator: std.mem.Allocator) !void {
     try request_body_surface(allocator);
+    try streaming_route_surface(init);
     const options: uz.ClusterOptions = .{};
     var group = try uz.Server.builder(init.io)
         .with_max_clients(8)
@@ -255,6 +256,28 @@ fn body_end(_: *anyopaque, _: *const uz.StreamingRequest, response: *uz.Response
 
 fn body_cancel(_: *anyopaque, reason: uz.BodyCancelReason) void {
     _ = reason;
+}
+
+fn streaming_route_surface(init: std.process.Init) !void {
+    var app = try uz.Server.builder(init.io)
+        .with_max_clients(1)
+        .build(std.heap.page_allocator);
+    defer app.deinit();
+    var context: u8 = 0;
+    const route = uz.BodyRoute{
+        .sink = uz.BodySink{
+            .context = &context,
+            .begin = body_begin,
+            .chunk = body_chunk,
+            .end = body_end,
+            .cancel = body_cancel,
+        },
+        .limits = uz.BodyLimits{ .max_body_bytes = 1024 * 1024, .max_active = 1 },
+        .middleware_policy = .headers_only,
+    };
+    _ = try app.post_stream("/upload", &route);
+    _ = try app.put_stream("/upload", &route);
+    _ = try app.patch_stream("/upload", &route);
 }
 
 pub fn main(init: std.process.Init) !void {

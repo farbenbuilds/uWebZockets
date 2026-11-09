@@ -1,9 +1,9 @@
 # 0008. Bounded request body streaming
 
-- Status: Accepted; live transport binding deferred
+- Status: Accepted; HTTP/1.1 and TLS live, H2/H3 binding deferred
 - Date: 2026-10-26
 - Revision: typed request view and platform activation guard, 2026-10-27
-- Release: 2.2.0 ships the contract and pure lifecycle; 2.3.0 owns live binding
+- Release: 2.2.0 ships the contract and live H1/TLS binding; 2.3.0 owns H2/H3 binding
 - Deciders: transport, HTTP, router, QUIC, and root integrator
 
 ## Context
@@ -22,10 +22,12 @@ M1 must finish before this decision's transport implementation starts.
 
 2.2.0 ships the public `StreamingRequest`, `BodySink`, `BodyRoute`,
 `BodyControl`, `BodyState`, pure HTTP/1 body decoder, and the incremental
-multipart sink. No live transport calls the sink yet, so `Request.body` remains
-buffered and source-compatible. The 2.3.0 milestone owns HTTP/1/TLS, HTTP/2,
-and HTTP/3 binding, admission, `Expect: 100-continue`, pause/resume, trailers,
-and the 100 MB bounded-memory proof. See the
+multipart sink. HTTP/1.1 and TLS HTTP/1.1 bind the sink live through
+`App.post_stream`, `put_stream`, and `patch_stream`; a 1 MiB live upload is
+covered with a 16 KiB buffered cap. HTTP/2 and HTTP/3 still buffer request
+bodies and return 501 for a streaming route. The 2.3.0 milestone owns H2/H3
+DATA/QUIC stream binding, flow-control pause/resume, trailers, and the 100 MB
+bounded-memory proof. See the
 [2.2.0 release record](../releases/2.2.0.md#limits-and-dated-restoration-criteria).
 
 ## Compatibility revision, 2026-10-26

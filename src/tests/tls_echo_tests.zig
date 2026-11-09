@@ -378,7 +378,9 @@ fn expect_echo_response(client: *EchoClient, status: u16, expected: []const u8) 
             .need_more => {},
         }
         var plaintext: [16 * 1024]u8 = undefined;
-        const length = try read_echo_bytes(client, &plaintext);
+        const length = read_echo_bytes(client, &plaintext) catch |err| {
+            return err;
+        };
         if (length == 0) return error.EchoResponseTruncated;
         if (length > client.wire.len - client.wire_length) return error.EchoResponseCapacity;
         @memcpy(client.wire[client.wire_length..][0..length], plaintext[0..length]);
@@ -417,4 +419,133 @@ fn fill_echo_bio(client: *EchoClient) !void {
     const length = try helpers.read_pattern_socket(client.stream.socket.handle, ciphertext[0..capacity]);
     if (length == 0) return error.EchoTlsTruncated;
     if (c.BIO_write(bio, &ciphertext, @intCast(length)) != @as(c_int, @intCast(length))) return error.EchoBioWriteFailed;
+}
+
+/// Route-level upload sink used by the live HTTP/1 streaming tests.
+const StreamingState = struct {
+    bytes: u64 = 0,
+    begins: usize = 0,
+    ends: usize = 0,
+    cancels: usize = 0,
+    failure: ?anyerror = null,
+
+    fn route(self: *StreamingState) support.request_body.BodyRoute {
+        return .{
+            .sink = .{
+                .context = self,
+                .begin = begin,
+                .chunk = chunk,
+                .end = end,
+                .cancel = cancel,
+            },
+            .limits = .{ .max_body_bytes = 2 * 1024 * 1024, .max_active = 1 },
+            .middleware_policy = .headers_only,
+        };
+    }
+
+    fn begin(
+        context: *anyopaque,
+        request: *const support.streaming_request.StreamingRequest,
+        _: support.request_body.BodyControl,
+    ) !support.request_body.BodyBinding {
+        const self: *StreamingState = @ptrCast(@alignCast(context));
+        self.begins += 1;
+        if (!std.mem.eql(u8, request.method, "POST")) return error.UnexpectedMethod;
+        if (!std.mem.eql(u8, request.path, "/upload")) return error.UnexpectedPath;
+        if (request.text().len != 0 or request.bytes().len != 0) return error.BufferedBodyVisible;
+        return .{ .context = self, .readiness = .ready };
+    }
+
+    fn chunk(context: *anyopaque, input: []const u8) !support.request_body.BodyProgress {
+        const self: *StreamingState = @ptrCast(@alignCast(context));
+        for (input, 0..) |byte, index| {
+            if (byte != streaming_pattern_byte(self.bytes + index)) return error.UploadPatternMismatch;
+        }
+        self.bytes += input.len;
+        return .{ .consumed = input.len, .readiness = .ready };
+    }
+
+    fn end(
+        context: *anyopaque,
+        _: *const support.streaming_request.StreamingRequest,
+        response: *Response,
+    ) !void {
+        const self: *StreamingState = @ptrCast(@alignCast(context));
+        self.ends += 1;
+        var buffer: [32]u8 = undefined;
+        const body = try std.fmt.bufPrint(&buffer, "{d}", .{self.bytes});
+        try response.end("200 OK", body);
+    }
+
+    fn cancel(context: *anyopaque, reason: support.request_body.BodyCancelReason) void {
+        const self: *StreamingState = @ptrCast(@alignCast(context));
+        self.cancels += 1;
+        if (reason == .sink_failure) self.failure = error.UnexpectedSinkFailure;
+    }
+};
+
+fn streaming_pattern_byte(offset: u64) u8 {
+    return @truncate(offset ^ (offset >> 8) ^ (offset >> 16) ^ 0x5a);
+}
+
+fn prepare_stream_server(server: *EchoApp, route: *const support.request_body.BodyRoute, encrypted: bool) !u16 {
+    if (encrypted) server.tls_ctx = try support.tls.TlsContext.init_ephemeral(.{});
+    _ = try server.post_stream("/upload", route);
+    try server.listen("127.0.0.1", 0);
+    return support.tcp.listener_port(&server.listeners[0]);
+}
+
+fn send_stream_upload(client: *EchoClient, length: usize) !void {
+    var head_buffer: [256]u8 = undefined;
+    const head = try std.fmt.bufPrint(
+        &head_buffer,
+        "POST /upload HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/octet-stream\r\nContent-Length: {d}\r\n\r\n",
+        .{length},
+    );
+    try write_echo_bytes(client, head);
+    var offset: usize = 0;
+    var chunk: [8192]u8 = undefined;
+    while (offset < length) {
+        const count = @min(chunk.len, length - offset);
+        for (chunk[0..count], 0..) |*byte, index| byte.* = streaming_pattern_byte(offset + index);
+        try write_echo_bytes(client, chunk[0..count]);
+        offset += count;
+    }
+}
+
+fn run_live_streaming_case(encrypted: bool) !void {
+    var state = StreamingState{};
+    var route = state.route();
+    var server = try EchoApp.init_configured(std.testing.io, std.testing.allocator, default_config);
+    defer server.deinit();
+    const port = try prepare_stream_server(&server, &route, encrypted);
+    var runner = EchoRunner{ .server = &server };
+    const thread = try std.Thread.spawn(.{}, EchoRunner.run, .{&runner});
+    var joined = false;
+    defer {
+        server.request_shutdown();
+        if (!joined) thread.join();
+    }
+    var client = try connect_echo_client(port, encrypted);
+    defer close_echo_client(&client);
+    const upload_length: usize = 1024 * 1024;
+    try send_stream_upload(&client, upload_length);
+    try expect_echo_response(&client, 200, "1048576");
+    server.request_shutdown();
+    thread.join();
+    joined = true;
+    try std.testing.expect(runner.failure == null and state.failure == null);
+    try std.testing.expectEqual(@as(usize, 1), state.begins);
+    try std.testing.expectEqual(@as(usize, 1), state.ends);
+    try std.testing.expectEqual(@as(usize, 0), state.cancels);
+    try std.testing.expectEqual(@as(u64, upload_length), state.bytes);
+    try std.testing.expectEqual(default_config.max_body_size, 16 * 1024);
+}
+
+test "request streaming: plaintext 1 MiB upload bypasses the buffered cap" {
+    try run_live_streaming_case(false);
+}
+
+test "request streaming: TLS 1 MiB upload bypasses the buffered cap" {
+    try run_live_streaming_case(true);
 }

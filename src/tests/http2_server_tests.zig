@@ -136,6 +136,7 @@ const TestState = struct {
                 binding.callback(binding.context, request, token);
                 return;
             },
+            .streaming => return error.StreamingRouteInTest,
         }
         if (!response.is_complete()) return error.IncompleteResponse;
     }

@@ -26,6 +26,9 @@ const http_compression_pool = @import("../http/compression_pool.zig");
 const zero_copy = @import("zero_copy.zig");
 const tcp_file = @import("tcp_file.zig");
 const file_transfer = @import("../http/file_transfer.zig");
+const body_decoder = @import("../http/body_decoder.zig");
+const request_body = @import("../http/request_body.zig");
+const streaming_request_module = @import("../http/streaming_request.zig");
 const dev_log = @import("../observability/dev_log.zig");
 const metrics = @import("../observability/metrics.zig");
 const zslay = @import("zslay");
@@ -179,6 +182,16 @@ pub const TcpConnection = struct {
     stream_producer: ?http_response.StreamProducer = null,
     stream_close_after: bool = false,
     buffered_file: file_transfer.FileTransfer = .{},
+
+    // HTTP/1 request-body streaming. The head stays pinned in request_buffer
+    // through the end callback; body bytes are fed from the same buffer.
+    streaming_active: bool = false,
+    streaming_route: ?*const request_body.BodyRoute = null,
+    streaming_request: streaming_request_module.StreamingRequest = undefined,
+    body_state: request_body.BodyState = .{},
+    body_decoder: body_decoder.BodyDecoder = body_decoder.init(.none, .{}),
+    body_start: usize = 0,
+    body_len: usize = 0,
 
     ssl: ?*c.SSL = null,
     network_bio: ?*c.BIO = null,
@@ -815,6 +828,9 @@ pub const TcpConnection = struct {
                 binding.callback(binding.context, request, token);
                 return;
             },
+            .streaming => {
+                response.end_best_effort("501 Not Implemented", "Streaming route is HTTP/1.1 only");
+            },
         }
         try self.finish_http2_dispatch(&response);
     }
@@ -1151,6 +1167,13 @@ pub const TcpConnection = struct {
         // HTTP/2 reads remain armed while other streams await completion.
     }
 
+    /// Returns the request method before the parser consumes the request line.
+    fn peek_method(buffer: []const u8) ?[]const u8 {
+        const space = std.mem.indexOfScalar(u8, buffer, ' ') orelse return null;
+        if (space == 0) return null;
+        return buffer[0..space];
+    }
+
     fn route_http_data(self: *TcpConnection, data: []const u8) void {
         // Re-arm the idle/header deadline after every parse or dispatch exit;
         // the partial-request check sees the post-dispatch parser state.
@@ -1164,6 +1187,10 @@ pub const TcpConnection = struct {
             if (batching) end_write_batch(self);
         }
 
+        if (self.streaming_active) {
+            self.append_streaming_data(data);
+            return;
+        }
         if (self.dispatch_suspended) {
             close_connection(self);
             return;
@@ -1183,6 +1210,45 @@ pub const TcpConnection = struct {
         self.request_len += data.len;
 
         while (self.request_len > 0 and !self.closing) {
+            const stream_method = if (self.parser.state == .method) peek_method(self.request_buffer[0..self.request_len]) else null;
+            const use_head = stream_method != null and (std.mem.eql(u8, stream_method.?, "POST") or std.mem.eql(u8, stream_method.?, "PUT") or std.mem.eql(u8, stream_method.?, "PATCH"));
+            if (use_head) {
+                const head = http_parser.consume_head(
+                    &self.parser,
+                    &self.req,
+                    self.request_buffer[0..self.request_len],
+                );
+                if (head.ready) |ready| {
+                    const method = radix.HttpMethod.parse(self.req.method);
+                    if (method == .post or method == .put or method == .patch or method == .any) {
+                        self.req.extra_param_names = self.route_param_names;
+                        self.req.extra_param_values = self.route_param_values;
+                        self.req.extra_param_count = 0;
+                        if (self.router.match_request(&self.req, method)) |matched| {
+                            if (matched.handler) |handler| switch (handler) {
+                                .streaming => |route_ptr| {
+                                    self.start_streaming_request(
+                                        ready,
+                                        @ptrCast(@alignCast(route_ptr)),
+                                    );
+                                    return;
+                                },
+                                else => {},
+                            };
+                        }
+                    }
+                    _ = http_parser.commit_head(&self.parser, &self.req, head);
+                } else if (head.buffered_failure != null) {
+                    _ = http_parser.commit_head(&self.parser, &self.req, head);
+                } else switch (self.parser.state) {
+                    .body, .chunk_size, .chunk_ext, .chunk_data, .chunk_crlf, .chunk_trailer => {},
+                    else => {
+                        self.handle_expect_continue();
+                        return;
+                    },
+                }
+            }
+
             const consumed = http_parser.consume(
                 &self.parser,
                 &self.req,
@@ -1244,6 +1310,324 @@ pub const TcpConnection = struct {
             self.expect_continue_sent = false;
             self.suppress_response_body = false;
         }
+    }
+
+    /// Starts a route-level body sink after the head is structurally ready.
+    fn start_streaming_request(
+        self: *TcpConnection,
+        head: http_parser.HeadReady,
+        route: *const request_body.BodyRoute,
+    ) void {
+        if (self.streaming_active) {
+            self.close_streaming_connection("503 Service Unavailable", "Upload already active");
+            return;
+        }
+        if (route.middleware_policy == .reject_legacy and self.router.has_middleware()) {
+            self.close_streaming_connection(
+                "500 Internal Server Error",
+                "Streaming route requires headers-only middleware",
+            );
+            return;
+        }
+        if (route.limits.max_active == 0) {
+            self.close_streaming_connection("500 Internal Server Error", "Invalid upload limits");
+            return;
+        }
+
+        http_parser.commit_streaming_head(&self.parser, &self.req);
+        self.req.body = "";
+        self.req.extra_param_names = self.route_param_names;
+        self.req.extra_param_values = self.route_param_values;
+        self.streaming_request = streaming_request_module.StreamingRequest.from_request(&self.req);
+        self.streaming_route = route;
+        self.body_start = head.header_end;
+        self.body_len = self.request_len - head.header_end;
+        self.body_decoder = body_decoder.init(head.framing, .{
+            .max_body_bytes = route.limits.max_body_bytes,
+            .max_header_bytes = self.parser.max_header_bytes,
+            .buffered = false,
+        });
+        const declared: ?u64 = switch (head.framing) {
+            .content_length => |length| length,
+            else => null,
+        };
+        self.body_state = .{};
+        const control = self.body_state.arm(.{
+            .context = self,
+            .resume_fn = resume_streaming_body,
+            .cancel_fn = cancel_streaming_control,
+        }, route.limits, declared) catch |err| {
+            self.streaming_route = null;
+            const status = if (err == error.BodyTooLarge) "413 Payload Too Large" else "500 Internal Server Error";
+            self.close_streaming_connection(status, "Upload refused");
+            return;
+        };
+        const binding = route.sink.begin(route.sink.context, &self.streaming_request, control) catch {
+            _ = self.body_state.reject_begin();
+            self.streaming_route = null;
+            self.close_streaming_connection("500 Internal Server Error", "Upload begin failed");
+            return;
+        };
+        self.streaming_active = true;
+        self.dispatch_suspended = true;
+        if (self.body_state.accept_begin(binding)) |terminal| {
+            self.complete_streaming_terminal(terminal);
+            return;
+        }
+        self.handle_expect_continue();
+        self.pump_streaming_body() catch {};
+    }
+
+    fn append_streaming_data(self: *TcpConnection, data: []const u8) void {
+        if (data.len != 0) {
+            const used = self.body_start + self.body_len;
+            if (data.len > self.request_buffer.len - used) {
+                self.fail_streaming(.body_too_large);
+                return;
+            }
+            @memcpy(self.request_buffer[used..][0..data.len], data);
+            self.body_len += data.len;
+            self.request_len = used + data.len;
+        }
+        self.pump_streaming_body() catch {};
+    }
+
+    fn pump_streaming_body(self: *TcpConnection) error{BodyDeliveryFailed}!void {
+        if (!self.streaming_active) return;
+        const route = self.streaming_route orelse return;
+        while (self.body_len > 0) {
+            if (self.body_state.readiness == .paused) {
+                self.dispatch_suspended = true;
+                return;
+            }
+            const event = body_decoder.next(
+                &self.body_decoder,
+                self.request_buffer[self.body_start..][0..self.body_len],
+            );
+            switch (event) {
+                .need_more => break,
+                .data => |bytes| {
+                    const retained: usize = @intCast(self.body_state.observed - self.body_state.consumed);
+                    if (bytes.len > retained) {
+                        self.body_state.observe(bytes.len - retained) catch {
+                            self.fail_streaming(.body_too_large);
+                            return error.BodyDeliveryFailed;
+                        };
+                    }
+                    self.body_state.start_chunk(bytes.len) catch {
+                        self.fail_streaming(.invalid_body);
+                        return error.BodyDeliveryFailed;
+                    };
+                    const progress = route.sink.chunk(route.sink.context, bytes) catch {
+                        const terminal = self.body_state.fail_chunk();
+                        self.invoke_streaming_cancel(terminal);
+                        return error.BodyDeliveryFailed;
+                    };
+                    const terminal = self.body_state.accept_chunk(progress) catch {
+                        const failed = self.body_state.fail_chunk();
+                        self.invoke_streaming_cancel(failed);
+                        return error.BodyDeliveryFailed;
+                    };
+                    body_decoder.accept_payload(&self.body_decoder, progress.consumed) catch {
+                        self.fail_streaming(.invalid_body);
+                        return error.BodyDeliveryFailed;
+                    };
+                    self.compact_streaming_body(progress.consumed);
+                    if (terminal) |pending| {
+                        self.invoke_streaming_terminal(pending);
+                        return;
+                    }
+                    if (progress.readiness == .paused) {
+                        self.dispatch_suspended = true;
+                        return;
+                    }
+                },
+                .end => {
+                    const terminal = self.body_state.take_end(true, 0) catch {
+                        self.fail_streaming(.invalid_body);
+                        return error.BodyDeliveryFailed;
+                    };
+                    self.invoke_streaming_end(terminal.end);
+                    return;
+                },
+                .invalid => {
+                    self.fail_streaming(.invalid_body);
+                    return error.BodyDeliveryFailed;
+                },
+                .too_large => {
+                    self.fail_streaming(.body_too_large);
+                    return error.BodyDeliveryFailed;
+                },
+            }
+        }
+        if (self.body_decoder.state == .done) {
+            const terminal = self.body_state.take_end(true, 0) catch {
+                self.fail_streaming(.invalid_body);
+                return error.BodyDeliveryFailed;
+            };
+            self.invoke_streaming_end(terminal.end);
+            return;
+        }
+        self.dispatch_suspended = false;
+    }
+
+    fn compact_streaming_body(self: *TcpConnection, consumed: usize) void {
+        if (consumed == 0) return;
+        body_decoder.discard_prefix(&self.body_decoder, consumed) catch {
+            self.fail_streaming(.invalid_body);
+            return;
+        };
+        const remaining = self.body_len - consumed;
+        if (remaining != 0) {
+            std.mem.copyForwards(
+                u8,
+                self.request_buffer[self.body_start..][0..remaining],
+                self.request_buffer[self.body_start + consumed ..][0..remaining],
+            );
+        }
+        self.body_len = remaining;
+        self.request_len = self.body_start + remaining;
+    }
+
+    fn complete_streaming_terminal(self: *TcpConnection, terminal: request_body.BodyTerminal) void {
+        const route = self.streaming_route orelse return;
+        switch (terminal) {
+            .cancel => |cancellation| {
+                route.sink.cancel(route.sink.context, cancellation.reason);
+                _ = self.body_state.finish_terminal();
+                self.close_streaming_connection("400 Bad Request", "Upload canceled");
+            },
+            .end => {},
+        }
+    }
+
+    fn invoke_streaming_cancel(self: *TcpConnection, terminal: request_body.BodyTerminal) void {
+        const route = self.streaming_route orelse return;
+        switch (terminal) {
+            .cancel => |cancellation| {
+                route.sink.cancel(route.sink.context, cancellation.reason);
+                _ = self.body_state.finish_terminal();
+                const status = if (cancellation.reason == .body_too_large)
+                    "413 Payload Too Large"
+                else if (cancellation.reason == .invalid_body)
+                    "400 Bad Request"
+                else
+                    "500 Internal Server Error";
+                self.close_streaming_connection(status, "Upload failed");
+            },
+            .end => {},
+        }
+    }
+
+    fn invoke_streaming_terminal(self: *TcpConnection, terminal: request_body.BodyTerminal) void {
+        switch (terminal) {
+            .end => |binding| self.invoke_streaming_end(binding),
+            .cancel => self.invoke_streaming_cancel(terminal),
+        }
+    }
+
+    fn invoke_streaming_end(self: *TcpConnection, binding: request_body.BodyBinding) void {
+        _ = binding;
+        const route = self.streaming_route orelse return;
+        var response = Response{
+            .target = .{ .tcp = self },
+            .request_body_complete = false,
+        };
+        route.sink.end(route.sink.context, &self.streaming_request, &response) catch {
+            self.close_streaming_connection("500 Internal Server Error", "Upload end failed");
+            return;
+        };
+        _ = self.body_state.finish_terminal();
+        const consumed = self.body_start + self.body_decoder.mark;
+        self.streaming_active = false;
+        self.streaming_route = null;
+        self.body_len = 0;
+        if (response.is_complete()) {
+            self.finish_streaming_request(consumed);
+        } else {
+            self.dispatch_suspended = true;
+            self.pending_request_consumed = consumed;
+            self.pending_close_requested = self.req.header_has_token("Connection", "close");
+        }
+    }
+
+    fn finish_streaming_request(self: *TcpConnection, consumed: usize) void {
+        self.streaming_active = false;
+        self.streaming_route = null;
+        self.body_len = 0;
+        if (consumed > self.request_len) {
+            close_connection(self);
+            return;
+        }
+        const remaining = self.request_len - consumed;
+        if (remaining != 0) {
+            std.mem.copyForwards(
+                u8,
+                self.request_buffer[0..remaining],
+                self.request_buffer[consumed..self.request_len],
+            );
+        }
+        self.request_len = remaining;
+        self.req = .{};
+        http_parser.reset(&self.parser);
+        self.expect_continue_sent = false;
+        self.suppress_response_body = false;
+        self.dispatch_suspended = false;
+        if (remaining != 0) self.route_http_data(&.{});
+    }
+
+    fn fail_streaming(self: *TcpConnection, reason: request_body.BodyCancelReason) void {
+        if (self.streaming_route) |route| {
+            if (self.body_state.request_cancel(reason)) |terminal| {
+                switch (terminal) {
+                    .cancel => |cancellation| {
+                        route.sink.cancel(route.sink.context, cancellation.reason);
+                        _ = self.body_state.finish_terminal();
+                    },
+                    .end => {},
+                }
+            }
+        }
+        const status = if (reason == .body_too_large)
+            "413 Payload Too Large"
+        else if (reason == .invalid_body)
+            "400 Bad Request"
+        else
+            "500 Internal Server Error";
+        self.close_streaming_connection(status, "Upload failed");
+    }
+
+    fn close_streaming_connection(self: *TcpConnection, status: []const u8, body: []const u8) void {
+        self.streaming_active = false;
+        self.streaming_route = null;
+        self.body_len = 0;
+        self.body_state = .{};
+        self.dispatch_suspended = false;
+        var response = Response{ .target = .{ .tcp = self } };
+        response.end_with_headers(status, "Connection: close\r\n", body) catch {
+            close_connection(self);
+            return;
+        };
+        close_after_flush(self);
+        self.request_len = 0;
+        self.req = .{};
+        http_parser.reset(&self.parser);
+    }
+
+    fn resume_streaming_body(context: *anyopaque) error{BodyDeliveryFailed}!void {
+        const self: *TcpConnection = @ptrCast(@alignCast(context));
+        if (!self.streaming_active) return error.BodyDeliveryFailed;
+        try self.pump_streaming_body();
+        if (self.streaming_active and self.body_state.readiness == .ready and
+            !self.dispatch_suspended and !self.read_active and !self.closing)
+        {
+            self.arm_read();
+        }
+    }
+
+    fn cancel_streaming_control(context: *anyopaque) void {
+        const self: *TcpConnection = @ptrCast(@alignCast(context));
+        self.fail_streaming(.cancelled);
     }
 
     fn dispatch_request(self: *TcpConnection) void {
@@ -1340,6 +1724,9 @@ pub const TcpConnection = struct {
                 const token = self.async_response_state.arm(self.async_target());
                 binding.callback(binding.context, &self.req, token);
                 self.dispatch_suspended = token.is_pending();
+            },
+            .streaming => {
+                response.end_best_effort("501 Not Implemented", "Streaming route is HTTP/1.1 only");
             },
         }
     }

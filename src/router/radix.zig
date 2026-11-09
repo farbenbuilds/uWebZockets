@@ -42,6 +42,8 @@ pub const RouteHandler = union(enum) {
     contextual: ContextualRoute,
     asynchronous: AsyncHandler,
     contextual_async: ContextualAsyncRoute,
+    /// Borrowed `*const request_body.BodyRoute`; the transport owns the cast.
+    streaming: *const anyopaque,
 };
 
 /// Middleware control flow after one ordered callback.
@@ -886,6 +888,29 @@ pub const Router = struct {
             .context = context,
             .callback = handler,
         } });
+    }
+
+    /// Registers a borrowed request-body sink route for one method.
+    ///
+    /// The route pointer must remain valid for the application lifetime. The
+    /// transport casts it to `*const request_body.BodyRoute` only when the
+    /// route is selected, keeping this module free of the HTTP response cycle.
+    pub fn route_stream(
+        self: *Router,
+        method: HttpMethod,
+        path: []const u8,
+        route: *const anyopaque,
+    ) !void {
+        switch (method) {
+            .post, .put, .patch => {},
+            else => return error.InvalidStreamingMethod,
+        }
+        return self.register_route(path, method, .{ .streaming = route });
+    }
+
+    /// Reports whether any global middleware is registered.
+    pub fn has_middleware(self: *const Router) bool {
+        return self.middleware_count != 0;
     }
 
     /// Appends one global middleware callback in execution order.

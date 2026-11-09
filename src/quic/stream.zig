@@ -724,6 +724,9 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
                     const token = self.async_response_state.arm(self.async_target());
                     binding.callback(binding.context, request, token);
                 },
+                .streaming => {
+                    response.end_best_effort("501 Not Implemented", "Streaming route is HTTP/1.1 only");
+                },
             }
         }
 

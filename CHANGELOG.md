@@ -29,9 +29,11 @@ the C ABI layout, and the v2.1.6 release are unchanged.
   bounded carry, explicit payload acknowledgement, strict metadata, and a
   part-sink adapter with pause, resume, and once-only cancellation.
 - A metadata-only `StreamingRequest`, the `BodySink`/`BodyRoute` contract, the
-  `BodyState` lifecycle, and the pure HTTP/1 head/body decoder. These are the
-  request-streaming foundation; live transport activation is deferred to
-  2.3.0.
+  `BodyState` lifecycle, and the pure HTTP/1 head/body decoder.
+- Live HTTP/1.1 and TLS HTTP/1.1 request-body streaming through
+  `App.post_stream`, `put_stream`, and `patch_stream`, with pause/resume via
+  `BodyControl` and no complete-body materialization. HTTP/2 and HTTP/3
+  streaming routes remain 2.3.0 work and return 501.
 - A bounded HTTP/2 reset FIFO so an output-blocked reset no longer closes
   healthy sibling streams.
 - A Woff2 MIME mapping for static assets.
@@ -82,9 +84,9 @@ the C ABI layout, and the v2.1.6 release are unchanged.
 
 ### Limits
 
-- Live request-body streaming remains deferred to 2.3.0. The contract, pure
-  decoder, body state machine, and multipart sink are shipped and tested, but
-  no live transport calls the sink yet; `Request.body` remains buffered.
+- HTTP/2 and HTTP/3 request-body streaming remain deferred to 2.3.0. The
+  contract and state machine are live on HTTP/1.1 and TLS; H2/H3 still buffer
+  request bodies and return 501 for a streaming route.
 - WebTransport, receive-side UDP GRO, the HttpArena `async` adapter, quiet-host
   performance evidence, cluster/timer ownership extraction, and final fork
   archives remain dated boundaries. See
