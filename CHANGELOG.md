@@ -61,7 +61,17 @@ the C ABI layout, and the v2.1.6 release are unchanged.
   the connection.
 - Large static assets no longer return 413 on TLS, HTTP/2, or HTTP/3 when they
   exceed the route scratch buffer.
-- `App.static` uses the Zig 0.16 `trimEnd` API.
+- `App.static` uses the Zig 0.16 `trimEnd` API and selects the directory index
+  from the normalized path, so percent-encoded trailing slashes resolve
+  correctly instead of returning 500.
+- `Response.append_header` validates the field name as one HTTP token before
+  joining it with the value, closing a CR/LF field-splitting path.
+- Chunk extensions now follow the RFC 9112 token/quoted-string grammar instead
+  of accepting an empty name or a missing value.
+- A truncated multipart entity reports `invalid_body` to the part sink rather
+  than `sink_failure`.
+- The HTTP/2 terminal file-head path keeps descriptor ownership unambiguous
+  when the peer has already closed the stream.
 - The shared RFC 9110 qvalue parser accepts one-digit fractional weights and
   rejects overlong values consistently.
 
