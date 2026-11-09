@@ -76,6 +76,11 @@ apply.
   opportunities and writes a throwaway HTML report; pair it with
   `codebase-design` for the module vocabulary and `domain-modeling` when a
   decision changes `GLOSSARY.md` or `docs/adr/`.
+- **Whole-codebase untangling**: `untangle-codebase` is the on-demand
+  refactor pass for hidden links, needless links, surplus code, and special
+  cases. Run it only when requested; record the decision log outside the
+  repository and keep every behavior-preserving change behind the normal
+  gates.
 - **Plan stress test**: `grill-me` routes to `grilling` for a relentless
   design-tree interview. Use it when a plan is expensive or hard to reverse;
   use `interview-me` to discover requirements and
@@ -92,20 +97,22 @@ apply.
 - **Domain**: Zig and systems (`zig-*`, `gcc`, `c-systems-programming`,
   `nix-best-practices`) and design (`dod`, `ponytail`, `caveman`,
   `functional-programming-fundamentals`).
-- **JavaScript/TypeScript tooling**: `install-anti-slop` is scoped to the
-  project's JS/TS harnesses. It is not a Zig lint policy: Zig source is
-  governed by `CODING_CONVENTION.md` and `scripts/check_conventions.sh`.
+- **JavaScript/TypeScript tooling**: this repository has no JS/TS lint
+  policy. Zig source is governed by `CODING_CONVENTION.md` and
+  `scripts/check_conventions.sh`; do not add an Oxlint toolchain to the Zig
+  build.
 
 ### Vendored Skill Overrides
 
 Vendored skills are pinned by `skills-lock.json`; do not hand-edit their
 `SKILL.md`. Project rules outrank skill defaults:
 
-- **Manual-only skills**: `improve-codebase-architecture`, `grill-me`, and
-  `thermo-nuclear-code-quality-review` set `disable-model-invocation: true`.
-  Run them only when the user or root agent requests the pass, by reading the
-  pinned `SKILL.md` and following it. `grill-me` routes to `grilling`; the
-  architect and reviewer instructions name these passes explicitly.
+- **Manual-only skills**: `improve-codebase-architecture`, `grill-me`,
+  `thermo-nuclear-code-quality-review`, and `untangle-codebase` set
+  `disable-model-invocation: true`. Run them only when the user or root agent
+  requests the pass, by reading the pinned `SKILL.md` and following it.
+  `grill-me` routes to `grilling`; the architect and reviewer instructions name
+  these passes explicitly.
 - **No emojis**: replace emoji markers in a skill's output template with plain
   text (`Q1`, `->`, `[strong]`).
 - **`improve-codebase-architecture`**: `CODEBASE.md` is the current domain
@@ -115,9 +122,9 @@ Vendored skills are pinned by `skills-lock.json`; do not hand-edit their
   review flag, not a mechanical split. Existing oversized files are not a
   license to keep growing; apply `code-simplification` and the project
   ownership boundaries.
-- **`install-anti-slop`**: JS/TS only. Never apply it to Zig source or add an
-  Oxlint toolchain to the Zig build unless the task explicitly covers JS/TS
-  linting.
+- **`untangle-codebase`**: do not delete comments or tests unless the user
+  explicitly chose those additions. Behavior must remain identical apart from
+  defects the refactor fixes; every slice still runs the project gates.
 
 ## Integrations
 - Seamlessly interact with C/C++ and Go projects via Zig FFI.

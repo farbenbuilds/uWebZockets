@@ -66,7 +66,7 @@ fits the current step and never stack processes that do not apply.
 - **Simplify (`code-simplification`, `ponytail`)**: prefer the smallest correct change; delete code before adding it.
 - **Guard the bar (`constraint-driven-development`)**: never lower a gate, threshold, or baseline to land a change.
 
-## 8. Delivery & Documentation (`api-and-interface-design`, `source-driven-development`, `documentation-and-adrs`, `deprecation-and-migration`, `git-workflow-and-versioning`, `ci-cd-and-automation`, `shipping-and-launch`, `install-anti-slop`)
+## 8. Delivery & Documentation (`api-and-interface-design`, `source-driven-development`, `documentation-and-adrs`, `deprecation-and-migration`, `git-workflow-and-versioning`, `ci-cd-and-automation`, `shipping-and-launch`, `untangle-codebase`)
 - **Design interfaces (`api-and-interface-design`)**: public surfaces are contracts: fixed capacities, explicit ownership, specific error names, additive evolution.
 - **Cite sources (`source-driven-development`)**: ground RFC and upstream API decisions in the pinned specs and headers, not memory.
 - **Record decisions (`documentation-and-adrs`)**: non-obvious choices land in `CODEBASE.md`, `docs/`, or `CHANGELOG.md`, not buried in code comments.
@@ -74,7 +74,7 @@ fits the current step and never stack processes that do not apply.
 - **Version atomically (`git-workflow-and-versioning`)**: one logical change per commit, conventional prefixes, synchronized version surfaces.
 - **Automate (`ci-cd-and-automation`)**: workflows stay pinned, deterministic, and cache-correct; never weakened to pass.
 - **Ship (`shipping-and-launch`)**: releases follow the documented checklist, and rollback precedes announcement.
-- **JS/TS tooling (`install-anti-slop`)**: install or update vendored Oxlint rules only when the task explicitly covers JavaScript or TypeScript harnesses. Never add an Oxlint toolchain to the Zig build; Zig hygiene stays with `CODING_CONVENTION.md`.
+- **Untangle (`untangle-codebase`)**: use the on-demand whole-codebase refactor pass for hidden links, needless links, surplus code, and special cases. Record its decision log outside the repository; behavior stays identical apart from fixed defects and every slice runs the project gates.
 
 ## 9. Knowledge Graph (`graphify`, Codex and OpenCode)
 - Ask the graph first: for architecture, file-relationship, or "how does X work" questions, use the `graphify` MCP tools or `graphify query` against `graphify-out/graph.json` instead of re-scanning the tree.
@@ -84,8 +84,8 @@ fits the current step and never stack processes that do not apply.
 
 ## 10. Vendored Skill Overrides
 - **Project rules win**: `AGENTS.md` and `CODING_CONVENTION.md` outrank every vendored skill default.
-- **Manual-only passes**: `improve-codebase-architecture`, `grill-me`, and `thermo-nuclear-code-quality-review` are opt-in. Run them only when requested, by reading their `SKILL.md`; do not auto-load them for every task.
+- **Manual-only passes**: `improve-codebase-architecture`, `grill-me`, `thermo-nuclear-code-quality-review`, and `untangle-codebase` are opt-in. Run them only when requested, by reading their `SKILL.md`; do not auto-load them for every task.
 - **No emojis**: the `grilling` template's emoji markers become plain `Q1` and `->` labels. Architecture report badges become `[strong]`, `[worth exploring]`, and `[speculative]`.
 - **Scratch artifacts**: architecture reports go to the OS temp directory and are never committed. `GLOSSARY.md` is created only when a domain term is actually resolved; until then `CODEBASE.md` is the vocabulary source.
 - **Review is additive**: `thermo-nuclear-code-quality-review` and `improve-codebase-architecture` produce candidate findings. They do not edit production code, lower gates, or override specialist ownership.
-- **No JS toolchain creep**: `install-anti-slop` exists for JS/TS harnesses only. Zig source and its build graph stay on `zig fmt` and `scripts/check_conventions.sh`.
+- **No JS toolchain creep**: this repository has no JS/TS lint policy. Zig source and its build graph stay on `zig fmt` and `scripts/check_conventions.sh`.
