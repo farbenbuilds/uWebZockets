@@ -1504,7 +1504,8 @@ allocation or lock appears on the steady-state request path.
 
 ## 8. Version 2.2.0: Streaming I/O, Large Payloads, and Zero-Copy Static Assets
 
-**Status (2026-11-10): released.** 2.2.0 ships bounded file responses on every
+**Status (2026-11-10): release-ready; maintainer merge and tag pending.**
+2.2.0 ships bounded file responses on every
 supported transport, static sidecar negotiation, the incremental multipart
 parser and part-sink adapter, the pure request-streaming foundation, and the
 HTTP/2 reset-retention and timer-overflow fixes. The C ABI layout, buffered
