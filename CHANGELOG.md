@@ -33,7 +33,10 @@ the C ABI layout, and the v2.1.6 release are unchanged.
 - Live request-body streaming through `App.post_stream`, `put_stream`, and
   `patch_stream` on HTTP/1.1, TLS HTTP/1.1, HTTP/2, and HTTP/3, with no
   complete-body materialization. HTTP/1/TLS sinks can pause/resume through
-  `BodyControl`; H2/H3 are ready-only and reset a paused stream.
+  `BodyControl` on every transport: H2 retains a bounded suffix and withholds
+  stream credit, and H3 stops reading and retains the bounded suffix. Live
+  100 MB uploads pass on plaintext and TLS; 100 MB logical H2/H3 session
+  proofs use constant storage.
 - A bounded HTTP/2 reset FIFO so an output-blocked reset no longer closes
   healthy sibling streams.
 - A Woff2 MIME mapping for static assets.
@@ -84,9 +87,8 @@ the C ABI layout, and the v2.1.6 release are unchanged.
 
 ### Limits
 
-- HTTP/2 and HTTP/3 request-body pause/resume remains 2.3.0 work. H2/H3 sinks
-  are ready-only; a paused sink resets the stream instead of withholding flow
-  control. The 100 MB bounded-memory proof remains a release-owner item.
+- The H2/H3 100 MB proofs drive the real session/stream paths but not a live
+  socket pair; a live H2/H3 socket run remains external evidence.
 - WebTransport, receive-side UDP GRO, the HttpArena `async` adapter, quiet-host
   performance evidence, cluster/timer ownership extraction, and final fork
   archives remain dated boundaries. See

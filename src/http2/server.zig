@@ -34,10 +34,12 @@ pub const WsDataFn = *const fn (*anyopaque, u32, []u8, bool) bool;
 pub const StreamClosedFn = *const fn (*anyopaque, u32, u16) void;
 /// Offers a completed request head before body collection; true means a sink owns it.
 pub const RequestHeadFn = *const fn (*anyopaque, *Request, u32, ?u64) anyerror!bool;
-/// Delivers one DATA event to a streaming sink; the sink must accept it fully.
-pub const BodyChunkFn = *const fn (*anyopaque, u32, []const u8, bool) anyerror!void;
+/// Delivers one DATA event to a streaming sink and reports accepted prefix/readiness.
+pub const BodyChunkFn = *const fn (*anyopaque, u32, []const u8, bool) anyerror!BodyChunkResult;
 /// Cancels an active streaming body after reset or connection teardown.
 pub const BodyCancelFn = *const fn (*anyopaque, u32) void;
+/// Accepted prefix and pause state for one streaming DATA event.
+pub const BodyChunkResult = struct { consumed: usize, paused: bool };
 
 /// Synchronous transport and request callbacks used by a server session.
 ///
@@ -523,6 +525,10 @@ pub fn server_session(comptime max_streams: usize) type {
         expected_content_lengths: [max_streams]?usize = .{null} ** max_streams,
         headers_ready: [max_streams]bool = .{false} ** max_streams,
         streaming: [max_streams]bool = .{false} ** max_streams,
+        streaming_paused: [max_streams]bool = .{false} ** max_streams,
+        streaming_end_pending: [max_streams]bool = .{false} ** max_streams,
+        streaming_pending_lengths: [max_streams]usize = .{0} ** max_streams,
+        streaming_pending_credits: [max_streams]u32 = .{0} ** max_streams,
         // Tracks whether the initial header block was seen, so a second HEADERS
         // section is treated as trailers instead of a fresh request.
         initial_seen: [max_streams]bool = .{false} ** max_streams,
@@ -647,6 +653,10 @@ pub fn server_session(comptime max_streams: usize) type {
             @memset(&self.expected_content_lengths, null);
             @memset(&self.headers_ready, false);
             @memset(&self.streaming, false);
+            @memset(&self.streaming_paused, false);
+            @memset(&self.streaming_end_pending, false);
+            @memset(&self.streaming_pending_lengths, 0);
+            @memset(&self.streaming_pending_credits, 0);
             @memset(&self.initial_seen, false);
             @memset(&self.dispatched, false);
             @memset(&self.callback_active, false);
@@ -1199,7 +1209,7 @@ pub fn server_session(comptime max_streams: usize) type {
                         try self.send_reset(stream_id, .internal_error, callbacks);
                         return;
                     };
-                    try chunk_fn(callbacks.context, stream_id, "", true);
+                    _ = try chunk_fn(callbacks.context, stream_id, "", true);
                     try self.finish_remote(index, stream_id, callbacks);
                     return;
                 }
@@ -1297,11 +1307,18 @@ pub fn server_session(comptime max_streams: usize) type {
                                 try self.send_reset(stream_id, .internal_error, callbacks);
                                 return;
                             };
-                            try chunk_fn(callbacks.context, stream_id, "", true);
+                            _ = try chunk_fn(callbacks.context, stream_id, "", true);
                             try self.finish_remote(index, stream_id, callbacks);
                         }
                         return;
                     }
+                }
+            }
+            if (self.expected_content_lengths[index]) |expected| {
+                if (expected > self.request_body_limit) {
+                    const stream_id = self.connection.streams.stream_ids[index];
+                    try self.send_reset(stream_id, .enhance_your_calm, callbacks);
+                    return;
                 }
             }
             if (end_stream or decoded.protocol != null) try self.dispatch(index, callbacks);
@@ -1358,7 +1375,13 @@ pub fn server_session(comptime max_streams: usize) type {
             const increment = try self.connection.restore_receive_credit(index, flow_length);
             if (increment != 0) {
                 try self.send_window_update(0, increment, callbacks);
-                try self.send_window_update(stream_id, increment, callbacks);
+                if (self.streaming[index]) {
+                    const pending = self.streaming_pending_credits[index];
+                    self.streaming_pending_credits[index] = std.math.add(u32, pending, increment) catch
+                        return error.StreamWindowOverflow;
+                } else {
+                    try self.send_window_update(stream_id, increment, callbacks);
+                }
             }
             if (self.dispatched[index] and self.requests[index].protocol.len > 0) {
                 const ws_data_fn = callbacks.ws_data_fn orelse {
@@ -1383,12 +1406,44 @@ pub fn server_session(comptime max_streams: usize) type {
                     try self.send_reset(stream_id, .internal_error, callbacks);
                     return;
                 };
-                chunk_fn(callbacks.context, stream_id, event.bytes, event.end_stream) catch {
+                if (self.streaming_paused[index]) {
+                    const pending = self.streaming_pending_lengths[index];
+                    if (event.bytes.len > self.body_stride - pending) {
+                        try self.send_reset(stream_id, .enhance_your_calm, callbacks);
+                        return;
+                    }
+                    @memcpy(self.body_bytes(index)[pending..][0..event.bytes.len], event.bytes);
+                    self.streaming_pending_lengths[index] = pending + event.bytes.len;
+                    if (event.end_stream) self.streaming_end_pending[index] = true;
+                    return;
+                }
+                const result = chunk_fn(callbacks.context, stream_id, event.bytes, event.end_stream) catch {
                     if (self.connection.streams.find(stream_id) != null) {
                         try self.send_reset(stream_id, .enhance_your_calm, callbacks);
                     }
                     return;
                 };
+                if (result.consumed > event.bytes.len) {
+                    try self.send_reset(stream_id, .enhance_your_calm, callbacks);
+                    return;
+                }
+                if (result.consumed < event.bytes.len) {
+                    const suffix = event.bytes[result.consumed..];
+                    if (suffix.len > self.body_stride) {
+                        try self.send_reset(stream_id, .enhance_your_calm, callbacks);
+                        return;
+                    }
+                    @memcpy(self.body_bytes(index)[0..suffix.len], suffix);
+                    self.streaming_pending_lengths[index] = suffix.len;
+                    self.streaming_paused[index] = true;
+                } else if (result.paused) {
+                    self.streaming_paused[index] = true;
+                }
+                if (self.streaming_paused[index]) {
+                    if (event.end_stream) self.streaming_end_pending[index] = true;
+                    return;
+                }
+                try self.flush_stream_credit(index, callbacks);
                 if (event.end_stream) try self.finish_remote(index, stream_id, callbacks);
                 return;
             }
@@ -1415,6 +1470,43 @@ pub fn server_session(comptime max_streams: usize) type {
             self.body_lengths[index] += event.bytes.len;
             if (event.end_stream) {
                 try self.dispatch(index, callbacks);
+                try self.finish_remote(index, stream_id, callbacks);
+            }
+        }
+
+        fn flush_stream_credit(self: *Self, index: u16, callbacks: Callbacks) !void {
+            const credit = self.streaming_pending_credits[index];
+            if (credit == 0) return;
+            const stream_id = self.connection.streams.stream_ids[index];
+            self.streaming_pending_credits[index] = 0;
+            if (stream_id != 0) try self.send_window_update(stream_id, credit, callbacks);
+        }
+
+        /// Retries retained DATA after an application pause.
+        pub fn resume_stream_body(self: *Self, stream_id: u32, callbacks: Callbacks) !void {
+            const index = self.connection.streams.find(stream_id) orelse return;
+            if (!self.streaming[index] or !self.streaming_paused[index]) return;
+            const chunk_fn = callbacks.body_chunk_fn orelse return error.StreamBodyUnavailable;
+            const pending = self.streaming_pending_lengths[index];
+            if (pending != 0) {
+                const bytes = self.body_bytes(index)[0..pending];
+                const result = try chunk_fn(callbacks.context, stream_id, bytes, false);
+                if (result.consumed > pending) return error.InvalidBodyProgress;
+                if (result.consumed < pending) {
+                    const remaining = pending - result.consumed;
+                    std.mem.copyForwards(u8, self.body_bytes(index)[0..remaining], bytes[result.consumed..]);
+                    self.streaming_pending_lengths[index] = remaining;
+                    if (result.paused) return;
+                    return error.InvalidBodyProgress;
+                }
+                self.streaming_pending_lengths[index] = 0;
+                if (result.paused) return;
+            }
+            self.streaming_paused[index] = false;
+            try self.flush_stream_credit(index, callbacks);
+            if (self.streaming_end_pending[index]) {
+                self.streaming_end_pending[index] = false;
+                _ = try chunk_fn(callbacks.context, stream_id, "", true);
                 try self.finish_remote(index, stream_id, callbacks);
             }
         }
@@ -1485,9 +1577,7 @@ pub fn server_session(comptime max_streams: usize) type {
                     if (self.expected_content_lengths[index] != null) {
                         return error.InvalidContentLength;
                     }
-                    const content_length = try parse_content_length(field.value);
-                    if (content_length > self.request_body_limit) return error.RequestBodyTooLarge;
-                    self.expected_content_lengths[index] = content_length;
+                    self.expected_content_lengths[index] = try parse_content_length(field.value);
                 }
             }
             if (has_host or decoded.authority == null) return;
@@ -1521,16 +1611,21 @@ pub fn server_session(comptime max_streams: usize) type {
 
         fn send_settings(self: *Self, callbacks: Callbacks) !void {
             if (self.settings_sent) return;
-            var payload: [30]u8 = undefined;
+            var payload: [36]u8 = undefined;
             write_setting(payload[0..6], 0x1, self.advertised_table_size());
             write_setting(payload[6..12], 0x2, 0);
             write_setting(payload[12..18], 0x3, @intCast(max_streams));
             write_setting(
                 payload[18..24],
+                0x4,
+                @intCast(@min(self.body_stride, std.math.maxInt(u32))),
+            );
+            write_setting(
+                payload[24..30],
                 0x6,
                 @intCast(@min(self.request_header_stride, std.math.maxInt(u32))),
             );
-            write_setting(payload[24..30], 0x8, 1);
+            write_setting(payload[30..36], 0x8, 1);
             try self.send_frame(.settings, 0, 0, &payload, callbacks);
             self.settings_sent = true;
         }
@@ -1865,6 +1960,10 @@ pub fn server_session(comptime max_streams: usize) type {
             self.callback_active[index] = false;
             self.response_started[index] = false;
             self.streaming[index] = false;
+            self.streaming_paused[index] = false;
+            self.streaming_end_pending[index] = false;
+            self.streaming_pending_lengths[index] = 0;
+            self.streaming_pending_credits[index] = 0;
             self.stream_write_retry_required[index] = false;
             self.clear_pending_response(index);
             if (self.header_stream_index == index) {

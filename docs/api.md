@@ -138,8 +138,10 @@ middleware: `Cors`, `SecurityHeaders`, `Auth`, and `RateLimit`. See
 Request body streaming has an accepted [design contract](adr/0008-request-body-streaming.md).
 `App.post_stream`, `put_stream`, and `patch_stream` bind a `BodyRoute` sink on
 HTTP/1.1, TLS HTTP/1.1, HTTP/2, and HTTP/3; the sink receives chunks as they
-arrive. HTTP/1/TLS use `BodyControl` to pause/resume; H2/H3 are ready-only and
-reset a paused stream. H2/H3 flow-control pause remains 2.3.0 work. See the
+arrive and uses `BodyControl` to pause/resume on every transport. H2 withholds
+stream credit and retains a bounded suffix; H3 stops reading and retains the
+bounded suffix. Live 100 MB uploads pass on plaintext and TLS; H2/H3 session
+proofs cover 100 MB with constant storage. See the
 [2.2.0 release record](releases/2.2.0.md#limits-and-dated-restoration-criteria).
 
 | Group | API |

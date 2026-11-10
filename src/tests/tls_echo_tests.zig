@@ -438,7 +438,7 @@ const StreamingState = struct {
                 .end = end,
                 .cancel = cancel,
             },
-            .limits = .{ .max_body_bytes = 2 * 1024 * 1024, .max_active = 1 },
+            .limits = .{ .max_body_bytes = 128 * 1024 * 1024, .max_active = 1 },
             .middleware_policy = .headers_only,
         };
     }
@@ -513,7 +513,7 @@ fn send_stream_upload(client: *EchoClient, length: usize) !void {
     }
 }
 
-fn run_live_streaming_case(encrypted: bool) !void {
+fn run_live_streaming_case(encrypted: bool, upload_length: usize) !void {
     var state = StreamingState{};
     var route = state.route();
     var server = try EchoApp.init_configured(std.testing.io, std.testing.allocator, default_config);
@@ -528,9 +528,10 @@ fn run_live_streaming_case(encrypted: bool) !void {
     }
     var client = try connect_echo_client(port, encrypted);
     defer close_echo_client(&client);
-    const upload_length: usize = 1024 * 1024;
     try send_stream_upload(&client, upload_length);
-    try expect_echo_response(&client, 200, "1048576");
+    var expected_buffer: [32]u8 = undefined;
+    const expected = try std.fmt.bufPrint(&expected_buffer, "{d}", .{upload_length});
+    try expect_echo_response(&client, 200, expected);
     server.request_shutdown();
     thread.join();
     joined = true;
@@ -543,9 +544,17 @@ fn run_live_streaming_case(encrypted: bool) !void {
 }
 
 test "request streaming: plaintext 1 MiB upload bypasses the buffered cap" {
-    try run_live_streaming_case(false);
+    try run_live_streaming_case(false, 1024 * 1024);
 }
 
 test "request streaming: TLS 1 MiB upload bypasses the buffered cap" {
-    try run_live_streaming_case(true);
+    try run_live_streaming_case(true, 1024 * 1024);
+}
+
+test "request streaming: plaintext 100 MB upload stays bounded" {
+    try run_live_streaming_case(false, 100 * 1024 * 1024);
+}
+
+test "request streaming: TLS 100 MB upload stays bounded" {
+    try run_live_streaming_case(true, 100 * 1024 * 1024);
 }

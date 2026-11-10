@@ -3569,6 +3569,9 @@ const SinkState = struct {
     begins: usize = 0,
     ends: usize = 0,
     bytes: usize = 0,
+    control: ?support.request_body.BodyControl = null,
+    pause_first: bool = true,
+    paused_once: bool = false,
     output: [256]u8 = undefined,
     output_length: usize = 0,
 
@@ -3583,14 +3586,7 @@ const SinkState = struct {
         };
     }
 
-    fn write(context: *anyopaque, parts: []const []const u8) !void {
-        const self: *SinkState = @ptrCast(@alignCast(context));
-        for (parts) |part| {
-            if (part.len > self.output.len - self.output_length) return error.OutputTooSmall;
-            @memcpy(self.output[self.output_length..][0..part.len], part);
-            self.output_length += part.len;
-        }
-    }
+    fn write(_: *anyopaque, _: []const []const u8) !void {}
 
     fn dispatch(_: *anyopaque, _: *Request, _: u32) !void {}
 
@@ -3603,6 +3599,7 @@ const SinkState = struct {
             .resume_fn = resume_body,
             .cancel_fn = cancel_control,
         }, self.route.limits, declared);
+        self.control = control;
         const binding = try self.route.sink.begin(self.route.sink.context, &request_view(self), control);
         self.begins += 1;
         _ = self.state.accept_begin(binding);
@@ -3621,28 +3618,36 @@ const SinkState = struct {
         };
     }
 
-    fn chunk(context: *anyopaque, _: u32, input: []const u8, end_stream: bool) !void {
+    fn chunk(context: *anyopaque, _: u32, input: []const u8, end_stream: bool) !http2_server.BodyChunkResult {
         const self: *SinkState = @ptrCast(@alignCast(context));
         if (input.len != 0) {
             try self.state.observe(input.len);
             try self.state.start_chunk(input.len);
             const progress = try self.route.sink.chunk(self.route.sink.context, input);
-            _ = try self.state.accept_chunk(progress);
+            const pause = self.pause_first and !self.paused_once;
+            self.paused_once = true;
+            const effective = support.request_body.BodyProgress{
+                .consumed = progress.consumed,
+                .readiness = if (pause) .paused else .ready,
+            };
+            _ = try self.state.accept_chunk(effective);
             self.bytes += progress.consumed;
+            if (pause) return .{ .consumed = progress.consumed, .paused = true };
         }
         if (end_stream) {
-            const terminal = try self.state.take_end(true, 0);
+            _ = try self.state.take_end(true, 0);
             var response: Response = undefined;
             try self.route.sink.end(self.route.sink.context, &self.request_view(), &response);
-            _ = terminal;
             _ = self.state.finish_terminal();
             self.ends += 1;
         }
+        return .{ .consumed = input.len, .paused = false };
     }
 
     fn cancel(_: *anyopaque, _: u32) void {}
-    fn resume_body(_: *anyopaque) error{BodyDeliveryFailed}!void {
-        return error.BodyDeliveryFailed;
+    fn resume_body(context: *anyopaque) error{BodyDeliveryFailed}!void {
+        const self: *SinkState = @ptrCast(@alignCast(context));
+        self.session.resume_stream_body(1, self.callbacks()) catch return error.BodyDeliveryFailed;
     }
     fn cancel_control(_: *anyopaque) void {}
     fn sink_begin(context: *anyopaque, _: *const support.streaming_request.StreamingRequest, _: support.request_body.BodyControl) !support.request_body.BodyBinding {
@@ -3654,6 +3659,59 @@ const SinkState = struct {
     fn sink_end(_: *anyopaque, _: *const support.streaming_request.StreamingRequest, _: *Response) !void {}
     fn sink_cancel(_: *anyopaque, _: support.request_body.BodyCancelReason) void {}
 };
+
+test "http2 server: 100 MB logical upload stays bounded through the sink" {
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var state = SinkState{ .session = &fixture.session, .pause_first = false };
+    state.route = .{
+        .sink = .{
+            .context = &state,
+            .begin = SinkState.sink_begin,
+            .chunk = SinkState.sink_chunk,
+            .end = SinkState.sink_end,
+            .cancel = SinkState.sink_cancel,
+        },
+        .limits = .{ .max_body_bytes = 100 * 1024 * 1024, .max_active = 1 },
+        .middleware_policy = .headers_only,
+    };
+
+    var block: [192]u8 = undefined;
+    var block_length: usize = 0;
+    block_length = try append_hpack_literal(&block, block_length, ":method", "POST");
+    block_length = try append_hpack_literal(&block, block_length, ":scheme", "https");
+    block_length = try append_hpack_literal(&block, block_length, ":path", "/upload");
+    block_length = try append_hpack_literal(&block, block_length, ":authority", "example.com");
+    block_length = try append_hpack_literal(&block, block_length, "content-length", "104857600");
+
+    var head_input: [512]u8 = undefined;
+    @memcpy(head_input[0..http2.client_preface.len], http2.client_preface);
+    var head_length: usize = http2.client_preface.len;
+    try append_frame(&head_input, &head_length, .settings, 0, 0, "");
+    try append_frame(&head_input, &head_length, .headers, 0x4, 1, block[0..block_length]);
+    try fixture.session.receive(head_input[0..head_length], state.callbacks());
+
+    var payload: [1024]u8 = undefined;
+    @memset(&payload, 0x5a);
+    var frame: [9 + payload.len]u8 = undefined;
+    const total: usize = 100 * 1024 * 1024;
+    var sent: usize = 0;
+    while (sent < total) {
+        const count = @min(payload.len, total - sent);
+        var frame_length: usize = 0;
+        try append_frame(&frame, &frame_length, .data, 0, 1, payload[0..count]);
+        try fixture.session.receive(frame[0..frame_length], state.callbacks());
+        sent += count;
+    }
+    var end_frame: [9]u8 = undefined;
+    var end_length: usize = 0;
+    try append_frame(&end_frame, &end_length, .data, 0x1, 1, "");
+    try fixture.session.receive(end_frame[0..end_length], state.callbacks());
+
+    try std.testing.expectEqual(@as(usize, 1), state.begins);
+    try std.testing.expectEqual(@as(usize, 1), state.ends);
+    try std.testing.expectEqual(total, state.bytes);
+}
 
 test "http2 server: request-head callback streams DATA without body collection" {
     var fixture: SessionFixture = .{};
@@ -3688,6 +3746,9 @@ test "http2 server: request-head callback streams DATA without body collection" 
     try fixture.session.receive(input[0..input_length], state.callbacks());
 
     try std.testing.expectEqual(@as(usize, 1), state.begins);
-    try std.testing.expectEqual(@as(usize, 1), state.ends);
+    try std.testing.expectEqual(@as(usize, 0), state.ends);
     try std.testing.expectEqual(@as(usize, 5), state.bytes);
+    try std.testing.expect(state.control != null);
+    try state.control.?.@"resume"();
+    try std.testing.expectEqual(@as(usize, 1), state.ends);
 }

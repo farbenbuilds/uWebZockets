@@ -275,8 +275,10 @@ The accepted [request-streaming design](adr/0008-request-body-streaming.md)
 defines the opt-in sink contract shipped as `StreamingRequest`, `BodySink`,
 `BodyRoute`, and `BodyState`. HTTP/1.1, TLS HTTP/1.1, HTTP/2, and HTTP/3 bind it live through
 `App.post_stream`, `put_stream`, and `patch_stream`; a sink receives chunks as
-they arrive. HTTP/1/TLS sinks can pause/resume with `BodyControl`; H2/H3 are
-ready-only and reset a paused stream. See the
+they arrive and can pause/resume with `BodyControl` on every transport. H2
+withholds stream credit and retains a bounded suffix; H3 stops reading and
+retains the bounded suffix. Live 100 MB uploads pass on plaintext and TLS;
+100 MB logical H2/H3 session proofs use constant storage. See the
 [2.2.0 release record](releases/2.2.0.md#limits-and-dated-restoration-criteria).
 
 Framework modules expose zero-allocation query/form parsing with SIMD slicing

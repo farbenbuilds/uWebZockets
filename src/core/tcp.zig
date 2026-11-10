@@ -69,6 +69,7 @@ pub const Http2Session = http2_server.server_session(max_http2_streams);
 const H2BodyState = struct {
     conn: *TcpConnection = undefined,
     index: u16 = 0,
+    stream_id: u32 = 0,
     active: bool = false,
     route: ?*const request_body.BodyRoute = null,
     request: streaming_request_module.StreamingRequest = undefined,
@@ -739,6 +740,7 @@ pub const TcpConnection = struct {
         state.* = .{
             .conn = self,
             .index = index,
+            .stream_id = stream_id,
             .route = route,
             .request = streaming_request_module.StreamingRequest.from_request(request),
         };
@@ -777,17 +779,20 @@ pub const TcpConnection = struct {
         stream_id: u32,
         bytes: []const u8,
         end_stream: bool,
-    ) anyerror!void {
+    ) anyerror!http2_server.BodyChunkResult {
         const self: *TcpConnection = @ptrCast(@alignCast(context));
         const index = self.h2.connection.streams.find(stream_id) orelse return error.StreamClosed;
         const state = &self.h2_body_states[index];
         if (!state.active) return error.StreamClosed;
         const route = state.route orelse return error.StreamClosed;
         if (bytes.len != 0) {
-            state.state.observe(bytes.len) catch {
-                self.cancel_http2_body(index, .body_too_large);
-                return error.BodyTooLarge;
-            };
+            const retained: usize = @intCast(state.state.observed - state.state.consumed);
+            if (bytes.len > retained) {
+                state.state.observe(bytes.len - retained) catch {
+                    self.cancel_http2_body(index, .body_too_large);
+                    return error.BodyTooLarge;
+                };
+            }
             state.state.start_chunk(bytes.len) catch {
                 self.cancel_http2_body(index, .invalid_body);
                 return error.InvalidBody;
@@ -796,14 +801,17 @@ pub const TcpConnection = struct {
                 self.cancel_http2_body(index, .sink_failure);
                 return error.SinkFailed;
             };
-            if (progress.consumed != bytes.len or progress.readiness != .ready) {
-                self.cancel_http2_body(index, .sink_failure);
-                return error.SinkPaused;
+            if (progress.consumed > bytes.len) {
+                self.cancel_http2_body(index, .invalid_body);
+                return error.InvalidBody;
             }
             _ = state.state.accept_chunk(progress) catch {
                 self.cancel_http2_body(index, .invalid_body);
                 return error.InvalidBody;
             };
+            if (progress.consumed < bytes.len or progress.readiness == .paused) {
+                return .{ .consumed = progress.consumed, .paused = true };
+            }
         }
         if (end_stream) {
             _ = state.state.take_end(true, 0) catch {
@@ -820,10 +828,13 @@ pub const TcpConnection = struct {
             state.active = false;
             state.route = null;
         }
+        return .{ .consumed = bytes.len, .paused = false };
     }
 
-    fn h2_body_resume(_: *anyopaque) error{BodyDeliveryFailed}!void {
-        return error.BodyDeliveryFailed;
+    fn h2_body_resume(context: *anyopaque) error{BodyDeliveryFailed}!void {
+        const state: *H2BodyState = @ptrCast(@alignCast(context));
+        state.conn.h2.resume_stream_body(state.stream_id, state.conn.http2_callbacks()) catch
+            return error.BodyDeliveryFailed;
     }
 
     fn h2_body_cancel_control(context: *anyopaque) void {

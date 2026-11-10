@@ -395,6 +395,8 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
         streaming_route: ?*const request_body.BodyRoute = null,
         streaming_request: streaming_request_module.StreamingRequest = undefined,
         body_state: request_body.BodyState = .{},
+        streaming_paused: bool = false,
+        streaming_pending_len: usize = 0,
 
         /// Reinitializes a pooled stream with borrowed transport and storage.
         ///
@@ -698,8 +700,34 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
         }
 
         fn stream_request_body(self: *Self) void {
+            if (self.streaming_paused) return;
             const route = self.streaming_route orelse return;
             while (true) {
+                if (self.streaming_pending_len != 0) {
+                    const pending = self.body_storage[0..self.streaming_pending_len];
+                    const progress = route.sink.chunk(route.sink.context, pending) catch {
+                        self.fail_streaming_body(.sink_failure);
+                        return;
+                    };
+                    _ = self.body_state.accept_chunk(progress) catch {
+                        self.fail_streaming_body(.invalid_body);
+                        return;
+                    };
+                    if (progress.consumed != pending.len) {
+                        const remaining = pending.len - progress.consumed;
+                        std.mem.copyForwards(u8, self.body_storage[0..remaining], pending[progress.consumed..]);
+                        self.streaming_pending_len = remaining;
+                    } else {
+                        self.streaming_pending_len = 0;
+                    }
+                    if (progress.readiness == .paused) {
+                        self.streaming_paused = true;
+                        _ = io.wantread(self.stream, 0);
+                        return;
+                    }
+                    continue;
+                }
+
                 const scratch = self.body_storage[0..@min(self.body_storage.len, 8192)];
                 const read_length = io.read(self.stream, scratch.ptr, scratch.len);
                 if (read_length < 0) {
@@ -711,10 +739,13 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
                     return;
                 }
                 const bytes = scratch[0..@intCast(read_length)];
-                self.body_state.observe(bytes.len) catch {
-                    self.fail_streaming_body(.body_too_large);
-                    return;
-                };
+                const retained: usize = @intCast(self.body_state.observed - self.body_state.consumed);
+                if (bytes.len > retained) {
+                    self.body_state.observe(bytes.len - retained) catch {
+                        self.fail_streaming_body(.body_too_large);
+                        return;
+                    };
+                }
                 self.body_state.start_chunk(bytes.len) catch {
                     self.fail_streaming_body(.invalid_body);
                     return;
@@ -723,14 +754,20 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
                     self.fail_streaming_body(.sink_failure);
                     return;
                 };
-                if (progress.consumed != bytes.len or progress.readiness != .ready) {
-                    self.fail_streaming_body(.sink_failure);
-                    return;
-                }
                 _ = self.body_state.accept_chunk(progress) catch {
                     self.fail_streaming_body(.invalid_body);
                     return;
                 };
+                if (progress.consumed != bytes.len) {
+                    const remaining = bytes.len - progress.consumed;
+                    std.mem.copyForwards(u8, self.body_storage[0..remaining], bytes[progress.consumed..]);
+                    self.streaming_pending_len = remaining;
+                }
+                if (progress.readiness == .paused) {
+                    self.streaming_paused = true;
+                    _ = io.wantread(self.stream, 0);
+                    return;
+                }
             }
         }
 
@@ -759,6 +796,8 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
         fn cancel_streaming_body(self: *Self, reason: request_body.BodyCancelReason) void {
             if (!self.streaming_active) return;
             self.streaming_active = false;
+            self.streaming_paused = false;
+            self.streaming_pending_len = 0;
             if (self.streaming_route) |route| {
                 if (self.body_state.request_cancel(reason)) |terminal| {
                     switch (terminal) {
@@ -771,8 +810,12 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
             }
         }
 
-        fn streaming_resume(_: *anyopaque) error{BodyDeliveryFailed}!void {
-            return error.BodyDeliveryFailed;
+        fn streaming_resume(context: *anyopaque) error{BodyDeliveryFailed}!void {
+            const self: *Self = @ptrCast(@alignCast(context));
+            if (!self.streaming_active or !self.streaming_paused) return error.BodyDeliveryFailed;
+            self.streaming_paused = false;
+            _ = io.wantread(self.stream, 1);
+            self.stream_request_body();
         }
 
         fn streaming_cancel_control(context: *anyopaque) void {

@@ -223,8 +223,9 @@ identity, gzip, or br from every `Accept-Encoding` field; and
 `src/http/static_files.zig` combines validators, ranges, freshness checks, and
 sidecar selection. The request-streaming types are bound live on HTTP/1.1, TLS HTTP/1.1,
 HTTP/2, and HTTP/3 through `App.post_stream`, `put_stream`, and
-`patch_stream`. H1/TLS support pause/resume; H2/H3 are ready-only. H2/H3
-flow-control pause remains the 2.3.0 request-streaming milestone.
+`patch_stream`. Every transport supports pause/resume; H2 withholds stream
+credit and H3 stops reading with a bounded suffix. Live 100 MB uploads pass on
+plaintext and TLS; H2/H3 100 MB logical proofs use constant storage.
 
 ## Client
 

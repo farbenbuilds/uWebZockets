@@ -1,9 +1,9 @@
 # 0008. Bounded request body streaming
 
-- Status: Accepted; live on H1/TLS/H2/H3, H2/H3 pause/resume deferred
+- Status: Accepted; live on H1/TLS/H2/H3 with pause/resume
 - Date: 2026-10-26
 - Revision: typed request view and platform activation guard, 2026-10-27
-- Release: 2.2.0 ships live H1/TLS/H2/H3 ready-only binding; 2.3.0 owns H2/H3 pause/resume
+- Release: 2.2.0 ships live H1/TLS/H2/H3 binding with pause/resume
 - Deciders: transport, HTTP, router, QUIC, and root integrator
 
 ## Context
@@ -23,10 +23,11 @@ M1 must finish before this decision's transport implementation starts.
 2.2.0 ships the public `StreamingRequest`, `BodySink`, `BodyRoute`,
 `BodyControl`, `BodyState`, pure HTTP/1 body decoder, and the incremental
 multipart sink. HTTP/1.1, TLS HTTP/1.1, HTTP/2, and HTTP/3 bind the sink live through
-`App.post_stream`, `put_stream`, and `patch_stream`; a 1 MiB live upload is
-covered with a 16 KiB buffered cap. H1/TLS support pause/resume; H2/H3 are
-ready-only and reset a paused stream. The 2.3.0 milestone owns H2/H3
-flow-control pause/resume, trailers, and the 100 MB bounded-memory proof. See the
+`App.post_stream`, `put_stream`, and `patch_stream`; live 1 MiB and 100 MB
+uploads are covered on plaintext and TLS with a 16 KiB buffered cap. Every
+transport supports pause/resume; H2 withholds stream credit and H3 stops
+reading, both retaining a bounded suffix. H2/H3 100 MB logical proofs run
+through the real session/stream paths with constant storage. See the
 [2.2.0 release record](../releases/2.2.0.md#limits-and-dated-restoration-criteria).
 
 ## Compatibility revision, 2026-10-26
