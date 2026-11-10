@@ -921,11 +921,11 @@ Register the executor once during server configuration before `listen()`.
 
 ### Deferred GraphQL checklist
 
-- [ ] Subprotocol negotiation (G-0) passes unit tests and Autobahn 517/517.
-- [ ] `graphql-transport-ws` (G-1) passes table-driven encode/decode tests.
-- [ ] GraphQL-over-HTTP (G-2) handles GET, POST JSON, and POST raw queries.
-- [ ] Executor seam (G-3) verified with the mock executor.
-- [ ] `docs/graphql.md` published and validated (G-4).
+- **Deferred:** Subprotocol negotiation (G-0) passes unit tests and Autobahn 517/517.
+- **Deferred:** `graphql-transport-ws` (G-1) passes table-driven encode/decode tests.
+- **Deferred:** GraphQL-over-HTTP (G-2) handles GET, POST JSON, and POST raw queries.
+- **Deferred:** Executor seam (G-3) verified with the mock executor.
+- **Deferred:** `docs/graphql.md` published and validated (G-4).
 
 ---
 
