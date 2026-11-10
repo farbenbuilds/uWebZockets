@@ -19,8 +19,8 @@ The pinned h1spec compliance source contains no license notice. Its previous
 MIT attribution is unverified. h1spec is a test-only submodule: it is not
 compiled into `libuWebZockets`, linked into a consumer artifact, or included in
 the package `.paths`. The maintainer must confirm attribution before
-redistributing the submodule itself; the 2.2.0 release record carries the open
-item.
+redistributing the submodule itself; the release checklist in [TODO.md](TODO.md#82-re-declared-to-230) carries the
+open item.
 
 The zslay, libxev, and zlib license texts are in the licenses directory, and
 the C and C++ license texts are in `licenses/vendor`. Sources are selected by

@@ -102,8 +102,8 @@ a public API or a wire format.
 ## Closed in 2.2.0
 
 The 2.2.0 release closes the response-streaming and static-asset gaps and ships
-the pure request-body and multipart foundations. The full record is
-[releases/2.2.0.md](releases/2.2.0.md).
+the live request-body and multipart foundations. The release entry is in
+[CHANGELOG.md](../CHANGELOG.md).
 
 | Boundary | Resolution |
 | --- | --- |
@@ -111,7 +111,8 @@ the pure request-body and multipart foundations. The full record is
 | Static sidecars | `App.static(..., .{ .precompressed = true })` selects fresh `.gz`/`.br` representations with `Vary`, `Content-Encoding`, representation-specific validators, and encoded ranges. The default remains identity-only |
 | Content-coding negotiation | Pure `negotiate.select_encoding` and `select_encoding_headers` scan every `Accept-Encoding` field with constant storage and explicit refusal |
 | Incremental multipart | `multipart.StreamingParser` and `multipart.MultipartSink` accept arbitrary chunk boundaries with caller-owned storage, bounded carry, strict RFC 7578 metadata, and pause/resume |
-| Request-streaming contract | `StreamingRequest`, `BodySink`, `BodyRoute`, `BodyState`, and the pure HTTP/1 head/body decoder are shipped. Live transport binding is a 2.3.0 item |
+| Request-streaming contract | `StreamingRequest`, `BodySink`, `BodyRoute`, `BodyState`, and the pure HTTP/1 head/body decoder are shipped. HTTP/1.1, TLS, HTTP/2, and HTTP/3 bind the sink live with pause/resume, `headers_only` middleware, per-request binding contexts, and `100 Continue`; live 100 MB socket-pair proofs pass |
+| Static special-file preflight | Source and sidecar paths are checked as regular files before open. A stable FIFO or other special file returns 404 without blocking the worker; the operator-controlled substitution race remains documented |
 | HTTP/2 reset backpressure | A bounded reset FIFO retains blocked stream resets and flushes them before later HEADERS or DATA, preserving healthy siblings |
 | Timer overflow ordering | The wheel scans every overflow entry for the earliest migration time, so a large advance cannot skip an earlier deadline behind a later list head |
 | 100 KiB TLS payload | Multi-record producer responses and true POST echo pass with bounded queue occupancy |
@@ -120,7 +121,8 @@ the pure request-body and multipart foundations. The full record is
 
 | Boundary | Dated reason and restoration criterion |
 | --- | --- |
-| Live request-body streaming | The contract, pure decoder, state machine, and multipart sink are shipped, but no live transport calls the sink yet. Restore in 2.3.0 by binding HTTP/1/TLS, HTTP/2, and HTTP/3 with admission, `Expect: 100-continue`, pause/resume, trailers, and a 100 MB bounded-memory proof |
+| Ownership debt (untangle pass) | `src/core/tcp.zig`, `src/router/app.zig`, `src/http2/server.zig`, `src/http/response.zig`, and `src/quic/stream.zig` remain above the 1000-line review flag. Their named seams are extracted; the remaining split is approved for 2.3.0 |
+| H2 streaming overflow captures | HTTP/1, TLS, HTTP/2, and HTTP/3 send `100 Continue` after streaming admission. HTTP/2 streaming route matching still uses the inline capture arrays; configurations above 16 captures require the buffered path. Add per-stream H2 capture storage in 2.3.0 |
 | WebTransport activation | The maintained lsquic fork lacks the complete draft-16 server surface and a compatible client gate. Reassess with the next authorized maintained-fork review; keep capability bits false until then ([ADR 0001](adr/0001-http3-datagram-and-webtransport.md)) |
 | Quiet-host performance evidence | No designated quiet host was available. Run the v2.0/v2.1 pipeline, WebSocket, `json-comp`, and `latency-1m` contracts on a named host before publishing numbers |
 | Receive-side UDP GRO | The loop still reads one datagram at a time. Restore when ancillary control messages expose `UDP_GRO` segment sizes and the pinned HTTP/3 gates pass |
@@ -138,8 +140,8 @@ the pure request-body and multipart foundations. The full record is
   subscription; this session has read-only access. Restore after the reviewed
   source is available, the real POST echo adapter passes official validation,
   and an authorized official run archives complete results. The
-  [2.2.0 release record](releases/2.2.0.md#limits-and-dated-restoration-criteria)
-  keeps the external result separate from local socket correctness proof.
+  [deliberate boundaries](#deliberate-boundaries) keep the external result
+  separate from local socket correctness proof.
 - S-3 kTLS integration stays with v3.5.0 SB-31. Pinned BoringSSL exposes
   traffic-secret and sequence inspection, but the project has no verified
   public TCP record-layer handoff covering queued records, control messages,
@@ -166,7 +168,7 @@ condition that would change it.
 | --- | --- |
 | TLS 1.2 is not supported | TLS 1.3-only is a deliberate security posture; adding 1.2 would re-enable obsolete cipher suites for no functional gain |
 | No dynamic capacity overflow | Fixed startup slabs are the architecture. Exhaustion returns a structured error; silently allocating would reintroduce heap behavior on the hot path |
-| Request bodies are buffered, not streamed to handlers | 2.2.0 ships the `StreamingRequest`/`BodySink`/`BodyState` contract and pure multipart sink, but live transports still buffer `Request.body`. Binding the sink to HTTP/1/TLS, HTTP/2, and HTTP/3 is the 2.3.0 request-streaming milestone; response streaming already exists (`begin_stream`) |
+| Request bodies are buffered by default | `Request.body` remains the default and source-compatible path. `App.post_stream`, `put_stream`, and `patch_stream` opt a route into bounded streaming on HTTP/1.1, TLS, HTTP/2, and HTTP/3; the sink never materializes the complete body |
 | HTTP/2 server push is not implemented | Deprecated in practice and removed from lsquic upstream; no browser consumes it |
 | h2c Upgrade is not implemented | RFC 9113 removed the Upgrade mechanism; cleartext HTTP/2 uses prior knowledge and TLS uses ALPN |
 | HTTP/2 caps at 8 concurrent streams and one WebSocket tunnel per connection | Stream and tunnel storage is connection-owned and carved from the slab. Raising the defaults requires specializing the connection type |
@@ -232,17 +234,14 @@ Candidates for the next minor releases, in rough dependency order:
 
 1. **WebSocket client** over the existing client transport, using the zslay
    client role for framing and masking.
-2. **Live request-body streaming:** bind the 2.2.0 `BodySink`/`BodyState`
-   contract to HTTP/1.1, TLS, HTTP/2, and HTTP/3 so large uploads bypass
-   `max_body_size` with bounded memory.
-3. **Configurable HTTP/2 stream and tunnel counts** through connection-type
+2. **Configurable HTTP/2 stream and tunnel counts** through connection-type
    specialization.
-4. **HTTP/3 counter parity** by threading the metrics registry into the engine.
-5. **WebTransport activation** through the maintained lsquic fork, behind the
+3. **HTTP/3 counter parity** by threading the metrics registry into the engine.
+4. **WebTransport activation** through the maintained lsquic fork, behind the
    capability gate recorded in
    [ADR 0001](adr/0001-http3-datagram-and-webtransport.md), once the fork
    exposes and tests the required server interfaces.
-6. **kTLS integration** if BoringSSL gains a supported key-handoff API.
+5. **kTLS integration** if BoringSSL gains a supported key-handoff API.
 
 ## How to influence the roadmap
 
@@ -256,8 +255,7 @@ path or weaken a compliance gate are declined by policy, not by preference.
 
 C12 activation is re-declared under the 2.2.0 plan's explicit alternative;
 reassess on 2026-11-02 or an earlier authorized maintained-fork review.
-[The 2.2.0 release record](releases/2.2.0.md#limits-and-dated-restoration-criteria)
-retains implementation owners, backend/client/provenance blockers, and full
-restoration gates. ADR 0001's design remains accepted. WT-required capabilities
+[The deliberate boundaries](#deliberate-boundaries) retain implementation
+owners, backend/client/provenance blockers, and full restoration gates. ADR 0001's design remains accepted. WT-required capabilities
 stay false; the backend's raw datagram primitive remains distinct from live
 listener support.

@@ -56,7 +56,7 @@ Adopt the same maintained-fork policy already used for libxev:
   test evidence, and retirement criterion. Every sync is a security review
   with branch protection, full-commit resolution, and an archived pin.
 - ADR 0001's deferral is lifted. The lsquic fork is the vehicle for the
-  server-side WebTransport surface, and v2.2.0 owns the live activation and
+  server-side WebTransport surface, and post-2.2.0 work owns the live activation and
   compliance gate.
 
 The normative procedure, branch table, and patch ledger are in
@@ -92,7 +92,7 @@ The normative procedure, branch table, and patch ledger are in
   Release tags and the weekly `Dependency Mirrors` workflow require exact live
   upstream equality with `--exact-mirrors`.
 - ADR 0001 moves from deferred to accepted implementation. Live WebTransport
-  activation remains gated by the v2.2.0 compliance work; the current
+  activation remains gated by the post-2.2.0 compliance work; the current
   `SECURITY.md` statement stays true until that work lands.
 - Future lsquic or h1spec bumps follow the same sync, review, pin, and rollback
   procedure as libxev.

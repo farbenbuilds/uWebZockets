@@ -6,7 +6,7 @@
   [ADR 0006](0006-dependency-forks.md)
 - Delivery amendment: 2026-10-26, activation re-declared under M4-3;
   reassess with the next authorized maintained-fork review
-  ([2.2.0 release record](../releases/2.2.0.md#limits-and-dated-restoration-criteria))
+  ([deliberate boundaries](../roadmap.md#deliberate-boundaries))
 - Deciders: QUIC/HTTP3 engineering, build/vendor, verification
 - Pinned dependency: `farbenbuilds/lsquic` commit
   `85bd081c9103c077a7cc98271d09334d0f1043d4` on `uwz/main`, based on
@@ -140,17 +140,17 @@ are true:
 - the HTTP/3 compliance gate exercises a WebTransport client successfully.
 
 No new public API is required beyond the existing `App.datagram*` surface.
-v2.2.0 retains ownership of the implementation and capability change. Its
+Post-2.2.0 work retains ownership of the implementation and capability change. Its
 2026-10-26 delivery declaration preserves the accepted design while recording
 the publication, backend, and compatible-client barriers; see the
-[dated M4 restoration criteria](../releases/2.2.0.md#limits-and-dated-restoration-criteria).
+[dated M4 restoration criteria](../roadmap.md#deliberate-boundaries).
 
 ## Consequences
 
 - The 2026-10-24 revision lifted the original architectural deferral. ADR 0006
   supplies the fork, branch, pin, and patch ledger mechanics; this ADR supplies
   the wire contract. The later delivery amendment records activation status.
-- Until the v2.2.0 implementation lands, `docs/protocols.md`, `SECURITY.md`,
+- Until the post-2.2.0 implementation lands, `docs/protocols.md`, `SECURITY.md`,
   and `BackendCapabilities` keep the current statement that extended CONNECT
   and application datagrams are not live. The helper modules remain Zig-only
   and are not a claim of deployed interoperability.

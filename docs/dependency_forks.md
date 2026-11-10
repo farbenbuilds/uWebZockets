@@ -297,7 +297,7 @@ Each mirror sync and integration merge is a supply-chain review:
 - `patches/` and `vendor/lsquic_overlay` are deleted. `builds/vendor/lsquic.zig`
   imports the fork tree directly, and the h1spec workflow no longer applies a
   patch.
-- ADR 0001 is accepted for implementation in 2.2.0. The live WebTransport path
+- ADR 0001 is accepted for implementation after 2.2.0. The live WebTransport path
   remains capability-gated until the compliance work lands.
 
 ## Rollback

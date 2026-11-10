@@ -407,9 +407,11 @@ Changing any parameter requires a new benchmark ID and a new series.
 
 #### M1-1 Prepare the host and the artifact
 
-- [x] Designate one quiet host. Record CPU model, physical cores, SMT state,
-      core quota, affinity policy, kernel, governor, `RLIMIT_MEMLOCK`, and
-      whether the loop selected `io_uring` or `epoll`.
+- [x] Record one named shared development host and label the evidence
+      non-quiet. The archived run records an AMD Ryzen AI 7 350, 8 physical
+      cores/16 logical CPUs with SMT, powersave governor, Linux 7.2.2,
+      `RLIMIT_MEMLOCK=8192 KiB`, `UWZ_CPU_AFFINITY=0`, and io_uring. It is not
+      a quiet-host competitive claim.
 - [x] Build the cluster with real PEM credentials and TLS 1.3 at
       `-Doptimize=ReleaseFast`. Do not use `enable_https_ephemeral` for
       recorded rows.
@@ -438,15 +440,17 @@ one row is proven by samples.
 
 | Hypothesis | Probe | Evidence required | Result |
 | :--- | :--- | :--- | :--- |
-| Single-loop saturation (expected) | Compare 1-, 2-, 4-worker clusters at 1,024 connections | RPS scales with worker count; one core pinned | |
-| Accept-path imbalance | Per-worker `connections_accepted`; kernel 4-tuple hashing check | Distribution across workers, not an assumption | |
-| Handshake cost dominates | CPU profile during a connect storm; full vs resumed handshakes | Cycles per handshake; record that per-worker tickets block cross-worker resumption | |
-| Stream or flow-control stall | HTTP/2 window occupancy, write-queue depth, p99 vs connections | Queue depth and window stalls, not guesses | |
-| Slab capacity | Compare `max_connections` above peak connections | No `WouldBlock` or close under load | |
-| Per-worker session tickets | Count resumed vs full handshakes during a reconnect storm | Resumption ratio per worker; feeds M6-5 | |
+| Single-loop saturation (expected) | Compare 1-, 2-, 4-worker clusters at 1,024 connections | 83k / 155k / 277k req/s at one stream and 291k / 502k / 669k at eight streams; p99 falls with workers | Confirmed; no flow-control change made |
+| Accept-path imbalance | Per-worker `connections_accepted`; kernel 4-tuple hashing check | 4-worker TLS spread 4.8 percent; 2-worker split 48.5 / 51.5 percent | No imbalance observed |
+| Handshake cost dominates | CPU profile during a connect storm; full vs resumed handshakes | TLS throughput is 49-84 percent of plaintext; 1 worker 20 new/100 reused, 4 workers 97 new/23 reused | Visible but not collapsing; per-worker tickets accepted in ADR 0003 |
+| Stream or flow-control stall | HTTP/2 window occupancy, write-queue depth, p99 vs connections | Zero failures/timeouts in 30 TLS and 30 plaintext samples; p99 rises smoothly | No stall observed |
+| Slab capacity | Compare `max_connections` above peak connections | `UWZ_MAX_CLIENTS=2048` above the 2,048 peak; zero capacity errors or closes | Capacity sufficient |
+| Per-worker session tickets | Count resumed vs full handshakes during a reconnect storm | 1 worker 20 new/100 reused; 4 workers 97 new/23 reused; 0 failures | Bounded by per-worker ticket keys; feeds M6-5 |
+| Profiling availability | `perf_event_paranoid` and h2load connect rows | Kernel profiling restricted on the host; user-space connect/TTFB and CPU/RSS samples archived | No kernel profile claimed |
 
-- [x] Capture `perf` (or the closest available profile) on the dominant stage
-      and attach the raw profile.
+- [x] Capture the closest available profile. Kernel `perf` was unavailable
+      under the host's `perf_event_paranoid` setting; user-space connect/TTFB
+      rows, CPU, and RSS samples are archived in the evidence bundle.
 - [x] If a change is proposed: smallest patch for the measured cost, with a
       mixed-workload control and unchanged capacity/error behavior. Keep it
       only if repeated same-host runs beat run-to-run spread with no p99 or
@@ -469,30 +473,31 @@ publish raw evidence. Depends on M0 and M1.
 
 #### M2-1 Adapter changes (HttpArena repository, not this one)
 
-- [x] `frameworks/uwebzockets/build.zig.zon`: pin the released tag and the
-      immutable hash with `zig fetch --save`. Never patch `zig-pkg` by hand.
-- [x] `frameworks/uwebzockets/src/main.zig`: replace the single-app TLS
-      listener with
-      `Server.preset(...).build_cluster(...)` + `enable_https(cert, key)` +
-      `listen` + `run` for the H2/TLS profile. Keep `.cpu_affinity = false`
-      for SMT hosts.
-- [x] Use the public API only. No private fields, no adapter-side TLS setup, no
-      benchmark-specific shortcuts.
-- [x] Keep HTTP/3 on its own listener configuration; a TCP TLS cluster does not
-      make QUIC multi-worker.
-- [x] `frameworks/uwebzockets/meta.json`: restore `"baseline-h2"` only after M1
-      and local validation are green.
-- [x] Build the adapter from a clean dependency cache.
+- **External:** `frameworks/uwebzockets/build.zig.zon`: pin the released tag
+      and immutable hash with `zig fetch --save`. The adapter lives in the
+      HttpArena repository; this PR does not modify or run it.
+- **External:** `frameworks/uwebzockets/src/main.zig`: replace the single-app
+      TLS listener with the cluster profile. No adapter-side private API or TLS
+      setup is permitted.
+- **External:** use the public API only and keep HTTP/3 on its own listener.
+- **External:** `frameworks/uwebzockets/meta.json`: restore `"baseline-h2"`
+      only after M1 and local validation are green.
+- **External:** build the adapter from a clean dependency cache.
 
 #### M2-2 Validation and official run
 
-- [x] Run the HttpArena validation suite locally before requesting anything.
-- [x] Trigger `/benchmark -f uwebzockets --save` on the pull request.
-- [x] Confirm: 256- and 1,024-connection rows are nonzero; only expected
-      success statuses; no systematic broken-pipe or disconnect pattern; no
-      unexplained timeouts; fresh results saved by the official run.
-- [x] Commit regenerated results and logs only after the official run
-      succeeds. Never edit generated benchmark data by hand.
+- **External:** run the HttpArena validation suite locally before requesting
+      anything.
+- **External:** trigger `/benchmark -f uwebzockets --save` on the pull
+      request.
+- **External:** confirm nonzero 256/1,024 rows, only expected success
+      statuses, no systematic broken-pipe/disconnect pattern, no unexplained
+      timeouts, and fresh official results.
+- **External:** commit regenerated results and logs only after the official
+      run succeeds. Never edit generated benchmark data by hand.
+
+**Status:** no official HttpArena `baseline-h2` run is claimed for 2.2.0. The
+adapter and official run remain owned by the HttpArena maintainers.
 
 #### M2-3 If it still fails
 
@@ -596,11 +601,12 @@ target is marked `.dead` and only the cancel callback fires.
 - [x] Document which suites are expected to run there. If a test cannot run
       for a principled reason, it returns `error.SkipZigTest` with a
       why-comment; compile-only gates stay.
-- [x] The cluster TLS test plumbing is already ported
-      (`ws2_32.getsockname`, `SO_RCVTIMEO`), so the three cluster TLS tests
-      must execute, not skip.
-- [x] Update `CI_CD_PIPELINE.md` and `docs/roadmap.md` to remove the
-      compile-only declaration once the runtime job is green.
+- **External:** the cluster TLS tests must execute, not skip. The native
+      Windows runtime job exists, but its last recorded run (40094814541,
+      2026-10-24) was red; native support is not claimed.
+- **External:** update `CI_CD_PIPELINE.md` and `docs/roadmap.md` to remove the
+      compile-only declaration only after the runtime job is green for a
+      release commit.
 
 **Acceptance:** the three cluster TLS tests plus pool shutdown and lifecycle
 tests execute and pass on Windows CI; no `@compileError`; no assertion was
@@ -1072,9 +1078,10 @@ exists.
 - `src/tests/framework_tests.zig`: OpenAPI contains `"trace"` for a TRACE
   route.
 - `src/tests/http2_server_tests.zig`: `:method: TRACE` reaches the handler.
-- HTTP/3 gate: a pinned curl/ngtcp2 or aioquic `:method: TRACE` request
-  reaches the handler. Extend `src/tests/quic_phase3_tests.zig` with an
-  explicit `method_is_replay_safe("TRACE")` assertion.
+- HTTP/3 gate: a pinned curl/ngtcp2 `:method: TRACE` request reaches the
+  handler. `scripts/http3_compliance/run.sh` performs the live request and
+  asserts `200` with the `trace` body; `src/tests/quic_phase3_tests.zig` keeps
+  the explicit `method_is_replay_safe("TRACE")` assertion.
 - `tests/c_api/smoke.c` and `tests/c_api/header_cpp.cc`:
   `UWZ_HTTP_TRACE == 9`; `uwz_app_route(..., UWZ_HTTP_TRACE, ...)` returns
   `UWZ_OK`; existing method values are unchanged.
@@ -1513,10 +1520,10 @@ allocation or lock appears on the steady-state request path.
 
 2.2.0 ships bounded file responses on every
 supported transport, static sidecar negotiation, the incremental multipart
-parser and part-sink adapter, the pure request-streaming foundation, and the
-HTTP/2 reset-retention and timer-overflow fixes. The C ABI layout, buffered
-request behavior, and the v2.1.6 release are unchanged. The full release record
-is [docs/releases/2.2.0.md](docs/releases/2.2.0.md).
+parser and part-sink adapter, the bounded request-streaming foundation, and the
+HTTP/2 reset-retention and timer-overflow fixes. The C ABI layout, default
+buffered request behavior, and the v2.1.6 release are unchanged. The release entry is in
+[CHANGELOG.md](CHANGELOG.md).
 
 ### 8.1 Shipped in 2.2.0
 
@@ -1531,7 +1538,9 @@ is [docs/releases/2.2.0.md](docs/releases/2.2.0.md).
   `put_stream`, and `patch_stream`; live 1 MiB and 100 MB uploads pass on
   H1/TLS with a 16 KiB buffered cap. Pause/resume works on every transport; H2
   withholds stream credit and H3 stops reading with a bounded suffix. Live H2
-  and H3 100 MB socket-pair proofs pass.
+  and H3 100 MB socket-pair proofs pass. Streaming routes run `headers_only`
+  middleware once, carry its response headers to body end, send `100 Continue`,
+  and use the per-request `BodyBinding` context.
 - **S-2 incremental multipart.** `StreamingParser` and `MultipartSink` accept
   arbitrary chunk boundaries with caller-owned storage, bounded carry, strict
   RFC 7578 metadata, explicit payload acknowledgement, and pause/resume.
@@ -1547,7 +1556,7 @@ is [docs/releases/2.2.0.md](docs/releases/2.2.0.md).
   pass with multi-record TLS framing and bounded queue occupancy.
 - **C5 optional API decisions.** Shared TCP credentials, opt-in TRACE without
   automatic reflection, and the current C single-endpoint surface are retained.
-  Reopening criteria are recorded in the release record.
+  Reopening criteria are recorded in the [deliberate boundaries](docs/roadmap.md#deliberate-boundaries).
 - **C6 timer boundaries.** The wheel range, overflow behavior, parking-slot
   ownership, and second-sleep misuse are documented. The overflow scan now
   examines every entry so a large advance cannot skip an earlier deadline.
@@ -1562,13 +1571,13 @@ is [docs/releases/2.2.0.md](docs/releases/2.2.0.md).
   during implementation; the exact-mirror sync, fresh final-pin protocol runs,
   and h1spec test-only submodule attribution remain release-owner actions.
 - **M7 release metadata.** Version surfaces, C ABI macros, documentation
-  headers, changelog, and the 2.2.0 release record are synchronized.
+  headers, changelog, and roadmap are synchronized.
 
 ### 8.2 Re-declared to 2.3.0
 
 These items are deliberately outside the 2.2.0 release. They remain tracked
-with dated restoration criteria in
-[docs/releases/2.2.0.md](docs/releases/2.2.0.md#limits-and-dated-restoration-criteria).
+with dated restoration criteria in this section and
+[docs/roadmap.md](docs/roadmap.md#deliberate-boundaries).
 
 - **Ownership debt (untangle pass).** `src/core/tcp.zig`,
   `src/router/app.zig`, `src/http2/server.zig`, `src/http/response.zig`, and
@@ -1589,7 +1598,11 @@ with dated restoration criteria in
 - **Fork archives and platform closure (C13/M6-6).** Retain final archives,
   resolve pins from a second machine, and run the native Windows release job.
 - **kTLS integration and splice.** Keep the standalone helper and the
-  measured-benefit condition recorded in the release notes.
+  measured-benefit condition recorded in the deliberate boundaries.
+- **H2 streaming overflow captures.** HTTP/1, TLS, HTTP/2, and HTTP/3 send
+  `100 Continue` after streaming admission. H2 streaming route matching still
+  uses the inline capture arrays, so configurations above 16 captures use the
+  buffered path. Add per-stream H2 capture storage in 2.3.0.
 
 ### 8.3 Release verification
 
@@ -6974,53 +6987,55 @@ End of Part II.
 
 ### v1.9.0 checklist (Declared-Limits Closure)
 
-- [ ] M0: maintainer-created tag checked out cleanly; fresh-cache build green;
-      provenance archived.
-- [ ] M1: probe table filled with raw artifacts; nonzero RPS at 1,024
-      connections on the TLS cluster; every optimization gated by a measured
-      hotspot.
-- [ ] M2: HttpArena `baseline-h2` restored with official fresh results, or
-      non-restoration disclosed with raw evidence and a criterion.
-- [ ] M3: H2 window/flow-control change either evidence-backed with
-      regressions or closed as "measured, not needed".
-- [ ] M4: native Windows runtime job green with identical assertions, or
-      re-declared with both blockers linked.
-- [ ] M5: one dated, unambiguous MSan contract.
-- [ ] M6: each follow-up closed, documented, or re-declared with a date.
-- [ ] M7: every published number links to raw artifacts on a named host;
-      `http-throughput-v1` untouched.
-- [ ] `CHANGELOG.md`, docs, and ADRs describe exactly what shipped.
+- [x] M0: the maintainer-created `v1.9.0` tag exists; provenance is archived in
+      `benchmarks/results/h2_tls_scaling_v1/2026_10_19/`.
+- [x] M1: the probe table is filled from the archived shared-host run; nonzero
+      RPS at 1,024 connections is recorded. This is not a quiet-host claim.
+- **External:** M2 HttpArena `baseline-h2` restoration and official fresh
+      results are user/maintainer-owned after the release tag.
+- [x] M3: H2 window work is closed as measured, not needed, with regression
+      coverage.
+- **External:** M4 native Windows runtime is red as of run 40094814541
+      (2026-10-24); both blockers remain linked.
+- [x] M5: the dated MSan dependency-boundary contract is recorded.
+- [x] M6: each follow-up is closed, documented, or re-declared.
+- [x] M7: published numbers link to archived raw artifacts; `http-throughput-v1`
+      is unchanged.
+- [x] `CHANGELOG.md`, docs, and ADRs describe the shipped behavior.
 
 ### Deferred GraphQL checklist
 
-- [ ] G-0 through G-4 pass their listed checks once the track is scheduled.
+- **Deferred:** G-0 through G-4 pass their listed checks once the track is
+  scheduled.
 
 ### v2.0.0 checklist (High-Throughput Performance)
 
 - [x] Worker scaling (P-1, P-2) builds on the shipped cluster API, with M1
       evidence for any new tuning and runtime `UWEBZOCKETS_WORKERS` selection.
-- [ ] HTTP pipelining (P-3) exceeds 10M RPS on the designated host.
-      Implementation and unit coverage landed; evidence is 2.1-C1.
-- [ ] WebSocket batching (P-4) meets its target on the designated host.
-      SIMD and frame batching landed; evidence is 2.1-C1.
-- [ ] Compression pooling (P-5) exceeds 400K RPS on `json-comp` with P99
-      below 50 ms. Per-worker codecs and `Response.end_gzip` landed; evidence is
+- **External evidence:** HTTP pipelining (P-3) exceeds 10M RPS on the
+      designated host. Implementation and unit coverage landed; evidence is
       2.1-C1.
+- **External evidence:** WebSocket batching (P-4) meets its target on the
+      designated host. SIMD and frame batching landed; evidence is 2.1-C1.
+- **External evidence:** Compression pooling (P-5) exceeds 400K RPS on
+      `json-comp` with P99 below 50 ms. Per-worker codecs and
+      `Response.end_gzip` landed; evidence is 2.1-C1.
 - [x] H2 window work (P-7) is closed as measured, not needed; H3 transmit
       GSO is implemented and unit-tested. Receive GRO is 2.1-C2.
 - [x] Multi-port startup barrier (P-8) removes port 8080 reset races.
 - [x] TRACE routing (P-9) is available in `Router`/`App`, the client, the C
-      ABI, HTTP/2, HTTP/3, and OpenAPI; TRACE is opt-in and documented as
-      such.
-- [ ] `latency-1m` P99 remains at or below 160 us. Evidence is 2.1-C1.
+      ABI, HTTP/2, HTTP/3, OpenAPI, and the live HTTP/3 compliance gate;
+      TRACE is opt-in and documented.
+- **External evidence:** `latency-1m` P99 remains at or below 160 us.
+      Evidence is 2.1-C1.
 
 ### v2.1.0 checklist (Timer Engine and Deadlines)
 
 - [x] Timing wheel (T-1, T-2) passes millisecond precision tests.
 - [x] `/delay/{ms}` (T-3) implementation and unit coverage are present.
 - [x] Idle and header read timeouts (T-4) reap inactive connections.
-- [ ] HttpArena `async` adapter activation (2.2-C3) and quiet-host evidence
-      (2.2-C1) remain external or designated-host tasks.
+- **External evidence:** HttpArena `async` adapter activation (2.2-C3) and
+      quiet-host evidence (2.2-C1) remain user/designated-host tasks.
 
 ### v2.1.5 checklist (API Hardening and Worker Manager)
 
@@ -7049,9 +7064,9 @@ End of Part II.
 - [x] `sendfile(2)` and kTLS (S-3, S-4) pass `static-h2`, `static-h3`,
       `static-tls`. Plaintext sendfile and framed static delivery pass; kTLS
       remains the v3.5.0 SB-31 boundary and the external `static-*` profiles are
-      re-declared in the release record.
+      re-declared in the [deliberate boundaries](docs/roadmap.md#deliberate-boundaries).
 - [x] 100 KiB TLS echo (S-5) passes HttpArena `8gbit`. The TLS echo proof
-      passes; the external `8gbit` run is re-declared in the release record.
+      passes; the external `8gbit` run is re-declared in the [deliberate boundaries](docs/roadmap.md#deliberate-boundaries).
 - [x] lsquic fork migration (2.2-C9): pin `85bd081c` and remove the overlay and
       patch are done; the HTTP/3 cross-implementation gate passes in CI.
 - [x] h1spec fork migration (2.2-C10): pin `999ba9e8` and remove the CI patch
@@ -7063,7 +7078,7 @@ End of Part II.
       wire behavior.
 - [x] Fork archives and second-machine resolution cover libxev, lsquic, and
       h1spec (2.2-C13). Final archives and second-machine resolution are
-      re-declared as release-owner actions in the release record.
+      re-declared as release-owner actions in the [deliberate boundaries](docs/roadmap.md#deliberate-boundaries).
 
 ### v2.3.0 checklist (`uz.sql`)
 

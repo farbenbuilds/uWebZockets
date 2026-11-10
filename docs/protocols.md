@@ -72,6 +72,6 @@ pending.
 
 
 Live WebTransport/application-datagram activation remains disabled under the
-[2.2.0 release record](releases/2.2.0.md#limits-and-dated-restoration-criteria),
+[deliberate boundaries](roadmap.md#deliberate-boundaries),
 with explicit restoration gates. Raw backend datagram primitives do not imply
 listener advertisement or session support.
