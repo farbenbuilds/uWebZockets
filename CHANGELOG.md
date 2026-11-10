@@ -36,7 +36,7 @@ the C ABI layout, and the v2.1.6 release are unchanged.
   `BodyControl` on every transport: H2 retains a bounded suffix and withholds
   stream credit, and H3 stops reading and retains the bounded suffix. Live
   100 MB uploads pass on plaintext, TLS, HTTP/2, and HTTP/3 socket pairs; the
-  HTTP/3 compliance client measured 120 KiB RSS growth against a 64 MiB bound.
+  HTTP/3 compliance client measured 76 KiB RSS growth against a 64 MiB bound.
 - A bounded HTTP/2 reset FIFO so an output-blocked reset no longer closes
   healthy sibling streams.
 - A Woff2 MIME mapping for static assets.

@@ -27,7 +27,7 @@ multipart sink. HTTP/1.1, TLS HTTP/1.1, HTTP/2, and HTTP/3 bind the sink live th
 uploads are covered on plaintext and TLS with a 16 KiB buffered cap. Every
 transport supports pause/resume; H2 withholds stream credit and H3 stops
 reading, both retaining a bounded suffix. Live H2 and H3 100 MB socket-pair
-uploads pass; the HTTP/3 compliance client measured 120 KiB RSS growth against
+uploads pass; the HTTP/3 compliance client measured 76 KiB RSS growth against
 a 64 MiB bound. See the
 [2.2.0 release record](../releases/2.2.0.md#limits-and-dated-restoration-criteria).
 
