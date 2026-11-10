@@ -102,6 +102,8 @@ pub fn server_session(comptime max_streams: usize) type {
             decoded_header_count: usize = 64,
             /// HPACK dynamic table bytes; zero disables dynamic indexing.
             dynamic_table_size: usize = 4096,
+            /// Route-capture slots per stream beyond the inline arrays.
+            route_param_extra_capacity: usize = 0,
         };
 
         /// Borrowed typed storage for one session.
@@ -144,6 +146,10 @@ pub fn server_session(comptime max_streams: usize) type {
             header_extra_names: [][]const u8,
             /// Flat per-stream header-overflow value pointer slots.
             header_extra_values: [][]const u8,
+            /// Flat per-stream route-capture name pointer slots.
+            route_param_names: [][]const u8,
+            /// Flat per-stream route-capture value pointer slots.
+            route_param_values: [][]const u8,
             /// Byte distance between consecutive request-header slabs.
             request_header_stride: usize,
             /// Byte distance between consecutive body slabs.
@@ -188,6 +194,8 @@ pub fn server_session(comptime max_streams: usize) type {
             lowercase_names: Span,
             header_extra_names: Span,
             header_extra_values: Span,
+            route_param_names: Span,
+            route_param_values: Span,
             total: usize,
         };
 
@@ -244,6 +252,11 @@ pub fn server_session(comptime max_streams: usize) type {
                 usize,
                 max_streams,
                 extra_capacity,
+            ) catch return error.InvalidHttp2Capacity;
+            const route_param_slot_count = std.math.mul(
+                usize,
+                max_streams,
+                capacities.route_param_extra_capacity,
             ) catch return error.InvalidHttp2Capacity;
 
             var cursor: usize = 0;
@@ -316,6 +329,18 @@ pub fn server_session(comptime max_streams: usize) type {
             plan.header_extra_values = try reserve(
                 &cursor,
                 extra_slot_count,
+                @sizeOf([]const u8),
+                @alignOf([]const u8),
+            );
+            plan.route_param_names = try reserve(
+                &cursor,
+                route_param_slot_count,
+                @sizeOf([]const u8),
+                @alignOf([]const u8),
+            );
+            plan.route_param_values = try reserve(
+                &cursor,
+                route_param_slot_count,
                 @sizeOf([]const u8),
                 @alignOf([]const u8),
             );
@@ -413,6 +438,18 @@ pub fn server_session(comptime max_streams: usize) type {
                     prefix,
                     plan.header_extra_values,
                 ),
+                .route_param_names = carved_slice(
+                    []const u8,
+                    region,
+                    prefix,
+                    plan.route_param_names,
+                ),
+                .route_param_values = carved_slice(
+                    []const u8,
+                    region,
+                    prefix,
+                    plan.route_param_values,
+                ),
                 .request_header_stride = capacities.request_header_size,
                 .body_stride = capacities.body_size,
                 .response_header_stride = capacities.response_header_size,
@@ -447,6 +484,8 @@ pub fn server_session(comptime max_streams: usize) type {
                 lowercase_names: [capacities.response_header_size]u8 = undefined,
                 header_extra_names: [extra_slot_count][]const u8 = undefined,
                 header_extra_values: [extra_slot_count][]const u8 = undefined,
+                route_param_names: [max_streams * capacities.route_param_extra_capacity][]const u8 = undefined,
+                route_param_values: [max_streams * capacities.route_param_extra_capacity][]const u8 = undefined,
 
                 comptime {
                     // `storage_bytes` already rejected bad capacities at
@@ -475,6 +514,8 @@ pub fn server_session(comptime max_streams: usize) type {
                         .lowercase_names = &self.lowercase_names,
                         .header_extra_names = &self.header_extra_names,
                         .header_extra_values = &self.header_extra_values,
+                        .route_param_names = &self.route_param_names,
+                        .route_param_values = &self.route_param_values,
                         .request_header_stride = capacities.request_header_size,
                         .body_stride = capacities.body_size,
                         .response_header_stride = capacities.response_header_size,
@@ -508,6 +549,8 @@ pub fn server_session(comptime max_streams: usize) type {
         lowercase_names: []u8 = &.{},
         header_extra_names: [][]const u8 = &.{},
         header_extra_values: [][]const u8 = &.{},
+        route_param_names: [][]const u8 = &.{},
+        route_param_values: [][]const u8 = &.{},
         request_header_stride: usize = 0,
         body_stride: usize = 0,
         response_header_stride: usize = 0,
@@ -576,6 +619,8 @@ pub fn server_session(comptime max_streams: usize) type {
                 .lowercase_names = storage.lowercase_names,
                 .header_extra_names = storage.header_extra_names,
                 .header_extra_values = storage.header_extra_values,
+                .route_param_names = storage.route_param_names,
+                .route_param_values = storage.route_param_values,
                 .request_header_stride = storage.request_header_stride,
                 .body_stride = storage.body_stride,
                 .response_header_stride = storage.response_header_stride,
@@ -610,6 +655,12 @@ pub fn server_session(comptime max_streams: usize) type {
                 return error.InvalidSessionStorage;
             }
             if (storage.header_extra_names.len != storage.header_extra_values.len) {
+                return error.InvalidSessionStorage;
+            }
+            if (storage.route_param_names.len % max_streams != 0) {
+                return error.InvalidSessionStorage;
+            }
+            if (storage.route_param_names.len != storage.route_param_values.len) {
                 return error.InvalidSessionStorage;
             }
             if (storage.decoded_headers.len == 0) return error.InvalidSessionStorage;
@@ -1569,6 +1620,10 @@ pub fn server_session(comptime max_streams: usize) type {
             const extra_start = @as(usize, index) * self.header_extra_capacity;
             self.requests[index].extra_header_names = self.header_extra_names[extra_start..][0..self.header_extra_capacity];
             self.requests[index].extra_header_values = self.header_extra_values[extra_start..][0..self.header_extra_capacity];
+            const route_capacity = self.route_param_names.len / max_streams;
+            const route_start = @as(usize, index) * route_capacity;
+            self.requests[index].extra_param_names = self.route_param_names[route_start..][0..route_capacity];
+            self.requests[index].extra_param_values = self.route_param_values[route_start..][0..route_capacity];
             self.request_storage_lengths[index] = 0;
             self.body_lengths[index] = 0;
             self.expected_content_lengths[index] = null;

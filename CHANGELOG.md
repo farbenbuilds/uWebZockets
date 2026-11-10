@@ -87,6 +87,9 @@ release are unchanged.
   503 instead of an internal error.
 - The shared RFC 9110 qvalue parser accepts one-digit fractional weights and
   rejects overlong values consistently.
+- HTTP/2 streaming route matching now uses per-stream overflow capture storage,
+  so configured capture capacities above 16 no longer fall back to buffered
+  dispatch.
 - HTTP/3 pause/resume now retries a retained partial suffix through the shared
   `BodyState.prepare_chunk` lifecycle instead of failing a chunk-state check.
 - HTTP/3 defers the buffered `Content-Length` ceiling until after route

@@ -20,6 +20,13 @@ const single_capacities = SingleStreamSession.Capacities{
     .request_header_size = 4096,
     .body_size = 1024,
 };
+const capture_capacities = TestSession.Capacities{
+    .header_block_size = 4096,
+    .request_header_size = 4096,
+    .body_size = 1024,
+    .route_param_extra_capacity = 8,
+};
+const CaptureBundle = TestSession.Bundle(capture_capacities);
 const TestBundle = TestSession.Bundle(test_capacities);
 const SingleBundle = SingleStreamSession.Bundle(single_capacities);
 
@@ -40,6 +47,16 @@ const SingleFixture = struct {
 
     fn init(self: *SingleFixture) !void {
         self.session = try SingleStreamSession.init(self.bundle.storage());
+    }
+};
+
+/// Owns a session with per-stream overflow route captures.
+const CaptureFixture = struct {
+    bundle: CaptureBundle = .{},
+    session: TestSession = .{},
+
+    fn init(self: *CaptureFixture) !void {
+        self.session = try TestSession.init(self.bundle.storage());
     }
 };
 
@@ -3568,6 +3585,87 @@ test "http2: begin_stream carries pending headers into the response block" {
         "text/plain",
         response_field(decoded, "content-type") orelse return error.MissingContentType,
     );
+}
+
+const CaptureState = struct {
+    router: *const radix.Router = undefined,
+    matched: bool = false,
+
+    fn callbacks(self: *CaptureState) http2_server.Callbacks {
+        return .{
+            .context = self,
+            .write_fn = write,
+            .request_fn = dispatch,
+            .request_head_fn = head,
+        };
+    }
+
+    fn write(_: *anyopaque, _: []const []const u8) !void {}
+    fn dispatch(_: *anyopaque, _: *Request, _: u32) !void {}
+
+    fn head(context: *anyopaque, request: *Request, _: u32, _: ?u64) !http2_server.RequestHeadDisposition {
+        const self: *CaptureState = @ptrCast(@alignCast(context));
+        const match = self.router.match_request(request, .post) orelse return .buffered;
+        const handler = match.handler orelse return .buffered;
+        switch (handler) {
+            .streaming => {
+                self.matched = request.get_param("p19") != null and
+                    request.extra_param_count != 0;
+                return .streaming;
+            },
+            else => return .buffered,
+        }
+    }
+};
+
+const CaptureSink = struct {
+    fn begin(context: *anyopaque, _: *const support.streaming_request.StreamingRequest, _: support.request_body.BodyControl) !support.request_body.BodyBinding {
+        return .{ .context = context, .readiness = .ready };
+    }
+    fn chunk(_: *anyopaque, input: []const u8) !support.request_body.BodyProgress {
+        return .{ .consumed = input.len, .readiness = .ready };
+    }
+    fn end(_: *anyopaque, _: *const support.streaming_request.StreamingRequest, _: *Response) !void {}
+    fn cancel(_: *anyopaque, _: support.request_body.BodyCancelReason) void {}
+};
+
+test "http2 server: streaming routes resolve per-stream overflow captures" {
+    var fixture: CaptureFixture = .{};
+    try fixture.init();
+    var capture = CaptureState{};
+    const pattern = "/:p0/:p1/:p2/:p3/:p4/:p5/:p6/:p7/:p8/:p9/:p10/:p11/:p12/:p13/:p14/:p15/:p16/:p17/:p18/:p19";
+    var router_bundle: radix.Bundle(.{ .max_route_params = 24 }) = .{};
+    var router = try radix.Router.init(router_bundle.storage());
+    var sink: u8 = 0;
+    var route = support.request_body.BodyRoute{
+        .sink = .{
+            .context = &sink,
+            .begin = CaptureSink.begin,
+            .chunk = CaptureSink.chunk,
+            .end = CaptureSink.end,
+            .cancel = CaptureSink.cancel,
+        },
+        .limits = .{ .max_body_bytes = 64, .max_active = 1 },
+        .middleware_policy = .headers_only,
+    };
+    try router.route_stream(.post, pattern, &route);
+    capture.router = &router;
+
+    var block: [512]u8 = undefined;
+    var block_length: usize = 0;
+    block_length = try append_hpack_literal(&block, block_length, ":method", "POST");
+    block_length = try append_hpack_literal(&block, block_length, ":scheme", "https");
+    block_length = try append_hpack_literal(&block, block_length, ":path", "/a0/a1/a2/a3/a4/a5/a6/a7/a8/a9/a10/a11/a12/a13/a14/a15/a16/a17/a18/a19");
+    block_length = try append_hpack_literal(&block, block_length, ":authority", "example.com");
+
+    var input: [1024]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x4, 1, block[0..block_length]);
+    try fixture.session.receive(input[0..input_length], capture.callbacks());
+
+    try std.testing.expect(capture.matched);
 }
 
 const SinkState = struct {

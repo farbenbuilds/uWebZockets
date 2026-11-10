@@ -236,9 +236,9 @@ test "config: default slab carries the router region at the end" {
     // per-stream HTTP/2 body sink state are inline.
     // Five kqueue completions save 80 bytes per connection versus Linux.
     const expected_total: usize = switch (builtin.os.tag) {
-        .macos => 689_698_432,
-        .windows => 690_280_064,
-        else => 689_788_544,
+        .macos => 689_731_200,
+        .windows => 690_312_832,
+        else => 689_821_312,
     };
     comptime std.debug.assert(total == expected_total);
     try std.testing.expectEqual(expected_total, total);
@@ -358,6 +358,10 @@ test "config: route param capacity sizes the slab" {
     const stride = try raised.extra_route_param_stride();
     try std.testing.expectEqual(@as(usize, 8 * 2 * @sizeOf([]const u8)), stride);
     try std.testing.expect((try raised.slab_bytes()) > (try base.slab_bytes()));
+    // HTTP/2 receives the same overflow capacity per stream.
+    try std.testing.expectEqual(@as(usize, 0), base.h2_capacities().route_param_extra_capacity);
+    try std.testing.expectEqual(@as(usize, 8), raised.h2_capacities().route_param_extra_capacity);
+    try std.testing.expect((try raised.h2_session_bytes()) > (try base.h2_session_bytes()));
 
     try std.testing.expectError(
         error.InvalidRouterCapacity,

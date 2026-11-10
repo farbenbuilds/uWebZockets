@@ -1540,7 +1540,8 @@ buffered request behavior, and the v2.1.6 release are unchanged. The release ent
   withholds stream credit and H3 stops reading with a bounded suffix. Live H2
   and H3 100 MB socket-pair proofs pass. Streaming routes run `headers_only`
   middleware once, carry its response headers to body end, send `100 Continue`,
-  and use the per-request `BodyBinding` context.
+  use the per-request `BodyBinding` context, and resolve capture capacities
+  above 16 from per-stream H2 storage.
 - **S-2 incremental multipart.** `StreamingParser` and `MultipartSink` accept
   arbitrary chunk boundaries with caller-owned storage, bounded carry, strict
   RFC 7578 metadata, explicit payload acknowledgement, and pause/resume.
@@ -1599,10 +1600,6 @@ with dated restoration criteria in this section and
   resolve pins from a second machine, and run the native Windows release job.
 - **kTLS integration and splice.** Keep the standalone helper and the
   measured-benefit condition recorded in the deliberate boundaries.
-- **H2 streaming overflow captures.** HTTP/1, TLS, HTTP/2, and HTTP/3 send
-  `100 Continue` after streaming admission. H2 streaming route matching still
-  uses the inline capture arrays, so configurations above 16 captures use the
-  buffered path. Add per-stream H2 capture storage in 2.3.0.
 
 ### 8.3 Release verification
 

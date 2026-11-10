@@ -122,7 +122,6 @@ the live request-body and multipart foundations. The release entry is in
 | Boundary | Dated reason and restoration criterion |
 | --- | --- |
 | Ownership debt (untangle pass) | `src/core/tcp.zig`, `src/router/app.zig`, `src/http2/server.zig`, `src/http/response.zig`, and `src/quic/stream.zig` remain above the 1000-line review flag. Their named seams are extracted; the remaining split is approved for 2.3.0 |
-| H2 streaming overflow captures | HTTP/1, TLS, HTTP/2, and HTTP/3 send `100 Continue` after streaming admission. HTTP/2 streaming route matching still uses the inline capture arrays; configurations above 16 captures require the buffered path. Add per-stream H2 capture storage in 2.3.0 |
 | WebTransport activation | The maintained lsquic fork lacks the complete draft-16 server surface and a compatible client gate. Reassess with the next authorized maintained-fork review; keep capability bits false until then ([ADR 0001](adr/0001-http3-datagram-and-webtransport.md)) |
 | Quiet-host performance evidence | No designated quiet host was available. Run the v2.0/v2.1 pipeline, WebSocket, `json-comp`, and `latency-1m` contracts on a named host before publishing numbers |
 | Receive-side UDP GRO | The loop still reads one datagram at a time. Restore when ancillary control messages expose `UDP_GRO` segment sizes and the pinned HTTP/3 gates pass |

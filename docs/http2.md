@@ -31,8 +31,8 @@ is the standard encrypted one.
   sink without whole-body buffering; a paused stream retains a bounded suffix
   and withholds stream credit, and trailer END_STREAM completes the sink. An
   initial `expect: 100-continue` receives an interim 100 HEADERS block after
-  admission. Streaming route matching uses the inline 16 capture slots; larger
-  capture configurations use the buffered path.
+  admission. Route captures beyond the inline 16 use per-stream overflow
+  storage, so streaming routes keep the configured capture capacity.
 - Connection-level and stream-level flow control.
 - Async response tokens and drain-driven producers, exactly as on HTTP/1.1.
 - Known-length file responses through `Response.stream_file`, bounded by both

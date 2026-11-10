@@ -29,8 +29,8 @@ transport supports pause/resume; H2 withholds stream credit and H3 stops
 reading, both retaining a bounded suffix. Live H2 and H3 100 MB socket-pair
 uploads pass; the HTTP/3 compliance client measured RSS growth under 1 MiB
 against a 64 MiB bound. All four transports send `100 Continue` after
-streaming admission. H2 streaming route matching uses the inline 16 capture
-slots, so larger capture configurations use the buffered path. See the
+streaming admission, and H2 streaming routes use per-stream overflow capture
+storage beyond the inline 16 slots. See the
 [deliberate boundaries](../roadmap.md#deliberate-boundaries).
 
 ## Compatibility revision, 2026-10-26
@@ -172,8 +172,9 @@ validation, so controls used from a terminal callback are already expired.
 
 The App and backing storage must outlive every control use, matching the
 existing async-token boundary. Header slices and route captures remain pinned
-through deferred end and subsequent response lifetime. Move HTTP/2's shared
-overflow captures to per-stream ownership before admitting streaming requests.
+through deferred end and subsequent response lifetime. HTTP/2 owns overflow
+captures per stream, so a deferred end cannot observe another stream's
+parameters.
 StreamingRequest pointers and header/capture array views are borrowed for each
 callback only; retain individual pinned byte slices or owned copies instead.
 Keep source arrays/slots valid through the whole active callback, including
