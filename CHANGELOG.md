@@ -56,6 +56,8 @@ release are unchanged.
 - The timing wheel scans every overflow entry for the earliest migration time,
   so one large clock advance cannot skip an earlier due timer behind a later
   list head.
+- Static sidecar probes are skipped when identity wins the Accept-Encoding
+  negotiation even though the field is present.
 - The Nix development shell fetches the pinned zon2nix compiler from the
   maintainer's GitHub mirror while preserving the exact commit and NAR hash.
 

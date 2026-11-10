@@ -227,6 +227,17 @@ pub fn static_files(comptime file_capacity: usize) type {
                 source_owned = false;
                 return source;
             }
+            // If identity wins even when both sidecars exist, neither file can
+            // change the selected representation; skip both probes.
+            const preferred = negotiate.select_encoding_headers(request.headers(), .{
+                .identity = true,
+                .gzip = true,
+                .br = true,
+            }) orelse return null;
+            if (preferred == .identity) {
+                source_owned = false;
+                return source;
+            }
             var gzip = try self.open_sidecar(path, ".gz", stat.mtime.nanoseconds, .gzip);
             defer if (gzip) |candidate| candidate.file.close(self.io);
             var br = try self.open_sidecar(path, ".br", stat.mtime.nanoseconds, .br);

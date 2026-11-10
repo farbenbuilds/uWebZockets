@@ -656,7 +656,9 @@ test "static sidecars: metadata and refusal write failures release every descrip
         target.end_fn = fail_end;
         var output = response.Response{ .target = .{ .http3 = target } };
         try std.testing.expectError(error.WouldBlock, fixture.files.serve(&request, &output));
-        try std.testing.expectEqual(@as(usize, 3), fixture.effects.readable_opens);
+        // A request that refuses every coding opens only the source; the
+        // other cases exercise both candidate sidecars plus the source.
+        try std.testing.expectEqual(@as(usize, if (case == 0) 1 else 3), fixture.effects.readable_opens);
         try std.testing.expectEqual(fixture.effects.opens, fixture.effects.closes);
         try std.testing.expectEqual(@as(usize, 0), fixture.effects.reads);
     }
