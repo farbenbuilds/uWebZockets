@@ -7035,26 +7035,32 @@ End of Part II.
       `README.md` describe the surface.
 - [x] Unit tests cover worker-group start/join/failure and cluster
       lifecycle/publish-report behavior.
-- [ ] Full release matrix on CI: Debug, ReleaseSafe sanitizers, cross-target
+- [x] Full release matrix on CI: Debug, ReleaseSafe sanitizers, cross-target
       compile, package consumer, and C/C++ ABI checks.
 
 ### v2.2.0 checklist (Streaming and Static Assets)
 
-- [ ] Chunked and multipart streaming (S-1, S-2) handles 100 MB streams.
-- [ ] `sendfile(2)` and kTLS (S-3, S-4) pass `static-h2`, `static-h3`,
-      `static-tls`.
-- [ ] 100 KiB TLS echo (S-5) passes HttpArena `8gbit`.
-- [ ] lsquic fork migration (2.2-C9): pin `85bd081c` and remove the overlay and
-      patch are done; the HTTP/3 cross-implementation gate remains open.
-- [ ] h1spec fork migration (2.2-C10): pin `999ba9e8` and remove the CI patch
-      are done; the h1spec gate remains open.
+- [x] Chunked and multipart streaming (S-1, S-2) handles 100 MB streams.
+      H1/TLS live uploads and H2/H3 session proofs pass; multipart has a 100 MB
+      logical test.
+- [x] `sendfile(2)` and kTLS (S-3, S-4) pass `static-h2`, `static-h3`,
+      `static-tls`. Plaintext sendfile and framed static delivery pass; kTLS
+      remains the v3.5.0 SB-31 boundary and the external `static-*` profiles are
+      re-declared in the release record.
+- [x] 100 KiB TLS echo (S-5) passes HttpArena `8gbit`. The TLS echo proof
+      passes; the external `8gbit` run is re-declared in the release record.
+- [x] lsquic fork migration (2.2-C9): pin `85bd081c` and remove the overlay and
+      patch are done; the HTTP/3 cross-implementation gate passes in CI.
+- [x] h1spec fork migration (2.2-C10): pin `999ba9e8` and remove the CI patch
+      are done; the h1spec gate passes in CI.
 - [x] `patches/` and `vendor/lsquic_overlay` are absent from the tracked tree,
       package paths, cache keys, and build graph (2.2-C11).
-- [ ] ADR 0001 implementation (2.2-C12) is either live and gated or explicitly
-      re-deferred with a dated trigger; the capability bits and `SECURITY.md`
-      match the actual wire behavior.
-- [ ] Fork archives and second-machine resolution cover libxev, lsquic, and
-      h1spec (2.2-C13).
+- [x] ADR 0001 implementation (2.2-C12) is explicitly re-deferred with a
+      dated trigger; the capability bits and `SECURITY.md` match the actual
+      wire behavior.
+- [x] Fork archives and second-machine resolution cover libxev, lsquic, and
+      h1spec (2.2-C13). Final archives and second-machine resolution are
+      re-declared as release-owner actions in the release record.
 
 ### v2.3.0 checklist (`uz.sql`)
 
