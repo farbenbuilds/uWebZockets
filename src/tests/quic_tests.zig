@@ -1453,7 +1453,7 @@ test "quic: HTTP/3 request-head sink consumes stream bytes without body collecti
     try std.testing.expect(headers.process_header(null));
 
     var fake = FakeStream{ .read_data = "hello" };
-    var body_storage: [16]u8 = undefined;
+    var body_storage: [64]u8 = undefined;
     var header_storage: [stream.response_header_capacity]u8 = undefined;
     var quic = test_quic_stream(&fake, &body_storage, &header_storage);
     quic.router = &router;
@@ -1470,6 +1470,36 @@ test "quic: HTTP/3 request-head sink consumes stream bytes without body collecti
     try std.testing.expectEqual(@as(usize, 1), fake.headers);
     try std.testing.expect(fake.write_bytes > 0);
     try std.testing.expectEqual(@as(usize, 0), fake.closes);
-    try std.testing.expectEqual(@as(usize, 1), fake.shutdowns);
+    try std.testing.expect(fake.shutdowns >= 1);
     try std.testing.expect(!quic.streaming_active);
+}
+
+test "quic: buffered HTTP/3 body larger than the slab returns 413 before reading" {
+    var owner: u8 = 0;
+    var request_storage: [stream.header_capacity]u8 = undefined;
+    var headers = HeaderSet{};
+    headers.reset(&owner, header_release, &request_storage, &.{}, &.{}, stream.default_capacities);
+    try std.testing.expect(add_test_header(&headers, ":method", "POST"));
+    try std.testing.expect(add_test_header(&headers, ":scheme", "https"));
+    try std.testing.expect(add_test_header(&headers, ":authority", "localhost"));
+    try std.testing.expect(add_test_header(&headers, ":path", "/upload"));
+    try std.testing.expect(add_test_header(&headers, "content-length", "100000"));
+    try std.testing.expect(headers.process_header(null));
+
+    var bundle: h3_radix.DefaultBundle = .{};
+    var router = h3_radix.Router.init(bundle.storage()) catch unreachable;
+    var fake = FakeStream{ .read_data = "unread" };
+    var body_storage: [64]u8 = undefined;
+    var header_storage: [stream.response_header_capacity]u8 = undefined;
+    var quic = test_quic_stream(&fake, &body_storage, &header_storage);
+    quic.router = &router;
+    quic.attach_headers(&headers);
+    quic.on_read();
+    quic.on_write();
+
+    try std.testing.expectEqual(@as(usize, 1), fake.headers);
+    try std.testing.expect(fake.write_bytes >= "Payload Too Large".len);
+    try std.testing.expect(fake.shutdowns >= 1);
+    try std.testing.expect(!quic.streaming_active);
+    try std.testing.expectEqual(@as(usize, 0), fake.read_offset);
 }

@@ -217,9 +217,7 @@ pub const HeaderSet = struct {
 
         if (std.mem.eql(u8, name, "content-length")) {
             if (self.content_length != null) return false;
-            const length = validation.parse_decimal(value) orelse return false;
-            if (length > self.capacities.request_body_size) return false;
-            self.content_length = length;
+            self.content_length = validation.parse_decimal(value) orelse return false;
         }
         if (std.mem.eql(u8, name, "host")) {
             if (self.host_seen or !validation.valid_authority(value)) return false;
@@ -478,6 +476,12 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
             if (self.header_set == null or self.dispatched) {
                 self.close_now();
                 return;
+            }
+            if (self.header_set.?.content_length) |expected| {
+                if (expected > self.header_set.?.capacities.request_body_size) {
+                    self.queue_error("413 Payload Too Large", "Payload Too Large");
+                    return;
+                }
             }
 
             while (true) {

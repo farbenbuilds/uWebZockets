@@ -35,8 +35,8 @@ the C ABI layout, and the v2.1.6 release are unchanged.
   complete-body materialization. HTTP/1/TLS sinks can pause/resume through
   `BodyControl` on every transport: H2 retains a bounded suffix and withholds
   stream credit, and H3 stops reading and retains the bounded suffix. Live
-  100 MB uploads pass on plaintext and TLS; 100 MB logical H2/H3 session
-  proofs use constant storage.
+  100 MB uploads pass on plaintext, TLS, HTTP/2, and HTTP/3 socket pairs; the
+  HTTP/3 compliance client measured 120 KiB RSS growth against a 64 MiB bound.
 - A bounded HTTP/2 reset FIFO so an output-blocked reset no longer closes
   healthy sibling streams.
 - A Woff2 MIME mapping for static assets.
@@ -87,8 +87,9 @@ the C ABI layout, and the v2.1.6 release are unchanged.
 
 ### Limits
 
-- The H2/H3 100 MB proofs drive the real session/stream paths but not a live
-  socket pair; a live H2/H3 socket run remains external evidence.
+- `src/core/tcp.zig`, `src/router/app.zig`, `src/http2/server.zig`,
+  `src/http/response.zig`, and `src/quic/stream.zig` remain above the
+  1000-line review flag. The remaining split is explicitly approved for 2.3.0.
 - WebTransport, receive-side UDP GRO, the HttpArena `async` adapter, quiet-host
   performance evidence, cluster/timer ownership extraction, and final fork
   archives remain dated boundaries. See

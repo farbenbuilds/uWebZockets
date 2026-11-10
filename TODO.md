@@ -1528,8 +1528,8 @@ is [docs/releases/2.2.0.md](docs/releases/2.2.0.md).
   HTTP/2, and HTTP/3 bind the sink live through `App.post_stream`,
   `put_stream`, and `patch_stream`; live 1 MiB and 100 MB uploads pass on
   H1/TLS with a 16 KiB buffered cap. Pause/resume works on every transport; H2
-  withholds stream credit and H3 stops reading with a bounded suffix. H2/H3
-  100 MB logical proofs use constant storage.
+  withholds stream credit and H3 stops reading with a bounded suffix. Live H2
+  and H3 100 MB socket-pair proofs pass.
 - **S-2 incremental multipart.** `StreamingParser` and `MultipartSink` accept
   arbitrary chunk boundaries with caller-owned storage, bounded carry, strict
   RFC 7578 metadata, explicit payload acknowledgement, and pause/resume.
@@ -1568,9 +1568,10 @@ These items are deliberately outside the 2.2.0 release. They remain tracked
 with dated restoration criteria in
 [docs/releases/2.2.0.md](docs/releases/2.2.0.md#limits-and-dated-restoration-criteria).
 
-- **H2/H3 live-socket acceptance.** The 100 MB H2/H3 proofs drive the real
-  session/stream paths, not a live socket pair. A live H2/H3 socket run remains
-  external evidence; the library path is covered.
+- **Ownership debt (untangle pass).** `src/core/tcp.zig`,
+  `src/router/app.zig`, `src/http2/server.zig`, `src/http/response.zig`, and
+  `src/quic/stream.zig` remain above the 1000-line review flag. Their named
+  seams are extracted; the remaining split is explicitly approved for 2.3.0.
 - **WebTransport activation (M4).** Publish the required maintained-fork
   server APIs and pass a compatible draft-16 client gate before flipping
   capability bits.
@@ -7041,8 +7042,8 @@ End of Part II.
 ### v2.2.0 checklist (Streaming and Static Assets)
 
 - [x] Chunked and multipart streaming (S-1, S-2) handles 100 MB streams.
-      H1/TLS live uploads and H2/H3 session proofs pass; multipart has a 100 MB
-      logical test.
+      H1/TLS live uploads and H2/H3 live socket-pair proofs pass; multipart has
+      a 100 MB logical test.
 - [x] `sendfile(2)` and kTLS (S-3, S-4) pass `static-h2`, `static-h3`,
       `static-tls`. Plaintext sendfile and framed static delivery pass; kTLS
       remains the v3.5.0 SB-31 boundary and the external `static-*` profiles are

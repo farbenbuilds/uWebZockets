@@ -925,3 +925,220 @@ test "static files: invalid and encoded parent paths remain confined" {
     }
     try std.testing.expectEqual(@as(usize, 0), effects.opens);
 }
+
+/// Route-level sink for the live HTTP/2 upload proof.
+const UploadSink = struct {
+    bytes: u64 = 0,
+    begins: usize = 0,
+    ends: usize = 0,
+    cancels: usize = 0,
+    failure: ?anyerror = null,
+
+    fn route(self: *UploadSink) support.request_body.BodyRoute {
+        return .{
+            .sink = .{
+                .context = self,
+                .begin = begin,
+                .chunk = chunk,
+                .end = end,
+                .cancel = cancel,
+            },
+            .limits = .{ .max_body_bytes = 128 * 1024 * 1024, .max_active = 1 },
+            .middleware_policy = .headers_only,
+        };
+    }
+
+    fn begin(
+        context: *anyopaque,
+        request: *const support.streaming_request.StreamingRequest,
+        _: support.request_body.BodyControl,
+    ) !support.request_body.BodyBinding {
+        const self: *UploadSink = @ptrCast(@alignCast(context));
+        self.begins += 1;
+        self.bytes = 0;
+        if (!std.mem.eql(u8, request.method, "POST")) return error.UnexpectedMethod;
+        if (!std.mem.eql(u8, request.path, "/upload")) return error.UnexpectedPath;
+        return .{ .context = self, .readiness = .ready };
+    }
+
+    fn chunk(context: *anyopaque, input: []const u8) !support.request_body.BodyProgress {
+        const self: *UploadSink = @ptrCast(@alignCast(context));
+        self.bytes += input.len;
+        return .{ .consumed = input.len, .readiness = .ready };
+    }
+
+    fn end(
+        context: *anyopaque,
+        _: *const support.streaming_request.StreamingRequest,
+        output: *response.Response,
+    ) !void {
+        const self: *UploadSink = @ptrCast(@alignCast(context));
+        self.ends += 1;
+        var buffer: [32]u8 = undefined;
+        const body = try std.fmt.bufPrint(&buffer, "{d}", .{self.bytes});
+        try output.end("200 OK", body);
+    }
+
+    fn cancel(context: *anyopaque, reason: support.request_body.BodyCancelReason) void {
+        const self: *UploadSink = @ptrCast(@alignCast(context));
+        self.cancels += 1;
+        if (reason == .sink_failure) self.failure = error.UnexpectedSinkFailure;
+    }
+};
+
+fn append_h2_literal(
+    buffer: []u8,
+    offset: usize,
+    name: []const u8,
+    value: []const u8,
+) !usize {
+    const required = 2 + name.len + 1 + value.len;
+    if (required > buffer.len - offset) return error.UploadHeaderOverflow;
+    var cursor = offset;
+    buffer[cursor] = 0;
+    cursor += 1;
+    buffer[cursor] = @intCast(name.len);
+    cursor += 1;
+    @memcpy(buffer[cursor..][0..name.len], name);
+    cursor += name.len;
+    buffer[cursor] = @intCast(value.len);
+    cursor += 1;
+    @memcpy(buffer[cursor..][0..value.len], value);
+    return cursor + value.len;
+}
+
+fn send_h2_upload_head(client: *TlsClient, id: u32, path: []const u8, length: u64) !void {
+    var block: [256]u8 = undefined;
+    var size: usize = 0;
+    size = try append_h2_literal(&block, size, ":method", "POST");
+    size = try append_h2_literal(&block, size, ":scheme", "https");
+    size = try append_h2_literal(&block, size, ":path", path);
+    size = try append_h2_literal(&block, size, ":authority", "localhost");
+    var length_buffer: [32]u8 = undefined;
+    const length_text = try std.fmt.bufPrint(&length_buffer, "{d}", .{length});
+    size = try append_h2_literal(&block, size, "content-length", length_text);
+    var frame: [512]u8 = undefined;
+    var frame_length: usize = 0;
+    try append_frame(&frame, &frame_length, .headers, 0x4, id, block[0..size]);
+    try client.send(frame[0..frame_length]);
+}
+
+const H2Frame = struct {
+    header: support.http2.FrameHeader,
+    payload: []const u8,
+};
+
+fn read_h2_frame(client: *TlsClient, storage: []u8) !H2Frame {
+    var raw: [9]u8 = undefined;
+    try tls_read_exact(client, &raw);
+    const header = try support.http2.FrameHeader.parse(&raw);
+    if (header.payload_length > storage.len) return error.UploadFrameTooLarge;
+    try tls_read_exact(client, storage[0..header.payload_length]);
+    return .{ .header = header, .payload = storage[0..header.payload_length] };
+}
+
+test "static files: live HTTP2 100 MB upload streams through a route sink" {
+    var sink = UploadSink{};
+    var route = sink.route();
+    var allocations = std.testing.FailingAllocator.init(std.testing.allocator, .{});
+    var server = try StaticApp.init_configured(std.testing.io, allocations.allocator(), .{ .max_connections = 1 });
+    defer server.deinit();
+    server.tls_ctx = try support.tls.TlsContext.init_ephemeral(.{});
+    _ = try server.post_stream("/upload", &route);
+    try server.listen("127.0.0.1", 0);
+    const baseline = allocations.alloc_index;
+    const resize_baseline = allocations.resize_index;
+    allocations.fail_index = baseline;
+    allocations.resize_fail_index = resize_baseline;
+
+    var runner = StaticRunner{ .server = &server };
+    const thread = try std.Thread.spawn(.{}, StaticRunner.run, .{&runner});
+    var joined = false;
+    defer {
+        server.request_shutdown();
+        if (!joined) thread.join();
+    }
+
+    var client = try TlsClient.connect(try support.tcp.listener_port(&server.listeners[0]), true);
+    defer client.close();
+
+    var preface: [256]u8 = undefined;
+    @memcpy(preface[0..support.http2.client_preface.len], support.http2.client_preface);
+    var preface_length: usize = support.http2.client_preface.len;
+    try append_frame(&preface, &preface_length, .settings, 0, 0, "\x00\x04\x0c\x80\x00\x00");
+    try append_frame(&preface, &preface_length, .window_update, 0, 0, "\x0c\x80\x00\x00");
+    try client.send(preface[0..preface_length]);
+
+    var storage: [16 * 1024]u8 = undefined;
+    const server_settings = try read_h2_frame(&client, &storage);
+    try std.testing.expectEqual(
+        @as(u8, @intFromEnum(support.http2.FrameType.settings)),
+        server_settings.header.frame_type,
+    );
+    var ack: [9]u8 = undefined;
+    var ack_length: usize = 0;
+    try append_frame(&ack, &ack_length, .settings, 0x1, 0, "");
+    try client.send(ack[0..ack_length]);
+
+    const total: u64 = 100 * 1024 * 1024;
+    try send_h2_upload_head(&client, 1, "/upload", total);
+
+    var connection_window: i64 = 65_535;
+    var stream_window: i64 = 65_535;
+    var payload: [16 * 1024]u8 = undefined;
+    @memset(&payload, 0x5a);
+    var sent: u64 = 0;
+    while (sent < total) {
+        const count: usize = @intCast(@min(payload.len, total - sent));
+        while (connection_window < count or stream_window < count) {
+            const frame = try read_h2_frame(&client, &storage);
+            if (frame.header.frame_type != @intFromEnum(support.http2.FrameType.window_update)) continue;
+            const increment = std.mem.readInt(u32, frame.payload[0..4], .big) & 0x7fff_ffff;
+            if (frame.header.stream_id == 0) {
+                connection_window += increment;
+            } else if (frame.header.stream_id == 1) {
+                stream_window += increment;
+            }
+        }
+        var frame: [9 + payload.len]u8 = undefined;
+        var frame_length: usize = 0;
+        try append_frame(&frame, &frame_length, .data, 0, 1, payload[0..count]);
+        try client.send(frame[0..frame_length]);
+        connection_window -= @intCast(count);
+        stream_window -= @intCast(count);
+        sent += count;
+    }
+
+    var end_frame: [9]u8 = undefined;
+    var end_length: usize = 0;
+    try append_frame(&end_frame, &end_length, .data, 0x1, 1, "");
+    try client.send(end_frame[0..end_length]);
+
+    var body: [64]u8 = undefined;
+    var body_length: usize = 0;
+    while (true) {
+        const frame = try read_h2_frame(&client, &storage);
+        if (frame.header.stream_id != 1) continue;
+        if (frame.header.frame_type == @intFromEnum(support.http2.FrameType.rst_stream)) {
+            return error.UploadStreamReset;
+        }
+        if (frame.header.frame_type != @intFromEnum(support.http2.FrameType.data)) continue;
+        if (frame.payload.len > body.len - body_length) return error.UploadResponseTooLarge;
+        @memcpy(body[body_length..][0..frame.payload.len], frame.payload);
+        body_length += frame.payload.len;
+        if (frame.header.flags & 0x1 != 0) break;
+    }
+
+    server.request_shutdown();
+    thread.join();
+    joined = true;
+    try std.testing.expect(runner.failure == null and sink.failure == null);
+    try std.testing.expectEqualStrings("104857600", body[0..body_length]);
+    try std.testing.expectEqual(@as(usize, 1), sink.begins);
+    try std.testing.expectEqual(@as(usize, 1), sink.ends);
+    try std.testing.expectEqual(@as(usize, 0), sink.cancels);
+    try std.testing.expectEqual(total, sink.bytes);
+    try std.testing.expectEqual(baseline, allocations.alloc_index);
+    try std.testing.expectEqual(resize_baseline, allocations.resize_index);
+    try std.testing.expect(!allocations.has_induced_failure);
+}

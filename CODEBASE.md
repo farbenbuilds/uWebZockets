@@ -225,7 +225,7 @@ sidecar selection. The request-streaming types are bound live on HTTP/1.1, TLS H
 HTTP/2, and HTTP/3 through `App.post_stream`, `put_stream`, and
 `patch_stream`. Every transport supports pause/resume; H2 withholds stream
 credit and H3 stops reading with a bounded suffix. Live 100 MB uploads pass on
-plaintext and TLS; H2/H3 100 MB logical proofs use constant storage.
+plaintext, TLS, HTTP/2, and HTTP/3 socket pairs.
 
 ## Client
 

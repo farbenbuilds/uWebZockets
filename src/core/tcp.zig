@@ -607,6 +607,9 @@ pub const TcpConnection = struct {
             .request_fn = dispatch_http2_request,
             .ws_data_fn = ws_http2_data,
             .stream_closed_fn = close_http2_stream,
+            .request_head_fn = begin_http2_body,
+            .body_chunk_fn = h2_body_chunk,
+            .body_cancel_fn = h2_body_cancel_stream,
             .max_frame_payload = http2_frame_payload_capacity(
                 self.write_queue.len,
                 self.ssl != null,

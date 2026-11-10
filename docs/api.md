@@ -140,8 +140,8 @@ Request body streaming has an accepted [design contract](adr/0008-request-body-s
 HTTP/1.1, TLS HTTP/1.1, HTTP/2, and HTTP/3; the sink receives chunks as they
 arrive and uses `BodyControl` to pause/resume on every transport. H2 withholds
 stream credit and retains a bounded suffix; H3 stops reading and retains the
-bounded suffix. Live 100 MB uploads pass on plaintext and TLS; H2/H3 session
-proofs cover 100 MB with constant storage. See the
+bounded suffix. Live 100 MB uploads pass on plaintext, TLS, HTTP/2, and HTTP/3
+socket pairs. See the
 [2.2.0 release record](releases/2.2.0.md#limits-and-dated-restoration-criteria).
 
 | Group | API |
