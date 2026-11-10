@@ -38,6 +38,16 @@ def copy_immutable(source, destination):
     shutil.copyfile(source, destination)
 
 
+def refresh_document(source, destination):
+    # The executable contract parameters and schema stay immutable. The
+    # narrative contract may gain clarifications; refresh it atomically so a
+    # docs-only change cannot block every later benchmark record.
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
+    shutil.copyfile(source, temporary)
+    temporary.replace(destination)
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--record", type=pathlib.Path, required=True)
@@ -109,7 +119,7 @@ def main():
     write_json(history / "latest.json", record)
 
     copy_immutable(args.schema, history / "schema" / args.schema.name)
-    copy_immutable(args.contract, history / "CONTRACT.md")
+    refresh_document(args.contract, history / "CONTRACT.md")
     copy_immutable(args.contract_parameters, history / args.contract_parameters.name)
     (history / ".nojekyll").touch()
 

@@ -3,6 +3,21 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [Unreleased]
+
+### Fixed
+
+- The scheduled benchmark publisher refreshes the narrative contract document
+  while keeping the executable contract parameters and schema immutable. This
+  lets documented harness clarifications publish without rejecting every later
+  benchmark record.
+- The lsquic read-only mirror is synchronized to upstream
+  `cd23e526e53387ad7a2fada9a4479d2353ee2b42`. The reviewed range adds BBRv3,
+  BBR-Copilot, ACK range-merge and ACK-frame capacity fixes, and send-controller
+  accounting. The integration pin remains
+  `85bd081c9103c077a7cc98271d09334d0f1043d4` pending the separate `uwz/main`
+  sync.
+
 ## [2.2.0] - 2026-11-10
 
 Minor release that closes the response-streaming and static-asset gaps carried

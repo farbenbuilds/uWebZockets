@@ -46,8 +46,14 @@ downstream fix must wait for an upstream release.
 branch. Pull-request and `main` lint verify that the fork branch still equals
 that record. This keeps a code PR green when upstream advances; it does not
 hide a fork-only commit or a rewritten mirror. The lsquic mirror was
-fast-forwarded to `413ca7c1acb443b0f9f7aa28611ca723c6738844` for 2.1.6; the
-2.2.0 integration pin remains `85bd081c9103c077a7cc98271d09334d0f1043d4`.
+fast-forwarded to `413ca7c1acb443b0f9f7aa28611ca723c6738844` for 2.1.6 and to
+`cd23e526e53387ad7a2fada9a4479d2353ee2b42` after the 2.2.0 release; the 2.2.0
+integration pin remains `85bd081c9103c077a7cc98271d09334d0f1043d4`. The
+`413ca7c..cd23e52` review covers upstream v4.11.0/v4.11.1, BBRv3 and
+BBR-Copilot, ACK range-merge and ACK-frame capacity fixes, and send-controller
+accounting. It changes no workflow, submodule, license, process-execution, TLS,
+or binary surface; the new BBRv3 source and removed adaptive controller join
+the integration source list only when `uwz/main` advances.
 
 Exact live equality is required at release and by the weekly
 `Dependency Mirrors` workflow:

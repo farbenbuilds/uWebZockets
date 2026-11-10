@@ -2076,7 +2076,7 @@ a revert or follow-up commit.
 | C3 | Scheduler timer-error fail-stop | A non-`Canceled` timer error sets `active = false` and logs, but the wheel stops silently. `verify_shutdown` cannot distinguish this from a clean drain. | Deadline liveness; diagnosable shutdown | M3 |
 | C4 | macOS uWebZockets runtime gate | No hosted uWebZockets macOS runtime job. The downstream suite was not run for 2.1.6; two known pre-existing failures remain (`config: default slab carries the router region at the end`, `kernel: validate_umem accepts page-aligned power-of-two regions`). | Claiming macOS runtime support; validating `set_nodelay` on Darwin | M4 |
 | C5 | Full H2/TLS matrix after 2.1.6 | Only reduced plaintext H2 and the rapid HTTP harness were run locally. The committed 64-2048 x 1/8-stream matrix has not been rerun after the timer and libxev changes; macOS harness paths are not exercised by CI. | Publishing fresh 2.1.x H2 evidence; mac/Linux cohorts | M5 |
-| C6 | lsquic integration sync | The read-only mirror is at upstream `413ca7c1...`, but `uwz/main` still pins `85bd081c...`. The upstream zero-application-close-error fix is not in the integration pin. | HTTP/3 close-error correctness and provenance closure | M6 |
+| C6 | lsquic integration sync | The read-only mirror is at upstream `cd23e526...`, but `uwz/main` still pins `85bd081c...`. The upstream zero-application-close-error fix and the BBRv3 range are not in the integration pin. | HTTP/3 close-error correctness and provenance closure | M6 |
 | C7 | macOS reset/EINVAL log noise | `src/core/tcp.zig` still logs expected reset errors as `read error: error.Unexpected` because libxev maps the Darwin errno to `Unexpected`; this is noise, not a wire failure. | Clean macOS benchmark logs; operator diagnosis | M3/M4 |
 | C8 | Windows native release gate | The release workflow verifies Linux and cross-compiles Windows; the native `windows-2025` runtime job is not part of the tagged release gate. | Windows runtime support claim | M7 |
 | C9 | Retained fork archives and second-machine resolution | The release records pins, but the retained archive/local bare mirror and second-machine resolution are still carried evidence work. | Supply-chain reproducibility | M7 |
@@ -2323,9 +2323,11 @@ number links to raw evidence; no hand-edited output.
 **Objective:** close the gap between the synchronized lsquic mirror and the
 older integration pin.
 
-**Current state:** mirror `413ca7c1acb443b0f9f7aa28611ca723c6738844`;
-integration pin `85bd081c9103c077a7cc98271d09334d0f1043d4`. The upstream
-commit preserves a zero application CONNECTION_CLOSE error code.
+**Current state:** mirror `cd23e526e53387ad7a2fada9a4479d2353ee2b42`;
+integration pin `85bd081c9103c077a7cc98271d09334d0f1043d4`. The reviewed
+upstream range adds BBRv3, BBR-Copilot, ACK range-merge and ACK-frame capacity
+fixes, and send-controller accounting; the 2.1.6 zero application
+CONNECTION_CLOSE fix remains in the integration gap.
 
 **Checklist:**
 
