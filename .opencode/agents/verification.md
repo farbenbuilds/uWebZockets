@@ -33,7 +33,8 @@ proof, review, gate integrity, pipeline health, and failure triage.
   `bleeding_edge_tests.zig`, `c_tests.zig`, `c_api_tests.zig`.
 - `src/tests/fuzz_main.zig` (Smith corpus), `src/fuzz_support.zig`,
   `src/test_support.zig`.
-- `fuzz/`: `http_framing.zig`, `ws_masking.zig`, `quic_packets.zig`, and the
+- `fuzz/`: `http_framing.zig`, `ws_masking.zig`, `quic_packets.zig`,
+  `query_parse.zig`, `cookie_parse.zig`, `multipart_streaming.zig`, and the
   smoke drivers; `oss-fuzz/` build script, Dockerfile, and metadata;
   `.clusterfuzzlite/`.
 - `tests/autobahn/` (Deno runner, RFC 6455 target, pinned digest container),

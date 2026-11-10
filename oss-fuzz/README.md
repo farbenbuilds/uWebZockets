@@ -22,6 +22,10 @@ nix develop -c zig build oss-fuzz-smoke -Doptimize=ReleaseSafe
 object with `$CXXFLAGS` and `$LIB_FUZZING_ENGINE`, then installs matching seed
 corpora, dictionaries, and runtime options under `$OUT`.
 
+The external helper path builds the repository's default branch because
+`oss-fuzz/Dockerfile` clones it. Use the ClusterFuzzLite workflow when the
+checked-out revision under test must be used.
+
 The repository is not assumed to be enrolled in the hosted OSS-Fuzz service.
 `.clusterfuzzlite/` uses the same builder against the exact checked-out revision
 in CI. ClusterFuzzLite's bad-build check verifies that all six targets link

@@ -462,12 +462,13 @@ The build rejects any non-object member in the µWebZockets static archive.
 
 Unit tests live only under `src/tests/`; `src/tests/main.zig` imports every
 test file for `zig build test`. Its `fuzz_main.zig` Smith corpus also serves as
-the dedicated root for extended `zig build fuzz` runs. Three
-`LLVMFuzzerTestOneInput` targets cover HTTP framing, WebSocket masking, and
-QUIC/WebTransport packet boundaries. `oss-fuzz/build.sh` links them with the
+the dedicated root for extended `zig build fuzz` runs. Six
+`LLVMFuzzerTestOneInput` targets cover HTTP framing, WebSocket masking,
+QUIC/WebTransport packet boundaries, query parsing, cookie parsing, and
+incremental multipart parsing. `oss-fuzz/build.sh` links them with the
 Google-provided fuzzing engine, while `zig build oss-fuzz-smoke` exercises
 fixed local seeds. The reusable ClusterFuzzLite gate runs the OSS-Fuzz builder,
-bad-build validation, and bounded execution for all three targets without
+bad-build validation, and bounded execution for all six targets without
 assuming hosted-service enrollment. It advertises address builds only: Zig
 objects carry sanitizer coverage and `ReleaseSafe` checks, while the separate
 library sanitizer matrix instruments the C/C++ graph with ASan/UBSan/MSan.

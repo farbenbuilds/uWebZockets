@@ -119,8 +119,7 @@ zig build test -Dsanitize=true -Doptimize=ReleaseSafe --summary all
 zig build msan -Dmemory-sanitize=true -Doptimize=ReleaseSafe --summary all
 zig build test-compile -Doptimize=ReleaseSafe --summary all
 zig build fuzz --fuzz=100K -Doptimize=ReleaseSafe
-zig build oss-fuzz-objects -Doptimize=ReleaseSafe --summary all
-zig build oss-fuzz-smoke -Doptimize=ReleaseSafe --summary all
+zig build oss-fuzz -Doptimize=ReleaseSafe --summary all
 zig build lib -Doptimize=ReleaseFast --summary all
 ```
 
