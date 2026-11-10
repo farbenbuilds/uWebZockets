@@ -44,6 +44,11 @@ bodies come from startup-allocated contiguous pools.
   accepted bytes into its existing bounded body storage before a partial write,
   owns one descriptor per active stream, and closes it exactly once on
   completion, reset, or reuse.
+- Route-level request-body streaming after completed headers. `post_stream`,
+  `put_stream`, and `patch_stream` deliver stream bytes to the sink without
+  whole-body buffering; a pause stops reads and retains the bounded suffix.
+  An initial `expect: 100-continue` receives an interim 100 response after
+  admission.
 
 ## Observability
 
@@ -76,12 +81,12 @@ option. Completed CONNECT dispatch returns `501 Not Implemented`; headers alone
 do not admit a long-lived session and ordinary body completion/bounds apply.
 WebTransport models draft-16 only, without deployed interoperability. Live
 activation was re-declared on 2026-10-26 with
-[dated restoration criteria](releases/2.2.0.md#limits-and-dated-restoration-criteria).
+[dated restoration criteria](roadmap.md#deliberate-boundaries).
 
 [adr/0001-http3-datagram-and-webtransport.md](adr/0001-http3-datagram-and-webtransport.md)
 records the exact backend blockers and the accepted implementation plan. The
 maintained `farbenbuilds/lsquic` fork can carry the missing server interfaces,
-but the live path remains capability-gated until the 2.2.0 implementation and
+but the live path remains capability-gated until a post-2.2.0 implementation and
 compliance gate land.
 
 ## Verification

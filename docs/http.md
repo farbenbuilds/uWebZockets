@@ -279,7 +279,7 @@ they arrive and can pause/resume with `BodyControl` on every transport. H2
 withholds stream credit and retains a bounded suffix; H3 stops reading and
 retains the bounded suffix. Live 100 MB uploads pass on plaintext, TLS, HTTP/2,
 and HTTP/3 socket pairs. See the
-[2.2.0 release record](releases/2.2.0.md#limits-and-dated-restoration-criteria).
+[deliberate boundaries](roadmap.md#deliberate-boundaries).
 
 Framework modules expose zero-allocation query/form parsing with SIMD slicing
 and compile-time capacities, streaming chunked JSON (`Response.begin_json`),
@@ -293,11 +293,10 @@ Every helper reuses the existing bounded buffers and stays off the heap on the
 request path. For the full helper inventory, see [api.md](api.md).
 
 The standalone [incremental multipart parser](multipart.md) accepts arriving
-chunks with bounded caller storage and explicit payload acknowledgement. It
-does not depend on the deferred request-streaming transport adapters.
-The [2.2.0 release record](releases/2.2.0.md#limits-and-dated-restoration-criteria)
-records the pure framing foundation, its buffered compatibility proof, and the
-deferred live transport binding.
+chunks with bounded caller storage and explicit payload acknowledgement. It is
+transport-agnostic and can feed a `BodySink` directly; live request streaming
+is available on HTTP/1.1, TLS, HTTP/2, and HTTP/3. See the
+[request-streaming contract](adr/0008-request-body-streaming.md).
 
 ## Integration with another parser
 

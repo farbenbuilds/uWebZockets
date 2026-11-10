@@ -4,6 +4,7 @@ const support = @import("test_support");
 const helpers = @import("tls_tests.zig");
 const net = std.Io.net;
 const Response = support.http_response.Response;
+const Request = support.http_request.Request;
 const StreamStatus = support.http_response.StreamStatus;
 const EchoApp = support.app.app(1);
 const echo_limit = 100 * 1024;
@@ -362,13 +363,34 @@ fn write_echo_bytes(client: *EchoClient, bytes: []const u8) !void {
     return helpers.write_socket_request(std.testing.io, handle, bytes);
 }
 
+const ExpectedHeader = struct { name: []const u8, value: []const u8 };
+
 fn expect_echo_response(client: *EchoClient, status: u16, expected: []const u8) !void {
+    return expect_echo_response_headers(client, status, expected, null);
+}
+
+fn expect_echo_response_headers(
+    client: *EchoClient,
+    status: u16,
+    expected: []const u8,
+    expected_header: ?ExpectedHeader,
+) !void {
     var parser = support.client.http1.Parser.init(echo_limit, false);
     for (0..256) |_| {
         switch (parser.consume(&client.wire, client.wire_length)) {
             .complete => |view| {
                 try std.testing.expectEqual(status, view.status);
                 if (status == 200) try std.testing.expectEqualSlices(u8, expected, view.body);
+                if (expected_header) |header| {
+                    var found = false;
+                    for (view.headers) |field| {
+                        if (std.ascii.eqlIgnoreCase(field.name, header.name)) {
+                            found = std.mem.eql(u8, field.value, header.value);
+                            break;
+                        }
+                    }
+                    try std.testing.expect(found);
+                }
                 const remaining = client.wire_length - parser.mark;
                 std.mem.copyForwards(u8, client.wire[0..remaining], client.wire[parser.mark..client.wire_length]);
                 client.wire_length = remaining;
@@ -423,11 +445,18 @@ fn fill_echo_bio(client: *EchoClient) !void {
 
 /// Route-level upload sink used by the live HTTP/1 streaming tests.
 const StreamingState = struct {
+    const Binding = struct { sink: *StreamingState = undefined };
     bytes: u64 = 0,
     begins: usize = 0,
     ends: usize = 0,
     cancels: usize = 0,
     failure: ?anyerror = null,
+    binding: Binding = .{},
+
+    fn from(context: *anyopaque) *StreamingState {
+        const binding: *Binding = @ptrCast(@alignCast(context));
+        return binding.sink;
+    }
 
     fn route(self: *StreamingState) support.request_body.BodyRoute {
         return .{
@@ -453,11 +482,12 @@ const StreamingState = struct {
         if (!std.mem.eql(u8, request.method, "POST")) return error.UnexpectedMethod;
         if (!std.mem.eql(u8, request.path, "/upload")) return error.UnexpectedPath;
         if (request.text().len != 0 or request.bytes().len != 0) return error.BufferedBodyVisible;
-        return .{ .context = self, .readiness = .ready };
+        self.binding.sink = self;
+        return .{ .context = &self.binding, .readiness = .ready };
     }
 
     fn chunk(context: *anyopaque, input: []const u8) !support.request_body.BodyProgress {
-        const self: *StreamingState = @ptrCast(@alignCast(context));
+        const self = from(context);
         for (input, 0..) |byte, index| {
             if (byte != streaming_pattern_byte(self.bytes + index)) return error.UploadPatternMismatch;
         }
@@ -470,7 +500,7 @@ const StreamingState = struct {
         _: *const support.streaming_request.StreamingRequest,
         response: *Response,
     ) !void {
-        const self: *StreamingState = @ptrCast(@alignCast(context));
+        const self = from(context);
         self.ends += 1;
         var buffer: [32]u8 = undefined;
         const body = try std.fmt.bufPrint(&buffer, "{d}", .{self.bytes});
@@ -478,7 +508,7 @@ const StreamingState = struct {
     }
 
     fn cancel(context: *anyopaque, reason: support.request_body.BodyCancelReason) void {
-        const self: *StreamingState = @ptrCast(@alignCast(context));
+        const self = from(context);
         self.cancels += 1;
         if (reason == .sink_failure) self.failure = error.UnexpectedSinkFailure;
     }
@@ -488,21 +518,50 @@ fn streaming_pattern_byte(offset: u64) u8 {
     return @truncate(offset ^ (offset >> 8) ^ (offset >> 16) ^ 0x5a);
 }
 
-fn prepare_stream_server(server: *EchoApp, route: *const support.request_body.BodyRoute, encrypted: bool) !u16 {
+fn streaming_header(context: *anyopaque, _: *Request, response: *Response) support.radix.MiddlewareResult {
+    const ran: *bool = @ptrCast(@alignCast(context));
+    ran.* = true;
+    response.append_header("X-Streaming-Middleware", "yes") catch {};
+    return .continue_dispatch;
+}
+
+fn stream_health(_: *Request, response: *Response) void {
+    response.end("200 OK", "ok") catch {};
+}
+
+fn prepare_stream_server(
+    server: *EchoApp,
+    route: *const support.request_body.BodyRoute,
+    encrypted: bool,
+    middleware_ran: *bool,
+) !u16 {
     if (encrypted) server.tls_ctx = try support.tls.TlsContext.init_ephemeral(.{});
+    _ = try server.use(middleware_ran, streaming_header);
+    _ = try server.get("/health", stream_health);
     _ = try server.post_stream("/upload", route);
     try server.listen("127.0.0.1", 0);
     return support.tcp.listener_port(&server.listeners[0]);
 }
 
-fn send_stream_upload(client: *EchoClient, length: usize) !void {
+fn send_stream_upload(client: *EchoClient, length: usize, fragmented_head: bool, expect_continue: bool) !void {
     var head_buffer: [256]u8 = undefined;
-    const head = try std.fmt.bufPrint(
-        &head_buffer,
-        "POST /upload HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/octet-stream\r\nContent-Length: {d}\r\n\r\n",
-        .{length},
-    );
-    try write_echo_bytes(client, head);
+    const head = if (expect_continue)
+        try std.fmt.bufPrint(
+            &head_buffer,
+            "POST /upload HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/octet-stream\r\nContent-Length: {d}\r\nExpect: 100-continue\r\n\r\n",
+            .{length},
+        )
+    else
+        try std.fmt.bufPrint(
+            &head_buffer,
+            "POST /upload HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/octet-stream\r\nContent-Length: {d}\r\n\r\n",
+            .{length},
+        );
+    if (fragmented_head) {
+        for (head) |byte| try write_echo_bytes(client, &.{byte});
+    } else {
+        try write_echo_bytes(client, head);
+    }
     var offset: usize = 0;
     var chunk: [8192]u8 = undefined;
     while (offset < length) {
@@ -513,12 +572,13 @@ fn send_stream_upload(client: *EchoClient, length: usize) !void {
     }
 }
 
-fn run_live_streaming_case(encrypted: bool, upload_length: usize) !void {
+fn run_live_streaming_case(encrypted: bool, upload_length: usize, fragmented_head: bool, expect_continue: bool) !void {
     var state = StreamingState{};
     var route = state.route();
+    var middleware_ran = false;
     var server = try EchoApp.init_configured(std.testing.io, std.testing.allocator, default_config);
     defer server.deinit();
-    const port = try prepare_stream_server(&server, &route, encrypted);
+    const port = try prepare_stream_server(&server, &route, encrypted, &middleware_ran);
     var runner = EchoRunner{ .server = &server };
     const thread = try std.Thread.spawn(.{}, EchoRunner.run, .{&runner});
     var joined = false;
@@ -528,10 +588,15 @@ fn run_live_streaming_case(encrypted: bool, upload_length: usize) !void {
     }
     var client = try connect_echo_client(port, encrypted);
     defer close_echo_client(&client);
-    try send_stream_upload(&client, upload_length);
+    try send_stream_upload(&client, upload_length, fragmented_head, expect_continue);
     var expected_buffer: [32]u8 = undefined;
     const expected = try std.fmt.bufPrint(&expected_buffer, "{d}", .{upload_length});
-    try expect_echo_response(&client, 200, expected);
+    try expect_echo_response_headers(
+        &client,
+        200,
+        expected,
+        .{ .name = "X-Streaming-Middleware", .value = "yes" },
+    );
     server.request_shutdown();
     thread.join();
     joined = true;
@@ -540,21 +605,76 @@ fn run_live_streaming_case(encrypted: bool, upload_length: usize) !void {
     try std.testing.expectEqual(@as(usize, 1), state.ends);
     try std.testing.expectEqual(@as(usize, 0), state.cancels);
     try std.testing.expectEqual(@as(u64, upload_length), state.bytes);
+    try std.testing.expect(middleware_ran);
     try std.testing.expectEqual(default_config.max_body_size, 16 * 1024);
 }
 
+test "request streaming: plaintext disconnect cancels the sink and releases the slot" {
+    var state = StreamingState{};
+    var route = state.route();
+    var middleware_ran = false;
+    var server = try EchoApp.init_configured(std.testing.io, std.testing.allocator, default_config);
+    defer server.deinit();
+    const port = try prepare_stream_server(&server, &route, false, &middleware_ran);
+    var runner = EchoRunner{ .server = &server };
+    const thread = try std.Thread.spawn(.{}, EchoRunner.run, .{&runner});
+    var joined = false;
+    defer {
+        server.request_shutdown();
+        if (!joined) thread.join();
+    }
+
+    var client = try connect_echo_client(port, false);
+    try write_echo_bytes(&client, "POST /upload HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1024\r\n\r\n");
+    var partial: [10]u8 = undefined;
+    for (&partial, 0..) |*byte, index| byte.* = streaming_pattern_byte(index);
+    try write_echo_bytes(&client, &partial);
+    close_echo_client(&client);
+
+    for (0..200) |_| {
+        if (state.cancels != 0) break;
+        try std.Io.sleep(std.testing.io, .{ .nanoseconds = 10 * std.time.ns_per_ms }, .awake);
+    }
+    try std.testing.expectEqual(@as(usize, 1), state.cancels);
+
+    var replacement: ?EchoClient = null;
+    for (0..200) |_| {
+        replacement = connect_echo_client(port, false) catch null;
+        if (replacement != null) break;
+        try std.Io.sleep(std.testing.io, .{ .nanoseconds = 10 * std.time.ns_per_ms }, .awake);
+    }
+    try std.testing.expect(replacement != null);
+    var second = replacement.?;
+    defer close_echo_client(&second);
+    try write_echo_bytes(&second, "GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    try expect_echo_response(&second, 200, "ok");
+
+    server.request_shutdown();
+    thread.join();
+    joined = true;
+    try std.testing.expect(runner.failure == null and state.failure == null);
+}
+
 test "request streaming: plaintext 1 MiB upload bypasses the buffered cap" {
-    try run_live_streaming_case(false, 1024 * 1024);
+    try run_live_streaming_case(false, 1024 * 1024, false, false);
 }
 
 test "request streaming: TLS 1 MiB upload bypasses the buffered cap" {
-    try run_live_streaming_case(true, 1024 * 1024);
+    try run_live_streaming_case(true, 1024 * 1024, false, false);
+}
+
+test "request streaming: plaintext fragmented head streams" {
+    try run_live_streaming_case(false, 64 * 1024, true, false);
+}
+
+test "request streaming: plaintext Expect 100-continue streams" {
+    try run_live_streaming_case(false, 64 * 1024, false, true);
 }
 
 test "request streaming: plaintext 100 MB upload stays bounded" {
-    try run_live_streaming_case(false, 100 * 1024 * 1024);
+    try run_live_streaming_case(false, 100 * 1024 * 1024, false, false);
 }
 
 test "request streaming: TLS 100 MB upload stays bounded" {
-    try run_live_streaming_case(true, 100 * 1024 * 1024);
+    try run_live_streaming_case(true, 100 * 1024 * 1024, false, false);
 }

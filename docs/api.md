@@ -104,10 +104,14 @@ nonempty segment, and a terminal `*name` captures the remainder. Static routes
 win. Malformed patterns fail registration rather than matching ambiguously.
 
 A streaming route borrows a `BodyRoute` for the application lifetime and uses
-`begin`/`chunk`/`end`/`cancel` callbacks. The sink context is application-owned;
-`BodyControl` pauses and resumes delivery. `middleware_policy = .headers_only`
-authorizes global middleware that does not read the body. H2/H3 streaming
-routes return 501; use the buffered helpers there.
+`begin`/`chunk`/`end`/`cancel` callbacks. `begin` returns a per-request
+`BodyBinding`; its context is passed to every later callback. `BodyControl`
+pauses and resumes delivery. `StreamingRequest.text()` and
+`bytes()` are intentionally empty metadata views; consume body bytes through
+`chunk` or use the buffered `Request` API on a non-streaming route. `middleware_policy = .headers_only`
+authorizes global middleware that does not read the body. H2 retains a bounded
+DATA suffix and withholds stream credit while paused; H3 stops reading and
+retains the suffix in its per-stream slab.
 
 `trace` is opt-in: the library does not register a route or synthesize the
 RFC 9110 echo response. A handler that reflects the request must redact
@@ -142,7 +146,7 @@ arrive and uses `BodyControl` to pause/resume on every transport. H2 withholds
 stream credit and retains a bounded suffix; H3 stops reading and retains the
 bounded suffix. Live 100 MB uploads pass on plaintext, TLS, HTTP/2, and HTTP/3
 socket pairs. See the
-[2.2.0 release record](releases/2.2.0.md#limits-and-dated-restoration-criteria).
+[deliberate boundaries](roadmap.md#deliberate-boundaries).
 
 | Group | API |
 | --- | --- |
@@ -192,7 +196,7 @@ The timing wheel's exact range is 67,108,863 milliseconds, about 18.64 hours.
 Longer deadlines wait on an intrusive overflow list and re-enter the wheel when
 they come into range. The active scheduler uses a bounded 5 ms driving tick;
 that is not a wall-clock callback-latency guarantee. The
-[2.2.0 release record](releases/2.2.0.md#limits-and-dated-restoration-criteria)
+[deliberate boundaries](roadmap.md#deliberate-boundaries)
 records the remaining timer and response-token requirements.
 
 `ServerConfig.idle_timeout_ms` bounds a drained keep-alive connection.
@@ -422,7 +426,7 @@ WebTransport, and client modules are Zig-only. See
 [operations.md](operations.md#c-abi).
 
 
-The [2.2.0 release record](releases/2.2.0.md#limits-and-dated-restoration-criteria)
+The [deliberate boundaries](roadmap.md#deliberate-boundaries)
 retains shared TCP credentials, opt-in TRACE without automatic reflection, and
 the current C single-endpoint surface. It defines the consumer requirements and
 ownership tests needed to reopen those boundaries.

@@ -67,7 +67,7 @@ pub fn static_files(comptime file_capacity: usize) type {
             const self: *Self = @ptrCast(@alignCast(context));
             self.serve(request, response) catch |err| switch (err) {
                 error.InvalidStaticPath, error.AccessDenied, error.SymLinkLoop => response.end_best_effort("403 Forbidden", ""),
-                error.FileNotFound, error.NotDir => response.end_best_effort("404 Not Found", ""),
+                error.FileNotFound, error.NotDir, error.NotRegularFile, error.IsDir => response.end_best_effort("404 Not Found", ""),
                 error.FileTooLarge => response.end_best_effort("413 Content Too Large", ""),
                 // A file head or first window can be refused before any bytes
                 // are queued. Treat it as bounded backpressure, not a 500.
@@ -200,7 +200,10 @@ pub fn static_files(comptime file_capacity: usize) type {
 
         /// Holds at most three representation descriptors; releases every unselected one.
         fn select_file(self: *Self, path: []const u8, request: *const Request) !?Representation {
-            const file = try self.open_no_symlinks(path, false);
+            const file = self.open_no_symlinks(path, true) catch |err| switch (err) {
+                error.NotRegularFile => return error.FileNotFound,
+                else => return err,
+            };
             var source_owned = true;
             defer if (source_owned) file.close(self.io);
             const stat = try file.stat(self.io);
@@ -291,21 +294,6 @@ pub fn static_files(comptime file_capacity: usize) type {
             return true;
         }
 
-        fn regular_leaf(self: *Self, directory: std.Io.Dir, leaf: []const u8) !bool {
-            if (comptime builtin.os.tag != .linux) {
-                return (try directory.statFile(self.io, leaf, .{ .follow_symlinks = false })).kind == .file;
-            }
-            // Pinned Zig 0.16 pathname-stat panics on component NameTooLong.
-            // Keep metadata-only open until pathname-stat returns that error.
-            const metadata = try directory.openFile(self.io, leaf, .{
-                .path_only = true,
-                .follow_symlinks = false,
-                .allow_directory = true,
-            });
-            defer metadata.close(self.io);
-            return (try metadata.stat(self.io)).kind == .file;
-        }
-
         /// Opens a relative path without following symlinks in any component.
         ///
         /// Zig 0.16 ignores `resolve_beneath` on Linux, and `O_NOFOLLOW` only
@@ -330,10 +318,18 @@ pub fn static_files(comptime file_capacity: usize) type {
                 component = next;
             }
             if (regular_candidate) {
-                // Asset publishing controls entry types. This rejects stable
-                // special files; hostile regular-to-FIFO replacement can still
-                // block the supplied Io open and is outside that boundary.
-                if (!try self.regular_leaf(current, component)) return error.NotRegularFile;
+                // Reject special files before opening: a stable FIFO would
+                // otherwise block the worker in the readable open. Hostile
+                // regular-to-FIFO replacement after this check remains a
+                // documented operator-controlled filesystem boundary.
+                if (component.len > std.Io.Dir.max_name_bytes) return error.NotRegularFile;
+                const metadata = try current.statFile(self.io, component, .{ .follow_symlinks = false });
+                switch (metadata.kind) {
+                    .file => {},
+                    .directory => return error.IsDir,
+                    .sym_link => return error.SymLinkLoop,
+                    else => return error.NotRegularFile,
+                }
             }
             return current.openFile(self.io, component, .{
                 .allow_directory = false,

@@ -3,6 +3,7 @@ const support = @import("test_support");
 const uz = support.public_api;
 const body = support.request_body;
 const StreamingRequest = uz.StreamingRequest;
+const Response = support.http_response.Response;
 
 const empty_metadata = StreamingRequest{
     .method = "",
@@ -466,6 +467,35 @@ test "request body: maximum observed prefix cannot overflow consumed counter" {
     try std.testing.expectEqual(@as(u64, length), owner.state.consumed);
     try std.testing.expectError(error.InvalidBodyProgress, owner.state.start_chunk(1));
     try control.cancel();
+}
+
+test "request body: pending middleware headers round trip through body end" {
+    var captured = Response{ .target = undefined };
+    const fields = "X-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\n";
+    @memcpy(captured.pending_headers[0..fields.len], fields);
+    captured.pending_header_length = fields.len;
+    var pending = body.PendingHeaders{};
+    pending.capture(&captured);
+    try std.testing.expectEqual(fields.len, pending.length);
+    var applied = Response{ .target = undefined };
+    pending.apply(&applied);
+    try std.testing.expectEqualStrings(fields, applied.pending_headers[0..applied.pending_header_length]);
+}
+
+test "request body: prepare_chunk retries retained bytes without double counting" {
+    var owner = Owner{};
+    const control = try owner.start(5, 5);
+    try owner.state.prepare_chunk(2);
+    try std.testing.expectEqual(@as(usize, 2), owner.state.offered);
+    try std.testing.expectEqual(@as(u64, 2), owner.state.observed);
+    try std.testing.expect((try owner.state.accept_chunk(.{ .consumed = 2, .readiness = .ready })) == null);
+    try owner.state.prepare_chunk(3);
+    try std.testing.expectEqual(@as(usize, 3), owner.state.offered);
+    try std.testing.expectEqual(@as(u64, 5), owner.state.observed);
+    try std.testing.expect((try owner.state.accept_chunk(.{ .consumed = 3, .readiness = .ready })) == null);
+    try std.testing.expectEqual(@as(u64, 5), owner.state.consumed);
+    _ = owner.terminate(try owner.state.take_end(true, 0));
+    try std.testing.expectError(error.BodyControlExpired, control.cancel());
 }
 
 test "request body: resumed chunk failure cleans binding before returning delivery failure" {

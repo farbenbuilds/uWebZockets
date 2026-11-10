@@ -9,14 +9,21 @@ fn index(_: *uz.Request, response: *uz.Response) void {
     ) catch |err| std.log.err("response failed: {}", .{err});
 }
 
+fn trace(_: *uz.Request, response: *uz.Response) void {
+    response.end("200 OK", "trace") catch |err| std.log.err("trace response failed: {}", .{err});
+}
+
 /// Counts a live HTTP/3 upload without retaining body bytes.
 const Upload = struct {
     bytes: u64 = 0,
+    active: bool = false,
 
     fn begin(context: *anyopaque, request: *const uz.StreamingRequest, _: uz.BodyControl) !uz.BodyBinding {
         const self: *Upload = @ptrCast(@alignCast(context));
         if (!std.mem.eql(u8, request.method, "POST")) return error.UnexpectedMethod;
         if (!std.mem.eql(u8, request.path, "/upload")) return error.UnexpectedPath;
+        if (self.active) return error.UploadBusy;
+        self.active = true;
         self.bytes = 0;
         return .{ .context = self, .readiness = .ready };
     }
@@ -29,12 +36,16 @@ const Upload = struct {
 
     fn end(context: *anyopaque, _: *const uz.StreamingRequest, response: *uz.Response) !void {
         const self: *Upload = @ptrCast(@alignCast(context));
+        self.active = false;
         var buffer: [32]u8 = undefined;
         const body = try std.fmt.bufPrint(&buffer, "{d}", .{self.bytes});
         try response.end("200 OK", body);
     }
 
-    fn cancel(_: *anyopaque, _: uz.BodyCancelReason) void {}
+    fn cancel(context: *anyopaque, _: uz.BodyCancelReason) void {
+        const self: *Upload = @ptrCast(@alignCast(context));
+        self.active = false;
+    }
 };
 
 pub fn main(init: std.process.Init) !void {
@@ -42,6 +53,7 @@ pub fn main(init: std.process.Init) !void {
     defer server.deinit();
 
     _ = try server.get("/", index);
+    _ = try server.trace("/trace", trace);
     var upload = Upload{};
     var upload_route = uz.BodyRoute{
         .sink = .{

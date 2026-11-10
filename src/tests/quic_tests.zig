@@ -1348,22 +1348,43 @@ test "quic: request headers spill into engine extras" {
 fn header_release(_: *anyopaque, _: *HeaderSet) void {}
 
 const H3SinkState = struct {
+    const Binding = struct { sink: *H3SinkState = undefined };
     begins: usize = 0,
     ends: usize = 0,
+    cancels: usize = 0,
     bytes: usize = 0,
     control: ?support.request_body.BodyControl = null,
     pause_first: bool = true,
+    partial_first: bool = false,
+    begin_paused: bool = false,
+    stream_response: bool = false,
+    full_body: bool = false,
+    fail_chunk: bool = false,
     paused_once: bool = false,
+    binding: Binding = .{},
+
+    fn from(context: *anyopaque) *H3SinkState {
+        const binding: *Binding = @ptrCast(@alignCast(context));
+        return binding.sink;
+    }
 
     fn begin(context: *anyopaque, _: *const support.streaming_request.StreamingRequest, control: support.request_body.BodyControl) !support.request_body.BodyBinding {
         const self: *H3SinkState = @ptrCast(@alignCast(context));
         self.begins += 1;
         self.control = control;
-        return .{ .context = self, .readiness = .ready };
+        self.binding.sink = self;
+        return .{ .context = &self.binding, .readiness = if (self.begin_paused) .paused else .ready };
     }
 
     fn chunk(context: *anyopaque, input: []const u8) !support.request_body.BodyProgress {
-        const self: *H3SinkState = @ptrCast(@alignCast(context));
+        const self = from(context);
+        if (self.fail_chunk) return error.SinkFailed;
+        if (self.partial_first and !self.paused_once) {
+            self.paused_once = true;
+            const consumed = @min(input.len, 2);
+            self.bytes += consumed;
+            return .{ .consumed = consumed, .readiness = .paused };
+        }
         self.bytes += input.len;
         if (self.pause_first and !self.paused_once) {
             self.paused_once = true;
@@ -1373,12 +1394,20 @@ const H3SinkState = struct {
     }
 
     fn end(context: *anyopaque, _: *const support.streaming_request.StreamingRequest, response: *Response) !void {
-        const self: *H3SinkState = @ptrCast(@alignCast(context));
+        const self = from(context);
         self.ends += 1;
+        if (self.stream_response) {
+            try response.begin_chunked("200 OK", "Content-Type: text/plain\r\n");
+            try response.write_chunk("ok");
+            try response.end_chunks();
+            return;
+        }
         try response.end("200 OK", "ok");
     }
 
-    fn cancel(_: *anyopaque, _: support.request_body.BodyCancelReason) void {}
+    fn cancel(context: *anyopaque, _: support.request_body.BodyCancelReason) void {
+        from(context).cancels += 1;
+    }
 };
 
 test "quic: HTTP/3 100 MB logical upload stays bounded through the sink" {
@@ -1425,7 +1454,60 @@ test "quic: HTTP/3 100 MB logical upload stays bounded through the sink" {
 }
 
 test "quic: HTTP/3 request-head sink consumes stream bytes without body collection" {
-    var sink = H3SinkState{};
+    var sink = H3SinkState{ .stream_response = true };
+    var route = support.request_body.BodyRoute{
+        .sink = .{
+            .context = &sink,
+            .begin = H3SinkState.begin,
+            .chunk = H3SinkState.chunk,
+            .end = H3SinkState.end,
+            .cancel = H3SinkState.cancel,
+        },
+        .limits = .{ .max_body_bytes = 64, .max_active = 1 },
+        .middleware_policy = .headers_only,
+    };
+    var bundle: h3_radix.DefaultBundle = .{};
+    var router = h3_radix.Router.init(bundle.storage()) catch unreachable;
+    try router.route_stream(.post, "/upload", &route);
+
+    var owner: u8 = 0;
+    var request_storage: [stream.header_capacity]u8 = undefined;
+    var headers = HeaderSet{};
+    headers.reset(&owner, header_release, &request_storage, &.{}, &.{}, stream.default_capacities);
+    try std.testing.expect(add_test_header(&headers, ":method", "POST"));
+    try std.testing.expect(add_test_header(&headers, ":scheme", "https"));
+    try std.testing.expect(add_test_header(&headers, ":authority", "localhost"));
+    try std.testing.expect(add_test_header(&headers, ":path", "/upload"));
+    try std.testing.expect(add_test_header(&headers, "content-length", "5"));
+    try std.testing.expect(add_test_header(&headers, "expect", "100-continue"));
+    try std.testing.expect(headers.process_header(null));
+    try std.testing.expect(headers.request.header_has_token("Expect", "100-continue"));
+
+    var fake = FakeStream{ .read_data = "hello" };
+    var body_storage: [64]u8 = undefined;
+    var header_storage: [stream.response_header_capacity]u8 = undefined;
+    var quic = test_quic_stream(&fake, &body_storage, &header_storage);
+    quic.router = &router;
+    quic.attach_headers(&headers);
+    try std.testing.expectEqual(@as(usize, 1), fake.headers);
+    quic.on_read();
+    try std.testing.expect(quic.streaming_paused);
+    try std.testing.expect(sink.control != null);
+    try sink.control.?.@"resume"();
+    quic.on_write();
+
+    try std.testing.expectEqual(@as(usize, 1), sink.begins);
+    try std.testing.expectEqual(@as(usize, 1), sink.ends);
+    try std.testing.expectEqual(@as(usize, 5), sink.bytes);
+    try std.testing.expectEqual(@as(usize, 2), fake.headers);
+    try std.testing.expect(fake.write_bytes > 0);
+    try std.testing.expectEqual(@as(usize, 0), fake.closes);
+    try std.testing.expect(fake.shutdowns >= 1);
+    try std.testing.expect(!quic.streaming_active);
+}
+
+test "quic: HTTP/3 sink failure delivers cancel and releases the binding" {
+    var sink = H3SinkState{ .pause_first = false, .fail_chunk = true };
     var route = support.request_body.BodyRoute{
         .sink = .{
             .context = &sink,
@@ -1459,18 +1541,112 @@ test "quic: HTTP/3 request-head sink consumes stream bytes without body collecti
     quic.router = &router;
     quic.attach_headers(&headers);
     quic.on_read();
-    try std.testing.expect(quic.streaming_paused);
-    try std.testing.expect(sink.control != null);
-    try sink.control.?.@"resume"();
     quic.on_write();
 
     try std.testing.expectEqual(@as(usize, 1), sink.begins);
-    try std.testing.expectEqual(@as(usize, 1), sink.ends);
-    try std.testing.expectEqual(@as(usize, 5), sink.bytes);
+    try std.testing.expectEqual(@as(usize, 0), sink.ends);
+    try std.testing.expectEqual(@as(usize, 1), sink.cancels);
+    try std.testing.expect(!quic.streaming_active);
     try std.testing.expectEqual(@as(usize, 1), fake.headers);
-    try std.testing.expect(fake.write_bytes > 0);
-    try std.testing.expectEqual(@as(usize, 0), fake.closes);
-    try std.testing.expect(fake.shutdowns >= 1);
+}
+
+test "quic: HTTP/3 begin-paused sink defers reads until explicit resume" {
+    var sink = H3SinkState{ .pause_first = false, .begin_paused = true };
+    var route = support.request_body.BodyRoute{
+        .sink = .{
+            .context = &sink,
+            .begin = H3SinkState.begin,
+            .chunk = H3SinkState.chunk,
+            .end = H3SinkState.end,
+            .cancel = H3SinkState.cancel,
+        },
+        .limits = .{ .max_body_bytes = 64, .max_active = 1 },
+        .middleware_policy = .headers_only,
+    };
+    var bundle: h3_radix.DefaultBundle = .{};
+    var router = h3_radix.Router.init(bundle.storage()) catch unreachable;
+    try router.route_stream(.post, "/upload", &route);
+
+    var owner: u8 = 0;
+    var request_storage: [stream.header_capacity]u8 = undefined;
+    var headers = HeaderSet{};
+    headers.reset(&owner, header_release, &request_storage, &.{}, &.{}, stream.default_capacities);
+    try std.testing.expect(add_test_header(&headers, ":method", "POST"));
+    try std.testing.expect(add_test_header(&headers, ":scheme", "https"));
+    try std.testing.expect(add_test_header(&headers, ":authority", "localhost"));
+    try std.testing.expect(add_test_header(&headers, ":path", "/upload"));
+    try std.testing.expect(add_test_header(&headers, "content-length", "5"));
+    try std.testing.expect(headers.process_header(null));
+
+    var fake = FakeStream{ .read_data = "hello" };
+    var body_storage: [64]u8 = undefined;
+    var header_storage: [stream.response_header_capacity]u8 = undefined;
+    var quic = test_quic_stream(&fake, &body_storage, &header_storage);
+    quic.router = &router;
+    quic.attach_headers(&headers);
+    quic.on_read();
+
+    try std.testing.expect(quic.streaming_paused);
+    try std.testing.expectEqual(@as(usize, 0), fake.read_offset);
+    try std.testing.expectEqual(@as(usize, 0), sink.bytes);
+    try std.testing.expectEqual(@as(usize, 0), sink.ends);
+    try sink.control.?.@"resume"();
+    quic.on_write();
+
+    try std.testing.expectEqual(@as(usize, 5), sink.bytes);
+    try std.testing.expectEqual(@as(usize, 1), sink.ends);
+    try std.testing.expectEqual(@as(usize, 5), fake.read_offset);
+    try std.testing.expect(!quic.streaming_active);
+}
+
+test "quic: HTTP/3 paused sink retains and retries a partial chunk" {
+    var sink = H3SinkState{ .pause_first = false, .partial_first = true };
+    var route = support.request_body.BodyRoute{
+        .sink = .{
+            .context = &sink,
+            .begin = H3SinkState.begin,
+            .chunk = H3SinkState.chunk,
+            .end = H3SinkState.end,
+            .cancel = H3SinkState.cancel,
+        },
+        .limits = .{ .max_body_bytes = 64, .max_active = 1 },
+        .middleware_policy = .headers_only,
+    };
+    var bundle: h3_radix.DefaultBundle = .{};
+    var router = h3_radix.Router.init(bundle.storage()) catch unreachable;
+    try router.route_stream(.post, "/upload", &route);
+
+    var owner: u8 = 0;
+    var request_storage: [stream.header_capacity]u8 = undefined;
+    var headers = HeaderSet{};
+    headers.reset(&owner, header_release, &request_storage, &.{}, &.{}, stream.default_capacities);
+    try std.testing.expect(add_test_header(&headers, ":method", "POST"));
+    try std.testing.expect(add_test_header(&headers, ":scheme", "https"));
+    try std.testing.expect(add_test_header(&headers, ":authority", "localhost"));
+    try std.testing.expect(add_test_header(&headers, ":path", "/upload"));
+    try std.testing.expect(add_test_header(&headers, "content-length", "5"));
+    try std.testing.expect(headers.process_header(null));
+
+    var fake = FakeStream{ .read_data = "hello" };
+    var body_storage: [64]u8 = undefined;
+    var header_storage: [stream.response_header_capacity]u8 = undefined;
+    var quic = test_quic_stream(&fake, &body_storage, &header_storage);
+    quic.router = &router;
+    quic.attach_headers(&headers);
+    quic.on_read();
+
+    try std.testing.expect(quic.streaming_paused);
+    try std.testing.expectEqual(@as(usize, 3), quic.streaming_pending_len);
+    try std.testing.expectEqual(@as(usize, 2), sink.bytes);
+    try std.testing.expectEqual(@as(usize, 0), sink.ends);
+    try sink.control.?.@"resume"();
+    quic.on_write();
+
+    try std.testing.expectEqual(@as(usize, 5), sink.bytes);
+    try std.testing.expectEqual(@as(usize, 1), sink.ends);
+    try std.testing.expectEqual(@as(usize, 5), quic.body_state.observed);
+    try std.testing.expectEqual(@as(usize, 5), quic.body_state.consumed);
+    try std.testing.expectEqual(@as(usize, 0), quic.streaming_pending_len);
     try std.testing.expect(!quic.streaming_active);
 }
 

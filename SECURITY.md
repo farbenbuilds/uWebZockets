@@ -65,8 +65,8 @@ dispatch returns 501, while headers alone do not admit a session. They do not
 establish WebTransport, server push, or
 application-datagram support. ADR 0001 accepts implementation through the
 maintained lsquic fork, but this statement remains true until that work and its
-compliance gate land. The [2.2.0 release record](docs/releases/2.2.0.md#limits-and-dated-restoration-criteria)
-records restoration owners and the dated reassessment. RFC 10008 is the
+compliance gate land. The [deliberate boundaries](docs/roadmap.md#deliberate-boundaries) record
+restoration owners and the dated reassessment. RFC 10008 is the
 separate HTTP `QUERY` method supported
 by the router. Live transports reject QUERY requests without a syntactically
 valid `Content-Type` before the route handler runs.
@@ -82,7 +82,8 @@ Static assets require an operator-controlled filesystem namespace. Untrusted
 users must not create or replace entries beneath a mounted root. Publish
 regular files as regular files; avoid substituting FIFOs, devices, or other
 special types while serving. Confined no-symlink opening and descriptor kind
-checks remain enforced. Sidecar preflight rejects stable special files, but
+checks remain enforced. Source and sidecar preflight reject stable special
+files before opening, but
 the portable synchronous filesystem API does not guarantee progress against
 hostile entry replacement or a stalled filesystem.
 

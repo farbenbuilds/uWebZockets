@@ -817,6 +817,24 @@ test "static sidecars: Linux metadata preflight rejects a stable real FIFO" {
     try std.testing.expectEqual(@as(usize, 0), fixture.effects.reads);
 }
 
+test "static sidecars: Linux source FIFO is rejected without a blocking open" {
+    if (comptime builtin.os.tag != .linux) return error.SkipZigTest;
+    var fixture = Fixture{};
+    try fixture.init(true);
+    defer fixture.deinit();
+    const rc = std.os.linux.mknodat(fixture.tmp.dir.handle, "asset.txt", std.os.linux.S.IFIFO | 0o600, 0);
+    if (std.os.linux.errno(rc) != .SUCCESS) return error.FifoCreationFailed;
+    var request = request_for("GET", "asset.txt", "gzip,identity;q=0");
+    var capture = FileCapture{};
+    defer close_capture(&capture);
+    var output = response.Response{ .target = .{ .http3 = capture.target(true) } };
+    try std.testing.expectError(error.FileNotFound, fixture.files.serve(&request, &output));
+    try std.testing.expectEqual(@as(usize, 0), fixture.effects.readable_opens);
+    try std.testing.expectEqual(@as(usize, 0), fixture.effects.reads);
+    try std.testing.expectEqual(fixture.effects.opens, fixture.effects.closes);
+    try std.testing.expectEqual(fixture.effects.metadata_opens, fixture.effects.metadata_closes);
+}
+
 test "static sidecars: freshness comes from readable descriptor rather than preflight" {
     for ([_]bool{ false, true }) |fresh| {
         var fixture = Fixture{};

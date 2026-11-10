@@ -236,9 +236,9 @@ test "config: default slab carries the router region at the end" {
     // per-stream HTTP/2 body sink state are inline.
     // Five kqueue completions save 80 bytes per connection versus Linux.
     const expected_total: usize = switch (builtin.os.tag) {
-        .macos => 687_576_704,
-        .windows => 688_158_336,
-        else => 687_666_816,
+        .macos => 689_698_432,
+        .windows => 690_280_064,
+        else => 689_788_544,
     };
     comptime std.debug.assert(total == expected_total);
     try std.testing.expectEqual(expected_total, total);

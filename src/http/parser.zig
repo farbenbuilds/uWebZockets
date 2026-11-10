@@ -317,7 +317,6 @@ fn parse_method(parser: *HttpParser, req: *Request, buffer: []u8, search_start: 
             parser.scan_work += crlf + 1;
             return .invalid;
         }
-        parser.scan_work += pending;
         if (buffer.len > parser.max_request_line_bytes) return .too_large;
         parser.scan = buffer.len;
         return .need_more;
@@ -342,7 +341,6 @@ fn parse_path(parser: *HttpParser, req: *Request, buffer: []u8, search_start: us
             parser.scan_work += crlf + 1;
             return .invalid;
         }
-        parser.scan_work += pending;
         if (buffer.len > parser.max_request_line_bytes) return .too_large;
         parser.scan = buffer.len;
         return .need_more;

@@ -3041,7 +3041,15 @@ test "http2: decoded request headers spill into extras" {
             return .{ .context = self, .write_fn = write, .request_fn = dispatch };
         }
 
-        fn write(_: *anyopaque, _: []const []const u8) !void {}
+        fn write(context: *anyopaque, parts: []const []const u8) !void {
+            const self: *SinkState = @ptrCast(@alignCast(context));
+            if (!self.capture_headers) return;
+            for (parts) |part| {
+                if (part.len > self.output.len - self.output_length) return error.OutputTooSmall;
+                @memcpy(self.output[self.output_length..][0..part.len], part);
+                self.output_length += part.len;
+            }
+        }
 
         fn dispatch(context: *anyopaque, request: *Request, _: u32) !void {
             const self: *@This() = @ptrCast(@alignCast(context));
@@ -3563,6 +3571,7 @@ test "http2: begin_stream carries pending headers into the response block" {
 }
 
 const SinkState = struct {
+    const Binding = struct { sink: *SinkState = undefined };
     session: *TestSession = undefined,
     route: support.request_body.BodyRoute = undefined,
     state: support.request_body.BodyState = .{},
@@ -3571,7 +3580,11 @@ const SinkState = struct {
     bytes: usize = 0,
     control: ?support.request_body.BodyControl = null,
     pause_first: bool = true,
+    partial_first: bool = false,
+    begin_paused: bool = false,
     paused_once: bool = false,
+    binding: Binding = .{},
+    capture_headers: bool = false,
     output: [256]u8 = undefined,
     output_length: usize = 0,
 
@@ -3582,18 +3595,25 @@ const SinkState = struct {
             .request_fn = dispatch,
             .request_head_fn = head,
             .body_chunk_fn = chunk,
-            .body_cancel_fn = cancel,
         };
     }
 
-    fn write(_: *anyopaque, _: []const []const u8) !void {}
+    fn write(context: *anyopaque, parts: []const []const u8) !void {
+        const self: *SinkState = @ptrCast(@alignCast(context));
+        if (!self.capture_headers) return;
+        for (parts) |part| {
+            if (part.len > self.output.len - self.output_length) return error.OutputTooSmall;
+            @memcpy(self.output[self.output_length..][0..part.len], part);
+            self.output_length += part.len;
+        }
+    }
 
     fn dispatch(_: *anyopaque, _: *Request, _: u32) !void {}
 
-    fn head(context: *anyopaque, request: *Request, _: u32, declared: ?u64) !bool {
+    fn head(context: *anyopaque, request: *Request, stream_id: u32, declared: ?u64) !http2_server.RequestHeadDisposition {
         const self: *SinkState = @ptrCast(@alignCast(context));
-        if (!std.mem.eql(u8, request.method, "POST")) return false;
-        if (!std.mem.eql(u8, request.path, "/upload")) return false;
+        if (!std.mem.eql(u8, request.method, "POST")) return .buffered;
+        if (!std.mem.eql(u8, request.path, "/upload")) return .buffered;
         const control = try self.state.arm(.{
             .context = self,
             .resume_fn = resume_body,
@@ -3603,7 +3623,10 @@ const SinkState = struct {
         const binding = try self.route.sink.begin(self.route.sink.context, &request_view(self), control);
         self.begins += 1;
         _ = self.state.accept_begin(binding);
-        return true;
+        if (request.header_has_token("Expect", "100-continue")) {
+            try self.session.send_continue(stream_id, self.callbacks());
+        }
+        return .streaming;
     }
 
     fn request_view(_: *SinkState) support.streaming_request.StreamingRequest {
@@ -3618,14 +3641,22 @@ const SinkState = struct {
         };
     }
 
+    fn from(context: *anyopaque) *SinkState {
+        const binding: *Binding = @ptrCast(@alignCast(context));
+        return binding.sink;
+    }
+
     fn chunk(context: *anyopaque, _: u32, input: []const u8, end_stream: bool) !http2_server.BodyChunkResult {
         const self: *SinkState = @ptrCast(@alignCast(context));
+        if (self.state.readiness == .paused) {
+            return .{ .consumed = 0, .paused = true };
+        }
         if (input.len != 0) {
-            try self.state.observe(input.len);
-            try self.state.start_chunk(input.len);
-            const progress = try self.route.sink.chunk(self.route.sink.context, input);
-            const pause = self.pause_first and !self.paused_once;
-            self.paused_once = true;
+            try self.state.prepare_chunk(input.len);
+            const binding = self.state.binding orelse return error.StreamClosed;
+            const progress = try self.route.sink.chunk(binding.context, input);
+            const pause = (self.pause_first and !self.paused_once) or progress.readiness == .paused;
+            if (pause) self.paused_once = true;
             const effective = support.request_body.BodyProgress{
                 .consumed = progress.consumed,
                 .readiness = if (pause) .paused else .ready,
@@ -3635,29 +3666,38 @@ const SinkState = struct {
             if (pause) return .{ .consumed = progress.consumed, .paused = true };
         }
         if (end_stream) {
-            _ = try self.state.take_end(true, 0);
+            const terminal = try self.state.take_end(true, 0);
             var response: Response = undefined;
-            try self.route.sink.end(self.route.sink.context, &self.request_view(), &response);
+            try self.route.sink.end(terminal.end.context, &self.request_view(), &response);
             _ = self.state.finish_terminal();
             self.ends += 1;
         }
         return .{ .consumed = input.len, .paused = false };
     }
 
-    fn cancel(_: *anyopaque, _: u32) void {}
     fn resume_body(context: *anyopaque) error{BodyDeliveryFailed}!void {
         const self: *SinkState = @ptrCast(@alignCast(context));
         self.session.resume_stream_body(1, self.callbacks()) catch return error.BodyDeliveryFailed;
     }
     fn cancel_control(_: *anyopaque) void {}
     fn sink_begin(context: *anyopaque, _: *const support.streaming_request.StreamingRequest, _: support.request_body.BodyControl) !support.request_body.BodyBinding {
-        return .{ .context = context, .readiness = .ready };
+        const self: *SinkState = @ptrCast(@alignCast(context));
+        self.binding.sink = self;
+        return .{ .context = &self.binding, .readiness = if (self.begin_paused) .paused else .ready };
     }
-    fn sink_chunk(_: *anyopaque, input: []const u8) !support.request_body.BodyProgress {
+    fn sink_chunk(context: *anyopaque, input: []const u8) !support.request_body.BodyProgress {
+        const self = from(context);
+        if (self.partial_first and !self.paused_once) {
+            return .{ .consumed = @min(input.len, 2), .readiness = .paused };
+        }
         return .{ .consumed = input.len, .readiness = .ready };
     }
-    fn sink_end(_: *anyopaque, _: *const support.streaming_request.StreamingRequest, _: *Response) !void {}
-    fn sink_cancel(_: *anyopaque, _: support.request_body.BodyCancelReason) void {}
+    fn sink_end(context: *anyopaque, _: *const support.streaming_request.StreamingRequest, _: *Response) !void {
+        _ = from(context);
+    }
+    fn sink_cancel(context: *anyopaque, _: support.request_body.BodyCancelReason) void {
+        _ = from(context);
+    }
 };
 
 test "http2 server: 100 MB logical upload stays bounded through the sink" {
@@ -3711,6 +3751,149 @@ test "http2 server: 100 MB logical upload stays bounded through the sink" {
     try std.testing.expectEqual(@as(usize, 1), state.begins);
     try std.testing.expectEqual(@as(usize, 1), state.ends);
     try std.testing.expectEqual(total, state.bytes);
+}
+
+test "http2 server: streaming expect sends an interim 100 response" {
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var state = SinkState{ .session = &fixture.session, .capture_headers = true, .pause_first = false };
+    state.route = .{
+        .sink = .{
+            .context = &state,
+            .begin = SinkState.sink_begin,
+            .chunk = SinkState.sink_chunk,
+            .end = SinkState.sink_end,
+            .cancel = SinkState.sink_cancel,
+        },
+        .limits = .{ .max_body_bytes = 64, .max_active = 1 },
+        .middleware_policy = .headers_only,
+    };
+
+    var block: [256]u8 = undefined;
+    var block_length: usize = 0;
+    block_length = try append_hpack_literal(&block, block_length, ":method", "POST");
+    block_length = try append_hpack_literal(&block, block_length, ":scheme", "https");
+    block_length = try append_hpack_literal(&block, block_length, ":path", "/upload");
+    block_length = try append_hpack_literal(&block, block_length, ":authority", "example.com");
+    block_length = try append_hpack_literal(&block, block_length, "content-length", "5");
+    block_length = try append_hpack_literal(&block, block_length, "expect", "100-continue");
+
+    var input: [512]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x4, 1, block[0..block_length]);
+    try fixture.session.receive(input[0..input_length], state.callbacks());
+
+    try std.testing.expectEqual(@as(usize, 1), state.begins);
+    var offset: usize = 0;
+    var interim = false;
+    while (offset + 9 <= state.output_length) {
+        const header = try support.http2.FrameHeader.parse(state.output[offset..][0..9]);
+        if (header.frame_type == @intFromEnum(support.http2.FrameType.headers) and header.stream_id == 1) {
+            interim = true;
+            break;
+        }
+        offset += 9 + header.payload_length;
+    }
+    try std.testing.expect(interim);
+}
+
+test "http2 server: begin-paused sink retains DATA until explicit resume" {
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var state = SinkState{ .session = &fixture.session, .pause_first = false, .begin_paused = true };
+    state.route = .{
+        .sink = .{
+            .context = &state,
+            .begin = SinkState.sink_begin,
+            .chunk = SinkState.sink_chunk,
+            .end = SinkState.sink_end,
+            .cancel = SinkState.sink_cancel,
+        },
+        .limits = .{ .max_body_bytes = 64, .max_active = 1 },
+        .middleware_policy = .headers_only,
+    };
+
+    var block: [192]u8 = undefined;
+    var block_length: usize = 0;
+    block_length = try append_hpack_literal(&block, block_length, ":method", "POST");
+    block_length = try append_hpack_literal(&block, block_length, ":scheme", "https");
+    block_length = try append_hpack_literal(&block, block_length, ":path", "/upload");
+    block_length = try append_hpack_literal(&block, block_length, ":authority", "example.com");
+    block_length = try append_hpack_literal(&block, block_length, "content-length", "5");
+
+    var input: [512]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x4, 1, block[0..block_length]);
+    try append_frame(&input, &input_length, .data, 0, 1, "hello");
+    try append_frame(&input, &input_length, .data, 0x1, 1, "");
+    try fixture.session.receive(input[0..input_length], state.callbacks());
+
+    try std.testing.expectEqual(@as(usize, 1), state.begins);
+    try std.testing.expectEqual(@as(usize, 0), state.ends);
+    try std.testing.expectEqual(@as(usize, 0), state.bytes);
+    try std.testing.expect(fixture.session.streaming[0]);
+    try std.testing.expect(fixture.session.streaming_paused[0]);
+    try std.testing.expectEqual(@as(usize, 5), fixture.session.streaming_pending_lengths[0]);
+    try state.control.?.@"resume"();
+
+    try std.testing.expectEqual(@as(usize, 5), state.bytes);
+    try std.testing.expectEqual(@as(usize, 1), state.ends);
+    try std.testing.expectEqual(@as(usize, 5), state.state.observed);
+    try std.testing.expectEqual(@as(usize, 5), state.state.consumed);
+    try std.testing.expectEqual(@as(usize, 0), fixture.session.streaming_pending_lengths[0]);
+}
+
+test "http2 server: paused sink retains and retries a partial DATA suffix" {
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var state = SinkState{ .session = &fixture.session, .pause_first = false, .partial_first = true };
+    state.route = .{
+        .sink = .{
+            .context = &state,
+            .begin = SinkState.sink_begin,
+            .chunk = SinkState.sink_chunk,
+            .end = SinkState.sink_end,
+            .cancel = SinkState.sink_cancel,
+        },
+        .limits = .{ .max_body_bytes = 64, .max_active = 1 },
+        .middleware_policy = .headers_only,
+    };
+
+    var block: [192]u8 = undefined;
+    var block_length: usize = 0;
+    block_length = try append_hpack_literal(&block, block_length, ":method", "POST");
+    block_length = try append_hpack_literal(&block, block_length, ":scheme", "https");
+    block_length = try append_hpack_literal(&block, block_length, ":path", "/upload");
+    block_length = try append_hpack_literal(&block, block_length, ":authority", "example.com");
+    block_length = try append_hpack_literal(&block, block_length, "content-length", "5");
+
+    var input: [512]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x4, 1, block[0..block_length]);
+    try append_frame(&input, &input_length, .data, 0, 1, "hello");
+    try append_frame(&input, &input_length, .data, 0x1, 1, "");
+    try fixture.session.receive(input[0..input_length], state.callbacks());
+
+    try std.testing.expectEqual(@as(usize, 1), state.begins);
+    try std.testing.expectEqual(@as(usize, 0), state.ends);
+    try std.testing.expectEqual(@as(usize, 2), state.bytes);
+    try std.testing.expect(fixture.session.streaming[0]);
+    try std.testing.expect(fixture.session.streaming_paused[0]);
+    try std.testing.expectEqual(@as(usize, 3), fixture.session.streaming_pending_lengths[0]);
+    try std.testing.expect(state.control != null);
+    try state.control.?.@"resume"();
+
+    try std.testing.expectEqual(@as(usize, 5), state.bytes);
+    try std.testing.expectEqual(@as(usize, 1), state.ends);
+    try std.testing.expectEqual(@as(usize, 5), state.state.observed);
+    try std.testing.expectEqual(@as(usize, 5), state.state.consumed);
+    try std.testing.expectEqual(@as(usize, 0), fixture.session.streaming_pending_lengths[0]);
 }
 
 test "http2 server: request-head callback streams DATA without body collection" {

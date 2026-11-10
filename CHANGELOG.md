@@ -9,9 +9,9 @@ Minor release that closes the response-streaming and static-asset gaps carried
 from 2.1.x. Large files now leave the fixed user buffer on TLS, HTTP/2, and
 HTTP/3; static mounts can select fresh precompressed representations; and
 blocked HTTP/2 resets no longer close healthy sibling streams. The release
-also ships the pure request-body and incremental-multipart contracts that
-2.3.0 will bind to live request transports. Public buffered request behavior,
-the C ABI layout, and the v2.1.6 release are unchanged.
+also ships bounded live request-body streaming and the incremental-multipart
+contract. Default buffered request behavior, the C ABI layout, and the v2.1.6
+release are unchanged.
 
 ### Added
 
@@ -32,11 +32,14 @@ the C ABI layout, and the v2.1.6 release are unchanged.
   `BodyState` lifecycle, and the pure HTTP/1 head/body decoder.
 - Live request-body streaming through `App.post_stream`, `put_stream`, and
   `patch_stream` on HTTP/1.1, TLS HTTP/1.1, HTTP/2, and HTTP/3, with no
-  complete-body materialization. HTTP/1/TLS sinks can pause/resume through
-  `BodyControl` on every transport: H2 retains a bounded suffix and withholds
-  stream credit, and H3 stops reading and retains the bounded suffix. Live
-  100 MB uploads pass on plaintext, TLS, HTTP/2, and HTTP/3 socket pairs; the
-  HTTP/3 compliance client measured RSS growth under 1 MiB against a 64 MiB bound.
+  complete-body materialization. Every transport supports pause/resume through
+  `BodyControl`: H2 retains a bounded suffix and withholds stream credit, and
+  H3 stops reading and retains the bounded suffix. Live 100 MB uploads pass on
+  plaintext, TLS, HTTP/2, and HTTP/3 socket pairs; the HTTP/3 compliance client
+  measured RSS growth under 1 MiB against a 64 MiB bound. Streaming routes run
+  `headers_only` global middleware once, carry its response headers to body
+  end, send `100 Continue` where requested, and bind callbacks to the
+  per-request `BodyBinding.context`.
 - A bounded HTTP/2 reset FIFO so an output-blocked reset no longer closes
   healthy sibling streams.
 - A Woff2 MIME mapping for static assets.
@@ -84,6 +87,27 @@ the C ABI layout, and the v2.1.6 release are unchanged.
   503 instead of an internal error.
 - The shared RFC 9110 qvalue parser accepts one-digit fractional weights and
   rejects overlong values consistently.
+- HTTP/3 pause/resume now retries a retained partial suffix through the shared
+  `BodyState.prepare_chunk` lifecycle instead of failing a chunk-state check.
+- HTTP/3 defers the buffered `Content-Length` ceiling until after route
+  selection, so a streaming route can accept a body larger than its per-stream
+  slab while buffered requests still return 413 before reading.
+- H1 streaming headers split across reads now stay on the streaming path
+  instead of falling back to buffered dispatch; H1 also honors
+  `Expect: 100-continue` and `Connection: close` after a streamed response.
+- A peer disconnect or protocol reset releases the H1 streaming sink exactly
+  once, clears the connection slot, and allows the slot to be reused without
+  stale body state.
+- H2/H3 sink failures, invalid progress, and deferred cancellation now deliver
+  the sink cancel callback and release the binding instead of leaking it.
+- H2/H3 streaming `BodyEndFn` responses can start chunked, JSON, stream, or
+  file responses and fail closed with a 500 when the sink leaves the response
+  incomplete.
+- Static source files are preflighted as regular files; a stable FIFO in the
+  published root returns 404 without a blocking open, just like sidecars.
+- HTTP parser delimiter diagnostics no longer count incomplete request-line
+  bytes twice.
+- The dead HTTP/2 body-cancel callback alias was removed.
 
 ### Limits
 
@@ -93,7 +117,7 @@ the C ABI layout, and the v2.1.6 release are unchanged.
 - WebTransport, receive-side UDP GRO, the HttpArena `async` adapter, quiet-host
   performance evidence, cluster/timer ownership extraction, and final fork
   archives remain dated boundaries. See
-  [the 2.2.0 release record](docs/releases/2.2.0.md#limits-and-dated-restoration-criteria).
+  [the deliberate boundaries](docs/roadmap.md#deliberate-boundaries).
 - kTLS remains a standalone helper owned by v3.5.0 SB-31. `io_uring_prep_splice`
   remains conditional on measured benefit; plaintext `sendfile` is unchanged.
 - Framed file responses use bounded synchronous positional reads on the owning

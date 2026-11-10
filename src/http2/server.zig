@@ -32,14 +32,14 @@ pub const RequestFn = *const fn (*anyopaque, *Request, u32) anyerror!void;
 pub const WsDataFn = *const fn (*anyopaque, u32, []u8, bool) bool;
 /// Reports that one stream slot closed with its HTTP/2 error code.
 pub const StreamClosedFn = *const fn (*anyopaque, u32, u16) void;
-/// Offers a completed request head before body collection; true means a sink owns it.
-pub const RequestHeadFn = *const fn (*anyopaque, *Request, u32, ?u64) anyerror!bool;
+/// Classification of a completed request head before body collection.
+pub const RequestHeadDisposition = enum { buffered, streaming, closed };
+/// Offers a completed request head before body collection.
+pub const RequestHeadFn = *const fn (*anyopaque, *Request, u32, ?u64) anyerror!RequestHeadDisposition;
 /// Delivers one DATA event to a streaming sink and reports accepted prefix/readiness.
 pub const BodyChunkFn = *const fn (*anyopaque, u32, []const u8, bool) anyerror!BodyChunkResult;
-/// Cancels an active streaming body after reset or connection teardown.
-pub const BodyCancelFn = *const fn (*anyopaque, u32) void;
-/// Accepted prefix and pause state for one streaming DATA event.
-pub const BodyChunkResult = struct { consumed: usize, paused: bool };
+/// Accepted prefix, pause state, and terminal-closed flag for one DATA event.
+pub const BodyChunkResult = struct { consumed: usize, paused: bool, closed: bool = false };
 
 /// Synchronous transport and request callbacks used by a server session.
 ///
@@ -60,7 +60,6 @@ pub const Callbacks = struct {
     stream_closed_fn: ?StreamClosedFn = null,
     request_head_fn: ?RequestHeadFn = null,
     body_chunk_fn: ?BodyChunkFn = null,
-    body_cancel_fn: ?BodyCancelFn = null,
     /// Largest nonempty frame payload that can fit an otherwise empty transport.
     max_frame_payload: usize = connection_module.maximum_frame_size,
 };
@@ -525,6 +524,7 @@ pub fn server_session(comptime max_streams: usize) type {
         expected_content_lengths: [max_streams]?usize = .{null} ** max_streams,
         headers_ready: [max_streams]bool = .{false} ** max_streams,
         streaming: [max_streams]bool = .{false} ** max_streams,
+        streaming_middleware_header_lengths: [max_streams]u16 = .{0} ** max_streams,
         streaming_paused: [max_streams]bool = .{false} ** max_streams,
         streaming_end_pending: [max_streams]bool = .{false} ** max_streams,
         streaming_pending_lengths: [max_streams]usize = .{0} ** max_streams,
@@ -653,6 +653,8 @@ pub fn server_session(comptime max_streams: usize) type {
             @memset(&self.expected_content_lengths, null);
             @memset(&self.headers_ready, false);
             @memset(&self.streaming, false);
+            @memset(&self.pending_header_lengths, 0);
+            @memset(&self.streaming_middleware_header_lengths, 0);
             @memset(&self.streaming_paused, false);
             @memset(&self.streaming_end_pending, false);
             @memset(&self.streaming_pending_lengths, 0);
@@ -1295,22 +1297,34 @@ pub fn server_session(comptime max_streams: usize) type {
             if (decoded.protocol == null) {
                 if (callbacks.request_head_fn) |head_fn| {
                     const stream_id = self.connection.streams.stream_ids[index];
-                    if (stream_id != 0 and try head_fn(
-                        callbacks.context,
-                        &self.requests[index],
-                        stream_id,
-                        self.expected_content_lengths[index],
-                    )) {
-                        self.streaming[index] = true;
-                        if (end_stream) {
-                            const chunk_fn = callbacks.body_chunk_fn orelse {
-                                try self.send_reset(stream_id, .internal_error, callbacks);
+                    if (stream_id != 0) {
+                        switch (try head_fn(
+                            callbacks.context,
+                            &self.requests[index],
+                            stream_id,
+                            self.expected_content_lengths[index],
+                        )) {
+                            .buffered => {},
+                            .closed => return,
+                            .streaming => {
+                                self.streaming[index] = true;
+                                if (end_stream) {
+                                    const chunk_fn = callbacks.body_chunk_fn orelse {
+                                        try self.send_reset(stream_id, .internal_error, callbacks);
+                                        return;
+                                    };
+                                    const result = chunk_fn(callbacks.context, stream_id, "", true) catch {
+                                        if (self.connection.streams.find(stream_id) != null) {
+                                            self.send_reset(stream_id, .enhance_your_calm, callbacks) catch {};
+                                        }
+                                        return;
+                                    };
+                                    if (result.closed) return;
+                                    try self.finish_remote(index, stream_id, callbacks);
+                                }
                                 return;
-                            };
-                            _ = try chunk_fn(callbacks.context, stream_id, "", true);
-                            try self.finish_remote(index, stream_id, callbacks);
+                            },
                         }
-                        return;
                     }
                 }
             }
@@ -1423,6 +1437,7 @@ pub fn server_session(comptime max_streams: usize) type {
                     }
                     return;
                 };
+                if (result.closed) return;
                 if (result.consumed > event.bytes.len) {
                     try self.send_reset(stream_id, .enhance_your_calm, callbacks);
                     return;
@@ -1490,7 +1505,16 @@ pub fn server_session(comptime max_streams: usize) type {
             const pending = self.streaming_pending_lengths[index];
             if (pending != 0) {
                 const bytes = self.body_bytes(index)[0..pending];
-                const result = try chunk_fn(callbacks.context, stream_id, bytes, false);
+                const result = chunk_fn(callbacks.context, stream_id, bytes, false) catch {
+                    self.streaming_paused[index] = false;
+                    self.streaming_pending_lengths[index] = 0;
+                    self.streaming_end_pending[index] = false;
+                    if (self.connection.streams.find(stream_id) != null) {
+                        self.send_reset(stream_id, .enhance_your_calm, callbacks) catch {};
+                    }
+                    return error.BodyDeliveryFailed;
+                };
+                if (result.closed) return;
                 if (result.consumed > pending) return error.InvalidBodyProgress;
                 if (result.consumed < pending) {
                     const remaining = pending - result.consumed;
@@ -1550,6 +1574,12 @@ pub fn server_session(comptime max_streams: usize) type {
             self.expected_content_lengths[index] = null;
             self.dispatched[index] = false;
             self.response_started[index] = false;
+            self.streaming[index] = false;
+            self.streaming_paused[index] = false;
+            self.streaming_end_pending[index] = false;
+            self.streaming_pending_lengths[index] = 0;
+            self.streaming_pending_credits[index] = 0;
+            self.streaming_middleware_header_lengths[index] = 0;
 
             self.requests[index].method = try self.copy_request_bytes(index, decoded.method);
             if (decoded.protocol) |protocol| {
@@ -1618,7 +1648,7 @@ pub fn server_session(comptime max_streams: usize) type {
             write_setting(
                 payload[18..24],
                 0x4,
-                @intCast(@min(self.body_stride, std.math.maxInt(u32))),
+                @intCast(@min(self.body_stride, 0x7fff_ffff)),
             );
             write_setting(
                 payload[24..30],
@@ -1628,6 +1658,12 @@ pub fn server_session(comptime max_streams: usize) type {
             write_setting(payload[30..36], 0x8, 1);
             try self.send_frame(.settings, 0, 0, &payload, callbacks);
             self.settings_sent = true;
+        }
+
+        /// Sends an interim 100 response without committing final headers.
+        pub fn send_continue(self: *Self, stream_id: u32, callbacks: Callbacks) !void {
+            const block = try hpack.encode_response(100, &.{}, self.response_encode);
+            try self.send_headers(stream_id, block, false, callbacks);
         }
 
         fn send_headers(
@@ -1948,6 +1984,24 @@ pub fn server_session(comptime max_streams: usize) type {
             try callbacks.write_fn(callbacks.context, &.{ &frame_header, payload });
         }
 
+        /// Stores middleware response headers for one stream until body end.
+        pub fn stash_stream_headers(self: *Self, stream_id: u32, headers: []const u8) void {
+            const index = self.connection.streams.find(stream_id) orelse return;
+            if (headers.len > self.response_header_stride) return;
+            @memcpy(self.response_header_bytes(index)[0..headers.len], headers);
+            self.streaming_middleware_header_lengths[index] = @intCast(headers.len);
+        }
+
+        /// Copies stashed middleware response headers into `output`.
+        pub fn take_stream_headers(self: *Self, index: u16, output: []u8) usize {
+            if (index >= max_streams) return 0;
+            const length = self.streaming_middleware_header_lengths[index];
+            if (length == 0 or length > output.len) return 0;
+            @memcpy(output[0..length], self.response_header_bytes(index)[0..length]);
+            self.streaming_middleware_header_lengths[index] = 0;
+            return length;
+        }
+
         fn clear_stream(self: *Self, index: u16) void {
             if (index >= max_streams) return;
             self.requests[index] = .{};
@@ -1960,6 +2014,7 @@ pub fn server_session(comptime max_streams: usize) type {
             self.callback_active[index] = false;
             self.response_started[index] = false;
             self.streaming[index] = false;
+            self.streaming_middleware_header_lengths[index] = 0;
             self.streaming_paused[index] = false;
             self.streaming_end_pending[index] = false;
             self.streaming_pending_lengths[index] = 0;

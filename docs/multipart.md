@@ -3,7 +3,7 @@
 `uz.multipart.StreamingParser` accepts arriving entity chunks using caller-owned
 working storage. The parser emits part metadata, borrowed payload, and part-end
 events. It performs no I/O or allocation and never retains an input pointer.
-Live request-streaming routes remain under implementation; this utility can
+Live request-streaming routes are available through `App.post_stream`; this utility can
 already parse chunks supplied by an application.
 
 ```zig
@@ -94,4 +94,6 @@ freeing the upload, working buffers, or sink context.
 
 The adapter performs no file I/O and supplies no automatic HTTP status. An
 application chooses its outer body callbacks, storage lifetime, response, and
-file policy. Transport-driven request streaming remains under implementation.
+file policy. The adapter is transport-agnostic; `App.post_stream`,
+`put_stream`, and `patch_stream` can drive it from HTTP/1.1, TLS, HTTP/2, or
+HTTP/3.

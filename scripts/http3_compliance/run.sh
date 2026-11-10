@@ -131,6 +131,17 @@ test "$(sed -n '1p' "${artifact_dir}/curl.metadata")" = "${expected_http_version
 test "$(sed -n '2p' "${artifact_dir}/curl.metadata")" = "${expected_status}"
 test "$(sha256sum "${artifact_dir}/curl.body" | cut -d ' ' -f 1)" = "${expected_digest}"
 
+trace_endpoint="${endpoint}trace"
+curl --http3-only --insecure --fail-with-body --silent --show-error \
+  --connect-timeout 5 --max-time 10 \
+  --request TRACE \
+  --output "${artifact_dir}/trace.body" \
+  --write-out '%{http_version}\n%{response_code}\n' \
+  "${trace_endpoint}" >"${artifact_dir}/trace.metadata"
+test "$(sed -n '1p' "${artifact_dir}/trace.metadata")" = "${expected_http_version}"
+test "$(sed -n '2p' "${artifact_dir}/trace.metadata")" = "200"
+test "$(cat "${artifact_dir}/trace.body")" = "trace"
+
 # A live HTTP/3 socket-pair upload proves the route sink consumes 100 MB
 # without retaining it. RSS is sampled before and after the request; the
 # server slab and connection state are already resident after the GET above.

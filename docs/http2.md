@@ -27,6 +27,12 @@ is the standard encrypted one.
 - Stream lifecycle with an eight-stream request, body, response, and
   async-token slab carved from the startup allocation.
 - Partial DATA and trailers.
+- Route-level request-body streaming after completed HEADERS. DATA reaches the
+  sink without whole-body buffering; a paused stream retains a bounded suffix
+  and withholds stream credit, and trailer END_STREAM completes the sink. An
+  initial `expect: 100-continue` receives an interim 100 HEADERS block after
+  admission. Streaming route matching uses the inline 16 capture slots; larger
+  capture configurations use the buffered path.
 - Connection-level and stream-level flow control.
 - Async response tokens and drain-driven producers, exactly as on HTTP/1.1.
 - Known-length file responses through `Response.stream_file`, bounded by both

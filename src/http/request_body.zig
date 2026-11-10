@@ -11,7 +11,11 @@ pub const BodyBinding = struct {
     context: *anyopaque,
     readiness: BodyReadiness = .ready,
 };
-/// Logical byte limit and positive per-route, per-worker admission bound.
+/// Logical byte limit and positive per-session active sink bound.
+///
+/// HTTP/1 and TLS allow one active upload per connection; HTTP/2 bounds
+/// concurrent streams by this value; HTTP/3 allows one per stream. The fixed
+/// connection/stream slab remains the hard memory bound.
 pub const BodyLimits = struct { max_body_bytes: u64, max_active: u16 };
 /// Begins a request, returning independently owned sink state.
 pub const BodyBeginFn = *const fn (*anyopaque, *const StreamingRequest, BodyControl) anyerror!BodyBinding;
@@ -122,6 +126,28 @@ pub fn validate_progress(offered: usize, progress: BodyProgress) BodyStateError!
     if (progress.readiness == .ready and progress.consumed != offered) return error.InvalidBodyProgress;
 }
 
+/// Bounded middleware response headers carried from head admission to body end.
+pub const PendingHeaders = struct {
+    storage: [2048]u8 = undefined,
+    length: usize = 0,
+
+    pub fn capture(self: *PendingHeaders, response: *const Response) void {
+        const length = @min(response.pending_header_length, response.pending_headers.len);
+        @memcpy(self.storage[0..length], response.pending_headers[0..length]);
+        self.length = length;
+    }
+
+    pub fn apply(self: *const PendingHeaders, response: *Response) void {
+        if (self.length == 0) return;
+        @memcpy(response.pending_headers[0..self.length], self.storage[0..self.length]);
+        response.pending_header_length = self.length;
+    }
+
+    pub fn clear(self: *PendingHeaders) void {
+        self.length = 0;
+    }
+};
+
 /// Stable caller-owned lifecycle; effects and sink invocation stay in adapters.
 ///
 /// Arm only after admission is reserved. A failed begin releases that reservation
@@ -184,6 +210,21 @@ pub const BodyState = struct {
         if (total[1] != 0 or total[0] > self.limit) return error.BodyTooLarge;
         if (self.declared) |declared| if (total[0] > declared) return error.InvalidBodyLength;
         self.observed = total[0];
+    }
+
+    /// Counts an offered chunk when it contains new bytes and starts delivery.
+    ///
+    /// Retained bytes are offered again after a pause without being counted
+    /// twice. This is the single adapter entry point for new and replayed
+    /// payloads.
+    pub fn prepare_chunk(self: *BodyState, offered: usize) BodyStateError!void {
+        if (offered == 0) return error.InvalidBodyProgress;
+        const retained = self.observed - self.consumed;
+        if (@as(u64, offered) > retained) {
+            const added: usize = offered - @as(usize, @intCast(retained));
+            try self.observe(@as(u64, added));
+        }
+        try self.start_chunk(offered);
     }
 
     /// Borrows callback storage only for a nonempty, already observed prefix.

@@ -8,9 +8,9 @@
 
 ## Context
 
-Every live transport currently buffers request bodies before dispatch. Its
-Content-Length policy applies the buffered ceiling before routing, so a new
-handler alone cannot support a 100 MB upload. Response producers and async
+At decision time, every live transport buffered request bodies before
+dispatch. Its Content-Length policy applied the buffered ceiling before
+routing, so a new handler alone could not support a 100 MB upload. Response producers and async
 response tokens do not provide a request coroutine runtime.
 
 Choose the route-level sink recommended by the milestone plan. Keep framing
@@ -28,8 +28,10 @@ uploads are covered on plaintext and TLS with a 16 KiB buffered cap. Every
 transport supports pause/resume; H2 withholds stream credit and H3 stops
 reading, both retaining a bounded suffix. Live H2 and H3 100 MB socket-pair
 uploads pass; the HTTP/3 compliance client measured RSS growth under 1 MiB
-against a 64 MiB bound. See the
-[2.2.0 release record](../releases/2.2.0.md#limits-and-dated-restoration-criteria).
+against a 64 MiB bound. All four transports send `100 Continue` after
+streaming admission. H2 streaming route matching uses the inline 16 capture
+slots, so larger capture configurations use the buffered path. See the
+[deliberate boundaries](../roadmap.md#deliberate-boundaries).
 
 ## Compatibility revision, 2026-10-26
 
@@ -41,21 +43,16 @@ metadata-only StreamingRequest with its own explicit refusal contract. Do not
 alias the new error into an unrelated old parse error or widen legacy helpers.
 The route-level lifetime, framing, flow-control and capacity decisions remain.
 
-## Public contract
+## Public contract (2.2.0)
 
-Add ServerConfig.stream_request_bodies, default false. Enabling it reserves
-bounded startup storage; registration cannot resize a running slab.
-Setup eligibility is limited to Linux, macOS, and Windows. Enabled setup on
-other targets returns the existing InvalidTransportConfiguration error before
-allocation or owner binding; community BSD activation requires worker wakeups
-and native validation first. The user confirmed this scope on 2026-10-27.
-Eligibility does not establish runtime support, and the Windows release-job
-gate remains in force. Disabled configurations, generic loops, pure decoders,
-body registries, and BodyState retain their existing contracts. The
-isolated platform guard is verified; production transport integration is
-deferred to 2.3.0 and recorded in the
-[2.2.0 release record](../releases/2.2.0.md#limits-and-dated-restoration-criteria).
-route_body returns BodyStreamingDisabled when the feature was not enabled.
+The shipped opt-in is route registration, not a `ServerConfig` switch.
+`App.stream(method, path, *const BodyRoute)`, `post_stream`, `put_stream`,
+`patch_stream`, and `Router.route_stream` register a borrowed route for the
+application lifetime. There is no `ServerConfig.stream_request_bodies` flag,
+no `route_body` entry point, and no `BodyStreamingDisabled` path. The route
+registration is the opt-in; a transport that cannot stream returns 501 for that
+route. Buffered `Request.body` remains the default and source-compatible path.
+
 It borrows an immutable BodyRoute whose lifetime covers the App:
 
 ```zig
@@ -102,11 +99,12 @@ mutation. Query parsing and case-sensitive capture lookup remain available.
 Use HeadersView directly rather than a second broad header facade.
 
 The caller supplies per-request state through begin's returned context. The
-library never allocates it. max_active is a required positive admission bound
-per route, per worker; existing connection/stream slots also bound concurrency.
-Store counters within the existing router-record capacity. Refuse admission
-before begin when its quota is full, with 503. A declared or observed logical
-body above max_body_bytes receives 413 before accepting the offending bytes.
+library never allocates it. max_active is a required positive per-session
+admission bound: HTTP/1 and TLS allow one active upload per connection, HTTP/2
+bounds concurrent streams on one connection by this value, and HTTP/3 allows
+one per stream. The fixed connection/stream slab remains the hard memory
+bound. A declared or observed logical body above max_body_bytes receives 413
+before accepting the offending bytes.
 A zero logical limit permits only an empty body. Invalid registration limits
 return InvalidBodyLimits. Check counters and logical arithmetic for overflow.
 
@@ -196,10 +194,11 @@ never merge into initial headers and end has no trailer view.
 ## Middleware and early responses
 
 BodyRoute defaults to reject_legacy. With any registered global middleware,
-route_body refuses that policy with BodyMiddlewareIncompatible before route
-mutation. Do not add an error to old App.use/Router.use/listen/run to police
-later registration. Admission rechecks the entire global chain: an incompatible
-late use gets bounded 503 before callbacks, quota, begin or 100 Continue.
+the transport refuses admission before begin rather than silently invoking it:
+HTTP/1 returns 500, HTTP/2 resets with REFUSED_STREAM, and HTTP/3 returns 501.
+Registration itself does not fail, so existing App.use/Router.use signatures
+stay unchanged. Explicit .headers_only certifies every current and future
+global as metadata-only; admission invokes those globals once before begin.
 
 Explicit headers_only certifies every current/future global uses metadata and
 response operations only. Invoke all globals once in their existing order;
@@ -284,62 +283,27 @@ Pause socket reads and TLS plaintext extraction while preserving BIO contents.
 Resume consumes retained plaintext first. An upload pause retains idle-timeout
 coverage; do not inherit dispatch_suspended's current timer cancellation.
 
-## HTTP/2 storage and credit
+## HTTP/2 storage and credit (2.2.0)
 
-Continue parsing connection frames while a sink is paused. Queue unaccepted
-DATA in connection-owned 1024-byte blocks with per-stream head/tail indices
-and a free list. Do not allocate a complete receive window per stream.
+The implementation uses the per-stream `body_stride` slab as the bounded
+suffix. While a sink is paused, the session retains at most one stride of
+unaccepted DATA for that stream and withholds the stream WINDOW_UPDATE credit;
+connection credit is refunded immediately so sibling streams can progress.
+The earlier 1024-byte block-pool design was not adopted: the per-stream slab
+already bounds each stream, and the connection footprint stays fixed. A paused
+stream therefore resets with ENHANCE_YOUR_CALM if a peer sends more than the
+retained stride instead of growing storage. Control frames and outbound
+responses continue during a pause.
 
-Hold DATA credit, including consumed head prefixes, until each occupied block
-is completely reclaimed. Refund padding immediately because it uses no retained
-payload storage. The required pool payload bound is:
+## HTTP/3 and informational headers (2.2.0)
 
-```text
-round_up(65535 + max_streams * 1023, 1024)
-```
-
-At eight streams this is 73,728 bytes, plus 432 planned bytes for three u16
-metadata fields per block, before owner state/alignment. Only the partial tail
-of each queued stream adds unaccounted fragmentation; consumed head bytes stay
-uncredited. At most 1023 consumed bytes per queued stream remain held this way.
-Allocate this pool only when streaming is enabled; measure both enabled and
-disabled layouts on Linux, macOS, and Windows.
-
-The pool is independent of max_h2_body_size/body_stride, which retains its
-positive buffered request/response role. Streaming bypasses complete-body
-ceilings after admission and never requires a 1024-byte or 65,535-byte stride.
-Validate the enabled pool at startup. A low-level session with missing/undersized
-storage returns BodyIngressUnavailable/503 before begin rather than accepting
-and later overflowing on its first legal DATA frame.
-
-Keep checked pending connection/stream WINDOW_UPDATE counters. Validate before
-output and update actual receive windows only after the whole frame is accepted.
-WouldBlock preserves the intent without granting credit. Reset reclaims queued
-storage, restores connection credit once, and drops obsolete stream intents.
-
-Control frames and outbound responses continue during a pause. Exhausting the
-shared connection receive window can block all inbound DATA; unconditional
-sibling upload progress is not promised. This follows
-[RFC 9113 flow control](https://www.rfc-editor.org/rfc/rfc9113.html#section-5.2.2).
-
-## HTTP/3 and informational headers
-
-Move buffered body-cap policy after routing while retaining structural header
-validation. Reuse a bounded ingress window and pause only that stream with
-wantread(0). Trailer decoding must not overwrite initial overflow-header arrays.
-max_h3_body_size supplies this reusable window; one byte suffices, independently
-of the logical route limit. Normal configured engines already require positive
-capacity. A malformed low-level zero-window streaming fixture refuses before
-begin with BodyIngressUnavailable/503; preserve the buffered zero-window probe.
-
-Pinned lsquic supports successive IETF header blocks after the previous block
-is sent; a pending block can refuse another. Implement private bounded interim
-paths: HTTP/1's literal, HTTP/2 status-100 HEADERS without END_STREAM, and HTTP/3
-status 100 without write shutdown and with retry state. Do not consume final
-pending metadata or mark final headers sent. Admit before 100 Continue; do not
-wait for content to decide whether to send it. Source inspection is provisional
-until real-client validation, following
-[RFC 9110 Expect](https://www.rfc-editor.org/rfc/rfc9110.html#section-10.1.1).
+The stream reuses its bounded `body_storage` as the ingress scratch and retains
+the unaccepted suffix in the same slab. A pause calls `wantread(0)`; resume
+retries the suffix before reading new bytes. The earlier `max_h3_body_size`
+window and interim 100-continue design were not needed for the shipped H3
+implementation. The buffered body-cap check now runs after route selection so a
+streaming route can accept a declared body larger than the per-stream slab;
+buffered routes still return 413 before reading.
 
 ## Implementation and acceptance
 
@@ -357,7 +321,8 @@ decoder and lifecycle/progress invariants common; adapters own I/O and storage.
 Do not introduce a generic continuation framework.
 
 Prove 100,000,000 logical bytes on every claimed transport using bounded input
-and exact byte/hash checks. Cover split framing, chunk CRLF/extensions, trailers,
+and exact byte/hash checks. The 2.2.0 suite contains live H1/TLS, HTTP/2, and
+HTTP/3 100 MB proofs; the H3 compliance artifact also bounds RSS growth. Cover split framing, chunk CRLF/extensions, trailers,
 100 Continue, metadata retention, limits/admission, pause/resume at EOF, errors,
 resets/shutdown, callback cancellation, stale tokens, and no library allocation
 after startup. Preserve existing buffered suites. Record exact source, capacities,

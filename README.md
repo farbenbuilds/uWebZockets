@@ -279,7 +279,9 @@ chunk writer for arbitrarily large JSON without allocation, and
 the transport drains, so response size never depends on the write-queue size.
 `Response.end_gzip` compresses from a per-worker codec pool enabled with
 `with_http_compression(true)`; the codec and bounded scratch are allocated at
-startup, never on a request. Pipelined HTTP/1.1 responses and consecutive
+startup, never on a request. `App.post_stream`, `put_stream`, and
+`patch_stream` deliver request-body chunks to a bounded `BodySink` on HTTP/1.1,
+TLS, HTTP/2, and HTTP/3 without materializing the complete body. Pipelined HTTP/1.1 responses and consecutive
 WebSocket frames coalesce into the bounded write ring before one flush.
 `errors.Problem` renders typed JSON error documents, `status.line` maps codes
 to canonical status lines, `cache.etag` and `cache.is_not_modified` implement
