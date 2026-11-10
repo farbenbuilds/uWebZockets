@@ -13,7 +13,14 @@
 | ls-hpack | fda48e02491d865cce00612be8cc10c2622b8e55 | MIT |
 | libdeflate | 1.26 | MIT |
 | zlib | 1.3.2 | zlib License |
-| h1spec | 999ba9e8f318b1c0ebbff1278b98bc5833f1af18 (farbenbuilds fork, base f0a5650a20c575fbea0f7179a3a9cfa50f20ba6e) | MIT |
+| h1spec | 999ba9e8f318b1c0ebbff1278b98bc5833f1af18 (farbenbuilds fork, base f0a5650a20c575fbea0f7179a3a9cfa50f20ba6e) | Unverified; maintainer confirmation required |
+
+The pinned h1spec compliance source contains no license notice. Its previous
+MIT attribution is unverified. h1spec is a test-only submodule: it is not
+compiled into `libuWebZockets`, linked into a consumer artifact, or included in
+the package `.paths`. The maintainer must confirm attribution before
+redistributing the submodule itself; the release checklist in [TODO.md](TODO.md#82-re-declared-to-230) carries the
+open item.
 
 The zslay, libxev, and zlib license texts are in the licenses directory, and
 the C and C++ license texts are in `licenses/vendor`. Sources are selected by

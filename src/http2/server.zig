@@ -18,6 +18,12 @@ pub const ErrorCode = enum(u32) {
     enhance_your_calm = 0xb,
 };
 
+/// One accepted reset intent retained independently of reusable stream slots.
+const PendingReset = struct {
+    stream_id: u32,
+    code: ErrorCode,
+};
+
 /// Writes frame parts; must consume or copy every part before returning.
 pub const WriteFn = *const fn (*anyopaque, []const []const u8) anyerror!void;
 /// Delivers a session-owned request for one stream.
@@ -26,15 +32,24 @@ pub const RequestFn = *const fn (*anyopaque, *Request, u32) anyerror!void;
 pub const WsDataFn = *const fn (*anyopaque, u32, []u8, bool) bool;
 /// Reports that one stream slot closed with its HTTP/2 error code.
 pub const StreamClosedFn = *const fn (*anyopaque, u32, u16) void;
+/// Classification of a completed request head before body collection.
+pub const RequestHeadDisposition = enum { buffered, streaming, closed };
+/// Offers a completed request head before body collection.
+pub const RequestHeadFn = *const fn (*anyopaque, *Request, u32, ?u64) anyerror!RequestHeadDisposition;
+/// Delivers one DATA event to a streaming sink and reports accepted prefix/readiness.
+pub const BodyChunkFn = *const fn (*anyopaque, u32, []const u8, bool) anyerror!BodyChunkResult;
+/// Accepted prefix, pause state, and terminal-closed flag for one DATA event.
+pub const BodyChunkResult = struct { consumed: usize, paused: bool, closed: bool = false };
 
 /// Synchronous transport and request callbacks used by a server session.
 ///
 /// `write_fn` must consume or copy every part before returning because frame
 /// headers use stack storage. `error.WouldBlock` must consume no bytes so the
 /// session can retry the frame. Stream DATA retries through the pending
-/// response state, but control frames (SETTINGS/PING acknowledgements,
-/// RST_STREAM, GOAWAY) are not buffered: a `WouldBlock` while sending one
-/// closes the connection instead of growing an unbounded control queue.
+/// response state. RST_STREAM intents use a FIFO bounded by `max_streams`;
+/// exhaustion returns `PendingResetCapacityReached` before closing a new stream.
+/// Other control frames (SETTINGS/PING acknowledgements, GOAWAY) are unbuffered:
+/// a `WouldBlock` while sending one still closes the connection.
 /// `request_fn` receives a session-owned request that stays valid until the
 /// corresponding stream slot is released.
 pub const Callbacks = struct {
@@ -43,6 +58,8 @@ pub const Callbacks = struct {
     request_fn: RequestFn,
     ws_data_fn: ?WsDataFn = null,
     stream_closed_fn: ?StreamClosedFn = null,
+    request_head_fn: ?RequestHeadFn = null,
+    body_chunk_fn: ?BodyChunkFn = null,
     /// Largest nonempty frame payload that can fit an otherwise empty transport.
     max_frame_payload: usize = connection_module.maximum_frame_size,
 };
@@ -85,6 +102,8 @@ pub fn server_session(comptime max_streams: usize) type {
             decoded_header_count: usize = 64,
             /// HPACK dynamic table bytes; zero disables dynamic indexing.
             dynamic_table_size: usize = 4096,
+            /// Route-capture slots per stream beyond the inline arrays.
+            route_param_extra_capacity: usize = 0,
         };
 
         /// Borrowed typed storage for one session.
@@ -127,6 +146,10 @@ pub fn server_session(comptime max_streams: usize) type {
             header_extra_names: [][]const u8,
             /// Flat per-stream header-overflow value pointer slots.
             header_extra_values: [][]const u8,
+            /// Flat per-stream route-capture name pointer slots.
+            route_param_names: [][]const u8,
+            /// Flat per-stream route-capture value pointer slots.
+            route_param_values: [][]const u8,
             /// Byte distance between consecutive request-header slabs.
             request_header_stride: usize,
             /// Byte distance between consecutive body slabs.
@@ -171,6 +194,8 @@ pub fn server_session(comptime max_streams: usize) type {
             lowercase_names: Span,
             header_extra_names: Span,
             header_extra_values: Span,
+            route_param_names: Span,
+            route_param_values: Span,
             total: usize,
         };
 
@@ -227,6 +252,11 @@ pub fn server_session(comptime max_streams: usize) type {
                 usize,
                 max_streams,
                 extra_capacity,
+            ) catch return error.InvalidHttp2Capacity;
+            const route_param_slot_count = std.math.mul(
+                usize,
+                max_streams,
+                capacities.route_param_extra_capacity,
             ) catch return error.InvalidHttp2Capacity;
 
             var cursor: usize = 0;
@@ -299,6 +329,18 @@ pub fn server_session(comptime max_streams: usize) type {
             plan.header_extra_values = try reserve(
                 &cursor,
                 extra_slot_count,
+                @sizeOf([]const u8),
+                @alignOf([]const u8),
+            );
+            plan.route_param_names = try reserve(
+                &cursor,
+                route_param_slot_count,
+                @sizeOf([]const u8),
+                @alignOf([]const u8),
+            );
+            plan.route_param_values = try reserve(
+                &cursor,
+                route_param_slot_count,
                 @sizeOf([]const u8),
                 @alignOf([]const u8),
             );
@@ -396,6 +438,18 @@ pub fn server_session(comptime max_streams: usize) type {
                     prefix,
                     plan.header_extra_values,
                 ),
+                .route_param_names = carved_slice(
+                    []const u8,
+                    region,
+                    prefix,
+                    plan.route_param_names,
+                ),
+                .route_param_values = carved_slice(
+                    []const u8,
+                    region,
+                    prefix,
+                    plan.route_param_values,
+                ),
                 .request_header_stride = capacities.request_header_size,
                 .body_stride = capacities.body_size,
                 .response_header_stride = capacities.response_header_size,
@@ -430,6 +484,8 @@ pub fn server_session(comptime max_streams: usize) type {
                 lowercase_names: [capacities.response_header_size]u8 = undefined,
                 header_extra_names: [extra_slot_count][]const u8 = undefined,
                 header_extra_values: [extra_slot_count][]const u8 = undefined,
+                route_param_names: [max_streams * capacities.route_param_extra_capacity][]const u8 = undefined,
+                route_param_values: [max_streams * capacities.route_param_extra_capacity][]const u8 = undefined,
 
                 comptime {
                     // `storage_bytes` already rejected bad capacities at
@@ -458,6 +514,8 @@ pub fn server_session(comptime max_streams: usize) type {
                         .lowercase_names = &self.lowercase_names,
                         .header_extra_names = &self.header_extra_names,
                         .header_extra_values = &self.header_extra_values,
+                        .route_param_names = &self.route_param_names,
+                        .route_param_values = &self.route_param_values,
                         .request_header_stride = capacities.request_header_size,
                         .body_stride = capacities.body_size,
                         .response_header_stride = capacities.response_header_size,
@@ -491,6 +549,8 @@ pub fn server_session(comptime max_streams: usize) type {
         lowercase_names: []u8 = &.{},
         header_extra_names: [][]const u8 = &.{},
         header_extra_values: [][]const u8 = &.{},
+        route_param_names: [][]const u8 = &.{},
+        route_param_values: [][]const u8 = &.{},
         request_header_stride: usize = 0,
         body_stride: usize = 0,
         response_header_stride: usize = 0,
@@ -506,6 +566,12 @@ pub fn server_session(comptime max_streams: usize) type {
         pending_body_offsets: [max_streams]usize = .{0} ** max_streams,
         expected_content_lengths: [max_streams]?usize = .{null} ** max_streams,
         headers_ready: [max_streams]bool = .{false} ** max_streams,
+        streaming: [max_streams]bool = .{false} ** max_streams,
+        streaming_middleware_header_lengths: [max_streams]u16 = .{0} ** max_streams,
+        streaming_paused: [max_streams]bool = .{false} ** max_streams,
+        streaming_end_pending: [max_streams]bool = .{false} ** max_streams,
+        streaming_pending_lengths: [max_streams]usize = .{0} ** max_streams,
+        streaming_pending_credits: [max_streams]u32 = .{0} ** max_streams,
         // Tracks whether the initial header block was seen, so a second HEADERS
         // section is treated as trailers instead of a fresh request.
         initial_seen: [max_streams]bool = .{false} ** max_streams,
@@ -516,6 +582,9 @@ pub fn server_session(comptime max_streams: usize) type {
         pending_response_active: [max_streams]bool = .{false} ** max_streams,
         pending_stream_end: [max_streams]bool = .{false} ** max_streams,
         stream_write_retry_required: [max_streams]bool = .{false} ** max_streams,
+        pending_resets: [max_streams]PendingReset = undefined,
+        pending_reset_head: usize = 0,
+        pending_reset_count: usize = 0,
 
         header_block_length: usize = 0,
         header_stream_index: ?u16 = null,
@@ -550,6 +619,8 @@ pub fn server_session(comptime max_streams: usize) type {
                 .lowercase_names = storage.lowercase_names,
                 .header_extra_names = storage.header_extra_names,
                 .header_extra_values = storage.header_extra_values,
+                .route_param_names = storage.route_param_names,
+                .route_param_values = storage.route_param_values,
                 .request_header_stride = storage.request_header_stride,
                 .body_stride = storage.body_stride,
                 .response_header_stride = storage.response_header_stride,
@@ -586,6 +657,12 @@ pub fn server_session(comptime max_streams: usize) type {
             if (storage.header_extra_names.len != storage.header_extra_values.len) {
                 return error.InvalidSessionStorage;
             }
+            if (storage.route_param_names.len % max_streams != 0) {
+                return error.InvalidSessionStorage;
+            }
+            if (storage.route_param_names.len != storage.route_param_values.len) {
+                return error.InvalidSessionStorage;
+            }
             if (storage.decoded_headers.len == 0) return error.InvalidSessionStorage;
             if (storage.decoded_header_bytes.len == 0) return error.InvalidSessionStorage;
             if (storage.header_block.len == 0) return error.InvalidSessionStorage;
@@ -616,6 +693,8 @@ pub fn server_session(comptime max_streams: usize) type {
             self.frame_target_length = 9;
             self.settings_sent = false;
             self.closed = false;
+            self.pending_reset_head = 0;
+            self.pending_reset_count = 0;
             @memset(&self.request_storage_lengths, 0);
             @memset(&self.body_lengths, 0);
             self.request_body_limit = self.body_stride;
@@ -624,6 +703,13 @@ pub fn server_session(comptime max_streams: usize) type {
             @memset(&self.pending_body_offsets, 0);
             @memset(&self.expected_content_lengths, null);
             @memset(&self.headers_ready, false);
+            @memset(&self.streaming, false);
+            @memset(&self.pending_header_lengths, 0);
+            @memset(&self.streaming_middleware_header_lengths, 0);
+            @memset(&self.streaming_paused, false);
+            @memset(&self.streaming_end_pending, false);
+            @memset(&self.streaming_pending_lengths, 0);
+            @memset(&self.streaming_pending_credits, 0);
             @memset(&self.initial_seen, false);
             @memset(&self.dispatched, false);
             @memset(&self.callback_active, false);
@@ -748,6 +834,7 @@ pub fn server_session(comptime max_streams: usize) type {
 
         /// Retries every buffered response after transport capacity becomes available.
         pub fn flush_pending(self: *Self, callbacks: Callbacks) !void {
+            if (!try self.flush_pending_resets(callbacks)) return;
             for (0..max_streams) |index| {
                 if (!self.pending_response_active[index] and
                     !self.pending_stream_end[index]) continue;
@@ -790,6 +877,57 @@ pub fn server_session(comptime max_streams: usize) type {
             try self.send_headers(stream_id, block, false, callbacks);
             self.response_started[index] = true;
             self.stream_write_retry_required[index] = false;
+        }
+
+        /// Commits known-length framing atomically; HEAD and empty files end in HEADERS.
+        pub fn begin_file_response(
+            self: *Self,
+            stream_id: u32,
+            status: []const u8,
+            raw_headers: []const u8,
+            length: u64,
+            callbacks: Callbacks,
+        ) !void {
+            const index = self.connection.streams.find(stream_id) orelse
+                return error.StreamClosed;
+            if (self.response_started[index]) return error.ResponseAlreadyStarted;
+            switch (self.connection.streams.states[index]) {
+                .open, .half_closed_remote => {},
+                else => return error.StreamClosed,
+            }
+            const code = parse_status(status) orelse return error.InvalidStatus;
+            if (status_forbids_body(code)) return error.BodyNotAllowed;
+            const method = self.requests[index].method;
+            if (code >= 200 and code < 300 and std.mem.eql(u8, method, "CONNECT")) {
+                return error.BodyNotAllowed;
+            }
+            const terminal = length == 0 or std.mem.eql(u8, method, "HEAD");
+            if (!terminal and self.data_frame_capacity(callbacks) == 0) {
+                return error.ResponseDataTooLarge;
+            }
+            var content_length_buffer: [24]u8 = undefined;
+            const field_count = try response_fields(
+                raw_headers,
+                length,
+                true,
+                self.response_fields,
+                self.lowercase_names,
+                &content_length_buffer,
+            );
+            const block = try hpack.encode_response(
+                code,
+                self.response_fields[0..field_count],
+                self.response_encode,
+            );
+            try self.send_headers(stream_id, block, terminal, callbacks);
+            self.response_started[index] = true;
+            self.stream_write_retry_required[index] = false;
+            if (terminal) {
+                // The terminal HEADERS are committed; the only finish_local
+                // failure is StreamClosed, so the caller's descriptor
+                // ownership stays unambiguous and the stream is already gone.
+                self.finish_local(index, callbacks) catch {};
+            }
         }
 
         /// Writes one atomic streaming DATA frame within transport and flow credit.
@@ -1118,6 +1256,16 @@ pub fn server_session(comptime max_streams: usize) type {
                     try self.send_reset(stream_id, .protocol_error, callbacks);
                     return;
                 }
+                if (self.streaming[index]) {
+                    const stream_id = self.connection.streams.stream_ids[index];
+                    const chunk_fn = callbacks.body_chunk_fn orelse {
+                        try self.send_reset(stream_id, .internal_error, callbacks);
+                        return;
+                    };
+                    _ = try chunk_fn(callbacks.context, stream_id, "", true);
+                    try self.finish_remote(index, stream_id, callbacks);
+                    return;
+                }
                 try self.dispatch(index, callbacks);
                 const trailer_stream_id = self.connection.streams.stream_ids[index];
                 if (trailer_stream_id != 0) {
@@ -1197,6 +1345,47 @@ pub fn server_session(comptime max_streams: usize) type {
             };
             self.headers_ready[index] = true;
             self.finish_header_block();
+            if (decoded.protocol == null) {
+                if (callbacks.request_head_fn) |head_fn| {
+                    const stream_id = self.connection.streams.stream_ids[index];
+                    if (stream_id != 0) {
+                        switch (try head_fn(
+                            callbacks.context,
+                            &self.requests[index],
+                            stream_id,
+                            self.expected_content_lengths[index],
+                        )) {
+                            .buffered => {},
+                            .closed => return,
+                            .streaming => {
+                                self.streaming[index] = true;
+                                if (end_stream) {
+                                    const chunk_fn = callbacks.body_chunk_fn orelse {
+                                        try self.send_reset(stream_id, .internal_error, callbacks);
+                                        return;
+                                    };
+                                    const result = chunk_fn(callbacks.context, stream_id, "", true) catch {
+                                        if (self.connection.streams.find(stream_id) != null) {
+                                            self.send_reset(stream_id, .enhance_your_calm, callbacks) catch {};
+                                        }
+                                        return;
+                                    };
+                                    if (result.closed) return;
+                                    try self.finish_remote(index, stream_id, callbacks);
+                                }
+                                return;
+                            },
+                        }
+                    }
+                }
+            }
+            if (self.expected_content_lengths[index]) |expected| {
+                if (expected > self.request_body_limit) {
+                    const stream_id = self.connection.streams.stream_ids[index];
+                    try self.send_reset(stream_id, .enhance_your_calm, callbacks);
+                    return;
+                }
+            }
             if (end_stream or decoded.protocol != null) try self.dispatch(index, callbacks);
             if (end_stream) {
                 const stream_id = self.connection.streams.stream_ids[index];
@@ -1251,7 +1440,13 @@ pub fn server_session(comptime max_streams: usize) type {
             const increment = try self.connection.restore_receive_credit(index, flow_length);
             if (increment != 0) {
                 try self.send_window_update(0, increment, callbacks);
-                try self.send_window_update(stream_id, increment, callbacks);
+                if (self.streaming[index]) {
+                    const pending = self.streaming_pending_credits[index];
+                    self.streaming_pending_credits[index] = std.math.add(u32, pending, increment) catch
+                        return error.StreamWindowOverflow;
+                } else {
+                    try self.send_window_update(stream_id, increment, callbacks);
+                }
             }
             if (self.dispatched[index] and self.requests[index].protocol.len > 0) {
                 const ws_data_fn = callbacks.ws_data_fn orelse {
@@ -1271,6 +1466,53 @@ pub fn server_session(comptime max_streams: usize) type {
                 return;
             }
 
+            if (self.streaming[index]) {
+                const chunk_fn = callbacks.body_chunk_fn orelse {
+                    try self.send_reset(stream_id, .internal_error, callbacks);
+                    return;
+                };
+                if (self.streaming_paused[index]) {
+                    const pending = self.streaming_pending_lengths[index];
+                    if (event.bytes.len > self.body_stride - pending) {
+                        try self.send_reset(stream_id, .enhance_your_calm, callbacks);
+                        return;
+                    }
+                    @memcpy(self.body_bytes(index)[pending..][0..event.bytes.len], event.bytes);
+                    self.streaming_pending_lengths[index] = pending + event.bytes.len;
+                    if (event.end_stream) self.streaming_end_pending[index] = true;
+                    return;
+                }
+                const result = chunk_fn(callbacks.context, stream_id, event.bytes, event.end_stream) catch {
+                    if (self.connection.streams.find(stream_id) != null) {
+                        try self.send_reset(stream_id, .enhance_your_calm, callbacks);
+                    }
+                    return;
+                };
+                if (result.closed) return;
+                if (result.consumed > event.bytes.len) {
+                    try self.send_reset(stream_id, .enhance_your_calm, callbacks);
+                    return;
+                }
+                if (result.consumed < event.bytes.len) {
+                    const suffix = event.bytes[result.consumed..];
+                    if (suffix.len > self.body_stride) {
+                        try self.send_reset(stream_id, .enhance_your_calm, callbacks);
+                        return;
+                    }
+                    @memcpy(self.body_bytes(index)[0..suffix.len], suffix);
+                    self.streaming_pending_lengths[index] = suffix.len;
+                    self.streaming_paused[index] = true;
+                } else if (result.paused) {
+                    self.streaming_paused[index] = true;
+                }
+                if (self.streaming_paused[index]) {
+                    if (event.end_stream) self.streaming_end_pending[index] = true;
+                    return;
+                }
+                try self.flush_stream_credit(index, callbacks);
+                if (event.end_stream) try self.finish_remote(index, stream_id, callbacks);
+                return;
+            }
             if (self.body_lengths[index] > self.request_body_limit or
                 event.bytes.len > self.request_body_limit - self.body_lengths[index])
             {
@@ -1294,6 +1536,52 @@ pub fn server_session(comptime max_streams: usize) type {
             self.body_lengths[index] += event.bytes.len;
             if (event.end_stream) {
                 try self.dispatch(index, callbacks);
+                try self.finish_remote(index, stream_id, callbacks);
+            }
+        }
+
+        fn flush_stream_credit(self: *Self, index: u16, callbacks: Callbacks) !void {
+            const credit = self.streaming_pending_credits[index];
+            if (credit == 0) return;
+            const stream_id = self.connection.streams.stream_ids[index];
+            self.streaming_pending_credits[index] = 0;
+            if (stream_id != 0) try self.send_window_update(stream_id, credit, callbacks);
+        }
+
+        /// Retries retained DATA after an application pause.
+        pub fn resume_stream_body(self: *Self, stream_id: u32, callbacks: Callbacks) !void {
+            const index = self.connection.streams.find(stream_id) orelse return;
+            if (!self.streaming[index] or !self.streaming_paused[index]) return;
+            const chunk_fn = callbacks.body_chunk_fn orelse return error.StreamBodyUnavailable;
+            const pending = self.streaming_pending_lengths[index];
+            if (pending != 0) {
+                const bytes = self.body_bytes(index)[0..pending];
+                const result = chunk_fn(callbacks.context, stream_id, bytes, false) catch {
+                    self.streaming_paused[index] = false;
+                    self.streaming_pending_lengths[index] = 0;
+                    self.streaming_end_pending[index] = false;
+                    if (self.connection.streams.find(stream_id) != null) {
+                        self.send_reset(stream_id, .enhance_your_calm, callbacks) catch {};
+                    }
+                    return error.BodyDeliveryFailed;
+                };
+                if (result.closed) return;
+                if (result.consumed > pending) return error.InvalidBodyProgress;
+                if (result.consumed < pending) {
+                    const remaining = pending - result.consumed;
+                    std.mem.copyForwards(u8, self.body_bytes(index)[0..remaining], bytes[result.consumed..]);
+                    self.streaming_pending_lengths[index] = remaining;
+                    if (result.paused) return;
+                    return error.InvalidBodyProgress;
+                }
+                self.streaming_pending_lengths[index] = 0;
+                if (result.paused) return;
+            }
+            self.streaming_paused[index] = false;
+            try self.flush_stream_credit(index, callbacks);
+            if (self.streaming_end_pending[index]) {
+                self.streaming_end_pending[index] = false;
+                _ = try chunk_fn(callbacks.context, stream_id, "", true);
                 try self.finish_remote(index, stream_id, callbacks);
             }
         }
@@ -1332,11 +1620,21 @@ pub fn server_session(comptime max_streams: usize) type {
             const extra_start = @as(usize, index) * self.header_extra_capacity;
             self.requests[index].extra_header_names = self.header_extra_names[extra_start..][0..self.header_extra_capacity];
             self.requests[index].extra_header_values = self.header_extra_values[extra_start..][0..self.header_extra_capacity];
+            const route_capacity = self.route_param_names.len / max_streams;
+            const route_start = @as(usize, index) * route_capacity;
+            self.requests[index].extra_param_names = self.route_param_names[route_start..][0..route_capacity];
+            self.requests[index].extra_param_values = self.route_param_values[route_start..][0..route_capacity];
             self.request_storage_lengths[index] = 0;
             self.body_lengths[index] = 0;
             self.expected_content_lengths[index] = null;
             self.dispatched[index] = false;
             self.response_started[index] = false;
+            self.streaming[index] = false;
+            self.streaming_paused[index] = false;
+            self.streaming_end_pending[index] = false;
+            self.streaming_pending_lengths[index] = 0;
+            self.streaming_pending_credits[index] = 0;
+            self.streaming_middleware_header_lengths[index] = 0;
 
             self.requests[index].method = try self.copy_request_bytes(index, decoded.method);
             if (decoded.protocol) |protocol| {
@@ -1364,9 +1662,7 @@ pub fn server_session(comptime max_streams: usize) type {
                     if (self.expected_content_lengths[index] != null) {
                         return error.InvalidContentLength;
                     }
-                    const content_length = try parse_content_length(field.value);
-                    if (content_length > self.request_body_limit) return error.RequestBodyTooLarge;
-                    self.expected_content_lengths[index] = content_length;
+                    self.expected_content_lengths[index] = try parse_content_length(field.value);
                 }
             }
             if (has_host or decoded.authority == null) return;
@@ -1400,18 +1696,29 @@ pub fn server_session(comptime max_streams: usize) type {
 
         fn send_settings(self: *Self, callbacks: Callbacks) !void {
             if (self.settings_sent) return;
-            var payload: [30]u8 = undefined;
+            var payload: [36]u8 = undefined;
             write_setting(payload[0..6], 0x1, self.advertised_table_size());
             write_setting(payload[6..12], 0x2, 0);
             write_setting(payload[12..18], 0x3, @intCast(max_streams));
             write_setting(
                 payload[18..24],
+                0x4,
+                @intCast(@min(self.body_stride, 0x7fff_ffff)),
+            );
+            write_setting(
+                payload[24..30],
                 0x6,
                 @intCast(@min(self.request_header_stride, std.math.maxInt(u32))),
             );
-            write_setting(payload[24..30], 0x8, 1);
+            write_setting(payload[30..36], 0x8, 1);
             try self.send_frame(.settings, 0, 0, &payload, callbacks);
             self.settings_sent = true;
+        }
+
+        /// Sends an interim 100 response without committing final headers.
+        pub fn send_continue(self: *Self, stream_id: u32, callbacks: Callbacks) !void {
+            const block = try hpack.encode_response(100, &.{}, self.response_encode);
+            try self.send_headers(stream_id, block, false, callbacks);
         }
 
         fn send_headers(
@@ -1595,16 +1902,68 @@ pub fn server_session(comptime max_streams: usize) type {
         ) !void {
             // RST_STREAM on stream 0 is a connection error; refuse to emit it.
             if (stream_id == 0) return;
+            if (callbacks.max_frame_payload < 4) return error.ResetFrameTooLarge;
+            if (self.has_pending_reset(stream_id)) {
+                _ = try self.flush_pending_resets(callbacks);
+                return;
+            }
+            if (self.connection.was_locally_reset(stream_id)) return;
+            if (self.pending_reset_count == max_streams) {
+                _ = try self.flush_pending_resets(callbacks);
+                if (self.pending_reset_count == max_streams) return error.PendingResetCapacityReached;
+            }
+
+            // Run the close callback before queueing the reset. An H2 WebSocket
+            // close callback may still send a final frame on this stream; the
+            // reset must follow it, never precede it (RFC 9113 section 6.4).
+            var reset_by_callback = false;
             if (self.connection.streams.find(stream_id)) |index| {
                 self.notify_stream_closed(stream_id, index, callbacks);
+                reset_by_callback = self.connection.was_locally_reset(stream_id);
                 _ = self.connection.reset_local(index);
                 self.clear_stream(index);
             } else {
                 self.connection.record_local_reset(stream_id);
             }
-            var payload: [4]u8 = undefined;
-            std.mem.writeInt(u32, &payload, @intFromEnum(code), .big);
-            try self.send_frame(.rst_stream, 0, stream_id, &payload, callbacks);
+
+            // A close callback may have reset this stream itself. Retain one
+            // reset intent, not a duplicate frame after the callback.
+            if (reset_by_callback) {
+                _ = try self.flush_pending_resets(callbacks);
+                return;
+            }
+
+            const tail = (self.pending_reset_head + self.pending_reset_count) % max_streams;
+            self.pending_resets[tail] = .{ .stream_id = stream_id, .code = code };
+            self.pending_reset_count += 1;
+            _ = try self.flush_pending_resets(callbacks);
+        }
+
+        fn has_pending_reset(self: *const Self, stream_id: u32) bool {
+            for (0..self.pending_reset_count) |offset| {
+                const index = (self.pending_reset_head + offset) % max_streams;
+                if (self.pending_resets[index].stream_id == stream_id) return true;
+            }
+            return false;
+        }
+
+        /// A reset leaves the FIFO only after the transport accepts every byte.
+        fn flush_pending_resets(self: *Self, callbacks: Callbacks) anyerror!bool {
+            if (self.pending_reset_count != 0 and callbacks.max_frame_payload < 4) {
+                return error.ResetFrameTooLarge;
+            }
+            while (self.pending_reset_count != 0) {
+                const pending = self.pending_resets[self.pending_reset_head];
+                var payload: [4]u8 = undefined;
+                std.mem.writeInt(u32, &payload, @intFromEnum(pending.code), .big);
+                self.send_frame(.rst_stream, 0, pending.stream_id, &payload, callbacks) catch |err| {
+                    if (err == error.WouldBlock) return false;
+                    return err;
+                };
+                self.pending_reset_head = (self.pending_reset_head + 1) % max_streams;
+                self.pending_reset_count -= 1;
+            }
+            return true;
         }
 
         fn send_goaway(self: *Self, code: ErrorCode, callbacks: Callbacks) !void {
@@ -1668,7 +2027,8 @@ pub fn server_session(comptime max_streams: usize) type {
             payload: []const u8,
             callbacks: Callbacks,
         ) !void {
-            _ = self;
+            if ((frame_type == .headers or frame_type == .data) and
+                !try self.flush_pending_resets(callbacks)) return error.WouldBlock;
             var frame_header: [9]u8 = undefined;
             try (connection_module.FrameHeader{
                 .payload_length = @intCast(payload.len),
@@ -1677,6 +2037,24 @@ pub fn server_session(comptime max_streams: usize) type {
                 .stream_id = stream_id,
             }).encode(&frame_header);
             try callbacks.write_fn(callbacks.context, &.{ &frame_header, payload });
+        }
+
+        /// Stores middleware response headers for one stream until body end.
+        pub fn stash_stream_headers(self: *Self, stream_id: u32, headers: []const u8) void {
+            const index = self.connection.streams.find(stream_id) orelse return;
+            if (headers.len > self.response_header_stride) return;
+            @memcpy(self.response_header_bytes(index)[0..headers.len], headers);
+            self.streaming_middleware_header_lengths[index] = @intCast(headers.len);
+        }
+
+        /// Copies stashed middleware response headers into `output`.
+        pub fn take_stream_headers(self: *Self, index: u16, output: []u8) usize {
+            if (index >= max_streams) return 0;
+            const length = self.streaming_middleware_header_lengths[index];
+            if (length == 0 or length > output.len) return 0;
+            @memcpy(output[0..length], self.response_header_bytes(index)[0..length]);
+            self.streaming_middleware_header_lengths[index] = 0;
+            return length;
         }
 
         fn clear_stream(self: *Self, index: u16) void {
@@ -1690,6 +2068,12 @@ pub fn server_session(comptime max_streams: usize) type {
             self.dispatched[index] = false;
             self.callback_active[index] = false;
             self.response_started[index] = false;
+            self.streaming[index] = false;
+            self.streaming_middleware_header_lengths[index] = 0;
+            self.streaming_paused[index] = false;
+            self.streaming_end_pending[index] = false;
+            self.streaming_pending_lengths[index] = 0;
+            self.streaming_pending_credits[index] = 0;
             self.stream_write_retry_required[index] = false;
             self.clear_pending_response(index);
             if (self.header_stream_index == index) {
@@ -1784,7 +2168,7 @@ fn parse_content_length(value: []const u8) !usize {
 
 fn response_fields(
     raw_headers: []const u8,
-    body_length: usize,
+    body_length: u64,
     include_content_length: bool,
     fields: []hpack.Header,
     lowercase_names: []u8,
@@ -1821,7 +2205,11 @@ fn response_fields(
         const value = std.mem.trim(u8, line[colon + 1 ..], " \t");
         if (std.mem.eql(u8, name, "content-length")) {
             if (has_content_length or !include_content_length) return error.InvalidHeaders;
-            const declared_length = parse_content_length(value) catch
+            if (value.len == 0) return error.InvalidHeaders;
+            for (value) |byte| {
+                if (!std.ascii.isDigit(byte)) return error.InvalidHeaders;
+            }
+            const declared_length = std.fmt.parseUnsigned(u64, value, 10) catch
                 return error.InvalidHeaders;
             if (declared_length != body_length) return error.InvalidHeaders;
             has_content_length = true;

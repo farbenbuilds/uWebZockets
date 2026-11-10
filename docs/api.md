@@ -9,6 +9,7 @@ map; each linked protocol document has the wire-level detail.
 - [websocket.md](websocket.md) — RFC 6455, compression, pub/sub
 - [json_rpc.md](json_rpc.md) — JSON-RPC 2.0
 - [client.md](client.md) — outbound HTTP/1.1 client
+- [multipart.md](multipart.md) — bounded incremental multipart events and acknowledgement
 - [memory_model.md](memory_model.md) — capacities, slab layout, backpressure
 - [deployment.md](deployment.md) — production checklist
 
@@ -96,10 +97,21 @@ _ = try app.any("/health", health);
 | `route_context` / `get_context` | `fn (*anyopaque, *Request, *Response) void` | Explicit caller-owned state |
 | `route_async` / `get_async` | `fn (*Request, AsyncResponse) void` | Work completed later |
 | `route_async_context` / `get_async_context` | `fn (*anyopaque, *Request, AsyncResponse) void` | Deferred work with state |
+| `post_stream` / `put_stream` / `patch_stream` | `BodyRoute` sink callbacks | Request-body streaming on H1/TLS/H2/H3 |
 
 Path patterns: exact segments stay on the radix fast path, `:name` captures one
 nonempty segment, and a terminal `*name` captures the remainder. Static routes
 win. Malformed patterns fail registration rather than matching ambiguously.
+
+A streaming route borrows a `BodyRoute` for the application lifetime and uses
+`begin`/`chunk`/`end`/`cancel` callbacks. `begin` returns a per-request
+`BodyBinding`; its context is passed to every later callback. `BodyControl`
+pauses and resumes delivery. `StreamingRequest.text()` and
+`bytes()` are intentionally empty metadata views; consume body bytes through
+`chunk` or use the buffered `Request` API on a non-streaming route. `middleware_policy = .headers_only`
+authorizes global middleware that does not read the body. H2 retains a bounded
+DATA suffix and withholds stream credit while paused; H3 stops reading and
+retains the suffix in its per-stream slab.
 
 `trace` is opt-in: the library does not register a route or synthesize the
 RFC 9110 echo response. A handler that reflects the request must redact
@@ -127,16 +139,28 @@ middleware: `Cors`, `SecurityHeaders`, `Auth`, and `RateLimit`. See
 
 ## Response
 
+Request body streaming has an accepted [design contract](adr/0008-request-body-streaming.md).
+`App.post_stream`, `put_stream`, and `patch_stream` bind a `BodyRoute` sink on
+HTTP/1.1, TLS HTTP/1.1, HTTP/2, and HTTP/3; the sink receives chunks as they
+arrive and uses `BodyControl` to pause/resume on every transport. H2 withholds
+stream credit and retains a bounded suffix; H3 stops reading and retains the
+bounded suffix. Live 100 MB uploads pass on plaintext, TLS, HTTP/2, and HTTP/3
+socket pairs. See the
+[deliberate boundaries](roadmap.md#deliberate-boundaries).
+
 | Group | API |
 | --- | --- |
 | Simple bodies | `res.text`, `res.html`, `res.bytes`, `res.json`, `res.json_buf` |
 | Streaming JSON | `res.begin_json()` |
 | Chunked output | `begin_chunked`, `write_chunk`, `end_chunks` |
 | Drain-driven bodies | `res.begin_stream()` with a `StreamProducer` |
-| Files | `res.send_file()`, `App.static` |
+| Files | `res.send_file()`, `res.stream_file()` with `FileSource`, `App.static` |
 | Server-Sent Events | `res.sse()` |
 | Redirects and headers | `res.redirect`, `res.append_header`, `end_with_headers` |
 | Callback ABI endings | `end_best_effort`, `end_with_headers_best_effort` (aborts the TCP connection or HTTP/2/3 stream on failure) |
+
+Response producers follow the [backpressure and completion contract](http.md#response-producer-backpressure).
+Known-length file responses follow the [file ownership contract](http.md#bounded-file-responses).
 
 ## Asynchronous responses
 
@@ -162,6 +186,19 @@ loop before completing. `sleep` parks a custom resume callback;
 connection-owned slot and HTTP/2 maps one slot per stream, so neither allocates.
 A disconnected peer, a reused generation, or an expired token fails closed.
 
+Each parking slot owns one delay callback. A second sleep replaces that callback
+and re-arms its timer; it does not provide simultaneous pending delays. Do not
+reuse a slot this way or rely on re-arming to expire an earlier response token:
+the current response generation remains pending until completion, cancellation,
+or reuse. HTTP/3 has no stream-owned parking node and returns TimerUnavailable.
+
+The timing wheel's exact range is 67,108,863 milliseconds, about 18.64 hours.
+Longer deadlines wait on an intrusive overflow list and re-enter the wheel when
+they come into range. The active scheduler uses a bounded 5 ms driving tick;
+that is not a wall-clock callback-latency guarantee. The
+[deliberate boundaries](roadmap.md#deliberate-boundaries)
+records the remaining timer and response-token requirements.
+
 `ServerConfig.idle_timeout_ms` bounds a drained keep-alive connection.
 `ServerConfig.header_read_timeout_ms` bounds an incomplete HTTP/1 request head
 or body; HTTP/2 header blocks are bounded by `max_h2_header_block_size` and the
@@ -176,6 +213,12 @@ _ = try app.static("/assets", "public", .{});
 _ = try app.rpc("/rpc", &service);
 _ = try app.openapi("/openapi.json");
 ```
+
+`negotiate.select_encoding(header, available)` returns an optional
+`Encoding` (`identity`, `gzip`, or `br`) using fixed storage and no I/O. See
+[the content-coding contract](adr/0009-static-content-coding.md) for weights,
+refusals, and duplicate handling. Callers supply verified availability; static
+sidecar selection is a separate integration step.
 
 ## Cluster
 
@@ -348,7 +391,7 @@ var server = try uz.Server.builder(init.io)
 
 | Value | Valid until |
 | --- | --- |
-| `Request` fields, route captures | Synchronous handler return, or async token completion |
+| `Request` fields, route captures | Synchronous handler return, or async token completion; see the HTTP/1 producer-body exception below |
 | WebSocket `message` slice | Callback return |
 | `ResponseView` from the client | Callback return, or `FetchStorage` lifetime |
 | `AsyncResponse` token | Completed exactly once; copyable |
@@ -358,6 +401,12 @@ var server = try uz.Server.builder(init.io)
 
 Slices always borrow connection storage. Copy into bounded application storage
 or use `clone` for work that outlives the callback.
+
+An armed HTTP/1 response producer pins the current `Request.body` storage until
+producer completion or cancellation. It can read that body on each producer
+callback without retaining a separate body slice. Return after successful
+`end_chunks`; request ownership may then be released. This body lifetime does
+not extend handler-local application data or route-capture scratch.
 
 ## Error handling
 
@@ -375,3 +424,9 @@ handles, `uwz_slice` views, and a versioned error mapping. The C ABI is a
 high-level server ABI: the low-level `udp`, HTTP/2, HPACK, HTTP/3-extension,
 WebTransport, and client modules are Zig-only. See
 [operations.md](operations.md#c-abi).
+
+
+The [deliberate boundaries](roadmap.md#deliberate-boundaries)
+retains shared TCP credentials, opt-in TRACE without automatic reflection, and
+the current C single-endpoint surface. It defines the consumer requirements and
+ownership tests needed to reopen those boundaries.

@@ -10,7 +10,7 @@ This page is the canonical rule for maintaining downstream forks of libxev,
 lsquic, and h1spec. It replaces local patch overlays and the assumption that a
 downstream fix must wait for an upstream release.
 
-## Current state (2026-10-26, 2.1.6 patch line)
+## Current state (2026-11-10, 2.2.0 release line)
 
 | Dependency | Upstream | Maintained fork | Mirror branch | Integration branch | Pinned commit |
 | --- | --- | --- | --- | --- | --- |
@@ -26,9 +26,13 @@ downstream fix must wait for an upstream release.
   `patch` or Perl.
 - `scripts/check_dependency_forks.sh` runs the libxev, lsquic, and h1spec
   provenance checks in lint and release gates.
-- ADR 0001 is accepted for implementation in 2.2.0. The live listener remains
-  capability-gated until the WebTransport compliance work lands; `SECURITY.md`
-  keeps the current "not live" statement until then.
+- ADR 0001 remains accepted. 2.2.0 re-declares live WebTransport activation
+  until the maintained fork publishes the complete draft-16 server surface and
+  a compatible client gate passes; `SECURITY.md` keeps the "not live"
+  statement until then.
+- The pinned h1spec tree still has no license notice. The previous MIT
+  attribution is unverified; the release owner must resolve it before
+  publication ([THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)).
 - XEV-003, XEV-004, and XEV-005 are merged into `uwz/zig-0.16` and pinned at
   `c49f6dfb83038c146232472c063e4b2681d098d8`. They repair the kqueue rearm
   state, duplicate completion queueing, nested-submit dispatch, pending-delete
@@ -43,7 +47,7 @@ branch. Pull-request and `main` lint verify that the fork branch still equals
 that record. This keeps a code PR green when upstream advances; it does not
 hide a fork-only commit or a rewritten mirror. The lsquic mirror was
 fast-forwarded to `413ca7c1acb443b0f9f7aa28611ca723c6738844` for 2.1.6; the
-integration pin remains `85bd081c9103c077a7cc98271d09334d0f1043d4`.
+2.2.0 integration pin remains `85bd081c9103c077a7cc98271d09334d0f1043d4`.
 
 Exact live equality is required at release and by the weekly
 `Dependency Mirrors` workflow:
@@ -293,7 +297,7 @@ Each mirror sync and integration merge is a supply-chain review:
 - `patches/` and `vendor/lsquic_overlay` are deleted. `builds/vendor/lsquic.zig`
   imports the fork tree directly, and the h1spec workflow no longer applies a
   patch.
-- ADR 0001 is accepted for implementation in 2.2.0. The live WebTransport path
+- ADR 0001 is accepted for implementation after 2.2.0. The live WebTransport path
   remains capability-gated until the compliance work lands.
 
 ## Rollback

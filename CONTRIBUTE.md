@@ -54,8 +54,16 @@ checkout once, then use `/hooks` to review the no-op Graphify hook.
 Project skills live under `.agents/skills/` and are pinned by
 `skills-lock.json`. Install or refresh them with `npx skills add ...`; do not
 hand-edit a vendored `SKILL.md`. `AGENTS.md` routes architecture review, plan
-grilling, strict maintainability review, and JS/TS anti-slop tooling, and its
-project overrides take precedence over vendored defaults.
+grilling, strict maintainability review, and whole-codebase untangling. Install
+the untangle pass with:
+
+```sh
+npx skills add caldoai/skills --skill untangle-codebase
+```
+
+Its decision log stays outside the repository, and every behavior-preserving
+slice still runs the project gates. `AGENTS.md` project overrides take
+precedence over vendored defaults.
 
 ## Engineering requirements
 
@@ -111,8 +119,7 @@ zig build test -Dsanitize=true -Doptimize=ReleaseSafe --summary all
 zig build msan -Dmemory-sanitize=true -Doptimize=ReleaseSafe --summary all
 zig build test-compile -Doptimize=ReleaseSafe --summary all
 zig build fuzz --fuzz=100K -Doptimize=ReleaseSafe
-zig build oss-fuzz-objects -Doptimize=ReleaseSafe --summary all
-zig build oss-fuzz-smoke -Doptimize=ReleaseSafe --summary all
+zig build oss-fuzz -Doptimize=ReleaseSafe --summary all
 zig build lib -Doptimize=ReleaseFast --summary all
 ```
 

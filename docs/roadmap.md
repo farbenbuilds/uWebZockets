@@ -99,32 +99,66 @@ a public API or a wire format.
 | Benchmark samples could pass with missing data | The HTTP/2 runner fails on missing request counters, invalid p99 values, non-TLSv1.3 samples, exit status 143 on the TLS cluster, an empty RSS sampler, an occupied port, or a listener owned by another process. The HTTP runner fails on invalid rates, socket errors, non-2xx responses, or shutdown and log failures. Both write a completion sentinel; the HTTP/2 runner also persists cohort medians |
 | kqueue rearm and queue defects | [libxev_kqueue_findings.md](libxev_kqueue_findings.md) records the investigation. XEV-003, XEV-004, and XEV-005 are merged into `farbenbuilds/libxev` and pinned at `c49f6dfb`; the exact XEV-005 tree passed 65/65 macOS kqueue tests in Debug and ReleaseSafe |
 
-## Carried into 2.2.0
+## Closed in 2.2.0
 
-- Quiet-host evidence for the v2.0.0 and v2.1.0 pipeline, WebSocket,
-  `json-comp`, and `latency-1m` targets, archived under the v1.9.0 evidence
-  contract.
-- Receive-side `UDP_GRO` after the loop exposes ancillary segment sizes.
-- HttpArena `async` adapter activation for the shipped `/delay/:ms` surface.
-- Cross-process `SO_REUSEPORT` / systemd socket-activation handoff.
-- Decisions on per-listener certificates, a bounded TRACE reflection example,
-  and an optional `uwz_app_listen_all` C entry point.
-- A retained fork archive and second-machine resolution for the pinned libxev,
-  lsquic, and h1spec commits, plus the native Windows runtime gate
-  ([ADR 0005](adr/0005-libxev-fork.md),
-  [ADR 0006](adr/0006-dependency-forks.md), [policy](dependency_forks.md)).
-- lsquic and h1spec fork gate evidence: the maintained pins are recorded and
-  `patches/` plus `vendor/lsquic_overlay` are removed; the HTTP/3 and h1spec
-  compliance runs still need fresh artifacts.
-- HTTP/3 datagram and WebTransport implementation through the maintained
-  lsquic fork, with the live path enabled only after the compliance gate
-  ([ADR 0001](adr/0001-http3-datagram-and-webtransport.md)).
-- Extract the nested `Cluster` runtime from `src/router/app.zig` into a
-  dedicated module with a narrow App-private seam. The 2.1.5 release moved
-  lifecycle policy and failure state to `src/router/worker_group.zig`; the
-  remaining worker/inbox/TLS plumbing is the next ownership boundary.
+The 2.2.0 release closes the response-streaming and static-asset gaps and ships
+the live request-body and multipart foundations. The release entry is in
+[CHANGELOG.md](../CHANGELOG.md).
+
+| Boundary | Resolution |
+| --- | --- |
+| Large files on framed transports | `Response.stream_file` and `FileSource` stream known-length files through bounded transport-owned scratch on HTTP/1, TLS HTTP/1, HTTP/2, and HTTP/3. Plaintext `sendfile` remains the preferred path |
+| Static sidecars | `App.static(..., .{ .precompressed = true })` selects fresh `.gz`/`.br` representations with `Vary`, `Content-Encoding`, representation-specific validators, and encoded ranges. The default remains identity-only |
+| Content-coding negotiation | Pure `negotiate.select_encoding` and `select_encoding_headers` scan every `Accept-Encoding` field with constant storage and explicit refusal |
+| Incremental multipart | `multipart.StreamingParser` and `multipart.MultipartSink` accept arbitrary chunk boundaries with caller-owned storage, bounded carry, strict RFC 7578 metadata, and pause/resume |
+| Request-streaming contract | `StreamingRequest`, `BodySink`, `BodyRoute`, `BodyState`, and the pure HTTP/1 head/body decoder are shipped. HTTP/1.1, TLS, HTTP/2, and HTTP/3 bind the sink live with pause/resume, `headers_only` middleware, per-request binding contexts, and `100 Continue`; live 100 MB socket-pair proofs pass |
+| Static special-file preflight | Source and sidecar paths are checked as regular files before open. A stable FIFO or other special file returns 404 without blocking the worker; the operator-controlled substitution race remains documented |
+| HTTP/2 reset backpressure | A bounded reset FIFO retains blocked stream resets and flushes them before later HEADERS or DATA, preserving healthy siblings |
+| Timer overflow ordering | The wheel scans every overflow entry for the earliest migration time, so a large advance cannot skip an earlier deadline behind a later list head |
+| 100 KiB TLS payload | Multi-record producer responses and true POST echo pass with bounded queue occupancy |
+
+## Re-declared in 2.2.0
+
+| Boundary | Dated reason and restoration criterion |
+| --- | --- |
+| Ownership debt (untangle pass) | `src/core/tcp.zig`, `src/router/app.zig`, `src/http2/server.zig`, `src/http/response.zig`, and `src/quic/stream.zig` remain above the 1000-line review flag. Their named seams are extracted; the remaining split is approved for 2.3.0 |
+| WebTransport activation | The maintained lsquic fork lacks the complete draft-16 server surface and a compatible client gate. Reassess with the next authorized maintained-fork review; keep capability bits false until then ([ADR 0001](adr/0001-http3-datagram-and-webtransport.md)) |
+| Quiet-host performance evidence | No designated quiet host was available. Run the v2.0/v2.1 pipeline, WebSocket, `json-comp`, and `latency-1m` contracts on a named host before publishing numbers |
+| Receive-side UDP GRO | The loop still reads one datagram at a time. Restore when ancillary control messages expose `UDP_GRO` segment sizes and the pinned HTTP/3 gates pass |
+| HttpArena `async` adapter | The external adapter change and official run are outside this repository. Restore through the adapter owner |
+| Cluster and timer/limiter ownership | The rate-limit table, index, and LRU moved to `src/http/rate_limit.zig` with unchanged `middleware` re-exports. The nested cluster runtime and connection parking state remain in their current owners; extract them in 2.3.0 without changing public behavior |
+| Fork archives and platform closure | Current pins are full maintained-fork commits and pass local provenance checks. The exact-mirror run reports upstream lsquic advanced, and the pinned h1spec tree still has no license notice. Final archives, mirror sync, second-machine resolution, and the native Windows release job remain release-owner actions |
+| kTLS and splice | kTLS stays with v3.5.0 SB-31. Splice remains conditional on measured benefit; plaintext `sendfile` is unchanged |
 
 ## Deliberate boundaries
+
+### 2.2.0 decisions, 2026-10-26
+
+- S-5 official HttpArena 8gbit evidence is re-declared under the plan's explicit
+  exception. The external adapter still pins 1.8.0 and lacks the route and
+  subscription; this session has read-only access. Restore after the reviewed
+  source is available, the real POST echo adapter passes official validation,
+  and an authorized official run archives complete results. The
+  [deliberate boundaries](#deliberate-boundaries) keep the external result
+  separate from local socket correctness proof.
+- S-3 kTLS integration stays with v3.5.0 SB-31. Pinned BoringSSL exposes
+  traffic-secret and sequence inspection, but the project has no verified
+  public TCP record-layer handoff covering queued records, control messages,
+  sequence ownership, and KeyUpdate. Retain the standalone caller-managed
+  helper, whose default version field is TLS 1.2; TCP server contexts remain
+  TLS 1.3 only. Restore through an ADR, audited epoch/key/IV handoff and
+  zeroization, real Linux interoperability, sanitizer, and performance evidence.
+  See [the secret inspection API](https://github.com/google/boringssl/blob/d3bf4795ad5b79d646cddf2fec687da5b9b502db/include/openssl/ssl.h#L6181),
+  [internal KeyUpdate ownership](https://github.com/google/boringssl/blob/d3bf4795ad5b79d646cddf2fec687da5b9b502db/ssl/tls13_both.cc#L680),
+  and [the kernel handoff contract](https://docs.kernel.org/networking/tls.html#tls-1-3-key-updates).
+  Buffered file delivery needs no handshake, cipher, ALPN, pin, or key change.
+- S-3 splice remains conditional on measured benefit. No splice experiment or
+  performance improvement is claimed. The existing plaintext sendfile path
+  stays in place. Revisit only with a controlled candidate/baseline static
+  workload and retained raw evidence showing a repeatable benefit within the
+  repository's performance and lifecycle constraints.
+
+### Established boundaries
 
 These are decisions, not omissions. Each has a reason and, where relevant, the
 condition that would change it.
@@ -133,13 +167,13 @@ condition that would change it.
 | --- | --- |
 | TLS 1.2 is not supported | TLS 1.3-only is a deliberate security posture; adding 1.2 would re-enable obsolete cipher suites for no functional gain |
 | No dynamic capacity overflow | Fixed startup slabs are the architecture. Exhaustion returns a structured error; silently allocating would reintroduce heap behavior on the hot path |
-| Request bodies are buffered, not streamed to handlers | Handlers are synchronous; true upload streaming needs an async body-reader contract. Response streaming already exists (`begin_stream`) |
+| Request bodies are buffered by default | `Request.body` remains the default and source-compatible path. `App.post_stream`, `put_stream`, and `patch_stream` opt a route into bounded streaming on HTTP/1.1, TLS, HTTP/2, and HTTP/3; the sink never materializes the complete body |
 | HTTP/2 server push is not implemented | Deprecated in practice and removed from lsquic upstream; no browser consumes it |
 | h2c Upgrade is not implemented | RFC 9113 removed the Upgrade mechanism; cleartext HTTP/2 uses prior knowledge and TLS uses ALPN |
 | HTTP/2 caps at 8 concurrent streams and one WebSocket tunnel per connection | Stream and tunnel storage is connection-owned and carved from the slab. Raising the defaults requires specializing the connection type |
 | WebTransport is not live yet | ADR 0001 is accepted for implementation through the maintained lsquic fork, but the live path stays capability-gated until extended CONNECT, server-initiated unidirectional streams, reset-at, and the compliance gate land; see [ADR 0001](adr/0001-http3-datagram-and-webtransport.md) |
 | HTTP/3 does not advance the metrics registry | The engine has no registry handle without new plumbing through the transport; records are emitted instead |
-| kTLS is a standalone helper, not an integrated offload | The pinned BoringSSL has no kernel-TLS support, so the connection path cannot hand keys to the kernel. `uz.ktls` remains available to applications that manage their own records |
+| kTLS is a standalone helper, not an integrated offload | Secret and sequence inspection exists, but an audited TCP record-layer handoff covering control messages and KeyUpdate has not been established. `uz.ktls` remains available to applications that manage their own records |
 | MemorySanitizer does not instrument Zig code | Permanent decision dated 2026-10-19: Zig 0.16 emits no MSan instrumentation, so the MSan gate covers the pinned C/C++ dependency boundary ([CI_CD_PIPELINE.md](../CI_CD_PIPELINE.md#memorysanitizer-contract-permanent-2026-10-19)) |
 | BSD targets have no runtime CI | No hosted GitHub runners exist for the BSDs; the shared build graph is compiled but not executed in CI |
 | Windows runtime is gated on native CI | The accept overlay and queued-close fixes landed in 1.9.0 and the workflow now runs the test suite, but official support starts only when that job is green for the release commit; see [Windows runtime blocker details](#windows-runtime-blocker-details) and [ADR 0004](adr/0004-windows-iocp-accept-and-queued-close.md). No Windows binaries are published |
@@ -199,16 +233,14 @@ Candidates for the next minor releases, in rough dependency order:
 
 1. **WebSocket client** over the existing client transport, using the zslay
    client role for framing and masking.
-2. **Incremental request bodies** for HTTP/1.1: a bounded, async body reader
-   that lets large uploads bypass `max_body_size` per connection.
-3. **Configurable HTTP/2 stream and tunnel counts** through connection-type
+2. **Configurable HTTP/2 stream and tunnel counts** through connection-type
    specialization.
-4. **HTTP/3 counter parity** by threading the metrics registry into the engine.
-5. **WebTransport activation** through the maintained lsquic fork, behind the
+3. **HTTP/3 counter parity** by threading the metrics registry into the engine.
+4. **WebTransport activation** through the maintained lsquic fork, behind the
    capability gate recorded in
    [ADR 0001](adr/0001-http3-datagram-and-webtransport.md), once the fork
    exposes and tests the required server interfaces.
-6. **kTLS integration** if BoringSSL gains a supported key-handoff API.
+5. **kTLS integration** if BoringSSL gains a supported key-handoff API.
 
 ## How to influence the roadmap
 
@@ -216,3 +248,13 @@ Open an issue describing the use case, or a pull request following
 [CONTRIBUTE.md](../CONTRIBUTE.md). The project accepts additive changes that
 preserve bounded behavior; proposals that add unbounded allocation to the hot
 path or weaken a compliance gate are declined by policy, not by preference.
+
+
+## 2026-10-26 WebTransport delivery declaration
+
+C12 activation is re-declared under the 2.2.0 plan's explicit alternative;
+reassess on 2026-11-02 or an earlier authorized maintained-fork review.
+[The deliberate boundaries](#deliberate-boundaries) retain implementation
+owners, backend/client/provenance blockers, and full restoration gates. ADR 0001's design remains accepted. WT-required capabilities
+stay false; the backend's raw datagram primitive remains distinct from live
+listener support.

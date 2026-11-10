@@ -15,8 +15,11 @@ Review the completed diff independently. Read `AGENTS.md`,
 `CODING_CONVENTION.md`, applicable specialist instructions, relevant docs,
 and the `code-review-and-quality` skill. On structural diffs, add the
 `thermo-nuclear-code-quality-review` lens for missed code-judo simplifications,
-file-size explosions, and spaghetti growth. It supplements the standard review
-and never overrides project gates; apply its project override in `AGENTS.md`.
+file-size explosions, and spaghetti growth. When the root agent requests a
+whole-codebase refactor review, apply `untangle-codebase` and verify its
+decision log is outside the repository. These lenses supplement the standard
+review and never override project gates; apply their project overrides in
+`AGENTS.md`.
 
 Check correctness and ownership first, then security, compatibility, tests and
 evidence, conventions, and scope. Look for weakened gates, ignored errors,

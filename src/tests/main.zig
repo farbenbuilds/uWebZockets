@@ -1,4 +1,5 @@
 comptime {
+    _ = @import("multipart_streaming_tests.zig");
     _ = @import("bleeding_edge_tests.zig");
     _ = @import("c_api_tests.zig");
     _ = @import("c_tests.zig");
@@ -8,14 +9,26 @@ comptime {
     _ = @import("dev_log_tests.zig");
     _ = @import("core_tests.zig");
     _ = @import("fuzz_main.zig");
+    _ = @import("multipart_large_tests.zig");
+    _ = @import("file_stream_tests.zig");
+    _ = @import("file_stream_http2_tests.zig");
+    _ = @import("file_stream_http3_tests.zig");
+    _ = @import("static_files_tests.zig");
+    _ = @import("static_sidecar_tests.zig");
+    _ = @import("streaming_request_tests.zig");
+    _ = @import("request_body_tests.zig");
+    _ = @import("request_body_response_tests.zig");
+    _ = @import("multipart_sink_tests.zig");
     _ = @import("framework_tests.zig");
     _ = @import("helpers_tests.zig");
     _ = @import("http_tests.zig");
+    _ = @import("http_body_decoder_tests.zig");
     _ = @import("http2_tests.zig");
     _ = @import("http2_hpack_tests.zig");
     _ = @import("http2_server_tests.zig");
     _ = @import("kernel_tests.zig");
     _ = @import("middleware_tests.zig");
+    _ = @import("negotiate_tests.zig");
     _ = @import("observability_tests.zig");
     _ = @import("quic_tests.zig");
     _ = @import("quic_phase3_tests.zig");
@@ -26,6 +39,7 @@ comptime {
     _ = @import("shared_nothing_tests.zig");
     _ = @import("signal_tests.zig");
     _ = @import("tls_tests.zig");
+    _ = @import("tls_echo_tests.zig");
     _ = @import("udp_tests.zig");
     _ = @import("watch_tests.zig");
     _ = @import("ws_tests.zig");

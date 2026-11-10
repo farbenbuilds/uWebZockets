@@ -1,3 +1,7 @@
+pub const fuzz_http_body = @import("fuzz_support.zig").fuzz_http_body;
+pub const streaming_request = @import("http/streaming_request.zig");
+pub const request_body = @import("http/request_body.zig");
+pub const public_api = @import("root.zig");
 pub const context = @import("core/context.zig");
 pub const loop = @import("core/loop.zig");
 pub const pool = @import("core/pool.zig");
@@ -19,6 +23,7 @@ pub const terminal = @import("observability/terminal.zig");
 pub const file_watch = @import("observability/file_watch.zig");
 
 pub const http_parser = @import("http/parser.zig");
+pub const http_body_decoder = @import("http/body_decoder.zig");
 pub const http_request = @import("http/request.zig");
 pub const http_response = @import("http/response.zig");
 pub const fetch = @import("http/fetch.zig");
@@ -76,3 +81,5 @@ pub const compression_stream = @import("http/compression_stream.zig");
 pub const compression_pool = @import("http/compression_pool.zig");
 pub const crypto_subtle = @import("crypto/subtle.zig");
 pub const shared_memory = @import("ffi/shared_memory.zig");
+pub const multipart_streaming_fuzz = @import("fuzz_support.zig").multipart_streaming;
+pub const multipart_sink = @import("http/multipart_sink.zig");

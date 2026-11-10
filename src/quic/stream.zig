@@ -5,6 +5,9 @@ const Request = @import("../http/request.zig").Request;
 const http_response = @import("../http/response.zig");
 const Response = http_response.Response;
 const Http3Target = http_response.Http3Target;
+const file_transfer = @import("../http/file_transfer.zig");
+const request_body = @import("../http/request_body.zig");
+const streaming_request_module = @import("../http/streaming_request.zig");
 const Router = @import("../router/radix.zig").Router;
 const radix = @import("../router/radix.zig");
 const validation = @import("validation.zig");
@@ -214,9 +217,7 @@ pub const HeaderSet = struct {
 
         if (std.mem.eql(u8, name, "content-length")) {
             if (self.content_length != null) return false;
-            const length = validation.parse_decimal(value) orelse return false;
-            if (length > self.capacities.request_body_size) return false;
-            self.content_length = length;
+            self.content_length = validation.parse_decimal(value) orelse return false;
         }
         if (std.mem.eql(u8, name, "host")) {
             if (self.host_seen or !validation.valid_authority(value)) return false;
@@ -387,6 +388,14 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
         stream_producer_context: ?*anyopaque = null,
         stream_producer: ?http_response.StreamProducer = null,
         async_response_state: http_response.AsyncResponseState = .{},
+        file_transfer_state: file_transfer.FileTransfer = .{},
+        streaming_active: bool = false,
+        streaming_route: ?*const request_body.BodyRoute = null,
+        streaming_request: streaming_request_module.StreamingRequest = undefined,
+        streaming_pending_headers: request_body.PendingHeaders = .{},
+        body_state: request_body.BodyState = .{},
+        streaming_paused: bool = false,
+        streaming_pending_len: usize = 0,
 
         /// Reinitializes a pooled stream with borrowed transport and storage.
         ///
@@ -408,6 +417,7 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
             header_extra_names: [][]const u8,
             header_extra_values: [][]const u8,
         ) void {
+            self.clear_stream_producer();
             var next_generation = self.async_response_state.generation +% 1;
             if (next_generation == 0) next_generation = 1;
             self.* = .{
@@ -431,14 +441,14 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
         pub fn attach_headers(self: *Self, header_set: *HeaderSet) void {
             if (!header_set.finished or header_set.claimed) {
                 header_set.release();
-                _ = io.close(self.stream);
+                self.close_now();
                 return;
             }
 
             if (header_set.is_trailer) {
                 if (self.header_set == null or self.request_phase != .body) {
                     header_set.release();
-                    _ = io.close(self.stream);
+                    self.close_now();
                     return;
                 }
                 header_set.claimed = true;
@@ -449,19 +459,30 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
 
             if (self.header_set != null or self.request_phase != .waiting_headers) {
                 header_set.release();
-                _ = io.close(self.stream);
+                self.close_now();
                 return;
             }
             header_set.claimed = true;
             self.header_set = header_set;
             self.request_phase = .body;
+            _ = self.start_streaming_request();
         }
 
         /// Drains readable request bytes and dispatches a complete request.
         pub fn on_read(self: *Self) void {
-            if (self.header_set == null or self.dispatched) {
-                _ = io.close(self.stream);
+            if (self.streaming_active) {
+                self.stream_request_body();
                 return;
+            }
+            if (self.header_set == null or self.dispatched) {
+                self.close_now();
+                return;
+            }
+            if (self.header_set.?.content_length) |expected| {
+                if (expected > self.header_set.?.capacities.request_body_size) {
+                    self.queue_error("413 Payload Too Large", "Payload Too Large");
+                    return;
+                }
             }
 
             while (true) {
@@ -513,7 +534,7 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
 
             if (!self.headers_sent) {
                 if (!self.send_headers()) {
-                    _ = io.close(self.stream);
+                    self.close_now();
                     return;
                 }
                 self.headers_sent = true;
@@ -555,7 +576,7 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
                 const body = self.response_body_storage[self.response_body_offset..self.response_body_length];
                 const written = io.write(self.stream, body.ptr, body.len);
                 if (written < 0) {
-                    _ = io.close(self.stream);
+                    self.close_now();
                     return false;
                 }
                 if (written == 0) return false;
@@ -578,6 +599,9 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
                 return .done;
             };
 
+            if (self.file_transfer_state.file != null) {
+                self.file_transfer_state.chunk_limit = self.response_body_storage.len - self.response_body_length;
+            }
             var response = Response{
                 .target = .{ .http3 = self.target() },
                 .state = .streaming,
@@ -586,19 +610,14 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
                 self.fail_stream_producer();
                 return .done;
             };
-            if (status == .done) {
-                self.clear_stream_producer();
-                // A producer that returns `.done` without end_chunks still
-                // terminates the body; finish_response arms the final drain.
-                if (self.response_phase == .streaming) {
-                    finish_response(self) catch self.close_now();
-                }
-                return .done;
-            }
             // end_chunks moved the phase out of `.streaming`; a later `.pending`
             // must not leave wantwrite armed forever.
             if (self.response_phase != .streaming) {
                 self.clear_stream_producer();
+                return .done;
+            }
+            if (status == .done) {
+                self.fail_stream_producer();
                 return .done;
             }
             return status;
@@ -609,7 +628,6 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
             self.clear_stream_producer();
             if (self.headers_sent or self.response_phase != .streaming) {
                 self.close_now();
-                self.response_phase = .done;
                 return;
             }
             self.response_phase = .idle;
@@ -620,11 +638,13 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
         fn clear_stream_producer(self: *Self) void {
             self.stream_producer = null;
             self.stream_producer_context = null;
+            file_transfer.close(&self.file_transfer_state);
         }
 
         /// Cancels deferred dispatch and returns pooled state to its owner.
         pub fn on_close(self: *Self) void {
             self.async_response_state.cancel();
+            self.cancel_streaming_body(.peer_closed);
             self.clear_stream_producer();
             if (self.header_set) |header_set| header_set.release();
             self.header_set = null;
@@ -632,6 +652,287 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
             const callback = self.release_fn orelse return;
             self.release_fn = null;
             callback(self.owner, self);
+        }
+
+        /// Starts a route-level H3 body sink before request-body collection.
+        fn start_streaming_request(self: *Self) bool {
+            if (self.body_storage.len == 0) return false;
+            const header_set = self.header_set orelse return false;
+            const method = radix.HttpMethod.parse(header_set.request.method) orelse return false;
+            if (method != .post and method != .put and method != .patch) return false;
+            header_set.request.extra_param_names = self.extra_param_names;
+            header_set.request.extra_param_values = self.extra_param_values;
+            header_set.request.extra_param_count = 0;
+            const matched = self.router.match_request(&header_set.request, method) orelse return false;
+            const handler = matched.handler orelse return false;
+            const route_ptr = switch (handler) {
+                .streaming => |pointer| pointer,
+                else => return false,
+            };
+            const route: *const request_body.BodyRoute = @ptrCast(@alignCast(route_ptr));
+            if (route.middleware_policy == .reject_legacy and self.router.has_middleware()) {
+                self.queue_error("503 Service Unavailable", "Streaming route requires headers-only middleware");
+                return true;
+            }
+            if (self.router.has_middleware()) {
+                var response = Response{ .target = .{ .http3 = self.target() } };
+                if (self.router.run_middleware(&header_set.request, &response) == .stop) {
+                    self.finish_early_stream_response(&response);
+                    return true;
+                }
+            }
+            if (route.limits.max_active == 0) {
+                self.queue_error("500 Internal Server Error", "Invalid upload limits");
+                return true;
+            }
+            self.streaming_request = streaming_request_module.StreamingRequest.from_request(&header_set.request);
+            self.streaming_route = route;
+            self.streaming_paused = false;
+            const control = self.body_state.arm(.{
+                .context = self,
+                .resume_fn = streaming_resume,
+                .cancel_fn = streaming_cancel_control,
+            }, route.limits, header_set.content_length) catch {
+                self.queue_error("413 Payload Too Large", "Payload Too Large");
+                return true;
+            };
+            const binding = route.sink.begin(route.sink.context, &self.streaming_request, control) catch {
+                _ = self.body_state.reject_begin();
+                self.streaming_route = null;
+                self.queue_error("500 Internal Server Error", "Upload begin failed");
+                return true;
+            };
+            self.streaming_active = true;
+            if (self.body_state.accept_begin(binding)) |terminal| {
+                self.streaming_active = false;
+                switch (terminal) {
+                    .cancel => |cancellation| route.sink.cancel(cancellation.binding.context, cancellation.reason),
+                    .end => {},
+                }
+                _ = self.body_state.finish_terminal();
+                self.streaming_route = null;
+                self.queue_error("400 Bad Request", "Upload canceled");
+                return true;
+            }
+            if (self.body_state.readiness == .paused) {
+                self.streaming_paused = true;
+                _ = io.wantread(self.stream, 0);
+            }
+            if (header_set.request.header_has_token("Expect", "100-continue") and !self.send_continue()) {
+                self.close_now();
+            }
+            return true;
+        }
+
+        /// Sends an interim 100 response without committing final headers.
+        fn send_continue(self: *Self) bool {
+            @memcpy(self.response_status[0..7], ":status");
+            @memcpy(self.response_status[7..10], "100");
+            self.response_header_count = 0;
+            self.response_header_length = 0;
+            const sent = self.send_headers();
+            self.response_header_count = 0;
+            self.response_header_length = 0;
+            self.response_phase = .idle;
+            return sent;
+        }
+
+        /// Finishes a middleware response before any request body is read.
+        fn finish_early_stream_response(self: *Self, response: *Response) void {
+            self.dispatched = true;
+            self.request_phase = .complete;
+            _ = io.wantread(self.stream, 0);
+            _ = io.shutdown(self.stream, 0);
+            if (response.is_complete() or response.is_started()) return;
+            self.queue_error("500 Internal Server Error", "Middleware did not complete the response");
+        }
+
+        fn stream_request_body(self: *Self) void {
+            if (self.streaming_paused) return;
+            const route = self.streaming_route orelse return;
+            while (true) {
+                if (self.streaming_pending_len != 0) {
+                    const pending = self.body_storage[0..self.streaming_pending_len];
+                    self.body_state.prepare_chunk(pending.len) catch {
+                        self.fail_streaming_body(.invalid_body);
+                        return;
+                    };
+                    const binding = self.body_state.binding orelse {
+                        self.fail_streaming_body(.invalid_body);
+                        return;
+                    };
+                    const progress = route.sink.chunk(binding.context, pending) catch {
+                        self.fail_streaming_chunk();
+                        return;
+                    };
+                    const terminal = self.body_state.accept_chunk(progress) catch {
+                        self.fail_streaming_chunk();
+                        return;
+                    };
+                    if (terminal) |pending_terminal| {
+                        self.invoke_streaming_terminal(pending_terminal);
+                        return;
+                    }
+                    if (progress.consumed != pending.len) {
+                        const remaining = pending.len - progress.consumed;
+                        std.mem.copyForwards(u8, self.body_storage[0..remaining], pending[progress.consumed..]);
+                        self.streaming_pending_len = remaining;
+                    } else {
+                        self.streaming_pending_len = 0;
+                    }
+                    if (progress.readiness == .paused) {
+                        self.streaming_paused = true;
+                        _ = io.wantread(self.stream, 0);
+                        return;
+                    }
+                    continue;
+                }
+
+                const scratch = self.body_storage[0..@min(self.body_storage.len, 8192)];
+                const read_length = io.read(self.stream, scratch.ptr, scratch.len);
+                if (read_length < 0) {
+                    if (std.c.errno(read_length) != .AGAIN) self.close_now();
+                    return;
+                }
+                if (read_length == 0) {
+                    self.finish_streaming_body();
+                    return;
+                }
+                const bytes = scratch[0..@intCast(read_length)];
+                self.body_state.prepare_chunk(bytes.len) catch |err| {
+                    self.fail_streaming_body(if (err == error.BodyTooLarge) .body_too_large else .invalid_body);
+                    return;
+                };
+                const binding = self.body_state.binding orelse {
+                    self.fail_streaming_body(.invalid_body);
+                    return;
+                };
+                const progress = route.sink.chunk(binding.context, bytes) catch {
+                    self.fail_streaming_chunk();
+                    return;
+                };
+                const terminal = self.body_state.accept_chunk(progress) catch {
+                    self.fail_streaming_chunk();
+                    return;
+                };
+                if (terminal) |pending_terminal| {
+                    self.invoke_streaming_terminal(pending_terminal);
+                    return;
+                }
+                if (progress.consumed != bytes.len) {
+                    const remaining = bytes.len - progress.consumed;
+                    std.mem.copyForwards(u8, self.body_storage[0..remaining], bytes[progress.consumed..]);
+                    self.streaming_pending_len = remaining;
+                }
+                if (progress.readiness == .paused) {
+                    self.streaming_paused = true;
+                    _ = io.wantread(self.stream, 0);
+                    return;
+                }
+            }
+        }
+
+        fn finish_streaming_body(self: *Self) void {
+            const route = self.streaming_route orelse return;
+            const terminal = self.body_state.take_end(true, 0) catch {
+                self.fail_streaming_body(.invalid_body);
+                return;
+            };
+            var response = Response{ .target = .{ .http3 = self.target() } };
+            self.streaming_pending_headers.apply(&response);
+            route.sink.end(terminal.end.context, &self.streaming_request, &response) catch {
+                self.fail_streaming_body(.sink_failure);
+                return;
+            };
+            if (!response.is_complete() and !response.is_started()) {
+                response.end("500 Internal Server Error", "Handler did not complete the response") catch {
+                    self.fail_streaming_body(.sink_failure);
+                    return;
+                };
+            }
+            _ = self.body_state.finish_terminal();
+            self.streaming_active = false;
+            self.streaming_route = null;
+        }
+
+        /// Delivers a cancellation recorded while the sink owned the chunk.
+        fn invoke_streaming_terminal(self: *Self, terminal: request_body.BodyTerminal) void {
+            const route = self.streaming_route orelse return;
+            switch (terminal) {
+                .cancel => |cancellation| {
+                    route.sink.cancel(cancellation.binding.context, cancellation.reason);
+                    _ = self.body_state.finish_terminal();
+                    self.streaming_active = false;
+                    self.streaming_route = null;
+                    self.streaming_paused = false;
+                    self.streaming_pending_len = 0;
+                    self.streaming_pending_headers.clear();
+                    const status = switch (cancellation.reason) {
+                        .body_too_large => "413 Payload Too Large",
+                        .invalid_body, .sink_failure => "400 Bad Request",
+                        .peer_closed, .reset, .shutdown, .timeout => {
+                            self.close_now();
+                            return;
+                        },
+                        else => "400 Bad Request",
+                    };
+                    self.queue_error(status, "Upload failed");
+                },
+                .end => {},
+            }
+        }
+
+        /// Delivers a sink/chunk failure after the callback has returned.
+        fn fail_streaming_chunk(self: *Self) void {
+            const route = self.streaming_route orelse return;
+            const terminal = self.body_state.fail_chunk();
+            switch (terminal) {
+                .cancel => |cancellation| route.sink.cancel(cancellation.binding.context, cancellation.reason),
+                .end => {},
+            }
+            _ = self.body_state.finish_terminal();
+            self.streaming_active = false;
+            self.streaming_route = null;
+            self.streaming_paused = false;
+            self.streaming_pending_len = 0;
+            self.queue_error("400 Bad Request", "Upload failed");
+        }
+
+        fn fail_streaming_body(self: *Self, reason: request_body.BodyCancelReason) void {
+            self.cancel_streaming_body(reason);
+            const status = if (reason == .body_too_large) "413 Payload Too Large" else "400 Bad Request";
+            self.queue_error(status, "Upload failed");
+        }
+
+        fn cancel_streaming_body(self: *Self, reason: request_body.BodyCancelReason) void {
+            if (!self.streaming_active) return;
+            self.streaming_active = false;
+            self.streaming_paused = false;
+            self.streaming_pending_len = 0;
+            if (self.streaming_route) |route| {
+                if (self.body_state.request_cancel(reason)) |terminal| {
+                    switch (terminal) {
+                        .cancel => |cancellation| route.sink.cancel(cancellation.binding.context, cancellation.reason),
+                        .end => {},
+                    }
+                }
+                _ = self.body_state.finish_terminal();
+                self.streaming_route = null;
+            }
+        }
+
+        fn streaming_resume(context: *anyopaque) error{BodyDeliveryFailed}!void {
+            const self: *Self = @ptrCast(@alignCast(context));
+            if (!self.streaming_active or !self.streaming_paused) return error.BodyDeliveryFailed;
+            self.streaming_paused = false;
+            _ = io.wantread(self.stream, 1);
+            self.stream_request_body();
+        }
+
+        fn streaming_cancel_control(context: *anyopaque) void {
+            const self: *Self = @ptrCast(@alignCast(context));
+            self.cancel_streaming_body(.cancelled);
+            self.queue_error("400 Bad Request", "Upload canceled");
         }
 
         fn dispatch(self: *Self) void {
@@ -723,6 +1024,9 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
                     const token = self.async_response_state.arm(self.async_target());
                     binding.callback(binding.context, request, token);
                 },
+                .streaming => {
+                    response.end_best_effort("501 Not Implemented", "Streaming route is HTTP/1.1 only");
+                },
             }
         }
 
@@ -798,6 +1102,7 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
                 .finish_fn = finish_response,
                 .abort_fn = abort_response,
                 .begin_stream_fn = begin_stream_response,
+                .stream_file_fn = begin_file_response,
             };
         }
 
@@ -846,6 +1151,67 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
                 return false;
             }
             return true;
+        }
+
+        /// Commits ownership only after the known-length head fits the fixed storage.
+        fn begin_file_response(
+            context: *anyopaque,
+            status: []const u8,
+            headers: []const u8,
+            source: http_response.FileSource,
+        ) anyerror!void {
+            const self: *Self = @ptrCast(@alignCast(context));
+            if (self.response_phase != .idle) return error.ResponseAlreadyStarted;
+            if (self.file_transfer_state.file != null) return error.ResponseAlreadyStarted;
+            const code = http_response.status_code(status) orelse return error.InvalidStatus;
+            if (http_response.status_forbids_body(code)) return error.BodyNotAllowed;
+            if (code < 300 and self.header_set != null and
+                std.mem.eql(u8, self.header_set.?.request.method, "CONNECT")) return error.BodyNotAllowed;
+            if (!http_response.valid_headers(headers)) return error.InvalidHeaders;
+            if (source.buffer.len == 0) return error.InvalidFileSource;
+            _ = std.math.add(u64, source.offset, source.length) catch return error.InvalidFileSource;
+            if (!self.suppress_body and source.length != 0 and self.response_body_storage.len == 0) {
+                return error.WouldBlock;
+            }
+            try self.prepare_response(status, headers);
+            try self.prepare_file_length(source.length);
+
+            self.response_body_offset = 0;
+            self.response_body_length = 0;
+            self.response_phase = .streaming;
+            self.stream_producer = file_transfer.produce;
+            self.stream_producer_context = &self.file_transfer_state;
+            self.file_transfer_state = .{
+                .io = source.io,
+                .file = source.file,
+                .buffer = source.buffer,
+                .offset = source.offset,
+                .remaining = if (self.suppress_body) 0 else source.length,
+            };
+            // Producer faults now own teardown; returning an error would imply
+            // the caller still owns a descriptor the stream has already closed.
+            if (self.step_stream_producer() != .done) _ = io.wantwrite(self.stream, 1);
+        }
+
+        /// Adds generated framing without extending field or byte capacity.
+        fn prepare_file_length(self: *Self, length: u64) !void {
+            const name = "content-length";
+            var digits: [20]u8 = undefined;
+            const value = std.fmt.bufPrint(&digits, "{d}", .{length}) catch return error.BufferOverflow;
+            if (self.response_header_count == capacities.response_header_count) return error.BufferOverflow;
+            const required = name.len + value.len;
+            if (required > self.response_header_storage.len - self.response_header_length) return error.BufferOverflow;
+            const index = self.response_header_count;
+            const name_offset = self.response_header_length;
+            const value_offset = name_offset + name.len;
+            @memcpy(self.response_header_storage[name_offset..][0..name.len], name);
+            @memcpy(self.response_header_storage[value_offset..][0..value.len], value);
+            self.response_name_offsets[index] = @intCast(name_offset);
+            self.response_name_lengths[index] = name.len;
+            self.response_value_offsets[index] = @intCast(value_offset);
+            self.response_value_lengths[index] = @intCast(value.len);
+            self.response_header_length += required;
+            self.response_header_count += 1;
         }
 
         fn write_response(context: *anyopaque, body: []const u8) !void {
@@ -979,12 +1345,12 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
         fn abort_response(context: *anyopaque) void {
             const self: *Self = @ptrCast(@alignCast(context));
             self.close_now();
-            self.response_phase = .done;
         }
 
         fn close_now(self: *Self) void {
             self.async_response_state.cancel();
             self.clear_stream_producer();
+            self.response_phase = .done;
             _ = io.close(self.stream);
         }
     };

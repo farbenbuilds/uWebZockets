@@ -23,15 +23,21 @@ zig build oss-fuzz-objects \
 # runtime; keep the shim free of sanitizer flags so it cannot drag in a
 # rejected coverage flavor of its own.
 "$CC" -O2 -c "$project_dir/oss-fuzz/zig_sancov_shim.c" \
-    -o "$install_dir/oss-fuzz/zig_sancov_shim.o"
+    -o "$install_dir/zig_sancov_shim.o"
 
-for target in http_framing ws_masking quic_packets query_parse cookie_parse; do
+# Derive the target list from the objects the build installed. This keeps the
+# OSS-Fuzz link step in sync with builds/fuzzing.zig without a second manifest.
+objects=("$install_dir"/oss-fuzz/*.o)
+test "${#objects[@]}" -eq 6
+for object in "${objects[@]}"; do
+    target="$(basename "$object" .o)"
+    test -f "oss-fuzz/options/${target}.options"
     # OSS-Fuzz exposes compiler arguments as space-delimited strings.
     # shellcheck disable=SC2086
     "$CXX" $CXXFLAGS \
         -no-pie \
-        "$install_dir/oss-fuzz/zig_sancov_shim.o" \
-        "$install_dir/oss-fuzz/${target}.o" \
+        "$install_dir/zig_sancov_shim.o" \
+        "$object" \
         $LIB_FUZZING_ENGINE \
         -o "$OUT/$target"
     test -x "$OUT/$target"

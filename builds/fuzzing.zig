@@ -39,62 +39,32 @@ pub fn inject(
     });
     fuzz_support.addImport("zslay", zslay);
 
-    const http_object = add_fuzz_object(b, "http_framing", "fuzz/http_framing.zig", target, optimize, fuzz_support);
-    const ws_object = add_fuzz_object(b, "ws_masking", "fuzz/ws_masking.zig", target, optimize, fuzz_support);
-    const quic_object = add_fuzz_object(b, "quic_packets", "fuzz/quic_packets.zig", target, optimize, fuzz_support);
-    const query_object = add_fuzz_object(b, "query_parse", "fuzz/query_parse.zig", target, optimize, fuzz_support);
-    const cookie_object = add_fuzz_object(b, "cookie_parse", "fuzz/cookie_parse.zig", target, optimize, fuzz_support);
-    const install_http = b.addInstallArtifact(http_object, .{
-        .dest_dir = .{ .override = .{ .custom = "oss-fuzz" } },
-        .dest_sub_path = "http_framing.o",
-    });
-    const install_ws = b.addInstallArtifact(ws_object, .{
-        .dest_dir = .{ .override = .{ .custom = "oss-fuzz" } },
-        .dest_sub_path = "ws_masking.o",
-    });
-    const install_quic = b.addInstallArtifact(quic_object, .{
-        .dest_dir = .{ .override = .{ .custom = "oss-fuzz" } },
-        .dest_sub_path = "quic_packets.o",
-    });
-    const install_query = b.addInstallArtifact(query_object, .{
-        .dest_dir = .{ .override = .{ .custom = "oss-fuzz" } },
-        .dest_sub_path = "query_parse.o",
-    });
-    const install_cookie = b.addInstallArtifact(cookie_object, .{
-        .dest_dir = .{ .override = .{ .custom = "oss-fuzz" } },
-        .dest_sub_path = "cookie_parse.o",
-    });
-    const coverage_check = b.addSystemCommand(&.{"sh"});
-    coverage_check.addFileArg(b.path("fuzz/check_fuzzer_coverage.sh"));
-    coverage_check.addFileArg(http_object.getEmittedBin());
-    coverage_check.addFileArg(ws_object.getEmittedBin());
-    coverage_check.addFileArg(quic_object.getEmittedBin());
-    coverage_check.addFileArg(query_object.getEmittedBin());
-    coverage_check.addFileArg(cookie_object.getEmittedBin());
-    const object_step = b.step("oss-fuzz-objects", "Build libFuzzer ABI objects with sanitizer coverage");
-    object_step.dependOn(&install_http.step);
-    object_step.dependOn(&install_ws.step);
-    object_step.dependOn(&install_quic.step);
-    object_step.dependOn(&install_query.step);
-    object_step.dependOn(&install_cookie.step);
-    object_step.dependOn(&coverage_check.step);
+    const targets = [_]Target{
+        .{ .name = "http_framing", .source = "fuzz/http_framing.zig", .smoke = "fuzz/smoke_http.zig" },
+        .{ .name = "ws_masking", .source = "fuzz/ws_masking.zig", .smoke = "fuzz/smoke_ws.zig" },
+        .{ .name = "quic_packets", .source = "fuzz/quic_packets.zig", .smoke = "fuzz/smoke_quic.zig" },
+        .{ .name = "query_parse", .source = "fuzz/query_parse.zig", .smoke = "fuzz/smoke_query.zig" },
+        .{ .name = "cookie_parse", .source = "fuzz/cookie_parse.zig", .smoke = "fuzz/smoke_cookie.zig" },
+        .{ .name = "multipart_streaming", .source = "fuzz/multipart_streaming.zig", .smoke = "fuzz/smoke_multipart.zig" },
+    };
 
-    const http_smoke = add_smoke(b, "http_framing_smoke", "fuzz/smoke_http.zig", target, optimize, fuzz_support);
-    const ws_smoke = add_smoke(b, "ws_masking_smoke", "fuzz/smoke_ws.zig", target, optimize, fuzz_support);
-    const quic_smoke = add_smoke(b, "quic_packets_smoke", "fuzz/smoke_quic.zig", target, optimize, fuzz_support);
-    const query_smoke = add_smoke(b, "query_parse_smoke", "fuzz/smoke_query.zig", target, optimize, fuzz_support);
-    const cookie_smoke = add_smoke(b, "cookie_parse_smoke", "fuzz/smoke_cookie.zig", target, optimize, fuzz_support);
-    const run_http = sanitizers.add_run_artifact(b, http_smoke, sanitizer.run);
-    const run_ws = sanitizers.add_run_artifact(b, ws_smoke, sanitizer.run);
-    const run_quic = sanitizers.add_run_artifact(b, quic_smoke, sanitizer.run);
-    const run_query = sanitizers.add_run_artifact(b, query_smoke, sanitizer.run);
-    const run_cookie = sanitizers.add_run_artifact(b, cookie_smoke, sanitizer.run);
+    const object_step = b.step("oss-fuzz-objects", "Build libFuzzer ABI objects with sanitizer coverage");
     const smoke_step = b.step("oss-fuzz-smoke", "Run deterministic protocol-boundary fuzz smoke inputs");
-    smoke_step.dependOn(&run_http.step);
-    smoke_step.dependOn(&run_ws.step);
-    smoke_step.dependOn(&run_quic.step);
-    smoke_step.dependOn(&run_query.step);
-    smoke_step.dependOn(&run_cookie.step);
+    var coverage_check = b.addSystemCommand(&.{"sh"});
+    coverage_check.addFileArg(b.path("fuzz/check_fuzzer_coverage.sh"));
+    for (targets) |entry| {
+        const object = add_fuzz_object(b, entry.name, entry.source, target, optimize, fuzz_support);
+        const install = b.addInstallArtifact(object, .{
+            .dest_dir = .{ .override = .{ .custom = "oss-fuzz" } },
+            .dest_sub_path = b.fmt("{s}.o", .{entry.name}),
+        });
+        object_step.dependOn(&install.step);
+        coverage_check.addFileArg(object.getEmittedBin());
+
+        const smoke = add_smoke(b, b.fmt("{s}_smoke", .{entry.name}), entry.smoke, target, optimize, fuzz_support);
+        smoke_step.dependOn(&sanitizers.add_run_artifact(b, smoke, sanitizer.run).step);
+    }
+    object_step.dependOn(&coverage_check.step);
 
     const oss_fuzz = b.step("oss-fuzz", "Build OSS-Fuzz objects and run deterministic smoke inputs");
     oss_fuzz.dependOn(object_step);
@@ -103,6 +73,12 @@ pub fn inject(
     fuzz.dependOn(&run_legacy.step);
     fuzz.dependOn(smoke_step);
 }
+
+const Target = struct {
+    name: []const u8,
+    source: []const u8,
+    smoke: []const u8,
+};
 
 fn add_fuzz_object(
     b: *std.Build,
@@ -116,6 +92,8 @@ fn add_fuzz_object(
         .root_source_file = b.path(source),
         .target = target,
         .optimize = optimize,
+        // OSS-Fuzz links the bare object with $CXX; Zig's stack-check runtime
+        // is not part of that link, so keep the check out of the object.
         .stack_check = false,
         // `-ffuzz` emits inline-8bit-counter sections without registration
         // calls; `oss-fuzz/zig_sancov_shim.c` registers those sections with

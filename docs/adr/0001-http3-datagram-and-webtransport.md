@@ -4,6 +4,9 @@
 - Date: 2026-09-26
 - Revision: 2026-10-24, deferral lifted by
   [ADR 0006](0006-dependency-forks.md)
+- Delivery amendment: 2026-10-26, activation re-declared under M4-3;
+  reassess with the next authorized maintained-fork review
+  ([deliberate boundaries](../roadmap.md#deliberate-boundaries))
 - Deciders: QUIC/HTTP3 engineering, build/vendor, verification
 - Pinned dependency: `farbenbuilds/lsquic` commit
   `85bd081c9103c077a7cc98271d09334d0f1043d4` on `uwz/main`, based on
@@ -24,10 +27,10 @@ datagram ring (`src/quic/datagram_ring.zig`), and datagram routing
 
 The live listener is `quic_engine` in `src/quic/engine.zig` over the pinned
 lsquic build, and it serves bounded RFC 9114 request/response routing
-(`src/quic/stream.zig`). A live `CONNECT` request receives `501 Not
-Implemented` in `src/quic/stream.zig`, so no extended CONNECT session can
-exist and `App.datagram*` (`src/router/app.zig`) is currently unreachable from
-QUIC input.
+(`src/quic/stream.zig`). Completed `CONNECT` dispatch returns `501 Not Implemented` in
+`src/quic/stream.zig`. Headers alone do not admit a long-lived session; ordinary
+body completion and bounds still apply. No extended CONNECT session exists,
+and `App.datagram*` (`src/router/app.zig`) is unreachable from QUIC input.
 
 The question this ADR answers: can RFC 9297 HTTP/3 datagrams be wired to the
 existing public `App.datagram*` surface and slab rings with no new public API
@@ -137,13 +140,17 @@ are true:
 - the HTTP/3 compliance gate exercises a WebTransport client successfully.
 
 No new public API is required beyond the existing `App.datagram*` surface.
-v2.2.0 owns the implementation and the capability-bit change.
+Post-2.2.0 work retains ownership of the implementation and capability change. Its
+2026-10-26 delivery declaration preserves the accepted design while recording
+the publication, backend, and compatible-client barriers; see the
+[dated M4 restoration criteria](../roadmap.md#deliberate-boundaries).
 
 ## Consequences
 
-- The deferral is lifted. ADR 0006 supplies the fork, branch, pin, and patch
-  ledger mechanics; this ADR supplies the wire contract.
-- Until the v2.2.0 implementation lands, `docs/protocols.md`, `SECURITY.md`,
+- The 2026-10-24 revision lifted the original architectural deferral. ADR 0006
+  supplies the fork, branch, pin, and patch ledger mechanics; this ADR supplies
+  the wire contract. The later delivery amendment records activation status.
+- Until the post-2.2.0 implementation lands, `docs/protocols.md`, `SECURITY.md`,
   and `BackendCapabilities` keep the current statement that extended CONNECT
   and application datagrams are not live. The helper modules remain Zig-only
   and are not a claim of deployed interoperability.

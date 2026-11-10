@@ -25,6 +25,10 @@ const http_rejection = @import("../http/rejection.zig");
 const http_compression_pool = @import("../http/compression_pool.zig");
 const zero_copy = @import("zero_copy.zig");
 const tcp_file = @import("tcp_file.zig");
+const file_transfer = @import("../http/file_transfer.zig");
+const body_decoder = @import("../http/body_decoder.zig");
+const request_body = @import("../http/request_body.zig");
+const streaming_request_module = @import("../http/streaming_request.zig");
 const dev_log = @import("../observability/dev_log.zig");
 const metrics = @import("../observability/metrics.zig");
 const zslay = @import("zslay");
@@ -60,6 +64,17 @@ const tls_plaintext_record_capacity = 16 * 1024;
 const tls_record_overhead = 64;
 /// HTTP/2 session type sized for one TCP connection's stream capacity.
 pub const Http2Session = http2_server.server_session(max_http2_streams);
+
+/// Per-stream HTTP/2 request-body sink state; ready-only, bounded by the slab.
+const H2BodyState = struct {
+    conn: *TcpConnection = undefined,
+    index: u16 = 0,
+    stream_id: u32 = 0,
+    active: bool = false,
+    route: ?*const request_body.BodyRoute = null,
+    request: streaming_request_module.StreamingRequest = undefined,
+    state: request_body.BodyState = .{},
+};
 
 /// Per-stream context for one asynchronous HTTP/2 response.
 const Http2AsyncContext = struct {
@@ -144,6 +159,9 @@ pub const TcpConnection = struct {
     // until `begin_response` succeeds. Completion logs read it before the
     // terminal frame releases the slot.
     h2_response_status: [max_http2_streams]u16 = .{0} ** max_http2_streams,
+    h2_files: [max_http2_streams]file_transfer.FileTransfer = .{file_transfer.FileTransfer{}} ** max_http2_streams,
+    h2_file_stream_ids: [max_http2_streams]u32 = .{0} ** max_http2_streams,
+    h2_body_states: [max_http2_streams]H2BodyState = .{H2BodyState{}} ** max_http2_streams,
 
     // One wheel node per connection for keep-alive/header deadlines and the
     // parking slots used by deferred responses. All storage is in the pooled
@@ -175,6 +193,20 @@ pub const TcpConnection = struct {
     stream_context: ?*anyopaque = null,
     stream_producer: ?http_response.StreamProducer = null,
     stream_close_after: bool = false,
+    buffered_file: file_transfer.FileTransfer = .{},
+
+    // HTTP/1 request-body streaming. The head stays pinned in request_buffer
+    // through the end callback; body bytes are fed from the same buffer.
+    streaming_active: bool = false,
+    streaming_route: ?*const request_body.BodyRoute = null,
+    streaming_request: streaming_request_module.StreamingRequest = undefined,
+    streaming_pending_headers: request_body.PendingHeaders = .{},
+    body_state: request_body.BodyState = .{},
+    body_decoder: body_decoder.BodyDecoder = body_decoder.init(.none, .{}),
+    body_start: usize = 0,
+    body_len: usize = 0,
+    streaming_candidate: bool = false,
+    streaming_abort_reason: ?request_body.BodyCancelReason = null,
 
     ssl: ?*c.SSL = null,
     network_bio: ?*c.BIO = null,
@@ -220,6 +252,7 @@ pub const TcpConnection = struct {
         self.abort_controller.reset();
         self.protocol_state = .detect;
         self.protocol_probe_len = 0;
+        self.abort_streaming(.shutdown);
         self.clear_stream();
         try self.h2.reset();
         for (&self.h2_async_states, &self.h2_async_contexts) |*state, *context| {
@@ -495,7 +528,9 @@ pub const TcpConnection = struct {
         // A rejection or keep-alive drain already decided to close; do not keep
         // decrypting and dispatching buffered pipelined bytes after that point.
         while (!self.closing and !self.close_when_drained and !self.dispatch_suspended) {
-            const read_bytes = c.SSL_read(ssl, &plain_buffer, plain_buffer.len);
+            const capacity = self.streaming_read_capacity();
+            if (capacity == 0) break;
+            const read_bytes = c.SSL_read(ssl, &plain_buffer, @min(plain_buffer.len, capacity));
             if (read_bytes > 0) {
                 self.route_decrypted_data(plain_buffer[0..@intCast(read_bytes)]);
                 continue;
@@ -578,6 +613,8 @@ pub const TcpConnection = struct {
             .request_fn = dispatch_http2_request,
             .ws_data_fn = ws_http2_data,
             .stream_closed_fn = close_http2_stream,
+            .request_head_fn = begin_http2_body,
+            .body_chunk_fn = h2_body_chunk,
             .max_frame_payload = http2_frame_payload_capacity(
                 self.write_queue.len,
                 self.ssl != null,
@@ -597,6 +634,7 @@ pub const TcpConnection = struct {
         const still_closing = streams.active[index] and streams.stream_ids[index] == stream_id;
         if (!still_closing and streams.active[index]) return;
 
+        self.cancel_http2_body(index, .peer_closed);
         self.h2_response_status[index] = 0;
         self.clear_http2_producer(index);
         if (self.h2_async_contexts[index].stream_id != stream_id) return;
@@ -671,6 +709,254 @@ pub const TcpConnection = struct {
         });
     }
 
+    /// Offers a completed H2 head to a route-level sink.
+    fn begin_http2_body(
+        context: *anyopaque,
+        request: *Request,
+        stream_id: u32,
+        declared: ?u64,
+    ) anyerror!http2_server.RequestHeadDisposition {
+        const self: *TcpConnection = @ptrCast(@alignCast(context));
+        if (self.closing or self.close_when_drained) return error.ConnectionClosed;
+        const index = self.h2.connection.streams.find(stream_id) orelse return error.StreamClosed;
+        const state = &self.h2_body_states[index];
+        if (state.active) {
+            self.reject_http2_stream(stream_id, "500 Internal Server Error", "Upload already active");
+            return .closed;
+        }
+        const method = radix.HttpMethod.parse(request.method) orelse return .buffered;
+        if (method != .post and method != .put and method != .patch) return .buffered;
+        if (self.early_data_forbids(method)) {
+            self.reject_http2_stream(stream_id, "425 Too Early", "Early data is limited to safe methods");
+            return .closed;
+        }
+        const matched = self.router.match_request(request, method) orelse return .buffered;
+        const handler = matched.handler orelse return .buffered;
+        const route_ptr = switch (handler) {
+            .streaming => |pointer| pointer,
+            else => return .buffered,
+        };
+        const route: *const request_body.BodyRoute = @ptrCast(@alignCast(route_ptr));
+        if (self.metrics) |registry| registry.add(.http_requests, 1);
+        if (route.middleware_policy == .reject_legacy and self.router.has_middleware()) {
+            self.reject_http2_stream(stream_id, "503 Service Unavailable", "Streaming route requires headers-only middleware");
+            return .closed;
+        }
+        if (self.router.has_middleware()) {
+            var response = self.http2_response(stream_id);
+            response.request_body_complete = false;
+            if (self.router.run_middleware(request, &response) == .stop) {
+                self.finish_http2_dispatch(&response) catch {
+                    self.h2.reset_stream(stream_id, .internal_error, self.http2_callbacks()) catch {};
+                };
+                return .closed;
+            }
+            self.h2.stash_stream_headers(stream_id, response.pending_headers[0..response.pending_header_length]);
+        }
+        var active: usize = 0;
+        for (&self.h2_body_states) |*candidate| {
+            if (candidate.active) active += 1;
+        }
+        if (active >= route.limits.max_active) {
+            self.reject_http2_stream(stream_id, "503 Service Unavailable", "Upload admission limit reached");
+            return .closed;
+        }
+        state.* = .{
+            .conn = self,
+            .index = index,
+            .stream_id = stream_id,
+            .route = route,
+            .request = streaming_request_module.StreamingRequest.from_request(request),
+        };
+        const control = state.state.arm(.{
+            .context = state,
+            .resume_fn = h2_body_resume,
+            .cancel_fn = h2_body_cancel_control,
+        }, route.limits, declared) catch |err| {
+            state.route = null;
+            const status = if (err == error.BodyTooLarge) "413 Payload Too Large" else "500 Internal Server Error";
+            self.reject_http2_stream(stream_id, status, "Upload refused");
+            return .closed;
+        };
+        const binding = route.sink.begin(route.sink.context, &state.request, control) catch {
+            _ = state.state.reject_begin();
+            state.route = null;
+            self.reject_http2_stream(stream_id, "500 Internal Server Error", "Upload begin failed");
+            return .closed;
+        };
+        state.active = true;
+        if (state.state.accept_begin(binding)) |terminal| {
+            state.active = false;
+            switch (terminal) {
+                .cancel => |cancellation| route.sink.cancel(cancellation.binding.context, cancellation.reason),
+                .end => {},
+            }
+            _ = state.state.finish_terminal();
+            state.route = null;
+            self.reject_http2_stream(stream_id, "400 Bad Request", "Upload canceled");
+            return .closed;
+        }
+        if (request.header_has_token("Expect", "100-continue")) {
+            self.h2.send_continue(stream_id, self.http2_callbacks()) catch {
+                self.cancel_http2_body(index, .sink_failure);
+                return .closed;
+            };
+        }
+        return .streaming;
+    }
+
+    /// Sends one bounded H2 error response and leaves the stream closed.
+    fn reject_http2_stream(self: *TcpConnection, stream_id: u32, status: []const u8, body: []const u8) void {
+        var response = self.http2_response(stream_id);
+        response.request_body_complete = false;
+        response.end_best_effort(status, body);
+    }
+
+    /// Delivers one H2 DATA event; ready-only sinks keep the stream bounded.
+    fn h2_body_chunk(
+        context: *anyopaque,
+        stream_id: u32,
+        bytes: []const u8,
+        end_stream: bool,
+    ) anyerror!http2_server.BodyChunkResult {
+        const self: *TcpConnection = @ptrCast(@alignCast(context));
+        const index = self.h2.connection.streams.find(stream_id) orelse return error.StreamClosed;
+        const state = &self.h2_body_states[index];
+        if (!state.active) return error.StreamClosed;
+        const route = state.route orelse return error.StreamClosed;
+        if (state.state.readiness == .paused) {
+            return .{ .consumed = 0, .paused = true };
+        }
+        if (bytes.len != 0) {
+            state.state.prepare_chunk(bytes.len) catch |err| {
+                if (err == error.BodyTooLarge) {
+                    self.cancel_http2_body(index, .body_too_large);
+                    return error.BodyTooLarge;
+                }
+                self.cancel_http2_body(index, .invalid_body);
+                return error.InvalidBody;
+            };
+            const binding = state.state.binding orelse return error.StreamClosed;
+            const progress = route.sink.chunk(binding.context, bytes) catch {
+                const failed = state.state.fail_chunk();
+                switch (failed) {
+                    .cancel => |cancellation| route.sink.cancel(cancellation.binding.context, cancellation.reason),
+                    .end => {},
+                }
+                _ = state.state.finish_terminal();
+                state.active = false;
+                state.route = null;
+                self.h2.reset_stream(stream_id, .internal_error, self.http2_callbacks()) catch {};
+                return error.SinkFailed;
+            };
+            if (progress.consumed > bytes.len) {
+                self.cancel_http2_body(index, .invalid_body);
+                return error.InvalidBody;
+            }
+            const terminal = state.state.accept_chunk(progress) catch {
+                const failed = state.state.fail_chunk();
+                switch (failed) {
+                    .cancel => |cancellation| route.sink.cancel(cancellation.binding.context, cancellation.reason),
+                    .end => {},
+                }
+                _ = state.state.finish_terminal();
+                state.active = false;
+                state.route = null;
+                self.h2.reset_stream(stream_id, .internal_error, self.http2_callbacks()) catch {};
+                return error.InvalidBody;
+            };
+            if (terminal) |pending_terminal| {
+                switch (pending_terminal) {
+                    .cancel => |cancellation| {
+                        route.sink.cancel(cancellation.binding.context, cancellation.reason);
+                        _ = state.state.finish_terminal();
+                        state.active = false;
+                        state.route = null;
+                        switch (cancellation.reason) {
+                            .body_too_large => self.reject_http2_stream(stream_id, "413 Payload Too Large", "Payload Too Large"),
+                            .invalid_body, .sink_failure, .cancelled => self.reject_http2_stream(stream_id, "400 Bad Request", "Upload failed"),
+                            else => self.h2.reset_stream(stream_id, .cancel, self.http2_callbacks()) catch {},
+                        }
+                        return .{ .consumed = progress.consumed, .paused = false, .closed = true };
+                    },
+                    .end => {},
+                }
+            }
+            if (progress.consumed < bytes.len or progress.readiness == .paused) {
+                return .{ .consumed = progress.consumed, .paused = true };
+            }
+        }
+        if (end_stream) {
+            const terminal = state.state.take_end(true, 0) catch {
+                self.cancel_http2_body(index, .invalid_body);
+                return error.InvalidBody;
+            };
+            var response = self.http2_response(stream_id);
+            response.pending_header_length = self.h2.take_stream_headers(index, response.pending_headers[0..]);
+            route.sink.end(terminal.end.context, &state.request, &response) catch {
+                self.cancel_http2_body(index, .sink_failure);
+                return error.SinkFailed;
+            };
+            if (!response.is_complete() and !response.is_started()) {
+                response.end("500 Internal Server Error", "Handler did not complete the response") catch {
+                    self.cancel_http2_body(index, .sink_failure);
+                    return error.SinkFailed;
+                };
+            }
+            _ = state.state.finish_terminal();
+            state.active = false;
+            state.route = null;
+        }
+        return .{ .consumed = bytes.len, .paused = false };
+    }
+
+    fn h2_body_resume(context: *anyopaque) error{BodyDeliveryFailed}!void {
+        const state: *H2BodyState = @ptrCast(@alignCast(context));
+        state.conn.h2.resume_stream_body(state.stream_id, state.conn.http2_callbacks()) catch
+            return error.BodyDeliveryFailed;
+    }
+
+    fn h2_body_cancel_control(context: *anyopaque) void {
+        const state: *H2BodyState = @ptrCast(@alignCast(context));
+        state.conn.cancel_http2_body(state.index, .cancelled);
+        // A refused reset leaves the stream to the peer's next DATA, which
+        // cancels again; there is no response to synthesize after app cancel.
+        state.conn.h2.reset_stream(state.stream_id, .cancel, state.conn.http2_callbacks()) catch {};
+    }
+
+    fn cancel_http2_body(self: *TcpConnection, index: u16, reason: request_body.BodyCancelReason) void {
+        if (index >= self.h2_body_states.len) return;
+        const state = &self.h2_body_states[index];
+        if (!state.active) return;
+        state.active = false;
+        if (state.route) |route| {
+            if (state.state.request_cancel(reason)) |terminal| {
+                switch (terminal) {
+                    .cancel => |cancellation| route.sink.cancel(cancellation.binding.context, cancellation.reason),
+                    .end => {},
+                }
+            }
+            _ = state.state.finish_terminal();
+            state.route = null;
+        }
+    }
+
+    fn http2_response(self: *TcpConnection, stream_id: u32) Response {
+        return .{ .target = .{ .http2 = .{
+            .context = self,
+            .router = self.router,
+            .stream_id = stream_id,
+            .end_fn = end_http2_response,
+            .begin_fn = begin_http2_response,
+            .write_fn = write_http2_response,
+            .finish_fn = finish_http2_response,
+            .abort_fn = abort_http2_response,
+            .begin_stream_fn = begin_http2_stream,
+            .stream_file_fn = begin_http2_file,
+            .compression_pool = self.http_compression,
+        } } };
+    }
+
     fn dispatch_http2_request(
         context: *anyopaque,
         request: *Request,
@@ -688,6 +974,7 @@ pub const TcpConnection = struct {
             .finish_fn = finish_http2_response,
             .abort_fn = abort_http2_response,
             .begin_stream_fn = begin_http2_stream,
+            .stream_file_fn = begin_http2_file,
             .compression_pool = self.http_compression,
         } } };
         const method = radix.HttpMethod.parse(request.method);
@@ -810,6 +1097,9 @@ pub const TcpConnection = struct {
                 binding.callback(binding.context, request, token);
                 return;
             },
+            .streaming => {
+                response.end_best_effort("501 Not Implemented", "Streaming route is HTTP/1.1 only");
+            },
         }
         try self.finish_http2_dispatch(&response);
     }
@@ -880,6 +1170,7 @@ pub const TcpConnection = struct {
 
     fn abort_http2_response(context: *anyopaque, stream_id: u32) void {
         const self: *TcpConnection = @ptrCast(@alignCast(context));
+        if (self.h2.connection.streams.find(stream_id) == null) return;
         self.h2.reset_stream(stream_id, .internal_error, self.http2_callbacks()) catch
             close_connection(self);
     }
@@ -921,6 +1212,62 @@ pub const TcpConnection = struct {
         return self.step_http2_stream(index) == .done;
     }
 
+    /// Header acceptance is the ownership boundary; later faults reset only this stream.
+    fn begin_http2_file(
+        context: *anyopaque,
+        stream_id: u32,
+        status: []const u8,
+        headers: []const u8,
+        source: http_response.FileSource,
+    ) anyerror!void {
+        const self: *TcpConnection = @ptrCast(@alignCast(context));
+        if (self.closing or self.close_when_drained) return error.ConnectionClosed;
+        const index = self.h2.connection.streams.find(stream_id) orelse
+            return error.StreamClosed;
+        if (self.h2_stream_producers[index] != null or self.h2_files[index].file != null) {
+            return error.StreamAlreadyActive;
+        }
+        const code = http_response.status_code(status) orelse return error.InvalidStatus;
+        const head = std.mem.eql(u8, self.h2.requests[index].method, "HEAD");
+        const target = self.http2_response_target(stream_id);
+        self.begin_write_batch();
+        defer self.end_write_batch();
+        try self.h2.begin_file_response(stream_id, status, headers, source.length, self.http2_callbacks());
+        if (head or source.length == 0) {
+            source.file.close(source.io);
+            if (target) |view| log_request(self, view.method, view.path, code);
+            return;
+        }
+        self.h2_response_status[index] = code;
+        self.h2_files[index] = .{
+            .io = source.io,
+            .file = source.file,
+            .buffer = source.buffer,
+            .offset = source.offset,
+            .remaining = source.length,
+        };
+        self.h2_file_stream_ids[index] = stream_id;
+        self.h2_stream_producer_contexts[index] = &self.h2_files[index];
+        self.h2_stream_producers[index] = file_transfer.produce;
+        self.h2_stream_producer_close[index] = false;
+        _ = self.step_http2_stream(index);
+    }
+
+    fn http2_file_chunk_limit(self: *TcpConnection, index: u16) usize {
+        const credit = @min(self.h2.connection.connection_send_window, self.h2.connection.streams.send_windows[index]);
+        if (credit <= 0) return 0;
+        var free = self.write_queue.len - self.write_len;
+        if (self.ssl != null) {
+            const bio = self.network_bio orelse return 0;
+            const pending: usize = @intCast(c.BIO_ctrl_pending(bio));
+            free -|= pending;
+        }
+        return @min(
+            @as(usize, @intCast(credit)),
+            @min(self.h2.data_frame_capacity(self.http2_callbacks()), http2_frame_payload_capacity(free, self.ssl != null)),
+        );
+    }
+
     /// Advances one armed HTTP/2 producer; a producer error resets its stream.
     fn step_http2_stream(self: *TcpConnection, index: u16) http_response.StreamStatus {
         const producer = self.h2_stream_producers[index] orelse return .done;
@@ -930,10 +1277,26 @@ pub const TcpConnection = struct {
         }
         const producer_context = self.h2_stream_producer_contexts[index];
         const stream_id = self.h2.connection.streams.stream_ids[index];
+        const owned_file = self.h2_files[index].file != null;
+        if (owned_file and self.h2_file_stream_ids[index] != stream_id) {
+            self.clear_http2_producer(index);
+            return .done;
+        }
         if (self.closing or self.close_when_drained) {
             self.clear_http2_producer(index);
             return .done;
         }
+
+        if (owned_file) {
+            self.h2_files[index].chunk_limit = self.http2_file_chunk_limit(index);
+            self.begin_write_batch();
+        }
+        defer if (owned_file) {
+            // One bounded read can yield before filling the ring. Keep a real
+            // completion queued so direct flushing cannot strand its next read.
+            self.arm_write();
+            self.end_write_batch();
+        };
 
         var response = Response{
             .target = .{ .http2 = .{
@@ -951,14 +1314,18 @@ pub const TcpConnection = struct {
             .close_after_end = self.h2_stream_producer_close[index],
         };
         const status = producer(producer_context, &response) catch {
-            const callbacks = self.http2_callbacks();
-            self.h2.reset_stream(stream_id, .internal_error, callbacks) catch
-                close_connection(self);
+            abort_http2_response(self, stream_id);
             self.clear_http2_producer(index);
             return .done;
         };
-        if (status == .done) self.clear_http2_producer(index);
-        return status;
+        if (response.is_complete()) {
+            self.clear_http2_producer(index);
+            return .done;
+        }
+        if (status == .pending) return .pending;
+        abort_http2_response(self, stream_id);
+        self.clear_http2_producer(index);
+        return .done;
     }
 
     /// Resumes every armed HTTP/2 producer after queued output drains.
@@ -974,6 +1341,8 @@ pub const TcpConnection = struct {
         self.h2_stream_producers[index] = null;
         self.h2_stream_producer_contexts[index] = undefined;
         self.h2_stream_producer_close[index] = false;
+        self.h2_file_stream_ids[index] = 0;
+        file_transfer.close(&self.h2_files[index]);
     }
 
     fn arm_http2_async(
@@ -1067,6 +1436,13 @@ pub const TcpConnection = struct {
         // HTTP/2 reads remain armed while other streams await completion.
     }
 
+    /// Returns the request method before the parser consumes the request line.
+    fn peek_method(buffer: []const u8) ?[]const u8 {
+        const space = std.mem.indexOfScalar(u8, buffer, ' ') orelse return null;
+        if (space == 0) return null;
+        return buffer[0..space];
+    }
+
     fn route_http_data(self: *TcpConnection, data: []const u8) void {
         // Re-arm the idle/header deadline after every parse or dispatch exit;
         // the partial-request check sees the post-dispatch parser state.
@@ -1080,6 +1456,10 @@ pub const TcpConnection = struct {
             if (batching) end_write_batch(self);
         }
 
+        if (self.streaming_active) {
+            self.append_streaming_data(data);
+            return;
+        }
         if (self.dispatch_suspended) {
             close_connection(self);
             return;
@@ -1099,6 +1479,53 @@ pub const TcpConnection = struct {
         self.request_len += data.len;
 
         while (self.request_len > 0 and !self.closing) {
+            if (!self.streaming_candidate and self.parser.state == .method) {
+                if (peek_method(self.request_buffer[0..self.request_len])) |stream_method| {
+                    const parsed = radix.HttpMethod.parse(stream_method);
+                    if (parsed == .post or parsed == .put or parsed == .patch) {
+                        self.streaming_candidate = true;
+                    }
+                }
+            }
+            if (self.streaming_candidate) {
+                const head = http_parser.consume_head(
+                    &self.parser,
+                    &self.req,
+                    self.request_buffer[0..self.request_len],
+                );
+                if (head.ready) |ready| {
+                    self.streaming_candidate = false;
+                    const method = radix.HttpMethod.parse(self.req.method);
+                    if (method == .post or method == .put or method == .patch or method == .any) {
+                        self.req.extra_param_names = self.route_param_names;
+                        self.req.extra_param_values = self.route_param_values;
+                        self.req.extra_param_count = 0;
+                        if (self.router.match_request(&self.req, method)) |matched| {
+                            if (matched.handler) |handler| switch (handler) {
+                                .streaming => |route_ptr| {
+                                    self.start_streaming_request(
+                                        ready,
+                                        @ptrCast(@alignCast(route_ptr)),
+                                    );
+                                    return;
+                                },
+                                else => {},
+                            };
+                        }
+                    }
+                    _ = http_parser.commit_head(&self.parser, &self.req, head);
+                } else if (head.buffered_failure != null) {
+                    self.streaming_candidate = false;
+                    _ = http_parser.commit_head(&self.parser, &self.req, head);
+                } else switch (self.parser.state) {
+                    .body, .chunk_size, .chunk_ext, .chunk_data, .chunk_crlf, .chunk_trailer, .error_invalid, .error_headers_too_large, .error_too_large => {},
+                    else => {
+                        self.handle_expect_continue();
+                        return;
+                    },
+                }
+            }
+
             const consumed = http_parser.consume(
                 &self.parser,
                 &self.req,
@@ -1121,6 +1548,7 @@ pub const TcpConnection = struct {
                 self.handle_expect_continue();
                 return;
             }
+            self.streaming_candidate = false;
 
             const close_requested = self.req.header_has_token("Connection", "close");
             if (!batching and consumed < self.request_len) {
@@ -1160,6 +1588,393 @@ pub const TcpConnection = struct {
             self.expect_continue_sent = false;
             self.suppress_response_body = false;
         }
+    }
+
+    /// Starts a route-level body sink after the head is structurally ready.
+    fn start_streaming_request(
+        self: *TcpConnection,
+        head: http_parser.HeadReady,
+        route: *const request_body.BodyRoute,
+    ) void {
+        if (self.streaming_active) {
+            self.close_streaming_connection("503 Service Unavailable", "Upload already active");
+            return;
+        }
+        if (route.middleware_policy == .reject_legacy and self.router.has_middleware()) {
+            self.close_streaming_connection(
+                "500 Internal Server Error",
+                "Streaming route requires headers-only middleware",
+            );
+            return;
+        }
+        if (route.limits.max_active == 0) {
+            self.close_streaming_connection("500 Internal Server Error", "Invalid upload limits");
+            return;
+        }
+        if (self.metrics) |registry| registry.add(.http_requests, 1);
+        const method = radix.HttpMethod.parse(self.req.method);
+        if (self.early_data_forbids(method)) {
+            var response = Response{ .target = .{ .tcp = self }, .request_body_complete = false };
+            response.end_with_headers(
+                "425 Too Early",
+                "Connection: close\r\n",
+                "Early data is limited to safe methods",
+            ) catch close_connection(self);
+            close_after_flush(self);
+            return;
+        }
+
+        http_parser.commit_streaming_head(&self.parser, &self.req);
+        self.streaming_candidate = false;
+        self.req.body = "";
+        self.req.extra_param_names = self.route_param_names;
+        self.req.extra_param_values = self.route_param_values;
+        self.streaming_pending_headers.clear();
+        if (self.router.has_middleware()) {
+            var response = Response{ .target = .{ .tcp = self }, .request_body_complete = false };
+            if (self.router.run_middleware(&self.req, &response) == .stop) {
+                self.finish_sync_dispatch(&response);
+                close_after_flush(self);
+                return;
+            }
+            self.streaming_pending_headers.capture(&response);
+        }
+        self.streaming_request = streaming_request_module.StreamingRequest.from_request(&self.req);
+        self.streaming_route = route;
+        self.body_start = head.header_end;
+        self.body_len = self.request_len - head.header_end;
+        self.body_decoder = body_decoder.init(head.framing, .{
+            .max_body_bytes = route.limits.max_body_bytes,
+            .max_header_bytes = self.parser.max_header_bytes,
+            .buffered = false,
+        });
+        const declared: ?u64 = switch (head.framing) {
+            .content_length => |length| length,
+            else => null,
+        };
+        self.body_state = .{};
+        const control = self.body_state.arm(.{
+            .context = self,
+            .resume_fn = resume_streaming_body,
+            .cancel_fn = cancel_streaming_control,
+        }, route.limits, declared) catch |err| {
+            self.streaming_route = null;
+            const status = if (err == error.BodyTooLarge) "413 Payload Too Large" else "500 Internal Server Error";
+            self.close_streaming_connection(status, "Upload refused");
+            return;
+        };
+        const binding = route.sink.begin(route.sink.context, &self.streaming_request, control) catch {
+            _ = self.body_state.reject_begin();
+            self.streaming_route = null;
+            self.close_streaming_connection("500 Internal Server Error", "Upload begin failed");
+            return;
+        };
+        self.streaming_active = true;
+        self.dispatch_suspended = true;
+        if (self.body_state.accept_begin(binding)) |terminal| {
+            self.complete_streaming_terminal(terminal);
+            return;
+        }
+        self.handle_expect_continue();
+        // The pump performs its own terminal response and cleanup on failure.
+        self.pump_streaming_body() catch {};
+    }
+
+    fn append_streaming_data(self: *TcpConnection, data: []const u8) void {
+        if (data.len != 0) {
+            const used = self.body_start + self.body_len;
+            if (data.len > self.request_buffer.len - used) {
+                self.fail_streaming(.body_too_large);
+                return;
+            }
+            @memcpy(self.request_buffer[used..][0..data.len], data);
+            self.body_len += data.len;
+            self.request_len = used + data.len;
+        }
+        // The pump performs its own terminal response and cleanup on failure.
+        self.pump_streaming_body() catch {};
+    }
+
+    fn pump_streaming_body(self: *TcpConnection) error{BodyDeliveryFailed}!void {
+        if (!self.streaming_active) return;
+        const route = self.streaming_route orelse return;
+        while (self.body_len > 0) {
+            if (self.body_state.readiness == .paused) {
+                self.dispatch_suspended = true;
+                return;
+            }
+            const event = body_decoder.next(
+                &self.body_decoder,
+                self.request_buffer[self.body_start..][0..self.body_len],
+            );
+            switch (event) {
+                .need_more => break,
+                .data => |bytes| {
+                    self.body_state.prepare_chunk(bytes.len) catch |err| {
+                        self.fail_streaming(if (err == error.BodyTooLarge) .body_too_large else .invalid_body);
+                        return error.BodyDeliveryFailed;
+                    };
+                    const binding = self.body_state.binding orelse {
+                        self.fail_streaming(.invalid_body);
+                        return error.BodyDeliveryFailed;
+                    };
+                    const progress = route.sink.chunk(binding.context, bytes) catch {
+                        const terminal = self.body_state.fail_chunk();
+                        self.streaming_abort_reason = null;
+                        self.invoke_streaming_cancel(terminal);
+                        return error.BodyDeliveryFailed;
+                    };
+                    const terminal = self.body_state.accept_chunk(progress) catch {
+                        const failed = self.body_state.fail_chunk();
+                        self.streaming_abort_reason = null;
+                        self.invoke_streaming_cancel(failed);
+                        return error.BodyDeliveryFailed;
+                    };
+                    body_decoder.accept_payload(&self.body_decoder, progress.consumed) catch {
+                        self.fail_streaming(.invalid_body);
+                        return error.BodyDeliveryFailed;
+                    };
+                    self.compact_streaming_body(progress.consumed);
+                    if (terminal) |pending| {
+                        self.streaming_abort_reason = null;
+                        self.invoke_streaming_terminal(pending);
+                        return;
+                    }
+                    if (self.streaming_abort_reason) |reason| {
+                        self.abort_streaming(reason);
+                        return;
+                    }
+                    if (progress.readiness == .paused) {
+                        self.dispatch_suspended = true;
+                        return;
+                    }
+                },
+                .end => {
+                    const terminal = self.body_state.take_end(true, 0) catch {
+                        self.fail_streaming(.invalid_body);
+                        return error.BodyDeliveryFailed;
+                    };
+                    self.invoke_streaming_end(terminal.end);
+                    return;
+                },
+                .invalid => {
+                    self.fail_streaming(.invalid_body);
+                    return error.BodyDeliveryFailed;
+                },
+                .too_large => {
+                    self.fail_streaming(.body_too_large);
+                    return error.BodyDeliveryFailed;
+                },
+            }
+        }
+        if (self.body_decoder.state == .done) {
+            const terminal = self.body_state.take_end(true, 0) catch {
+                self.fail_streaming(.invalid_body);
+                return error.BodyDeliveryFailed;
+            };
+            self.invoke_streaming_end(terminal.end);
+            return;
+        }
+        self.dispatch_suspended = false;
+    }
+
+    fn compact_streaming_body(self: *TcpConnection, consumed: usize) void {
+        if (consumed == 0) return;
+        body_decoder.discard_prefix(&self.body_decoder, consumed) catch {
+            self.fail_streaming(.invalid_body);
+            return;
+        };
+        const remaining = self.body_len - consumed;
+        if (remaining != 0) {
+            std.mem.copyForwards(
+                u8,
+                self.request_buffer[self.body_start..][0..remaining],
+                self.request_buffer[self.body_start + consumed ..][0..remaining],
+            );
+        }
+        self.body_len = remaining;
+        self.request_len = self.body_start + remaining;
+    }
+
+    fn complete_streaming_terminal(self: *TcpConnection, terminal: request_body.BodyTerminal) void {
+        const route = self.streaming_route orelse return;
+        switch (terminal) {
+            .cancel => |cancellation| {
+                route.sink.cancel(cancellation.binding.context, cancellation.reason);
+                _ = self.body_state.finish_terminal();
+                self.close_streaming_connection("400 Bad Request", "Upload canceled");
+            },
+            .end => {},
+        }
+    }
+
+    fn invoke_streaming_cancel(self: *TcpConnection, terminal: request_body.BodyTerminal) void {
+        const route = self.streaming_route orelse return;
+        switch (terminal) {
+            .cancel => |cancellation| {
+                route.sink.cancel(cancellation.binding.context, cancellation.reason);
+                _ = self.body_state.finish_terminal();
+                self.streaming_active = false;
+                self.streaming_route = null;
+                self.body_len = 0;
+                if (self.closing) return;
+                const status = if (cancellation.reason == .body_too_large)
+                    "413 Payload Too Large"
+                else if (cancellation.reason == .invalid_body)
+                    "400 Bad Request"
+                else
+                    "500 Internal Server Error";
+                self.close_streaming_connection(status, "Upload failed");
+            },
+            .end => {},
+        }
+    }
+
+    fn invoke_streaming_terminal(self: *TcpConnection, terminal: request_body.BodyTerminal) void {
+        switch (terminal) {
+            .end => |binding| self.invoke_streaming_end(binding),
+            .cancel => self.invoke_streaming_cancel(terminal),
+        }
+    }
+
+    fn invoke_streaming_end(self: *TcpConnection, binding: request_body.BodyBinding) void {
+        defer _ = self.body_state.finish_terminal();
+        const route = self.streaming_route orelse return;
+        var response = Response{ .target = .{ .tcp = self } };
+        self.streaming_pending_headers.apply(&response);
+        route.sink.end(binding.context, &self.streaming_request, &response) catch {
+            self.close_streaming_connection("500 Internal Server Error", "Upload end failed");
+            return;
+        };
+        if (!response.is_complete() and !response.is_started()) {
+            response.end("500 Internal Server Error", "Handler did not complete the response") catch {
+                self.close_streaming_connection("500 Internal Server Error", "Response failed");
+                return;
+            };
+        }
+        _ = self.body_state.finish_terminal();
+        const consumed = self.body_start + self.body_decoder.mark;
+        self.streaming_active = false;
+        self.streaming_route = null;
+        self.body_len = 0;
+        const close_requested = self.req.header_has_token("Connection", "close");
+        if (response.is_complete()) {
+            self.finish_streaming_request(consumed);
+            if (close_requested) close_after_flush(self);
+        } else {
+            self.dispatch_suspended = true;
+            self.pending_request_consumed = consumed;
+            self.pending_close_requested = close_requested;
+        }
+    }
+
+    fn finish_streaming_request(self: *TcpConnection, consumed: usize) void {
+        self.streaming_active = false;
+        self.streaming_route = null;
+        self.body_len = 0;
+        if (consumed > self.request_len) {
+            close_connection(self);
+            return;
+        }
+        const remaining = self.request_len - consumed;
+        if (remaining != 0) {
+            std.mem.copyForwards(
+                u8,
+                self.request_buffer[0..remaining],
+                self.request_buffer[consumed..self.request_len],
+            );
+        }
+        self.request_len = remaining;
+        self.req = .{};
+        http_parser.reset(&self.parser);
+        self.expect_continue_sent = false;
+        self.suppress_response_body = false;
+        self.dispatch_suspended = false;
+        if (remaining != 0) self.route_http_data(&.{});
+    }
+
+    fn fail_streaming(self: *TcpConnection, reason: request_body.BodyCancelReason) void {
+        if (self.streaming_route) |route| {
+            if (self.body_state.request_cancel(reason)) |terminal| {
+                switch (terminal) {
+                    .cancel => |cancellation| {
+                        route.sink.cancel(cancellation.binding.context, cancellation.reason);
+                        _ = self.body_state.finish_terminal();
+                    },
+                    .end => {},
+                }
+            }
+        }
+        const status = if (reason == .body_too_large)
+            "413 Payload Too Large"
+        else if (reason == .invalid_body)
+            "400 Bad Request"
+        else
+            "500 Internal Server Error";
+        self.close_streaming_connection(status, "Upload failed");
+    }
+
+    /// Releases an H1 streaming body after close, reset, or protocol switch.
+    ///
+    /// The active callback path owns the terminal callback while a chunk is
+    /// borrowed; in that case the reason is deferred until the callback exits.
+    fn abort_streaming(self: *TcpConnection, reason: request_body.BodyCancelReason) void {
+        if (!self.streaming_active and self.body_state.phase == .inactive) return;
+        if (self.body_state.phase == .begin or self.body_state.phase == .chunk) {
+            _ = self.body_state.request_cancel(reason);
+            self.streaming_abort_reason = reason;
+            return;
+        }
+        if (self.streaming_route) |route| {
+            if (self.body_state.request_cancel(reason)) |terminal| {
+                switch (terminal) {
+                    .cancel => |cancellation| route.sink.cancel(cancellation.binding.context, cancellation.reason),
+                    .end => {},
+                }
+            }
+            _ = self.body_state.finish_terminal();
+        }
+        self.streaming_active = false;
+        self.streaming_route = null;
+        self.streaming_candidate = false;
+        self.streaming_pending_headers.clear();
+        self.body_start = 0;
+        self.body_len = 0;
+        self.streaming_abort_reason = null;
+        self.body_state = .{};
+    }
+
+    fn close_streaming_connection(self: *TcpConnection, status: []const u8, body: []const u8) void {
+        self.streaming_active = false;
+        self.streaming_route = null;
+        self.body_len = 0;
+        self.body_state = .{};
+        self.dispatch_suspended = false;
+        var response = Response{ .target = .{ .tcp = self } };
+        response.end_with_headers(status, "Connection: close\r\n", body) catch {
+            close_connection(self);
+            return;
+        };
+        close_after_flush(self);
+        self.request_len = 0;
+        self.req = .{};
+        http_parser.reset(&self.parser);
+    }
+
+    fn resume_streaming_body(context: *anyopaque) error{BodyDeliveryFailed}!void {
+        const self: *TcpConnection = @ptrCast(@alignCast(context));
+        if (!self.streaming_active) return error.BodyDeliveryFailed;
+        try self.pump_streaming_body();
+        if (self.streaming_active and self.body_state.readiness == .ready and
+            !self.dispatch_suspended and !self.read_active and !self.closing)
+        {
+            self.arm_read();
+        }
+    }
+
+    fn cancel_streaming_control(context: *anyopaque) void {
+        const self: *TcpConnection = @ptrCast(@alignCast(context));
+        self.fail_streaming(.cancelled);
     }
 
     fn dispatch_request(self: *TcpConnection) void {
@@ -1257,10 +2072,17 @@ pub const TcpConnection = struct {
                 binding.callback(binding.context, &self.req, token);
                 self.dispatch_suspended = token.is_pending();
             },
+            .streaming => {
+                response.end_best_effort("501 Not Implemented", "Streaming route is HTTP/1.1 only");
+            },
         }
     }
 
     fn finish_sync_dispatch(self: *TcpConnection, response: *Response) void {
+        if (self.buffered_file.file != null) {
+            self.dispatch_suspended = true;
+            return;
+        }
         if (response.is_complete()) {
             // A handler that ended its own streaming response leaves no
             // producer behind; clear any armed one defensively.
@@ -1302,17 +2124,28 @@ pub const TcpConnection = struct {
             return .done;
         }
 
+        const owns_file = self.buffered_file.file != null;
+        if (owns_file) {
+            self.buffered_file.chunk_limit = self.file_chunk_limit();
+            // One bounded file read must leave a completion to pull its next window.
+            self.begin_write_batch();
+        }
+        defer if (owns_file) self.end_write_batch();
         var response = Response{
             .target = .{ .tcp = self },
             .state = .streaming,
             .close_after_end = self.stream_close_after,
+            .stream_framing = if (owns_file) .fixed_length else .chunked,
         };
         const status = producer(context, &response) catch {
-            self.clear_stream();
             close_connection(self);
             return .done;
         };
-        if (status == .done) self.clear_stream();
+        if (response.is_complete()) {
+            self.clear_stream();
+            return .done;
+        }
+        if (status == .done) close_connection(self);
         return status;
     }
 
@@ -1326,6 +2159,16 @@ pub const TcpConnection = struct {
         self.stream_producer = null;
         self.stream_context = null;
         self.stream_close_after = false;
+        file_transfer.close(&self.buffered_file);
+    }
+
+    fn file_chunk_limit(self: *const TcpConnection) usize {
+        const free = self.write_queue.len - self.write_len;
+        if (self.ssl == null) return free;
+        const bio = self.network_bio orelse return 0;
+        const pending: usize = @intCast(c.BIO_ctrl_pending(bio));
+        if (pending >= free or tls_record_overhead >= free - pending) return 0;
+        return @min(tls_plaintext_record_capacity, free - pending - tls_record_overhead);
     }
 
     fn async_target(self: *TcpConnection) http_response.AsyncTarget {
@@ -1424,13 +2267,23 @@ pub const TcpConnection = struct {
         }
     }
 
+    /// Bounds one socket read by the free streaming ingress window.
+    fn streaming_read_capacity(self: *const TcpConnection) usize {
+        if (!self.streaming_active) return self.read_buffer.len;
+        const used = self.body_start + self.body_len;
+        if (used > self.request_buffer.len) return 0;
+        return @min(self.read_buffer.len, self.request_buffer.len - used);
+    }
+
     fn arm_read(self: *TcpConnection) void {
         if (self.read_active or self.dispatch_suspended or self.closing) return;
+        const capacity = self.streaming_read_capacity();
+        if (capacity == 0) return;
         self.read_active = true;
         self.socket.read(
             self.loop,
             &self.read_completion,
-            .{ .slice = &self.read_buffer },
+            .{ .slice = self.read_buffer[0..capacity] },
             TcpConnection,
             self,
             on_read_complete,
@@ -1464,9 +2317,11 @@ pub const TcpConnection = struct {
     fn handle_expect_continue(self: *TcpConnection) void {
         if (self.expect_continue_sent or self.closing) return;
 
-        switch (self.parser.state) {
-            .body, .chunk_size, .chunk_ext, .chunk_data, .chunk_crlf, .chunk_trailer => {},
-            else => return,
+        if (!self.streaming_active) {
+            switch (self.parser.state) {
+                .body, .chunk_size, .chunk_ext, .chunk_data, .chunk_crlf, .chunk_trailer => {},
+                else => return,
+            }
         }
 
         const expect_count = self.req.count_headers("Expect");
@@ -1679,6 +2534,7 @@ pub const TcpConnection = struct {
         if (comptime !zero_copy.kernel_send_supported) return error.ZeroCopyUnavailable;
         if (self.ssl != null) return error.ZeroCopyUnavailable;
         if (self.file_body != null) return error.FileBodyAlreadyActive;
+        if (self.buffered_file.file != null) return error.FileBodyAlreadyActive;
 
         var framing_buffer: [128]u8 = undefined;
         const framing = try http_status.format_http1_framing(&framing_buffer, status, length);
@@ -1709,6 +2565,47 @@ pub const TcpConnection = struct {
             self.dispatch_suspended = false;
             return err;
         };
+    }
+
+    /// Accepts the descriptor only after the complete known-length head is queued.
+    pub fn begin_buffered_file_response(
+        self: *TcpConnection,
+        status: []const u8,
+        pending: []const u8,
+        headers: []const u8,
+        source: http_response.FileSource,
+        close_after: bool,
+    ) !void {
+        if (self.closing or self.close_when_drained) return error.ConnectionClosed;
+        if (self.file_body != null or self.buffered_file.file != null or self.stream_producer != null) {
+            return error.FileBodyAlreadyActive;
+        }
+        if (source.buffer.len == 0) return error.InvalidFileSource;
+        _ = std.math.add(u64, source.offset, source.length) catch return error.InvalidFileSource;
+        if (source.length != 0 and !self.suppress_response_body and
+            (self.write_queue.len == 0 or (self.ssl != null and self.write_queue.len <= tls_record_overhead)))
+        {
+            return error.FileStreamingUnsupported;
+        }
+        var framing_buffer: [128]u8 = undefined;
+        const framing = try http_status.format_http1_framing(&framing_buffer, status, source.length);
+        self.begin_write_batch();
+        defer self.end_write_batch();
+        try tcp_file.write_data_parts(self, &.{ framing, pending, headers, "\r\n" });
+        if (source.length == 0 or self.suppress_response_body) {
+            source.file.close(source.io);
+            if (close_after) close_after_flush(self);
+            return;
+        }
+        self.buffered_file = .{
+            .io = source.io,
+            .file = source.file,
+            .buffer = source.buffer,
+            .offset = source.offset,
+            .remaining = source.length,
+        };
+        self.dispatch_suspended = true;
+        _ = self.start_stream(&self.buffered_file, file_transfer.produce, close_after);
     }
 
     /// Releases a pending response file without touching queued socket bytes.
@@ -1851,7 +2748,7 @@ fn on_read_complete(
         release_closed_connection(conn);
         return .disarm;
     }
-    if (conn.dispatch_suspended) return .disarm;
+    if (conn.dispatch_suspended or conn.streaming_read_capacity() == 0) return .disarm;
     conn.read_active = true;
     return .rearm;
 }
@@ -1989,11 +2886,16 @@ pub fn close_connection(conn: *TcpConnection) void {
     conn.pending_request_consumed = 0;
     conn.pending_close_requested = false;
     conn.write_batch_depth = 0;
+    conn.abort_streaming(.shutdown);
     conn.clear_stream();
     conn.protocol_probe_len = 0;
     conn.cancel_timers();
     conn.async_response_state.cancel();
     for (&conn.h2_async_states) |*state| state.cancel();
+    for (0..max_http2_streams) |index| {
+        conn.cancel_http2_body(@intCast(index), .shutdown);
+        conn.clear_http2_producer(@intCast(index));
+    }
 
     if (conn.ws.initialized) conn.ws.deinit();
     conn.release_file_body();
@@ -2171,6 +3073,13 @@ pub fn release_closed_connection(conn: *TcpConnection) void {
     conn.pending_request_consumed = 0;
     conn.pending_close_requested = false;
     conn.write_batch_depth = 0;
+    conn.streaming_active = false;
+    conn.streaming_route = null;
+    conn.streaming_candidate = false;
+    conn.streaming_abort_reason = null;
+    conn.body_start = 0;
+    conn.body_len = 0;
+    conn.body_state = .{};
     conn.on_close_cb = null;
     conn.pool_ptr = null;
     callback(pool, conn);

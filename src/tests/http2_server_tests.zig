@@ -6,6 +6,7 @@ const hpack = support.http2_hpack;
 const Request = support.http_request.Request;
 const Response = support.http_response.Response;
 const radix = support.radix;
+const stream_pattern = @import("stream_pattern.zig");
 
 const TestSession = http2_server.server_session(4);
 const SingleStreamSession = http2_server.server_session(1);
@@ -19,6 +20,13 @@ const single_capacities = SingleStreamSession.Capacities{
     .request_header_size = 4096,
     .body_size = 1024,
 };
+const capture_capacities = TestSession.Capacities{
+    .header_block_size = 4096,
+    .request_header_size = 4096,
+    .body_size = 1024,
+    .route_param_extra_capacity = 8,
+};
+const CaptureBundle = TestSession.Bundle(capture_capacities);
 const TestBundle = TestSession.Bundle(test_capacities);
 const SingleBundle = SingleStreamSession.Bundle(single_capacities);
 
@@ -39,6 +47,16 @@ const SingleFixture = struct {
 
     fn init(self: *SingleFixture) !void {
         self.session = try SingleStreamSession.init(self.bundle.storage());
+    }
+};
+
+/// Owns a session with per-stream overflow route captures.
+const CaptureFixture = struct {
+    bundle: CaptureBundle = .{},
+    session: TestSession = .{},
+
+    fn init(self: *CaptureFixture) !void {
+        self.session = try TestSession.init(self.bundle.storage());
     }
 };
 
@@ -135,6 +153,7 @@ const TestState = struct {
                 binding.callback(binding.context, request, token);
                 return;
             },
+            .streaming => return error.StreamingRouteInTest,
         }
         if (!response.is_complete()) return error.IncompleteResponse;
     }
@@ -244,12 +263,16 @@ const FlowState = struct {
     max_frame_payload: usize = http2.maximum_frame_size,
     write_capacity: usize = std.math.maxInt(usize),
     queued_length: usize = 0,
+    reset_write_failure: bool = false,
+    closed_stream_count: usize = 0,
+    last_closed_stream_id: u32 = 0,
 
     fn callbacks(self: *FlowState) http2_server.Callbacks {
         return .{
             .context = self,
             .write_fn = write,
             .request_fn = dispatch,
+            .stream_closed_fn = stream_closed,
             .max_frame_payload = self.max_frame_payload,
         };
     }
@@ -258,6 +281,8 @@ const FlowState = struct {
         const self: *FlowState = @ptrCast(@alignCast(context));
         if (parts.len == 0 or parts[0].len != 9) return error.InvalidFrame;
         const header = try http2.FrameHeader.parse(parts[0][0..9]);
+        if (header.frame_type == @intFromEnum(http2.FrameType.rst_stream) and
+            self.reset_write_failure) return error.TestWriteFailure;
         if ((header.frame_type == @intFromEnum(http2.FrameType.headers) or
             header.frame_type == @intFromEnum(http2.FrameType.data)) and
             header.payload_length > self.max_frame_payload)
@@ -294,10 +319,29 @@ const FlowState = struct {
         self.dispatch_count += 1;
     }
 
+    fn stream_closed(context: *anyopaque, stream_id: u32, _: u16) void {
+        const self: *FlowState = @ptrCast(@alignCast(context));
+        self.closed_stream_count += 1;
+        self.last_closed_stream_id = stream_id;
+    }
+
     fn drain(self: *FlowState) void {
         self.queued_length = 0;
     }
 };
+
+/// Opens streams and discards handshake output before queue-pressure assertions.
+fn prime_flow_streams(session: *TestSession, state: *FlowState, stream_ids: []const u32) !void {
+    const headers = [_]u8{ 0x82, 0x86, 0x84 };
+    var input: [256]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var length: usize = http2.client_preface.len;
+    try append_frame(&input, &length, .settings, 0, 0, "");
+    for (stream_ids) |stream_id| try append_frame(&input, &length, .headers, 0x5, stream_id, &headers);
+    try session.receive(input[0..length], state.callbacks());
+    state.output_length = 0;
+    state.drain();
+}
 
 fn append_frame(
     output: []u8,
@@ -389,6 +433,7 @@ const DataFrames = struct {
     bytes_length: usize = 0,
     end_stream_count: usize = 0,
     final_end_stream: bool = false,
+    empty_count: usize = 0,
 };
 
 fn collect_data_frames(
@@ -413,6 +458,7 @@ fn collect_data_frames(
             @memcpy(bytes[result.bytes_length .. result.bytes_length + payload.len], payload);
             result.bytes_length += payload.len;
             result.count += 1;
+            if (header.payload_length == 0) result.empty_count += 1;
             result.final_end_stream = header.flags & 0x1 != 0;
             if (result.final_end_stream) result.end_stream_count += 1;
         }
@@ -1337,6 +1383,194 @@ test "http2 server: small transport queues make bounded DATA progress" {
     try std.testing.expectEqualSlices(u8, &body, &received);
 }
 
+test "http2 server: saturated reset retains one frame ahead of a healthy sibling" {
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
+    var state = FlowState{};
+    try prime_flow_streams(&session, &state, &.{ 1, 3 });
+    state.write_capacity = 64;
+    state.queued_length = state.write_capacity;
+
+    try session.reset_stream(1, .internal_error, state.callbacks());
+    try std.testing.expect(session.connection.streams.find(1) == null);
+    try std.testing.expect(session.connection.streams.find(3) != null);
+    try std.testing.expectEqual(@as(usize, 1), state.closed_stream_count);
+    try session.send_response(3, "200 OK", "", "healthy", state.callbacks());
+    state.queued_length = state.write_capacity - 12;
+    try session.flush_pending(state.callbacks());
+    try session.flush_pending(state.callbacks());
+    try std.testing.expectEqual(@as(usize, 0), state.output_length);
+
+    state.queued_length = state.write_capacity - 13;
+    try session.flush_pending(state.callbacks());
+    try std.testing.expectEqual(@as(usize, 13), state.output_length);
+    try std.testing.expectEqual(@as(usize, 1), try reset_count(state.output[0..state.output_length], 1, .internal_error));
+    try std.testing.expectEqual(@as(usize, 0), try frame_count(state.output[0..state.output_length], .headers, 3));
+    try std.testing.expect(session.connection.streams.find(3) != null);
+
+    state.drain();
+    try session.flush_pending(state.callbacks());
+    var body: [32]u8 = undefined;
+    const sibling = try collect_data_frames(state.output[0..state.output_length], 3, &body);
+    try std.testing.expectEqualStrings("healthy", body[0..sibling.bytes_length]);
+    try std.testing.expectEqual(@as(usize, 1), sibling.end_stream_count);
+    try std.testing.expectEqual(@as(usize, 2), state.closed_stream_count);
+    try std.testing.expect(!session.is_closed());
+    const length = state.output_length;
+    state.drain();
+    try session.flush_pending(state.callbacks());
+    try std.testing.expectEqual(length, state.output_length);
+}
+
+test "http2 server: pending reset gates smaller application HEADERS and DATA" {
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
+    var state = FlowState{};
+    try prime_flow_streams(&session, &state, &.{ 1, 3, 5 });
+    try session.begin_response(5, "200 OK", "", state.callbacks());
+    state.output_length = 0;
+    state.write_capacity = 64;
+    state.queued_length = state.write_capacity;
+    try session.reset_stream(1, .internal_error, state.callbacks());
+    state.queued_length = state.write_capacity - 12;
+
+    try std.testing.expectError(error.WouldBlock, session.begin_response(3, "200 OK", "", state.callbacks()));
+    const credit = session.connection.connection_send_window;
+    try std.testing.expectError(error.WouldBlock, session.write_response_data(5, "x", state.callbacks()));
+    try std.testing.expectEqual(credit, session.connection.connection_send_window);
+    try std.testing.expectEqual(@as(usize, 0), state.output_length);
+
+    state.drain();
+    try session.flush_pending(state.callbacks());
+    try std.testing.expectEqual(@as(usize, 13), state.output_length);
+    state.drain();
+    try session.begin_response(3, "200 OK", "", state.callbacks());
+    try session.write_response_data(3, "healthy", state.callbacks());
+    try session.finish_response(3, state.callbacks());
+    try session.write_response_data(5, "x", state.callbacks());
+    try session.finish_response(5, state.callbacks());
+    try std.testing.expectEqual(@as(usize, 3), state.closed_stream_count);
+    try std.testing.expectEqual(@as(usize, 1), try reset_count(state.output[0..state.output_length], 1, .internal_error));
+    var body: [32]u8 = undefined;
+    const sibling = try collect_data_frames(state.output[0..state.output_length], 3, &body);
+    try std.testing.expectEqualStrings("healthy", body[0..sibling.bytes_length]);
+    try std.testing.expectEqual(@as(usize, 1), sibling.end_stream_count);
+}
+
+test "http2 server: pending reset keeps its ID across slot reuse and duplicates" {
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
+    var state = FlowState{};
+    try prime_flow_streams(&session, &state, &.{ 1, 3 });
+    const old_index = session.connection.streams.find(1).?;
+    state.write_capacity = 64;
+    state.queued_length = state.write_capacity;
+    try session.reset_stream(1, .internal_error, state.callbacks());
+
+    const headers = [_]u8{ 0x82, 0x86, 0x84 };
+    var input: [64]u8 = undefined;
+    var length: usize = 0;
+    try append_frame(&input, &length, .headers, 0x5, 5, &headers);
+    const self_dependency = [_]u8{ 0, 0, 0, 1, 16 };
+    try append_frame(&input, &length, .priority, 0, 1, &self_dependency);
+    try session.receive(input[0..length], state.callbacks());
+    try std.testing.expectEqual(old_index, session.connection.streams.find(5).?);
+    try std.testing.expectEqual(@as(usize, 1), state.closed_stream_count);
+    try std.testing.expectEqual(@as(u32, 1), state.last_closed_stream_id);
+    state.drain();
+    try session.flush_pending(state.callbacks());
+    try std.testing.expectEqual(@as(usize, 13), state.output_length);
+    try std.testing.expectEqual(@as(usize, 1), try reset_count(state.output[0..state.output_length], 1, .internal_error));
+    try std.testing.expectEqual(@as(usize, 0), try frame_count(state.output[0..state.output_length], .rst_stream, 5));
+    try std.testing.expectEqual(old_index, session.connection.streams.find(5).?);
+}
+
+test "http2 server: reset FIFO refuses bounded exhaustion and recovers in order" {
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
+    var state = FlowState{};
+    try prime_flow_streams(&session, &state, &.{ 1, 3, 5, 7 });
+    state.write_capacity = 64;
+    state.queued_length = state.write_capacity;
+    for ([_]u32{ 1, 3, 5, 7 }) |stream_id| try session.reset_stream(stream_id, .cancel, state.callbacks());
+    const headers = [_]u8{ 0x82, 0x86, 0x84 };
+    var input: [32]u8 = undefined;
+    var length: usize = 0;
+    try append_frame(&input, &length, .headers, 0x5, 9, &headers);
+    try session.receive(input[0..length], state.callbacks());
+
+    try std.testing.expectError(error.PendingResetCapacityReached, session.reset_stream(9, .cancel, state.callbacks()));
+    try std.testing.expect(session.connection.streams.find(9) != null);
+    try std.testing.expectEqual(@as(usize, 4), state.closed_stream_count);
+    state.queued_length = state.write_capacity - 13;
+    try session.reset_stream(9, .cancel, state.callbacks());
+    try std.testing.expect(session.connection.streams.find(9) == null);
+    try std.testing.expectEqual(@as(usize, 5), state.closed_stream_count);
+    for (0..4) |_| {
+        state.queued_length = state.write_capacity - 13;
+        try session.flush_pending(state.callbacks());
+    }
+    try std.testing.expectEqual(@as(usize, 5 * 13), state.output_length);
+    for ([_]u32{ 1, 3, 5, 7, 9 }, 0..) |stream_id, index| {
+        const header = try http2.FrameHeader.parse(state.output[index * 13 ..][0..9]);
+        try std.testing.expectEqual(stream_id, header.stream_id);
+        try std.testing.expectEqual(@as(usize, 1), try reset_count(state.output[0..state.output_length], stream_id, .cancel));
+    }
+    try std.testing.expect(!session.is_closed());
+}
+
+test "http2 server: reset write faults propagate without losing accepted intent" {
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
+    var state = FlowState{};
+    try prime_flow_streams(&session, &state, &.{1});
+    state.reset_write_failure = true;
+    try std.testing.expectError(error.TestWriteFailure, session.reset_stream(1, .cancel, state.callbacks()));
+    try std.testing.expectEqual(@as(usize, 0), state.output_length);
+    try std.testing.expectEqual(@as(usize, 1), state.closed_stream_count);
+    state.reset_write_failure = false;
+    try session.flush_pending(state.callbacks());
+    try std.testing.expectEqual(@as(usize, 1), try reset_count(state.output[0..state.output_length], 1, .cancel));
+    try std.testing.expectEqual(@as(usize, 1), state.closed_stream_count);
+}
+
+test "http2 server: permanently oversized reset refuses before stream mutation" {
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
+    var state = FlowState{};
+    try prime_flow_streams(&session, &state, &.{1});
+    state.max_frame_payload = 3;
+    try std.testing.expectError(error.ResetFrameTooLarge, session.reset_stream(1, .cancel, state.callbacks()));
+    try std.testing.expect(session.connection.streams.find(1) != null);
+    try std.testing.expectEqual(@as(usize, 0), state.closed_stream_count);
+    try std.testing.expectEqual(@as(usize, 0), state.output_length);
+    state.max_frame_payload = 4;
+    try session.reset_stream(1, .cancel, state.callbacks());
+    try std.testing.expectEqual(@as(usize, 1), try reset_count(state.output[0..state.output_length], 1, .cancel));
+}
+
+test "http2 server: session reset discards pending reset intents" {
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
+    var state = FlowState{};
+    try prime_flow_streams(&session, &state, &.{1});
+    state.write_capacity = 64;
+    state.queued_length = state.write_capacity;
+    try session.reset_stream(1, .cancel, state.callbacks());
+    try session.reset();
+    state.drain();
+    try session.flush_pending(state.callbacks());
+    try std.testing.expectEqual(@as(usize, 0), state.output_length);
+    try std.testing.expectEqual(@as(usize, 1), state.closed_stream_count);
+}
+
 test "http2 server: oversized response HEADERS fail before state commit" {
     var fixture: SessionFixture = .{};
     try fixture.init();
@@ -1783,6 +2017,9 @@ test "tls: ALPN prefers h2 and falls back to http 1.1" {
     try std.testing.expect(support.tls.select_http_protocol("\x03h2") == null);
 }
 
+/// Terminal callback behavior exercised by producer lifecycle tests.
+const StreamCompletionMode = enum { done, done_without_end, pending_after_end };
+
 /// Drain-driven producer whose chunk schedule is controlled by the test.
 const StreamProducerState = struct {
     chunk: [8192]u8 = undefined,
@@ -1795,6 +2032,8 @@ const StreamProducerState = struct {
     would_block_count: usize = 0,
     saw_non_would_block: bool = false,
     begin_error: ?anyerror = null,
+    begin_complete: bool = false,
+    completion_mode: StreamCompletionMode = .done,
 
     fn produce(
         context: *anyopaque,
@@ -1812,7 +2051,9 @@ const StreamProducerState = struct {
         while (self.remaining_chunks != 0) {
             self.write_next(response) catch |err| return self.on_backpressure(err);
         }
+        if (self.completion_mode == .done_without_end) return .done;
         response.end_chunks() catch |err| return self.on_backpressure(err);
+        if (self.completion_mode == .pending_after_end) return .pending;
         return .done;
     }
 
@@ -1841,6 +2082,7 @@ fn stream_route_handler(context: *anyopaque, _: *Request, response: *Response) v
     response.begin_stream("200 OK", "", producer, StreamProducerState.produce) catch |err| {
         producer.begin_error = err;
     };
+    producer.begin_complete = response.is_complete();
 }
 
 /// Connection with no live socket whose write ring is the only output sink.
@@ -1978,6 +2220,201 @@ test "http2: producer failure resets the stream and clears the slot" {
         @as(usize, 1),
         try reset_count(ring[0..conn.write_len], 1, .internal_error),
     );
+}
+
+/// Exercises repeated producer aborts with a native socket for the failure path.
+fn expect_idempotent_producer_abort(saturate: bool) !void {
+    const Producer = struct {
+        connection: *support.tcp.TcpConnection,
+        saturate: bool,
+        calls: usize = 0,
+        stream_index: ?u16 = null,
+        begin_error: ?anyerror = null,
+
+        fn produce(context: *anyopaque, response: *Response) anyerror!support.http_response.StreamStatus {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            self.calls += 1;
+            self.stream_index = self.connection.h2.connection.streams.find(3);
+            if (self.saturate) {
+                const available = self.connection.write_queue.len - self.connection.write_len;
+                if (available <= 9) return error.TestQueueTooSmall;
+                var body: [1024]u8 = undefined;
+                @memset(body[0 .. available - 9], 'x');
+                try response.write_chunk(body[0 .. available - 9]);
+            }
+            response.end_best_effort("500 Internal Server Error", "");
+            return .done;
+        }
+
+        fn handle(context: *anyopaque, _: *Request, response: *Response) void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            response.begin_stream("200 OK", "", self, produce) catch |err| {
+                self.begin_error = err;
+            };
+        }
+    };
+
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    var event_loop = try support.loop.init();
+    defer support.loop.deinit(&event_loop);
+    const address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
+    var ring: [1024]u8 = undefined;
+    var conn = support.tcp.TcpConnection{
+        .socket = try @import("xev").TCP.init(address),
+        .io = std.testing.io,
+        .router = &router,
+        .write_queue = &ring,
+    };
+    conn.loop = event_loop.get_xev_loop();
+    defer {
+        support.tcp.close_connection(&conn);
+        event_loop.xev_loop.run(.until_done) catch @panic("producer abort close did not drain");
+    }
+    // Keep output queued until the test explicitly drives the event loop.
+    conn.begin_write_batch();
+    var h2_bundle = support.tcp.Http2Session.Bundle(support.tcp.Http2Session.default_capacities){};
+    conn.h2 = try support.tcp.Http2Session.init(h2_bundle.storage());
+    var healthy = StreamProducerState{ .stall = true };
+    var producer = Producer{ .connection = &conn, .saturate = saturate };
+    try router.route_context(.get, "/healthy", &healthy, stream_route_handler);
+    try router.route_context(.get, "/stream", &producer, Producer.handle);
+    const healthy_headers = [_]u8{ 0x82, 0x86, 0x04, 0x08, '/', 'h', 'e', 'a', 'l', 't', 'h', 'y' };
+    const bad_headers = producer_request_headers();
+    var input: [128]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x5, 1, &healthy_headers);
+    try append_frame(&input, &input_length, .headers, 0x5, 3, &bad_headers);
+    try conn.h2.receive(input[0..input_length], conn.http2_callbacks());
+
+    if (saturate) try std.testing.expectEqual(ring.len, conn.write_len);
+    try std.testing.expect(!conn.closing);
+    try std.testing.expectEqual(@as(?anyerror, null), producer.begin_error);
+    try std.testing.expect(conn.h2.connection.streams.find(3) == null);
+    try std.testing.expect(conn.h2_stream_producers[producer.stream_index.?] == null);
+    try std.testing.expectEqual(@as(u16, 0), conn.h2_response_status[producer.stream_index.?]);
+    try std.testing.expect(conn.h2.connection.streams.find(1) != null);
+    try std.testing.expectError(error.StreamClosed, conn.h2.reset_stream(3, .internal_error, conn.http2_callbacks()));
+    const initial_resets = try reset_count(ring[0..conn.write_len], 3, .internal_error);
+    try std.testing.expectEqual(@as(usize, if (saturate) 0 else 1), initial_resets);
+
+    conn.write_len = 0;
+    conn.write_head = 0;
+    try conn.h2.flush_pending(conn.http2_callbacks());
+    const reset_length = conn.write_len;
+    try conn.h2.flush_pending(conn.http2_callbacks());
+    conn.pump_http2_streams();
+    try std.testing.expectEqual(reset_length, conn.write_len);
+    try std.testing.expectEqual(@as(usize, 1), producer.calls);
+    try std.testing.expect(conn.h2.connection.streams.find(1) != null);
+
+    healthy.stall = false;
+    healthy.remaining_chunks = 1;
+    conn.pump_http2_streams();
+    var body: [128]u8 = undefined;
+    const sibling = try collect_data_frames(ring[0..conn.write_len], 1, &body);
+    try std.testing.expectEqual(@as(usize, 64), sibling.bytes_length);
+    try std.testing.expectEqual(@as(usize, 1), sibling.end_stream_count);
+    try std.testing.expectEqual(@as(usize, 1), initial_resets + try reset_count(ring[0..conn.write_len], 3, .internal_error));
+    try std.testing.expectEqual(@as(usize, 1), producer.calls);
+    try std.testing.expect(!conn.closing);
+}
+
+test "http2: producer best-effort abort preserves a healthy sibling" {
+    try expect_idempotent_producer_abort(false);
+}
+
+test "http2: saturated producer best-effort abort retains exactly one reset" {
+    try expect_idempotent_producer_abort(true);
+}
+
+test "http2: producer completion without end_chunks resets only its stream" {
+    const Healthy = struct {
+        fn handle(_: *Request, response: *Response) void {
+            response.end("200 OK", "healthy") catch @panic("healthy response failed");
+        }
+    };
+
+    for ([_]bool{ false, true }) |pending_first| {
+        var bundle = radix.DefaultBundle{};
+        var router = try radix.Router.init(bundle.storage());
+        var producer = StreamProducerState{
+            .remaining_chunks = 1,
+            .pending_once = pending_first,
+            .completion_mode = .done_without_end,
+        };
+        try router.route_context(.get, "/stream", &producer, stream_route_handler);
+        try router.get("/healthy", Healthy.handle);
+        var ring: [1024]u8 = undefined;
+        var conn = producer_connection(&ring, &router);
+        var h2_bundle = support.tcp.Http2Session.Bundle(support.tcp.Http2Session.default_capacities){};
+        conn.h2 = try support.tcp.Http2Session.init(h2_bundle.storage());
+
+        const request_headers = producer_request_headers();
+        const healthy_headers = [_]u8{ 0x82, 0x86, 0x04, 0x08, '/', 'h', 'e', 'a', 'l', 't', 'h', 'y' };
+        var input: [128]u8 = undefined;
+        @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+        var input_length: usize = http2.client_preface.len;
+        try append_frame(&input, &input_length, .settings, 0, 0, "");
+        try append_frame(&input, &input_length, .headers, 0x5, 1, &request_headers);
+        try append_frame(&input, &input_length, .headers, 0x5, 3, &healthy_headers);
+        try conn.h2.receive(input[0..input_length], conn.http2_callbacks());
+        if (pending_first) conn.pump_http2_streams();
+
+        try std.testing.expect(conn.h2.connection.streams.find(1) == null);
+        try std.testing.expect(!conn.closing);
+        try std.testing.expectEqual(@as(?anyerror, null), producer.begin_error);
+        try std.testing.expectEqual(@as(usize, 1), try reset_count(ring[0..conn.write_len], 1, .internal_error));
+        try std.testing.expectEqual(@as(usize, 0), try frame_count(ring[0..conn.write_len], .rst_stream, 3));
+        var body: [32]u8 = undefined;
+        const healthy = try collect_data_frames(ring[0..conn.write_len], 3, &body);
+        try std.testing.expectEqualStrings("healthy", body[0..healthy.bytes_length]);
+        try std.testing.expectEqual(@as(usize, 1), healthy.end_stream_count);
+        for (conn.h2_stream_producers) |armed| try std.testing.expect(armed == null);
+        const calls = producer.calls;
+        const length = conn.write_len;
+        conn.pump_http2_streams();
+        try std.testing.expectEqual(calls, producer.calls);
+        try std.testing.expectEqual(length, conn.write_len);
+    }
+}
+
+test "http2: end_chunks disarms a producer returning pending" {
+    var bundle = radix.DefaultBundle{};
+    var router = try radix.Router.init(bundle.storage());
+    var producer = StreamProducerState{
+        .remaining_chunks = 1,
+        .completion_mode = .pending_after_end,
+    };
+    try router.route_context(.get, "/stream", &producer, stream_route_handler);
+    var ring: [1024]u8 = undefined;
+    var conn = producer_connection(&ring, &router);
+    var h2_bundle = support.tcp.Http2Session.Bundle(support.tcp.Http2Session.default_capacities){};
+    conn.h2 = try support.tcp.Http2Session.init(h2_bundle.storage());
+
+    const request_headers = producer_request_headers();
+    var input: [128]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x5, 1, &request_headers);
+    try conn.h2.receive(input[0..input_length], conn.http2_callbacks());
+
+    try std.testing.expectEqual(@as(?anyerror, null), producer.begin_error);
+    try std.testing.expect(producer.begin_complete);
+    try std.testing.expect(conn.h2.connection.streams.find(1) == null);
+    try std.testing.expect(conn.h2_stream_producers[0] == null);
+    const length = conn.write_len;
+    conn.pump_http2_streams();
+    try std.testing.expectEqual(@as(usize, 1), producer.calls);
+    try std.testing.expectEqual(length, conn.write_len);
+    var body: [128]u8 = undefined;
+    const frames = try collect_data_frames(ring[0..length], 1, &body);
+    try std.testing.expectEqual(@as(usize, 64), frames.bytes_length);
+    try std.testing.expectEqual(@as(usize, 1), frames.end_stream_count);
+    try std.testing.expectEqual(@as(usize, 0), try frame_count(ring[0..length], .rst_stream, 1));
 }
 
 test "http2: pending producer keeps the dispatch from force-ending" {
@@ -2309,6 +2746,97 @@ fn prime_stream_connection(
     conn.protocol_state = .http2;
 }
 
+test "http2: streaming pattern matrix replenishes only consumed window credit" {
+    var oversized: [64 * 1024]u8 = undefined;
+    @memset(&oversized, 0xcc);
+    for (stream_pattern.logical_sizes) |logical_size| {
+        var bundle = radix.DefaultBundle{};
+        var router = try radix.Router.init(bundle.storage());
+        var producer = stream_pattern.Producer{ .logical_size = logical_size, .target_size = 2 * logical_size };
+        try router.route_context(.get, "/stream", &producer, stream_pattern.Producer.handle);
+        var ring: [16 * 1024]u8 = undefined;
+        var conn = producer_connection(&ring, &router);
+        var h2_bundle = support.tcp.Http2Session.Bundle(support.tcp.Http2Session.default_capacities){};
+        conn.h2 = try support.tcp.Http2Session.init(h2_bundle.storage());
+        const queue = conn.write_queue;
+        const body_storage = conn.h2.response_body_storage;
+        var input: [128]u8 = undefined;
+        try prime_stream_connection(&conn, &input);
+        try std.testing.expectEqual(@as(?anyerror, null), producer.begin_error);
+        const index = conn.h2.connection.streams.find(1).?;
+        const connection_credit = conn.h2.connection.connection_send_window;
+        const stream_credit = conn.h2.connection.streams.send_windows[index];
+        const queued = conn.write_len;
+        const produced = producer.offset;
+        try std.testing.expectError(error.ResponseDataTooLarge, conn.h2.write_response_data(1, &oversized, conn.http2_callbacks()));
+        try std.testing.expectEqual(queued, conn.write_len);
+        try std.testing.expectEqual(produced, producer.offset);
+        try std.testing.expectEqual(connection_credit, conn.h2.connection.connection_send_window);
+        try std.testing.expectEqual(stream_credit, conn.h2.connection.streams.send_windows[index]);
+
+        var capture = stream_pattern.Capture{ .expected_size = producer.target_size };
+        var terminal_count: usize = 0;
+        var empty_count: usize = 0;
+        var rounds: usize = 0;
+        while (rounds < 128) : (rounds += 1) {
+            var body: [16 * 1024]u8 = undefined;
+            const frames = try collect_data_frames(ring[0..conn.write_len], 1, &body);
+            try std.testing.expect(capture.consume(body[0..frames.bytes_length]));
+            terminal_count += frames.end_stream_count;
+            empty_count += frames.empty_count;
+            if (terminal_count != 0) break;
+            conn.write_len = 0;
+            conn.write_head = 0;
+            try conn.h2.flush_pending(conn.http2_callbacks());
+            if (frames.bytes_length != 0) {
+                var update: [26]u8 = undefined;
+                var length: usize = 0;
+                try append_window_update(&update, &length, 0, @intCast(frames.bytes_length));
+                if (conn.h2.connection.streams.find(1) != null) {
+                    try append_window_update(&update, &length, 1, @intCast(frames.bytes_length));
+                }
+                conn.route_decrypted_data(update[0..length]);
+            } else conn.pump_http2_streams();
+            try std.testing.expect(conn.h2.connection.connection_send_window <= http2.default_window_size);
+        }
+        try std.testing.expect(rounds < 128);
+        try std.testing.expectEqual(capture.expected_size, capture.offset);
+        try std.testing.expectEqual(@as(usize, 1), terminal_count);
+        try std.testing.expectEqual(@as(usize, 1), empty_count);
+        try std.testing.expectEqual(@as(usize, 2), producer.logical_yields);
+        try std.testing.expect(producer.empty_writes >= 3);
+        try std.testing.expect(conn.h2.connection.streams.find(1) == null);
+        try std.testing.expect(conn.h2_stream_producers[0] == null);
+        try std.testing.expectEqual(queue.ptr, conn.write_queue.ptr);
+        try std.testing.expectEqual(queue.len, conn.write_queue.len);
+        try std.testing.expectEqual(body_storage.ptr, conn.h2.response_body_storage.ptr);
+        try std.testing.expectEqual(body_storage.len, conn.h2.response_body_storage.len);
+        const calls = producer.calls;
+        conn.pump_http2_streams();
+        try std.testing.expectEqual(calls, producer.calls);
+    }
+}
+
+test "http2 server: streaming rejects HEAD and bodyless statuses without output" {
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var session = fixture.session;
+    var state = FlowState{};
+    try prime_flow_streams(&session, &state, &.{1});
+    for ([_][]const u8{ "204 No Content", "205 Reset Content", "304 Not Modified" }) |status| {
+        try std.testing.expectError(error.BodyNotAllowed, session.begin_response(1, status, "", state.callbacks()));
+    }
+    const headers = [_]u8{ 0x02, 0x04, 'H', 'E', 'A', 'D', 0x86, 0x84 };
+    var input: [32]u8 = undefined;
+    var length: usize = 0;
+    try append_frame(&input, &length, .headers, 0x5, 3, &headers);
+    try session.receive(input[0..length], state.callbacks());
+    try std.testing.expectError(error.BodyNotAllowed, session.begin_response(3, "200 OK", "", state.callbacks()));
+    try std.testing.expectEqual(@as(usize, 0), state.output_length);
+    try std.testing.expect(session.connection.streams.find(1) != null);
+    try std.testing.expect(session.connection.streams.find(3) != null);
+}
+
 test "http2: producer completes across flow-control window updates" {
     var bundle = radix.DefaultBundle{};
     var router = try radix.Router.init(bundle.storage());
@@ -2530,7 +3058,15 @@ test "http2: decoded request headers spill into extras" {
             return .{ .context = self, .write_fn = write, .request_fn = dispatch };
         }
 
-        fn write(_: *anyopaque, _: []const []const u8) !void {}
+        fn write(context: *anyopaque, parts: []const []const u8) !void {
+            const self: *SinkState = @ptrCast(@alignCast(context));
+            if (!self.capture_headers) return;
+            for (parts) |part| {
+                if (part.len > self.output.len - self.output_length) return error.OutputTooSmall;
+                @memcpy(self.output[self.output_length..][0..part.len], part);
+                self.output_length += part.len;
+            }
+        }
 
         fn dispatch(context: *anyopaque, request: *Request, _: u32) !void {
             const self: *@This() = @ptrCast(@alignCast(context));
@@ -3049,4 +3585,451 @@ test "http2: begin_stream carries pending headers into the response block" {
         "text/plain",
         response_field(decoded, "content-type") orelse return error.MissingContentType,
     );
+}
+
+const CaptureState = struct {
+    router: *const radix.Router = undefined,
+    matched: bool = false,
+
+    fn callbacks(self: *CaptureState) http2_server.Callbacks {
+        return .{
+            .context = self,
+            .write_fn = write,
+            .request_fn = dispatch,
+            .request_head_fn = head,
+        };
+    }
+
+    fn write(_: *anyopaque, _: []const []const u8) !void {}
+    fn dispatch(_: *anyopaque, _: *Request, _: u32) !void {}
+
+    fn head(context: *anyopaque, request: *Request, _: u32, _: ?u64) !http2_server.RequestHeadDisposition {
+        const self: *CaptureState = @ptrCast(@alignCast(context));
+        const match = self.router.match_request(request, .post) orelse return .buffered;
+        const handler = match.handler orelse return .buffered;
+        switch (handler) {
+            .streaming => {
+                self.matched = request.get_param("p19") != null and
+                    request.extra_param_count != 0;
+                return .streaming;
+            },
+            else => return .buffered,
+        }
+    }
+};
+
+const CaptureSink = struct {
+    fn begin(context: *anyopaque, _: *const support.streaming_request.StreamingRequest, _: support.request_body.BodyControl) !support.request_body.BodyBinding {
+        return .{ .context = context, .readiness = .ready };
+    }
+    fn chunk(_: *anyopaque, input: []const u8) !support.request_body.BodyProgress {
+        return .{ .consumed = input.len, .readiness = .ready };
+    }
+    fn end(_: *anyopaque, _: *const support.streaming_request.StreamingRequest, _: *Response) !void {}
+    fn cancel(_: *anyopaque, _: support.request_body.BodyCancelReason) void {}
+};
+
+test "http2 server: streaming routes resolve per-stream overflow captures" {
+    var fixture: CaptureFixture = .{};
+    try fixture.init();
+    var capture = CaptureState{};
+    const pattern = "/:p0/:p1/:p2/:p3/:p4/:p5/:p6/:p7/:p8/:p9/:p10/:p11/:p12/:p13/:p14/:p15/:p16/:p17/:p18/:p19";
+    var router_bundle: radix.Bundle(.{ .max_route_params = 24 }) = .{};
+    var router = try radix.Router.init(router_bundle.storage());
+    var sink: u8 = 0;
+    var route = support.request_body.BodyRoute{
+        .sink = .{
+            .context = &sink,
+            .begin = CaptureSink.begin,
+            .chunk = CaptureSink.chunk,
+            .end = CaptureSink.end,
+            .cancel = CaptureSink.cancel,
+        },
+        .limits = .{ .max_body_bytes = 64, .max_active = 1 },
+        .middleware_policy = .headers_only,
+    };
+    try router.route_stream(.post, pattern, &route);
+    capture.router = &router;
+
+    var block: [512]u8 = undefined;
+    var block_length: usize = 0;
+    block_length = try append_hpack_literal(&block, block_length, ":method", "POST");
+    block_length = try append_hpack_literal(&block, block_length, ":scheme", "https");
+    block_length = try append_hpack_literal(&block, block_length, ":path", "/a0/a1/a2/a3/a4/a5/a6/a7/a8/a9/a10/a11/a12/a13/a14/a15/a16/a17/a18/a19");
+    block_length = try append_hpack_literal(&block, block_length, ":authority", "example.com");
+
+    var input: [1024]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x4, 1, block[0..block_length]);
+    try fixture.session.receive(input[0..input_length], capture.callbacks());
+
+    try std.testing.expect(capture.matched);
+}
+
+const SinkState = struct {
+    const Binding = struct { sink: *SinkState = undefined };
+    session: *TestSession = undefined,
+    route: support.request_body.BodyRoute = undefined,
+    state: support.request_body.BodyState = .{},
+    begins: usize = 0,
+    ends: usize = 0,
+    bytes: usize = 0,
+    control: ?support.request_body.BodyControl = null,
+    pause_first: bool = true,
+    partial_first: bool = false,
+    begin_paused: bool = false,
+    paused_once: bool = false,
+    binding: Binding = .{},
+    capture_headers: bool = false,
+    output: [256]u8 = undefined,
+    output_length: usize = 0,
+
+    fn callbacks(self: *SinkState) http2_server.Callbacks {
+        return .{
+            .context = self,
+            .write_fn = write,
+            .request_fn = dispatch,
+            .request_head_fn = head,
+            .body_chunk_fn = chunk,
+        };
+    }
+
+    fn write(context: *anyopaque, parts: []const []const u8) !void {
+        const self: *SinkState = @ptrCast(@alignCast(context));
+        if (!self.capture_headers) return;
+        for (parts) |part| {
+            if (part.len > self.output.len - self.output_length) return error.OutputTooSmall;
+            @memcpy(self.output[self.output_length..][0..part.len], part);
+            self.output_length += part.len;
+        }
+    }
+
+    fn dispatch(_: *anyopaque, _: *Request, _: u32) !void {}
+
+    fn head(context: *anyopaque, request: *Request, stream_id: u32, declared: ?u64) !http2_server.RequestHeadDisposition {
+        const self: *SinkState = @ptrCast(@alignCast(context));
+        if (!std.mem.eql(u8, request.method, "POST")) return .buffered;
+        if (!std.mem.eql(u8, request.path, "/upload")) return .buffered;
+        const control = try self.state.arm(.{
+            .context = self,
+            .resume_fn = resume_body,
+            .cancel_fn = cancel_control,
+        }, self.route.limits, declared);
+        self.control = control;
+        const binding = try self.route.sink.begin(self.route.sink.context, &request_view(self), control);
+        self.begins += 1;
+        _ = self.state.accept_begin(binding);
+        if (request.header_has_token("Expect", "100-continue")) {
+            try self.session.send_continue(stream_id, self.callbacks());
+        }
+        return .streaming;
+    }
+
+    fn request_view(_: *SinkState) support.streaming_request.StreamingRequest {
+        return .{
+            .method = "POST",
+            .target = "/upload",
+            .path = "/upload",
+            .protocol = "HTTP/1.1",
+            .query = "",
+            .headers = .{ .names = &.{}, .values = &.{} },
+            .params = .{ .names = &.{}, .values = &.{} },
+        };
+    }
+
+    fn from(context: *anyopaque) *SinkState {
+        const binding: *Binding = @ptrCast(@alignCast(context));
+        return binding.sink;
+    }
+
+    fn chunk(context: *anyopaque, _: u32, input: []const u8, end_stream: bool) !http2_server.BodyChunkResult {
+        const self: *SinkState = @ptrCast(@alignCast(context));
+        if (self.state.readiness == .paused) {
+            return .{ .consumed = 0, .paused = true };
+        }
+        if (input.len != 0) {
+            try self.state.prepare_chunk(input.len);
+            const binding = self.state.binding orelse return error.StreamClosed;
+            const progress = try self.route.sink.chunk(binding.context, input);
+            const pause = (self.pause_first and !self.paused_once) or progress.readiness == .paused;
+            if (pause) self.paused_once = true;
+            const effective = support.request_body.BodyProgress{
+                .consumed = progress.consumed,
+                .readiness = if (pause) .paused else .ready,
+            };
+            _ = try self.state.accept_chunk(effective);
+            self.bytes += progress.consumed;
+            if (pause) return .{ .consumed = progress.consumed, .paused = true };
+        }
+        if (end_stream) {
+            const terminal = try self.state.take_end(true, 0);
+            var response: Response = undefined;
+            try self.route.sink.end(terminal.end.context, &self.request_view(), &response);
+            _ = self.state.finish_terminal();
+            self.ends += 1;
+        }
+        return .{ .consumed = input.len, .paused = false };
+    }
+
+    fn resume_body(context: *anyopaque) error{BodyDeliveryFailed}!void {
+        const self: *SinkState = @ptrCast(@alignCast(context));
+        self.session.resume_stream_body(1, self.callbacks()) catch return error.BodyDeliveryFailed;
+    }
+    fn cancel_control(_: *anyopaque) void {}
+    fn sink_begin(context: *anyopaque, _: *const support.streaming_request.StreamingRequest, _: support.request_body.BodyControl) !support.request_body.BodyBinding {
+        const self: *SinkState = @ptrCast(@alignCast(context));
+        self.binding.sink = self;
+        return .{ .context = &self.binding, .readiness = if (self.begin_paused) .paused else .ready };
+    }
+    fn sink_chunk(context: *anyopaque, input: []const u8) !support.request_body.BodyProgress {
+        const self = from(context);
+        if (self.partial_first and !self.paused_once) {
+            return .{ .consumed = @min(input.len, 2), .readiness = .paused };
+        }
+        return .{ .consumed = input.len, .readiness = .ready };
+    }
+    fn sink_end(context: *anyopaque, _: *const support.streaming_request.StreamingRequest, _: *Response) !void {
+        _ = from(context);
+    }
+    fn sink_cancel(context: *anyopaque, _: support.request_body.BodyCancelReason) void {
+        _ = from(context);
+    }
+};
+
+test "http2 server: 100 MB logical upload stays bounded through the sink" {
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var state = SinkState{ .session = &fixture.session, .pause_first = false };
+    state.route = .{
+        .sink = .{
+            .context = &state,
+            .begin = SinkState.sink_begin,
+            .chunk = SinkState.sink_chunk,
+            .end = SinkState.sink_end,
+            .cancel = SinkState.sink_cancel,
+        },
+        .limits = .{ .max_body_bytes = 100 * 1024 * 1024, .max_active = 1 },
+        .middleware_policy = .headers_only,
+    };
+
+    var block: [192]u8 = undefined;
+    var block_length: usize = 0;
+    block_length = try append_hpack_literal(&block, block_length, ":method", "POST");
+    block_length = try append_hpack_literal(&block, block_length, ":scheme", "https");
+    block_length = try append_hpack_literal(&block, block_length, ":path", "/upload");
+    block_length = try append_hpack_literal(&block, block_length, ":authority", "example.com");
+    block_length = try append_hpack_literal(&block, block_length, "content-length", "104857600");
+
+    var head_input: [512]u8 = undefined;
+    @memcpy(head_input[0..http2.client_preface.len], http2.client_preface);
+    var head_length: usize = http2.client_preface.len;
+    try append_frame(&head_input, &head_length, .settings, 0, 0, "");
+    try append_frame(&head_input, &head_length, .headers, 0x4, 1, block[0..block_length]);
+    try fixture.session.receive(head_input[0..head_length], state.callbacks());
+
+    var payload: [1024]u8 = undefined;
+    @memset(&payload, 0x5a);
+    var frame: [9 + payload.len]u8 = undefined;
+    const total: usize = 100 * 1024 * 1024;
+    var sent: usize = 0;
+    while (sent < total) {
+        const count = @min(payload.len, total - sent);
+        var frame_length: usize = 0;
+        try append_frame(&frame, &frame_length, .data, 0, 1, payload[0..count]);
+        try fixture.session.receive(frame[0..frame_length], state.callbacks());
+        sent += count;
+    }
+    var end_frame: [9]u8 = undefined;
+    var end_length: usize = 0;
+    try append_frame(&end_frame, &end_length, .data, 0x1, 1, "");
+    try fixture.session.receive(end_frame[0..end_length], state.callbacks());
+
+    try std.testing.expectEqual(@as(usize, 1), state.begins);
+    try std.testing.expectEqual(@as(usize, 1), state.ends);
+    try std.testing.expectEqual(total, state.bytes);
+}
+
+test "http2 server: streaming expect sends an interim 100 response" {
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var state = SinkState{ .session = &fixture.session, .capture_headers = true, .pause_first = false };
+    state.route = .{
+        .sink = .{
+            .context = &state,
+            .begin = SinkState.sink_begin,
+            .chunk = SinkState.sink_chunk,
+            .end = SinkState.sink_end,
+            .cancel = SinkState.sink_cancel,
+        },
+        .limits = .{ .max_body_bytes = 64, .max_active = 1 },
+        .middleware_policy = .headers_only,
+    };
+
+    var block: [256]u8 = undefined;
+    var block_length: usize = 0;
+    block_length = try append_hpack_literal(&block, block_length, ":method", "POST");
+    block_length = try append_hpack_literal(&block, block_length, ":scheme", "https");
+    block_length = try append_hpack_literal(&block, block_length, ":path", "/upload");
+    block_length = try append_hpack_literal(&block, block_length, ":authority", "example.com");
+    block_length = try append_hpack_literal(&block, block_length, "content-length", "5");
+    block_length = try append_hpack_literal(&block, block_length, "expect", "100-continue");
+
+    var input: [512]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x4, 1, block[0..block_length]);
+    try fixture.session.receive(input[0..input_length], state.callbacks());
+
+    try std.testing.expectEqual(@as(usize, 1), state.begins);
+    var offset: usize = 0;
+    var interim = false;
+    while (offset + 9 <= state.output_length) {
+        const header = try support.http2.FrameHeader.parse(state.output[offset..][0..9]);
+        if (header.frame_type == @intFromEnum(support.http2.FrameType.headers) and header.stream_id == 1) {
+            interim = true;
+            break;
+        }
+        offset += 9 + header.payload_length;
+    }
+    try std.testing.expect(interim);
+}
+
+test "http2 server: begin-paused sink retains DATA until explicit resume" {
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var state = SinkState{ .session = &fixture.session, .pause_first = false, .begin_paused = true };
+    state.route = .{
+        .sink = .{
+            .context = &state,
+            .begin = SinkState.sink_begin,
+            .chunk = SinkState.sink_chunk,
+            .end = SinkState.sink_end,
+            .cancel = SinkState.sink_cancel,
+        },
+        .limits = .{ .max_body_bytes = 64, .max_active = 1 },
+        .middleware_policy = .headers_only,
+    };
+
+    var block: [192]u8 = undefined;
+    var block_length: usize = 0;
+    block_length = try append_hpack_literal(&block, block_length, ":method", "POST");
+    block_length = try append_hpack_literal(&block, block_length, ":scheme", "https");
+    block_length = try append_hpack_literal(&block, block_length, ":path", "/upload");
+    block_length = try append_hpack_literal(&block, block_length, ":authority", "example.com");
+    block_length = try append_hpack_literal(&block, block_length, "content-length", "5");
+
+    var input: [512]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x4, 1, block[0..block_length]);
+    try append_frame(&input, &input_length, .data, 0, 1, "hello");
+    try append_frame(&input, &input_length, .data, 0x1, 1, "");
+    try fixture.session.receive(input[0..input_length], state.callbacks());
+
+    try std.testing.expectEqual(@as(usize, 1), state.begins);
+    try std.testing.expectEqual(@as(usize, 0), state.ends);
+    try std.testing.expectEqual(@as(usize, 0), state.bytes);
+    try std.testing.expect(fixture.session.streaming[0]);
+    try std.testing.expect(fixture.session.streaming_paused[0]);
+    try std.testing.expectEqual(@as(usize, 5), fixture.session.streaming_pending_lengths[0]);
+    try state.control.?.@"resume"();
+
+    try std.testing.expectEqual(@as(usize, 5), state.bytes);
+    try std.testing.expectEqual(@as(usize, 1), state.ends);
+    try std.testing.expectEqual(@as(usize, 5), state.state.observed);
+    try std.testing.expectEqual(@as(usize, 5), state.state.consumed);
+    try std.testing.expectEqual(@as(usize, 0), fixture.session.streaming_pending_lengths[0]);
+}
+
+test "http2 server: paused sink retains and retries a partial DATA suffix" {
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var state = SinkState{ .session = &fixture.session, .pause_first = false, .partial_first = true };
+    state.route = .{
+        .sink = .{
+            .context = &state,
+            .begin = SinkState.sink_begin,
+            .chunk = SinkState.sink_chunk,
+            .end = SinkState.sink_end,
+            .cancel = SinkState.sink_cancel,
+        },
+        .limits = .{ .max_body_bytes = 64, .max_active = 1 },
+        .middleware_policy = .headers_only,
+    };
+
+    var block: [192]u8 = undefined;
+    var block_length: usize = 0;
+    block_length = try append_hpack_literal(&block, block_length, ":method", "POST");
+    block_length = try append_hpack_literal(&block, block_length, ":scheme", "https");
+    block_length = try append_hpack_literal(&block, block_length, ":path", "/upload");
+    block_length = try append_hpack_literal(&block, block_length, ":authority", "example.com");
+    block_length = try append_hpack_literal(&block, block_length, "content-length", "5");
+
+    var input: [512]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x4, 1, block[0..block_length]);
+    try append_frame(&input, &input_length, .data, 0, 1, "hello");
+    try append_frame(&input, &input_length, .data, 0x1, 1, "");
+    try fixture.session.receive(input[0..input_length], state.callbacks());
+
+    try std.testing.expectEqual(@as(usize, 1), state.begins);
+    try std.testing.expectEqual(@as(usize, 0), state.ends);
+    try std.testing.expectEqual(@as(usize, 2), state.bytes);
+    try std.testing.expect(fixture.session.streaming[0]);
+    try std.testing.expect(fixture.session.streaming_paused[0]);
+    try std.testing.expectEqual(@as(usize, 3), fixture.session.streaming_pending_lengths[0]);
+    try std.testing.expect(state.control != null);
+    try state.control.?.@"resume"();
+
+    try std.testing.expectEqual(@as(usize, 5), state.bytes);
+    try std.testing.expectEqual(@as(usize, 1), state.ends);
+    try std.testing.expectEqual(@as(usize, 5), state.state.observed);
+    try std.testing.expectEqual(@as(usize, 5), state.state.consumed);
+    try std.testing.expectEqual(@as(usize, 0), fixture.session.streaming_pending_lengths[0]);
+}
+
+test "http2 server: request-head callback streams DATA without body collection" {
+    var fixture: SessionFixture = .{};
+    try fixture.init();
+    var state = SinkState{ .session = &fixture.session };
+    state.route = .{
+        .sink = .{
+            .context = &state,
+            .begin = SinkState.sink_begin,
+            .chunk = SinkState.sink_chunk,
+            .end = SinkState.sink_end,
+            .cancel = SinkState.sink_cancel,
+        },
+        .limits = .{ .max_body_bytes = 1024, .max_active = 1 },
+        .middleware_policy = .headers_only,
+    };
+
+    var block: [160]u8 = undefined;
+    var block_length: usize = 0;
+    block_length = try append_hpack_literal(&block, block_length, ":method", "POST");
+    block_length = try append_hpack_literal(&block, block_length, ":scheme", "https");
+    block_length = try append_hpack_literal(&block, block_length, ":path", "/upload");
+    block_length = try append_hpack_literal(&block, block_length, ":authority", "example.com");
+
+    var input: [512]u8 = undefined;
+    @memcpy(input[0..http2.client_preface.len], http2.client_preface);
+    var input_length: usize = http2.client_preface.len;
+    try append_frame(&input, &input_length, .settings, 0, 0, "");
+    try append_frame(&input, &input_length, .headers, 0x4, 1, block[0..block_length]);
+    try append_frame(&input, &input_length, .data, 0, 1, "hello");
+    try append_frame(&input, &input_length, .data, 0x1, 1, "");
+    try fixture.session.receive(input[0..input_length], state.callbacks());
+
+    try std.testing.expectEqual(@as(usize, 1), state.begins);
+    try std.testing.expectEqual(@as(usize, 0), state.ends);
+    try std.testing.expectEqual(@as(usize, 5), state.bytes);
+    try std.testing.expect(state.control != null);
+    try state.control.?.@"resume"();
+    try std.testing.expectEqual(@as(usize, 1), state.ends);
 }

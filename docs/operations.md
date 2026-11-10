@@ -101,21 +101,24 @@ production modules never import that suite. Protocol fuzzing has two layers:
 
 ```sh
 zig build fuzz --fuzz=100K -Doptimize=ReleaseSafe
+zig build oss-fuzz -Doptimize=ReleaseSafe
+# or run the object and smoke steps separately:
 zig build oss-fuzz-objects -Doptimize=ReleaseSafe
 zig build oss-fuzz-smoke -Doptimize=ReleaseSafe
 ```
 
 The Smith harness retains HTTP, query/Accept, zslay, extension-negotiation,
 HPACK, multipart, and HTTP/3 validation coverage. The OSS-Fuzz objects export
-`LLVMFuzzerTestOneInput` for HTTP framing, WebSocket masking, query parsing,
-cookie parsing, and QUIC/WebTransport packet boundaries. Zig's `-ffuzz`
+`LLVMFuzzerTestOneInput` for HTTP framing, WebSocket masking, QUIC/WebTransport
+packet boundaries, query parsing, cookie parsing, and incremental multipart
+parsing. Zig's `-ffuzz`
 instrumentation emits inline-8bit-counter sections rather than the
 trace-pc-guard callbacks current libFuzzer runtimes reject;
 `oss-fuzz/zig_sancov_shim.c` registers those sections with libFuzzer at link
 time. `zig build oss-fuzz-objects` fails when an object lacks
 `__sancov_cntrs`, and `oss-fuzz-smoke` runs deterministic seeds
 without libFuzzer. A reusable ClusterFuzzLite workflow links and executes
-all five targets with the OSS-Fuzz ASan/libFuzzer environment on the exact
+all six targets with the OSS-Fuzz ASan/libFuzzer environment on the exact
 revision under test. This is an OSS-Fuzz compatibility gate, not a claim of
 enrollment in the hosted service; `oss-fuzz/README.md` documents the Zig
 sanitizer boundary.
@@ -202,7 +205,7 @@ HTTP/1.1 and advances the `uwz_http_requests` counter; HTTP/3 emits one
 `http_request` record per completed request/response through the owning
 thread's sink, while the QUIC path never advances the counter registry.
 
-## Graceful shutdown
+## Shutdown
 
 Applications that should stop on SIGINT or SIGTERM arm the watcher before the
 loop starts:
@@ -218,8 +221,11 @@ try server.run();
 ```
 
 `catch_shutdown_signals` moves the application into the same `begin_shutdown`
-path as an explicit `shutdown()` call: existing connections drain, recurring
-timers stop, and the loop exits. It must be called before `run`; once shutdown
+path as an explicit `shutdown()` call: active connections close, producers and
+tokens are cancelled, completions drain, recurring timers stop, and the loop
+exits. Drain application requests externally before shutdown; pending responses
+are not automatically completed. See the [rolling-restart boundary](roadmap.md#deliberate-boundaries).
+It must be called before `run`; once shutdown
 has started it returns `error.ApplicationUnavailable`. A second call returns
 `error.SignalWatcherAlreadyInstalled`, because the signal disposition and
 self-pipe are process-wide and only one watcher may own them.

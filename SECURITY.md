@@ -60,11 +60,14 @@ process-wide watcher; deployments that already manage signals must not install
 a second one.
 
 `http3_extensions` and `webtransport` provide bounded validators and wire
-helpers. They are not connected to the live lsquic listener, which rejects
-extended CONNECT; they do not establish WebTransport, server push, or
+helpers. They are not connected to the live lsquic listener; completed CONNECT
+dispatch returns 501, while headers alone do not admit a session. They do not
+establish WebTransport, server push, or
 application-datagram support. ADR 0001 accepts implementation through the
 maintained lsquic fork, but this statement remains true until that work and its
-compliance gate land. RFC 10008 is the separate HTTP `QUERY` method supported
+compliance gate land. The [deliberate boundaries](docs/roadmap.md#deliberate-boundaries) record
+restoration owners and the dated reassessment. RFC 10008 is the
+separate HTTP `QUERY` method supported
 by the router. Live transports reject QUERY requests without a syntactically
 valid `Content-Type` before the route handler runs.
 
@@ -74,6 +77,15 @@ timeout, and apply normal operating-system resource limits. The default idle
 timeout is 120 seconds; `ConfiguredAppWithTimeout` can change it or disable
 idle sweeping with zero. HTTP/3 additionally bounds decoded headers, request
 bodies, packet buffers, connections, and active streams.
+
+Static assets require an operator-controlled filesystem namespace. Untrusted
+users must not create or replace entries beneath a mounted root. Publish
+regular files as regular files; avoid substituting FIFOs, devices, or other
+special types while serving. Confined no-symlink opening and descriptor kind
+checks remain enforced. Source and sidecar preflight reject stable special
+files before opening, but
+the portable synchronous filesystem API does not guarantee progress against
+hostile entry replacement or a stalled filesystem.
 
 Parameterized routing stores at most 16 borrowed captures per request and 64
 patterns per router. Global middleware is capped at 32 entries. Asynchronous

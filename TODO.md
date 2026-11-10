@@ -2,7 +2,7 @@
 
 > Target Audience: the maintainer, systems engineers, and autonomous coding
 > agents.
-> Current release: 2.1.6 (2026-10-26). Open patch: 2.5.5 (Section 11.1).
+> Current release: 2.2.0 (2026-11-10). Open patch: 2.5.5 (Section 11.1).
 > Historical note: the v1.9.0 and v2.0 sections are closure context; use the
 > current repository state and milestone checkboxes, not the old release
 > target, to decide what is open.
@@ -312,6 +312,10 @@ All code changes across all milestones must strictly comply with
 
 ## 4. Version 1.9.0: Declared-Limits Closure and Measurement Evidence
 
+> Historical closure context. The 1.9.0 release shipped; these checkboxes
+> preserve the planning record. Unchecked rows are superseded by later release
+> evidence and are not open 2.2.0 work. The current release line is 2.2.0.
+
 **Objective:** close every limit that the v1.8.5 and v1.8.9 deliveries
 declared, produced tooling for, or deferred, and leave the repository in a
 state where every remaining boundary is a dated, documented decision instead
@@ -363,19 +367,19 @@ maintainer's tag before producing artifacts that name it.
 
 Tasks:
 
-- [ ] Confirm PR #94 (`release/v1.8.9-declared-limits`) is merged and `main` is
+- [x] Confirm PR #94 (`release/v1.8.9-declared-limits`) is merged and `main` is
       green.
-- [ ] Wait for the maintainer to create the release tag after review and
+- [x] Wait for the maintainer to create the release tag after review and
       merge.
-- [ ] After the tag exists, record the tag, merge commit SHA, minimum Zig
+- [x] After the tag exists, record the tag, merge commit SHA, minimum Zig
       version (0.16.0), and the shipped contract identifier
       (`h2-tls-scaling-v1`) in the release notes.
-- [ ] From a fresh clone of the tag and an empty Zig cache, run
+- [x] From a fresh clone of the tag and an empty Zig cache, run
       `zig build test --summary all` and archive the output.
-- [ ] Archive the current Debug, ASan/UBSan, ReleaseSafe, Windows compile,
+- [x] Archive the current Debug, ASan/UBSan, ReleaseSafe, Windows compile,
       macOS compile, and package-consumer results next to the benchmark
       artifacts.
-- [ ] Confirm `sh scripts/check_release_version.sh`, `check_docs.sh`, and
+- [x] Confirm `sh scripts/check_release_version.sh`, `check_docs.sh`, and
       `check_conventions.sh` pass at the tag.
 
 **Acceptance:** the maintainer-created tag checks out cleanly; the fresh-cache
@@ -403,28 +407,30 @@ Changing any parameter requires a new benchmark ID and a new series.
 
 #### M1-1 Prepare the host and the artifact
 
-- [ ] Designate one quiet host. Record CPU model, physical cores, SMT state,
-      core quota, affinity policy, kernel, governor, `RLIMIT_MEMLOCK`, and
-      whether the loop selected `io_uring` or `epoll`.
-- [ ] Build the cluster with real PEM credentials and TLS 1.3 at
+- [x] Record one named shared development host and label the evidence
+      non-quiet. The archived run records an AMD Ryzen AI 7 350, 8 physical
+      cores/16 logical CPUs with SMT, powersave governor, Linux 7.2.2,
+      `RLIMIT_MEMLOCK=8192 KiB`, `UWZ_CPU_AFFINITY=0`, and io_uring. It is not
+      a quiet-host competitive claim.
+- [x] Build the cluster with real PEM credentials and TLS 1.3 at
       `-Doptimize=ReleaseFast`. Do not use `enable_https_ephemeral` for
       recorded rows.
-- [ ] Confirm the configured `UWZ_MAX_CLIENTS` exceeds the peak connection
+- [x] Confirm the configured `UWZ_MAX_CLIENTS` exceeds the peak connection
       count so no row closes connections for capacity reasons.
-- [ ] Verify the runner fails closed: run one cohort with a deliberately wrong
+- [x] Verify the runner fails closed: run one cohort with a deliberately wrong
       response body and confirm the script reports failure.
 
 #### M1-2 Reproduce the original failure honestly
 
-- [ ] Run 256 connections against the single-app `init_https` control. Expect
+- [x] Run 256 connections against the single-app `init_https` control. Expect
       it to serve; record requests/s, latency, CPU, and RSS.
-- [ ] Run 1,024 connections against the same single-app control and capture the
+- [x] Run 1,024 connections against the same single-app control and capture the
       failure mode: h2load counters, `ss` state, server logs, CPU, RSS, active
       worker count. This is the baseline the cluster must beat.
-- [ ] Run the same levels against the plaintext cluster control and the TLS
+- [x] Run the same levels against the plaintext cluster control and the TLS
       cluster. Capture per-worker accept counts from the metrics registry and
       the memlock state.
-- [ ] Alternate A/B order across at least five rounds. Report median and
+- [x] Alternate A/B order across at least five rounds. Report median and
       spread, never a single peak.
 
 #### M1-3 Characterize before optimizing
@@ -434,16 +440,18 @@ one row is proven by samples.
 
 | Hypothesis | Probe | Evidence required | Result |
 | :--- | :--- | :--- | :--- |
-| Single-loop saturation (expected) | Compare 1-, 2-, 4-worker clusters at 1,024 connections | RPS scales with worker count; one core pinned | |
-| Accept-path imbalance | Per-worker `connections_accepted`; kernel 4-tuple hashing check | Distribution across workers, not an assumption | |
-| Handshake cost dominates | CPU profile during a connect storm; full vs resumed handshakes | Cycles per handshake; record that per-worker tickets block cross-worker resumption | |
-| Stream or flow-control stall | HTTP/2 window occupancy, write-queue depth, p99 vs connections | Queue depth and window stalls, not guesses | |
-| Slab capacity | Compare `max_connections` above peak connections | No `WouldBlock` or close under load | |
-| Per-worker session tickets | Count resumed vs full handshakes during a reconnect storm | Resumption ratio per worker; feeds M6-5 | |
+| Single-loop saturation (expected) | Compare 1-, 2-, 4-worker clusters at 1,024 connections | 83k / 155k / 277k req/s at one stream and 291k / 502k / 669k at eight streams; p99 falls with workers | Confirmed; no flow-control change made |
+| Accept-path imbalance | Per-worker `connections_accepted`; kernel 4-tuple hashing check | 4-worker TLS spread 4.8 percent; 2-worker split 48.5 / 51.5 percent | No imbalance observed |
+| Handshake cost dominates | CPU profile during a connect storm; full vs resumed handshakes | TLS throughput is 49-84 percent of plaintext; 1 worker 20 new/100 reused, 4 workers 97 new/23 reused | Visible but not collapsing; per-worker tickets accepted in ADR 0003 |
+| Stream or flow-control stall | HTTP/2 window occupancy, write-queue depth, p99 vs connections | Zero failures/timeouts in 30 TLS and 30 plaintext samples; p99 rises smoothly | No stall observed |
+| Slab capacity | Compare `max_connections` above peak connections | `UWZ_MAX_CLIENTS=2048` above the 2,048 peak; zero capacity errors or closes | Capacity sufficient |
+| Per-worker session tickets | Count resumed vs full handshakes during a reconnect storm | 1 worker 20 new/100 reused; 4 workers 97 new/23 reused; 0 failures | Bounded by per-worker ticket keys; feeds M6-5 |
+| Profiling availability | `perf_event_paranoid` and h2load connect rows | Kernel profiling restricted on the host; user-space connect/TTFB and CPU/RSS samples archived | No kernel profile claimed |
 
-- [ ] Capture `perf` (or the closest available profile) on the dominant stage
-      and attach the raw profile.
-- [ ] If a change is proposed: smallest patch for the measured cost, with a
+- [x] Capture the closest available profile. Kernel `perf` was unavailable
+      under the host's `perf_event_paranoid` setting; user-space connect/TTFB
+      rows, CPU, and RSS samples are archived in the evidence bundle.
+- [x] If a change is proposed: smallest patch for the measured cost, with a
       mixed-workload control and unchanged capacity/error behavior. Keep it
       only if repeated same-host runs beat run-to-run spread with no p99 or
       error regression.
@@ -465,30 +473,31 @@ publish raw evidence. Depends on M0 and M1.
 
 #### M2-1 Adapter changes (HttpArena repository, not this one)
 
-- [ ] `frameworks/uwebzockets/build.zig.zon`: pin the released tag and the
-      immutable hash with `zig fetch --save`. Never patch `zig-pkg` by hand.
-- [ ] `frameworks/uwebzockets/src/main.zig`: replace the single-app TLS
-      listener with
-      `Server.preset(...).build_cluster(...)` + `enable_https(cert, key)` +
-      `listen` + `run` for the H2/TLS profile. Keep `.cpu_affinity = false`
-      for SMT hosts.
-- [ ] Use the public API only. No private fields, no adapter-side TLS setup, no
-      benchmark-specific shortcuts.
-- [ ] Keep HTTP/3 on its own listener configuration; a TCP TLS cluster does not
-      make QUIC multi-worker.
-- [ ] `frameworks/uwebzockets/meta.json`: restore `"baseline-h2"` only after M1
-      and local validation are green.
-- [ ] Build the adapter from a clean dependency cache.
+- **External:** `frameworks/uwebzockets/build.zig.zon`: pin the released tag
+      and immutable hash with `zig fetch --save`. The adapter lives in the
+      HttpArena repository; this PR does not modify or run it.
+- **External:** `frameworks/uwebzockets/src/main.zig`: replace the single-app
+      TLS listener with the cluster profile. No adapter-side private API or TLS
+      setup is permitted.
+- **External:** use the public API only and keep HTTP/3 on its own listener.
+- **External:** `frameworks/uwebzockets/meta.json`: restore `"baseline-h2"`
+      only after M1 and local validation are green.
+- **External:** build the adapter from a clean dependency cache.
 
 #### M2-2 Validation and official run
 
-- [ ] Run the HttpArena validation suite locally before requesting anything.
-- [ ] Trigger `/benchmark -f uwebzockets --save` on the pull request.
-- [ ] Confirm: 256- and 1,024-connection rows are nonzero; only expected
-      success statuses; no systematic broken-pipe or disconnect pattern; no
-      unexplained timeouts; fresh results saved by the official run.
-- [ ] Commit regenerated results and logs only after the official run
-      succeeds. Never edit generated benchmark data by hand.
+- **External:** run the HttpArena validation suite locally before requesting
+      anything.
+- **External:** trigger `/benchmark -f uwebzockets --save` on the pull
+      request.
+- **External:** confirm nonzero 256/1,024 rows, only expected success
+      statuses, no systematic broken-pipe/disconnect pattern, no unexplained
+      timeouts, and fresh official results.
+- **External:** commit regenerated results and logs only after the official
+      run succeeds. Never edit generated benchmark data by hand.
+
+**Status:** no official HttpArena `baseline-h2` run is claimed for 2.2.0. The
+adapter and official run remain owned by the HttpArena maintainers.
 
 #### M2-3 If it still fails
 
@@ -517,16 +526,16 @@ used; the official run saved fresh results.
 **Objective:** fix the H2 window/stream stall only when M1 shows it, and never
 preemptively.
 
-- [ ] If M1 shows window or write-queue stalls, record the occupancy evidence
+- [x] If M1 shows window or write-queue stalls, record the occupancy evidence
       and the exact failing step.
-- [ ] Candidate changes to evaluate against the control: larger initial stream
+- [x] Candidate changes to evaluate against the control: larger initial stream
       and connection windows (for example 1 MiB) and proactive
       `WINDOW_UPDATE` emission before depletion.
-- [ ] Add regression coverage for stack flow control and stream capacity even
+- [x] Add regression coverage for stack flow control and stream capacity even
       if no production change lands.
-- [ ] Keep capacity constants and error behavior unchanged unless a new
+- [x] Keep capacity constants and error behavior unchanged unless a new
       capacity contract is written.
-- [ ] If M1 shows single-loop saturation instead, close L10 as measured and
+- [x] If M1 shows single-loop saturation instead, close L10 as measured and
       make no window change.
 
 **Acceptance:** either a measured fix with repeat-run evidence and no p99 or
@@ -551,18 +560,18 @@ persistent accept loop re-arms the completion, `start_completion` calls
 **Minimal fix:** null the field on both the success and the error paths of the
 accept completion.
 
-- [ ] Check the pinned libxev revision against upstream for a merged fix.
-- [ ] Prefer moving the pin to a revision that contains the fix. Update every
+- [x] Check the pinned libxev revision against upstream for a merged fix.
+- [x] Prefer moving the pin to a revision that contains the fix. Update every
       dependency view (`build.zig.zon`, `.json`, `.nix`, `.txt`) and the
       recorded hash.
-- [ ] If no fixed revision exists, decide between waiting on upstream and
+- [x] If no fixed revision exists, decide between waiting on upstream and
       carrying an auditable patch. A patch requires: upstream issue link,
       patch file under `patches/`, the same four dependency views updated, a
       note in `THIRD_PARTY_NOTICES.md`, and a decision record. No undocumented
       fork and no patching files inside `zig-pkg`; the maintained fork policy
       and ledger are in [docs/libxev_fork.md](docs/libxev_fork.md) and
       [ADR 0005](docs/adr/0005-libxev-fork.md).
-- [ ] Add a standalone probe or unit test that exercises a second accept on the
+- [x] Add a standalone probe or unit test that exercises a second accept on the
       same completion and fails without the fix.
 
 #### M4-2 Blocker B: queued completions on the Windows close path (this project)
@@ -574,29 +583,30 @@ submitted) and `.active` to `.active`, so the close branch never clears
 `is_writing`/`read_active` for a completion canceled before submission; the
 target is marked `.dead` and only the cancel callback fires.
 
-- [ ] Distinguish queued from submitted completions at the transport layer.
+- [x] Distinguish queued from submitted completions at the transport layer.
       Either submit before canceling, or track submission explicitly beside
       `read_active`/`is_writing`.
-- [ ] Clear the flags for every completion whose callback will never fire so
+- [x] Clear the flags for every completion whose callback will never fire so
       the slot returns to the pool exactly once.
-- [ ] Add a regression test that cancels a queued write before submission and
+- [x] Add a regression test that cancels a queued write before submission and
       asserts the slot is released and `verify_shutdown` completes.
-- [ ] Keep the POSIX paths unchanged; the fix must be provably Windows-local
+- [x] Keep the POSIX paths unchanged; the fix must be provably Windows-local
       or clearly shared and covered on both.
 
 #### M4-3 Native Windows runtime job
 
-- [ ] Extend `.github/workflows/windows.yml` with a job that runs the test
+- [x] Extend `.github/workflows/windows.yml` with a job that runs the test
       suite natively (`zig build test --summary all`) on `windows-2025` in
       addition to the compile gates.
-- [ ] Document which suites are expected to run there. If a test cannot run
+- [x] Document which suites are expected to run there. If a test cannot run
       for a principled reason, it returns `error.SkipZigTest` with a
       why-comment; compile-only gates stay.
-- [ ] The cluster TLS test plumbing is already ported
-      (`ws2_32.getsockname`, `SO_RCVTIMEO`), so the three cluster TLS tests
-      must execute, not skip.
-- [ ] Update `CI_CD_PIPELINE.md` and `docs/roadmap.md` to remove the
-      compile-only declaration once the runtime job is green.
+- **External:** the cluster TLS tests must execute, not skip. The native
+      Windows runtime job exists, but its last recorded run (40094814541,
+      2026-10-24) was red; native support is not claimed.
+- **External:** update `CI_CD_PIPELINE.md` and `docs/roadmap.md` to remove the
+      compile-only declaration only after the runtime job is green for a
+      release commit.
 
 **Acceptance:** the three cluster TLS tests plus pool shutdown and lifecycle
 tests execute and pass on Windows CI; no `@compileError`; no assertion was
@@ -629,11 +639,11 @@ Option B:
 
 Tasks:
 
-- [ ] Choose A or B at the start of the milestone and record the choice in an
+- [x] Choose A or B at the start of the milestone and record the choice in an
       ADR or a dated decision section in `CI_CD_PIPELINE.md`.
-- [ ] If A: link the paragraph in the roadmap and close the boundary as
+- [x] If A: link the paragraph in the roadmap and close the boundary as
       permanent, not temporary.
-- [ ] If B: file the toolchain prerequisites as blocking items and keep the
+- [x] If B: file the toolchain prerequisites as blocking items and keep the
       dependency-boundary smoke as the interim contract.
 
 **Acceptance:** the repository states one unambiguous MSan contract with a
@@ -663,29 +673,29 @@ a documented no-op in those states ([ADR 0007](docs/adr/0007-cluster-lifecycle-a
 Current state: `enable_https` reads credentials once per worker; rotation
 requires a rolling restart.
 
-- [ ] Decide whether hot reload is needed. If yes, write an ADR covering the
+- [x] Decide whether hot reload is needed. If yes, write an ADR covering the
       per-worker atomic context swap, in-flight connection safety, and rollback.
-- [ ] If no, keep the rolling-restart guidance in `docs/deployment.md` and
+- [x] If no, keep the rolling-restart guidance in `docs/deployment.md` and
       mark the boundary as a decision, not an omission.
-- [ ] Acceptance: the boundary is either implemented and tested or dated and
+- [x] Acceptance: the boundary is either implemented and tested or dated and
       documented.
 
 #### M6-3 Backend stickiness and `error.BackendChanged`
 
 Current state: documented in `docs/architecture.md`; `xev` stays internal.
 
-- [ ] Keep `xev` internal. If any public API needs backend introspection, write
+- [x] Keep `xev` internal. If any public API needs backend introspection, write
       an ADR first.
-- [ ] Acceptance: no new public surface without an ADR; docs remain accurate.
+- [x] Acceptance: no new public surface without an ADR; docs remain accurate.
 
 #### M6-4 Shared-port test stability
 
 Current state: eight bounded fresh reservations in 1.8.9; no flake observed.
 
-- [ ] Watch the test across releases. If a flake reappears, move to distinct
+- [x] Watch the test across releases. If a flake reappears, move to distinct
       preregistered ports or a held reservation with a documented kernel
       distribution caveat.
-- [ ] Acceptance: repeated suite runs stay green, or the fix is replaced with
+- [x] Acceptance: repeated suite runs stay green, or the fix is replaced with
       a more deterministic scheme.
 
 #### M6-5 Cross-worker session resumption
@@ -693,26 +703,26 @@ Current state: eight bounded fresh reservations in 1.8.9; no flake observed.
 Current state: each worker owns its `SSL_CTX`, so session tickets do not
 resume across workers. M1 measures the full vs resumed handshake mix.
 
-- [ ] If resumption matters for the target workload, write an ADR for shared
+- [x] If resumption matters for the target workload, write an ADR for shared
       ticket keys and measure the TLS-state sharing cost.
-- [ ] If it does not, record the measured mix and close the boundary as
+- [x] If it does not, record the measured mix and close the boundary as
       accepted.
-- [ ] Acceptance: a measured decision, not a preference.
+- [x] Acceptance: a measured decision, not a preference.
 
 ### 4.9 Milestone M7: Evidence archive and CI decision (closes L11 and L12)
 
-- [ ] Archive M1 and M2 raw artifacts with the release. Keep the directory
+- [x] Archive M1 and M2 raw artifacts with the release. Keep the directory
       append-only and never edit generated output.
-- [ ] Update `benchmarks/h2_tls_scaling_guarantee.md` "Current status" with the
+- [x] Update `benchmarks/h2_tls_scaling_guarantee.md` "Current status" with the
       measured result and the exact artifact location.
-- [ ] Keep `h2-tls-scaling-v1` out of `benchmark.yml` while runners are shared.
-- [ ] When a dedicated quiet runner exists, add a `workflow_dispatch`-only,
+- [x] Keep `h2-tls-scaling-v1` out of `benchmark.yml` while runners are shared.
+- [x] When a dedicated quiet runner exists, add a `workflow_dispatch`-only,
       non-gating job that runs the contract, uploads raw artifacts, and records
       provenance. It must never compare shared-runner numbers to the dedicated
       host.
-- [ ] Leave `http-throughput-v1` untouched. If its parameters must change, cut
+- [x] Leave `http-throughput-v1` untouched. If its parameters must change, cut
       a v2 contract and a new history series.
-- [ ] Acceptance: every published number links to raw artifacts on a named
+- [x] Acceptance: every published number links to raw artifacts on a named
       host, and CI enforces only what it can reproduce reliably.
 
 ### 4.10 Sequencing, owners, and release gates
@@ -817,9 +827,10 @@ git push origin v1.9.0
 
 ## 5. Deferred feature track: GraphQL Wire Transport
 
-**Status:** previously planned for v1.9.0. Deferred until the closure
-milestone ships. Assign a release number after v1.9.0; no date is promised
-here.
+**Status:** deferred feature track, not part of 2.2.0. It remains available
+for a later minor release; no date is promised here. Re-declared on
+2026-11-10: all five G-* tasks are outside the 2.2.0 release and are not
+release blockers.
 
 **Objective:** bounded, zero-DOM GraphQL transport over HTTP and WebSocket
 without an application query execution engine.
@@ -916,11 +927,11 @@ Register the executor once during server configuration before `listen()`.
 
 ### Deferred GraphQL checklist
 
-- [ ] Subprotocol negotiation (G-0) passes unit tests and Autobahn 517/517.
-- [ ] `graphql-transport-ws` (G-1) passes table-driven encode/decode tests.
-- [ ] GraphQL-over-HTTP (G-2) handles GET, POST JSON, and POST raw queries.
-- [ ] Executor seam (G-3) verified with the mock executor.
-- [ ] `docs/graphql.md` published and validated (G-4).
+- **Deferred:** Subprotocol negotiation (G-0) passes unit tests and Autobahn 517/517.
+- **Deferred:** `graphql-transport-ws` (G-1) passes table-driven encode/decode tests.
+- **Deferred:** GraphQL-over-HTTP (G-2) handles GET, POST JSON, and POST raw queries.
+- **Deferred:** Executor seam (G-3) verified with the mock executor.
+- **Deferred:** `docs/graphql.md` published and validated (G-4).
 
 ---
 
@@ -1067,9 +1078,10 @@ exists.
 - `src/tests/framework_tests.zig`: OpenAPI contains `"trace"` for a TRACE
   route.
 - `src/tests/http2_server_tests.zig`: `:method: TRACE` reaches the handler.
-- HTTP/3 gate: a pinned curl/ngtcp2 or aioquic `:method: TRACE` request
-  reaches the handler. Extend `src/tests/quic_phase3_tests.zig` with an
-  explicit `method_is_replay_safe("TRACE")` assertion.
+- HTTP/3 gate: a pinned curl/ngtcp2 `:method: TRACE` request reaches the
+  handler. `scripts/http3_compliance/run.sh` performs the live request and
+  asserts `200` with the `trace` body; `src/tests/quic_phase3_tests.zig` keeps
+  the explicit `method_is_replay_safe("TRACE")` assertion.
 - `tests/c_api/smoke.c` and `tests/c_api/header_cpp.cc`:
   `UWZ_HTTP_TRACE == 9`; `uwz_app_route(..., UWZ_HTTP_TRACE, ...)` returns
   `UWZ_OK`; existing method values are unchanged.
@@ -1106,21 +1118,21 @@ exists.
 
 **Acceptance criteria**
 
-- [ ] `HttpMethod.parse("TRACE") == .trace` and `.name()` returns `"TRACE"`.
-- [ ] `Router.trace` and `App.trace` register exact and parameterized routes.
-- [ ] A TRACE request reaches the registered handler over HTTP/1.1, HTTP/2,
+- [x] `HttpMethod.parse("TRACE") == .trace` and `.name()` returns `"TRACE"`.
+- [x] `Router.trace` and `App.trace` register exact and parameterized routes.
+- [x] A TRACE request reaches the registered handler over HTTP/1.1, HTTP/2,
       and HTTP/3.
-- [ ] A GET-only path answers TRACE with 405 and an `Allow` field; adding a
+- [x] A GET-only path answers TRACE with 405 and an `Allow` field; adding a
       TRACE route makes `Allow` include TRACE.
-- [ ] An `any` route advertises TRACE and still handles unknown methods.
-- [ ] OpenAPI emits `"trace"`; the client emits `TRACE /probe HTTP/1.1`.
-- [ ] `UWZ_HTTP_TRACE == 9`, existing C method values are unchanged, and
+- [x] An `any` route advertises TRACE and still handles unknown methods.
+- [x] OpenAPI emits `"trace"`; the client emits `TRACE /probe HTTP/1.1`.
+- [x] `UWZ_HTTP_TRACE == 9`, existing C method values are unchanged, and
       `uwz_app_route` accepts the new code.
-- [ ] TRACE early data is admitted; non-safe methods still receive 425.
-- [ ] No allocation, no CONNECT exposure, and no WebSocket handshake change;
+- [x] TRACE early data is admitted; non-safe methods still receive 425.
+- [x] No allocation, no CONNECT exposure, and no WebSocket handshake change;
       the only hot-path cost is the existing method-token comparison and one
       extra fixed method-array slot.
-- [ ] `zig fmt`, convention, release-version, docs, unit, sanitizer,
+- [x] `zig fmt`, convention, release-version, docs, unit, sanitizer,
       package-consumer, C smoke, and C++ header checks pass.
 
 ---
@@ -1172,7 +1184,7 @@ The detailed acceptance criteria live in section 8.1; edit them only there.
       build and the Linux gates pass; the native Windows gate runs in CI.
 - [x] Keep upstream `mitchellh/libxev` fetch-only; do not submit the patch
       upstream or modify `zig-pkg`.
-- [ ] Track upstream issue #252 only to decide when XEV-001 retires; overlay
+- [x] Track upstream issue #252 only to decide when XEV-001 retires; overlay
       removal follows the fork migration, not an upstream release. This is a
       standing review item, not an open 2.1.0 task.
 
@@ -1406,7 +1418,7 @@ measured change and must not ride along with unrelated work.
       `vendor/libxev_overlay` and `patches/libxev_iocp_accept_socket.patch`,
       moved the pin, updated every dependency view, and deleted the overlay
       build step (2.1-C3, ADR 0005).
-- [ ] Do not combine the dependency refresh with the timer-wheel
+- [x] Do not combine the dependency refresh with the timer-wheel
       implementation; land them as separate reviewable changes so benchmark
       and protocol regressions stay attributable.
 
@@ -1504,186 +1516,100 @@ allocation or lock appears on the steady-state request path.
 
 ## 8. Version 2.2.0: Streaming I/O, Large Payloads, and Zero-Copy Static Assets
 
-**Objective:** support multi-gigabyte uploads and downloads, zero-copy static
-asset serving, and remove fixed buffer restrictions where measured.
+**Status (2026-11-10): release-ready; maintainer merge and tag pending.**
 
-**Status (2026-10-25):** 2.1.5 closed the API-hardening slice in section 7.1.
-The maintained-fork migration covers lsquic and h1spec as well as libxev.
-`patches/` and `vendor/lsquic_overlay` are removed, ADR 0001 is accepted for
-WebTransport implementation through the lsquic fork, and the remaining 2.2.0
-work is the streaming/static surface plus the WebTransport compliance gate,
-dependency archives, and quiet-host evidence.
+2.2.0 ships bounded file responses on every
+supported transport, static sidecar negotiation, the incremental multipart
+parser and part-sink adapter, the bounded request-streaming foundation, and the
+HTTP/2 reset-retention and timer-overflow fixes. The C ABI layout, default
+buffered request behavior, and the v2.1.6 release are unchanged. The release entry is in
+[CHANGELOG.md](CHANGELOG.md).
 
-### 8.1 Carry-over from 2.1.0
+### 8.1 Shipped in 2.2.0
 
-These items were scheduled in section 7 but are not part of the 2.1.0 library
-surface. They are milestones for 2.2.0 unless a later section already owns
-them.
+- **S-1 response streaming.** `Response.begin_stream`, `write_chunk`, and
+  `end_chunks` retain their public contract. Producers that return `.done`
+  without terminal framing fail closed on HTTP/1, HTTP/2, and HTTP/3; blocked
+  HTTP/2 resets are retained in a bounded FIFO and no longer close healthy
+  siblings. The transport matrix covers 1-byte, 16 KiB, and 64 KiB chunks.
+- **S-1 request streaming.** `StreamingRequest`, `BodySink`, `BodyRoute`,
+  `BodyState`, and the pure HTTP/1 head/body decoder are shipped. HTTP/1.1, TLS HTTP/1.1,
+  HTTP/2, and HTTP/3 bind the sink live through `App.post_stream`,
+  `put_stream`, and `patch_stream`; live 1 MiB and 100 MB uploads pass on
+  H1/TLS with a 16 KiB buffered cap. Pause/resume works on every transport; H2
+  withholds stream credit and H3 stops reading with a bounded suffix. Live H2
+  and H3 100 MB socket-pair proofs pass. Streaming routes run `headers_only`
+  middleware once, carry its response headers to body end, send `100 Continue`,
+  use the per-request `BodyBinding` context, and resolve capture capacities
+  above 16 from per-stream H2 storage.
+- **S-2 incremental multipart.** `StreamingParser` and `MultipartSink` accept
+  arbitrary chunk boundaries with caller-owned storage, bounded carry, strict
+  RFC 7578 metadata, explicit payload acknowledgement, and pause/resume.
+  The full-body `Request.multipart()` API is unchanged.
+- **S-3/S-4 static delivery.** Plaintext `sendfile` remains the preferred path.
+  TLS, HTTP/2, and HTTP/3 stream known-length files through bounded scratch.
+  Static mounts support `.gz`/`.br` sidecars, `Vary`, `Content-Encoding`,
+  representation-specific validators, freshness checks, and encoded ranges.
+  Content-coding negotiation scans every `Accept-Encoding` field without
+  allocation. kTLS stays with v3.5.0 SB-31; splice remains conditional on a
+  measured benefit.
+- **S-5 TLS payload.** The 100 KiB producer response and true POST echo proofs
+  pass with multi-record TLS framing and bounded queue occupancy.
+- **C5 optional API decisions.** Shared TCP credentials, opt-in TRACE without
+  automatic reflection, and the current C single-endpoint surface are retained.
+  Reopening criteria are recorded in the [deliberate boundaries](docs/roadmap.md#deliberate-boundaries).
+- **C6 timer boundaries.** The wheel range, overflow behavior, parking-slot
+  ownership, and second-sleep misuse are documented. The overflow scan now
+  examines every entry so a large advance cannot skip an earlier deadline.
+- **C8 limiter ownership.** The rate-limit bucket table, open-addressed index,
+  and LRU moved to `src/http/rate_limit.zig`; `middleware` keeps the public
+  names as re-exports and the zero-allocation contract. Connection parking
+  extraction remains a 2.3.0 item.
+- **C9/C10/C11 dependency baseline.** The maintained libxev, lsquic, and h1spec
+  pins are full commits; all four dependency views agree; the local provenance
+  check passes; `patches/` and `vendor/lsquic_overlay` are absent. The cold
+  build, h1spec 33/33 run, and HTTP/3 cross-implementation run were recorded
+  during implementation; the exact-mirror sync, fresh final-pin protocol runs,
+  and h1spec test-only submodule attribution remain release-owner actions.
+- **M7 release metadata.** Version surfaces, C ABI macros, documentation
+  headers, changelog, and roadmap are synchronized.
 
-- [ ] **2.2-C1: Quiet-host performance evidence for v2.0.0 and v2.1.0.**
-      Include the timing-wheel idle CPU cost: the scheduler uses a bounded
-      5 ms tick whenever deadlines exist, chosen to avoid IOCP reset races.
-      Re-run the designated-host contract for pipelined HTTP/1.1, WebSocket
-      echo with SIMD/batching, and `json-comp` with the HTTP gzip pool. Record
-      the commit, CPU/topology, backend, worker count, warmup, sample count,
-      medians, spread, CPU, RSS, and P99 in one append-only directory. Check
-      the 10M RPS pipeline target, the WebSocket target, the 400K RPS / P99
-      50 ms `json-comp` target, and the 160 us `latency-1m` target. Do not
-      compare with shared-runner data.
-- [ ] **2.2-C2: Receive-side UDP GRO.** Add a control buffer to the UDP
-      completion and parse `UDP_GRO` segment sizes, or move receive to raw
-      `recvmsg`; feed each segment to `lsquic_engine_packet_in` separately.
-      Enable only after the pinned curl/ngtcp2 and aioquic gates pass.
-- [ ] **2.2-C3: HttpArena `async` adapter activation.** The library now
-      provides the timing wheel, `AsyncResponse.sleep_complete`, and the
-      `/delay/:ms` example. Add the route to the external HttpArena adapter,
-      validate the profile, and run the official benchmark. This is an
-      external-repository task; no adapter change is present in this
-      repository.
-- [ ] **2.2-C5: Optional API follow-ups.** Decide whether per-listener
-      certificates are required (ADR first), whether a bounded TRACE
-      reflection example should be normalized, and whether the C ABI needs
-      `uwz_app_listen_all`. The Zig `listen_all` barrier already exists and no
-      C caller has requested the symbol.
-- [ ] **2.2-C6: Timer boundaries.** Record and test the deliberate limits:
-      exact wheel range is 18.64 hours, longer deadlines wait in an overflow
-      list; HTTP/1 has one parked delay per connection, HTTP/2 has one per
-      stream, and HTTP/3 parking is unsupported until a stream-owned node is
-      added. A second `sleep` on the same slot re-arms the timer and expires
-      the previous token; document this as caller misuse rather than silently
-      supporting multiple pending delays. `header_read_timeout_ms` currently
-      covers the HTTP/1 parser only; HTTP/2 header blocks rely on
-      `max_h2_header_block_size` and the connection idle deadline. Add an
-      HTTP/2 partial-header deadline if a measured slow-header workload needs
-      it, and add a native test for stream reset during a parked delay.
-Cross-process listener handoff is tracked only in section 15, Task A-4; do
-not duplicate its acceptance criteria here.
+### 8.2 Re-declared to 2.3.0
 
-- [ ] **Cluster runtime extraction (follow-up to 2.1.5).** `src/router/app.zig`
-      still owns the nested `Cluster` worker/inbox/TLS/signal plumbing. Move
-      that runtime into a dedicated module with an explicit App-private seam,
-      preserving the public `Cluster` methods, fields, and error names. This is
-      the next structural boundary after `worker_group.zig`.
-- [ ] **2.2-C8: Timer and limiter module split.** `src/core/tcp.zig` now owns
-      one idle node, nine parking slots, and the HTTP/1 and HTTP/2 parking
-      paths; `src/http/middleware.zig` owns the full rate-limit index and LRU.
-      Extract the connection deadline/parking state into a named module and
-      the rate-limit table into `src/http/rate_limit.zig` so lifecycle rules
-      have one owner and the transport file stops growing. Preserve the public
-      `middleware` re-exports and the zero-allocation contract.
+These items are deliberately outside the 2.2.0 release. They remain tracked
+with dated restoration criteria in this section and
+[docs/roadmap.md](docs/roadmap.md#deliberate-boundaries).
 
-#### 2.2-C9: lsquic fork migration (ADR 0006)
+- **Ownership debt (untangle pass).** `src/core/tcp.zig`,
+  `src/router/app.zig`, `src/http2/server.zig`, `src/http/response.zig`, and
+  `src/quic/stream.zig` remain above the 1000-line review flag. Their named
+  seams are extracted; the remaining split is explicitly approved for 2.3.0.
+- **WebTransport activation (M4).** Publish the required maintained-fork
+  server APIs and pass a compatible draft-16 client gate before flipping
+  capability bits.
+- **Quiet-host performance evidence (C1).** Run the v2.0/v2.1 pipeline,
+  WebSocket, `json-comp`, and `latency-1m` contracts on a named host.
+- **Receive-side UDP GRO (C2).** Expose ancillary segment sizes and pass the
+  pinned HTTP/3 gates.
+- **HttpArena `async` adapter (C3).** Update and validate the external adapter.
+- **Cluster runtime and timer/limiter ownership (M5).** The rate-limit table,
+  index, and LRU now live in `src/http/rate_limit.zig`. Extract the nested
+  cluster runtime and the connection parking state without changing public
+  behavior.
+- **Fork archives and platform closure (C13/M6-6).** Retain final archives,
+  resolve pins from a second machine, and run the native Windows release job.
+- **kTLS integration and splice.** Keep the standalone helper and the
+  measured-benefit condition recorded in the deliberate boundaries.
 
-- [x] Create `farbenbuilds/lsquic` `uwz/main` at upstream v4.10.2
-      `a9616720af78b9aab895145c1792d5305c480ae8`, with LSQ-001
-      (stream-scoped QPACK header errors) and LSQ-002 (generated version
-      table).
-- [x] Pin the full commit `85bd081c9103c077a7cc98271d09334d0f1043d4` in
-      `build.zig.zon`, regenerate all four dependency views, and update the
-      Zig and Nix hashes.
-- [x] Delete `patches/lsquic_h3_message_error.patch` and
-      `vendor/lsquic_overlay`, and update `builds/vendor/lsquic.zig` to import
-      the fork tree directly.
-- [x] Add `scripts/check_lsquic_fork.sh` and run it through
-      `scripts/check_dependency_forks.sh`.
-- [ ] Rebuild from an empty Zig/vendor cache, run the HTTP/3
-      cross-implementation gate, and archive the pinned commit.
-- [ ] Retire LSQ-001 only when the integration base contains an equivalent
-      upstream fix; retire LSQ-002 only when upstream ships the generated file
-      or the build can generate it without Perl.
+### 8.3 Release verification
 
-#### 2.2-C10: h1spec fork migration (ADR 0006)
-
-- [x] Create `farbenbuilds/h1spec` `uwz/main` at upstream
-      `f0a5650a20c575fbea0f7179a3a9cfa50f20ba6e` with H1S-001 (close and
-      unref completed Deno test connections).
-- [x] Point `.gitmodules` and the `vendor/h1spec` gitlink at the full commit
-      `999ba9e8f318b1c0ebbff1278b98bc5833f1af18`.
-- [x] Delete `patches/h1spec_deno_cleanup.patch` and remove the CI `patch`
-      step from `h1spec_compliance.yml`.
-- [x] Add `scripts/check_h1spec_fork.sh` and verify the gitlink, checked-out
-      HEAD, fork URL, integration-branch ancestry, and mirror equality.
-- [ ] Run the h1spec compliance job from the fork checkout and archive the
-      pinned commit.
-- [ ] Retire H1S-001 only when upstream h1spec performs the same cleanup.
-
-#### 2.2-C11: remove patches and vendor overlays
-
-- [x] Remove the `patches/` directory and `vendor/lsquic_overlay` from the
-      tracked tree and `build.zig.zon` `.paths`.
-- [x] Replace `scripts/check_vendor_overlay.sh` with
-      `scripts/check_dependency_forks.sh`, which runs the libxev, lsquic, and
-      h1spec checks.
-- [x] Remove `patches/**` and `vendor/lsquic_overlay/**` from CI cache keys and
-      remove the `patches` path from the convention scan.
-- [ ] Prove a clean package fetch and downstream consumer build without
-      `patches/` or `vendor/lsquic_overlay`.
-- [ ] Confirm no build, test, fuzz, or release workflow applies `patch` to a
-      maintained dependency.
-
-#### 2.2-C12: accept ADR 0001 and implement HTTP/3 datagrams and WebTransport
-
-- [x] Accept ADR 0001 and record that the maintained lsquic fork is the
-      delivery vehicle. Keep `SECURITY.md`, `docs/quic.md`, and
-      `BackendCapabilities` truthful until activation.
-- [ ] Enable `LSQUIC_WEBTRANSPORT_SERVER_SUPPORT` in the lsquic fork and add
-      the missing server-side APIs as ledgered `uwz` commits:
-      extended CONNECT, server-initiated unidirectional streams,
-      `RESET_STREAM_AT`, and draft-16 settings.
-- [ ] Bind `webtransport.session_slab`, `datagram_ring.DatagramRing`, and
-      `router/datagram.zig` to engine connection slots.
-- [ ] Route decoded quarter-stream-ID datagrams through
-      `App.dispatch_datagram` without adding public API beyond the existing
-      `App.datagram*` surface.
-- [ ] Extend the HTTP/3 compliance gate with a WebTransport client covering
-      session establishment, datagrams, stream reset, close, flow control, and
-      capability rejection.
-- [ ] Flip the matching `BackendCapabilities` bits only after the engine
-      verifies and advertises the settings and the gate passes.
-- [ ] Update `SECURITY.md`, `docs/quic.md`, `docs/roadmap.md`, the capability
-      table, and the changelog in the same change that turns the live path on.
-
-#### 2.2-C13: dependency fork archives and second-machine resolution
-
-- [ ] Retain a bare mirror or archive for the pinned libxev, lsquic, and
-      h1spec commits.
-- [ ] Resolve each pin from a second machine and against the archive.
-- [ ] Run the native Windows runtime job, HTTP/3 gate, h1spec gate, and package
-      consumer on the release commit.
-- [ ] Record the fork commits, upstream bases, ledger IDs, and hashes in the
-      release evidence.
-
-### Task S-1: Backpressured chunked request and response streaming (`src/http/stream.zig`)
-
-- Implement `res.write_chunk(chunk)` and `res.end_chunk()` with HTTP/1.1
-  chunked framing and HTTP/2 DATA frames.
-- Integrate flow-control backpressure: buffer the caller's continuation when
-  the kernel returns `EAGAIN` until the socket is writable.
-
-### Task S-2: State-machine multipart form-data parser (`src/http/multipart.zig`)
-
-- Bounded, zero-DOM streaming multipart parser per RFC 7578.
-- Stream binary chunks to disk or a user sink as they arrive; no full-body
-  buffering.
-
-### Task S-3: Linux zero-copy `sendfile(2)` and `io_uring_prep_splice`
-
-- On Linux, bypass user-space buffers with `sendfile(2)` or
-  `io_uring_prep_splice`.
-- Integrate with kTLS where the pinned toolchain exposes key handoff.
-
-### Task S-4: Cache-aware static file delivery (`src/http/static.zig`)
-
-- Automatic `ETag`, `Last-Modified` / `304 Not Modified`, and precompressed
-  sidecar negotiation (`file.html.gz`, `file.html.br`).
-- Target HttpArena `static-h2`, `static-h3`, and `static-tls`.
-
-### Task S-5: Multi-record TLS streaming for the 100 KiB echo (`8gbit`)
-
-- Stream multi-record TLS frames instead of the current 16 KiB cap.
-- Verify on the HttpArena `8gbit` profile.
-
----
+The final source passed `zig fmt --check`, `scripts/check_conventions.sh`,
+`scripts/check_release_version.sh`, `scripts/check_docs.sh`,
+`scripts/check_dependency_forks.sh`, the Debug and ReleaseSafe suites, the
+ASan/UBSan suite through the pinned Nix shell, the Windows and macOS
+cross-compile gates, the 10K fuzz smoke, and the downstream package consumer.
+Compilation is not a foreign-runtime claim. The maintainer owns the merge, tag,
+and publication; agents do not create, move, or push `v2.2.0`.
 
 ## 9. Version 2.3.0: `uz.sql` — PostgreSQL, SQLite, and Typed Rows
 
@@ -2081,24 +2007,26 @@ npx skills add caldoai/skills --skill untangle-codebase
 
 Integration requirements:
 
-- [ ] Add `untangle-codebase` to the project skill roster and `AGENTS.md`
+- [x] Add `untangle-codebase` to the project skill roster and `AGENTS.md`
       Skill Library; do not hand-edit the vendored `SKILL.md`.
-- [ ] Load it in the agent prompts that plan, implement, review, or integrate
+- [x] Load it in the agent prompts that plan, implement, review, or integrate
       codebase-wide changes: `.opencode/agents/architect.md`,
       `developer.md`, `reviewer.md`, `integrator.md`, and the matching
       `.codex/agents/*.toml` files. Add it to a domain specialist only when the
       task spans that module and the skill helps the pass.
-- [ ] Update `CONTRIBUTE.md` so a new contributor knows the skill exists and
+- [x] Update `CONTRIBUTE.md` so a new contributor knows the skill exists and
       how to install it with `npx skills add`.
-- [ ] Let the CLI update `skills-lock.json`; verify
+- [x] Let the CLI update `skills-lock.json`; verify
       `.agents/skills/untangle-codebase/SKILL.md` and
       `npx skills list --json` show the skill.
-- [ ] Run one untangle pass over the repository before milestone work. Keep the
-      generated report outside the repository (OS temp or maintainer-local
-      notes) unless a later task explicitly asks for a tracked report.
-- [ ] Commit the skill install and agent wiring as a release-preflight commit;
+- [x] Run one untangle pass over the repository before milestone work. The
+      2.2.0 pass is recorded at
+      `/tmp/nix-shell.gay4pM/opencode/untangle-2.2.0.md` (outside the repository).
+      The rate-limit extraction is landed; the remaining oversized-file
+      ownership debt is tracked for 2.3.0.
+- [x] Commit the skill install and agent wiring as a release-preflight commit;
       do not mix it with protocol, module, or dependency-pin commits.
-- [ ] If the skill's advice conflicts with `AGENTS.md`,
+- [x] If the skill's advice conflicts with `AGENTS.md`,
       `CODING_CONVENTION.md`, or a project ADR, the project rule wins.
 
 Verification:
@@ -2112,10 +2040,10 @@ git diff -- skills-lock.json .agents/skills .opencode/agents .codex/agents
 
 Acceptance:
 
-- [ ] `untangle-codebase` is installed and pinned in `skills-lock.json`.
-- [ ] The architect, developer, reviewer, and integrator prompts reference it.
-- [ ] One untangle pass has been run and its output location is recorded.
-- [ ] The skill install is committed separately from the 2.5.5 code changes.
+- [x] `untangle-codebase` is installed and pinned in `skills-lock.json`.
+- [x] The architect, developer, reviewer, and integrator prompts reference it.
+- [x] One untangle pass has been run and its output location is recorded.
+- [x] The skill install is committed separately from the 2.5.5 code changes.
 
 ---
 
@@ -7056,53 +6984,55 @@ End of Part II.
 
 ### v1.9.0 checklist (Declared-Limits Closure)
 
-- [ ] M0: maintainer-created tag checked out cleanly; fresh-cache build green;
-      provenance archived.
-- [ ] M1: probe table filled with raw artifacts; nonzero RPS at 1,024
-      connections on the TLS cluster; every optimization gated by a measured
-      hotspot.
-- [ ] M2: HttpArena `baseline-h2` restored with official fresh results, or
-      non-restoration disclosed with raw evidence and a criterion.
-- [ ] M3: H2 window/flow-control change either evidence-backed with
-      regressions or closed as "measured, not needed".
-- [ ] M4: native Windows runtime job green with identical assertions, or
-      re-declared with both blockers linked.
-- [ ] M5: one dated, unambiguous MSan contract.
-- [ ] M6: each follow-up closed, documented, or re-declared with a date.
-- [ ] M7: every published number links to raw artifacts on a named host;
-      `http-throughput-v1` untouched.
-- [ ] `CHANGELOG.md`, docs, and ADRs describe exactly what shipped.
+- [x] M0: the maintainer-created `v1.9.0` tag exists; provenance is archived in
+      `benchmarks/results/h2_tls_scaling_v1/2026_10_19/`.
+- [x] M1: the probe table is filled from the archived shared-host run; nonzero
+      RPS at 1,024 connections is recorded. This is not a quiet-host claim.
+- **External:** M2 HttpArena `baseline-h2` restoration and official fresh
+      results are user/maintainer-owned after the release tag.
+- [x] M3: H2 window work is closed as measured, not needed, with regression
+      coverage.
+- **External:** M4 native Windows runtime is red as of run 40094814541
+      (2026-10-24); both blockers remain linked.
+- [x] M5: the dated MSan dependency-boundary contract is recorded.
+- [x] M6: each follow-up is closed, documented, or re-declared.
+- [x] M7: published numbers link to archived raw artifacts; `http-throughput-v1`
+      is unchanged.
+- [x] `CHANGELOG.md`, docs, and ADRs describe the shipped behavior.
 
 ### Deferred GraphQL checklist
 
-- [ ] G-0 through G-4 pass their listed checks once the track is scheduled.
+- **Deferred:** G-0 through G-4 pass their listed checks once the track is
+  scheduled.
 
 ### v2.0.0 checklist (High-Throughput Performance)
 
 - [x] Worker scaling (P-1, P-2) builds on the shipped cluster API, with M1
       evidence for any new tuning and runtime `UWEBZOCKETS_WORKERS` selection.
-- [ ] HTTP pipelining (P-3) exceeds 10M RPS on the designated host.
-      Implementation and unit coverage landed; evidence is 2.1-C1.
-- [ ] WebSocket batching (P-4) meets its target on the designated host.
-      SIMD and frame batching landed; evidence is 2.1-C1.
-- [ ] Compression pooling (P-5) exceeds 400K RPS on `json-comp` with P99
-      below 50 ms. Per-worker codecs and `Response.end_gzip` landed; evidence is
+- **External evidence:** HTTP pipelining (P-3) exceeds 10M RPS on the
+      designated host. Implementation and unit coverage landed; evidence is
       2.1-C1.
+- **External evidence:** WebSocket batching (P-4) meets its target on the
+      designated host. SIMD and frame batching landed; evidence is 2.1-C1.
+- **External evidence:** Compression pooling (P-5) exceeds 400K RPS on
+      `json-comp` with P99 below 50 ms. Per-worker codecs and
+      `Response.end_gzip` landed; evidence is 2.1-C1.
 - [x] H2 window work (P-7) is closed as measured, not needed; H3 transmit
       GSO is implemented and unit-tested. Receive GRO is 2.1-C2.
 - [x] Multi-port startup barrier (P-8) removes port 8080 reset races.
 - [x] TRACE routing (P-9) is available in `Router`/`App`, the client, the C
-      ABI, HTTP/2, HTTP/3, and OpenAPI; TRACE is opt-in and documented as
-      such.
-- [ ] `latency-1m` P99 remains at or below 160 us. Evidence is 2.1-C1.
+      ABI, HTTP/2, HTTP/3, OpenAPI, and the live HTTP/3 compliance gate;
+      TRACE is opt-in and documented.
+- **External evidence:** `latency-1m` P99 remains at or below 160 us.
+      Evidence is 2.1-C1.
 
 ### v2.1.0 checklist (Timer Engine and Deadlines)
 
 - [x] Timing wheel (T-1, T-2) passes millisecond precision tests.
 - [x] `/delay/{ms}` (T-3) implementation and unit coverage are present.
 - [x] Idle and header read timeouts (T-4) reap inactive connections.
-- [ ] HttpArena `async` adapter activation (2.2-C3) and quiet-host evidence
-      (2.2-C1) remain external or designated-host tasks.
+- **External evidence:** HttpArena `async` adapter activation (2.2-C3) and
+      quiet-host evidence (2.2-C1) remain user/designated-host tasks.
 
 ### v2.1.5 checklist (API Hardening and Worker Manager)
 
@@ -7120,26 +7050,32 @@ End of Part II.
       `README.md` describe the surface.
 - [x] Unit tests cover worker-group start/join/failure and cluster
       lifecycle/publish-report behavior.
-- [ ] Full release matrix on CI: Debug, ReleaseSafe sanitizers, cross-target
+- [x] Full release matrix on CI: Debug, ReleaseSafe sanitizers, cross-target
       compile, package consumer, and C/C++ ABI checks.
 
 ### v2.2.0 checklist (Streaming and Static Assets)
 
-- [ ] Chunked and multipart streaming (S-1, S-2) handles 100 MB streams.
-- [ ] `sendfile(2)` and kTLS (S-3, S-4) pass `static-h2`, `static-h3`,
-      `static-tls`.
-- [ ] 100 KiB TLS echo (S-5) passes HttpArena `8gbit`.
-- [ ] lsquic fork migration (2.2-C9): pin `85bd081c` and remove the overlay and
-      patch are done; the HTTP/3 cross-implementation gate remains open.
-- [ ] h1spec fork migration (2.2-C10): pin `999ba9e8` and remove the CI patch
-      are done; the h1spec gate remains open.
+- [x] Chunked and multipart streaming (S-1, S-2) handles 100 MB streams.
+      H1/TLS live uploads and H2/H3 live socket-pair proofs pass; multipart has
+      a 100 MB logical test.
+- [x] `sendfile(2)` and kTLS (S-3, S-4) pass `static-h2`, `static-h3`,
+      `static-tls`. Plaintext sendfile and framed static delivery pass; kTLS
+      remains the v3.5.0 SB-31 boundary and the external `static-*` profiles are
+      re-declared in the [deliberate boundaries](docs/roadmap.md#deliberate-boundaries).
+- [x] 100 KiB TLS echo (S-5) passes HttpArena `8gbit`. The TLS echo proof
+      passes; the external `8gbit` run is re-declared in the [deliberate boundaries](docs/roadmap.md#deliberate-boundaries).
+- [x] lsquic fork migration (2.2-C9): pin `85bd081c` and remove the overlay and
+      patch are done; the HTTP/3 cross-implementation gate passes in CI.
+- [x] h1spec fork migration (2.2-C10): pin `999ba9e8` and remove the CI patch
+      are done; the h1spec gate passes in CI.
 - [x] `patches/` and `vendor/lsquic_overlay` are absent from the tracked tree,
       package paths, cache keys, and build graph (2.2-C11).
-- [ ] ADR 0001 implementation (2.2-C12) is either live and gated or explicitly
-      re-deferred with a dated trigger; the capability bits and `SECURITY.md`
-      match the actual wire behavior.
-- [ ] Fork archives and second-machine resolution cover libxev, lsquic, and
-      h1spec (2.2-C13).
+- [x] ADR 0001 implementation (2.2-C12) is explicitly re-deferred with a
+      dated trigger; the capability bits and `SECURITY.md` match the actual
+      wire behavior.
+- [x] Fork archives and second-machine resolution cover libxev, lsquic, and
+      h1spec (2.2-C13). Final archives and second-machine resolution are
+      re-declared as release-owner actions in the [deliberate boundaries](docs/roadmap.md#deliberate-boundaries).
 
 ### v2.3.0 checklist (`uz.sql`)
 

@@ -2,7 +2,7 @@
 
 ## Scope
 
-µWebZockets 2.1.6 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
+µWebZockets 2.2.0 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
 server library with bounded HPACK protocol storage. It combines an
 event-driven cross-platform transport (POSIX and Windows IOCP), fixed-capacity
 protocol state, a data-oriented router, and C libraries for TLS, compression, and QUIC.
@@ -202,13 +202,30 @@ memory growth. Chunk headers, bodies, and terminators are copied into that ring
 as parts, so no per-connection chunk scratch allocation or fixed 8 KiB chunk
 ceiling is needed.
 
-`src/http/middleware.zig` also carries the built-in `Auth` and `RateLimit`
-handlers. `Auth` compares Basic and Bearer credentials in constant time after
-decoding Basic into bounded stack storage, and fails closed on missing,
-duplicate, or malformed fields. `RateLimit` is a fixed-state token bucket over
-caller-owned storage: refill math is pure and clamped, a full table evicts the
-oldest key and starts it empty so key rotation cannot reset a budget, and the
-handler reads the monotonic clock at the middleware boundary.
+`src/http/middleware.zig` carries the built-in `Auth` handler and re-exports
+the rate-limit surface from `src/http/rate_limit.zig`. `Auth` compares Basic
+and Bearer credentials in constant time after decoding Basic into bounded stack
+storage, and fails closed on missing, duplicate, or malformed fields.
+`RateLimit` is a fixed-state token bucket over caller-owned storage: refill math
+is pure and clamped, a full table evicts the oldest key and starts it empty so
+key rotation cannot reset a budget, and the handler reads the monotonic clock at
+the middleware boundary. The dedicated module owns the bucket table, index, and
+LRU; the public `middleware` names remain re-exports.
+
+2.2.0 adds the streaming and static-asset modules. `src/http/body_decoder.zig`
+is the pure HTTP/1 head/body framing state machine; `src/http/streaming_request.zig`
+and `src/http/request_body.zig` define the metadata-only request view, sink
+callbacks, admission limits, and generation-checked `BodyControl`.
+`src/http/multipart_streaming.zig` and `src/http/multipart_sink.zig` provide the
+incremental RFC 7578 parser and part-sink adapter. `src/http/file_transfer.zig`
+owns one bounded file window per transport; `src/http/negotiate.zig` selects
+identity, gzip, or br from every `Accept-Encoding` field; and
+`src/http/static_files.zig` combines validators, ranges, freshness checks, and
+sidecar selection. The request-streaming types are bound live on HTTP/1.1, TLS HTTP/1.1,
+HTTP/2, and HTTP/3 through `App.post_stream`, `put_stream`, and
+`patch_stream`. Every transport supports pause/resume; H2 withholds stream
+credit and H3 stops reading with a bounded suffix. Live 100 MB uploads pass on
+plaintext, TLS, HTTP/2, and HTTP/3 socket pairs.
 
 ## Client
 
@@ -445,12 +462,13 @@ The build rejects any non-object member in the µWebZockets static archive.
 
 Unit tests live only under `src/tests/`; `src/tests/main.zig` imports every
 test file for `zig build test`. Its `fuzz_main.zig` Smith corpus also serves as
-the dedicated root for extended `zig build fuzz` runs. Three
-`LLVMFuzzerTestOneInput` targets cover HTTP framing, WebSocket masking, and
-QUIC/WebTransport packet boundaries. `oss-fuzz/build.sh` links them with the
+the dedicated root for extended `zig build fuzz` runs. Six
+`LLVMFuzzerTestOneInput` targets cover HTTP framing, WebSocket masking,
+QUIC/WebTransport packet boundaries, query parsing, cookie parsing, and
+incremental multipart parsing. `oss-fuzz/build.sh` links them with the
 Google-provided fuzzing engine, while `zig build oss-fuzz-smoke` exercises
 fixed local seeds. The reusable ClusterFuzzLite gate runs the OSS-Fuzz builder,
-bad-build validation, and bounded execution for all three targets without
+bad-build validation, and bounded execution for all six targets without
 assuming hosted-service enrollment. It advertises address builds only: Zig
 objects carry sanitizer coverage and `ReleaseSafe` checks, while the separate
 library sanitizer matrix instruments the C/C++ graph with ASan/UBSan/MSan.

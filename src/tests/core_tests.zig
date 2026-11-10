@@ -86,6 +86,35 @@ fn mark_fired(ctx: *anyopaque) void {
     fired.* = true;
 }
 
+fn count_wheel_expiration(ctx: *anyopaque) void {
+    const count: *u32 = @ptrCast(@alignCast(ctx));
+    count.* += 1;
+}
+
+test "core: timer wheel dispatches earlier overflow behind a later head" {
+    const wheel_mod = support.timer_wheel;
+    var wheel = wheel_mod.Wheel.init(0);
+    var later_node: wheel_mod.TimerNode = .{};
+    var earlier_node: wheel_mod.TimerNode = .{};
+    var later_fired: u32 = 0;
+    var earlier_fired: u32 = 0;
+    const later = wheel_mod.max_exact_delay_ms * 5;
+    const earlier = wheel_mod.max_exact_delay_ms * 2;
+    wheel.insert(&later_node, later, count_wheel_expiration, &later_fired);
+    wheel.insert(&earlier_node, earlier, count_wheel_expiration, &earlier_fired);
+    try std.testing.expectEqual(wheel_mod.TimerState.overflow, later_node.state);
+    try std.testing.expectEqual(wheel_mod.TimerState.overflow, earlier_node.state);
+
+    // Advancing near the deadline first would hide the missed migration.
+    wheel.advance(earlier);
+    try std.testing.expectEqual(@as(u32, 1), earlier_fired);
+    try std.testing.expectEqual(@as(u32, 0), later_fired);
+    try std.testing.expectEqual(@as(usize, 1), wheel.count);
+    wheel.advance(later);
+    try std.testing.expectEqual(@as(u32, 1), later_fired);
+    try std.testing.expectEqual(@as(usize, 0), wheel.count);
+}
+
 const StopSchedulerContext = struct {
     scheduler: *timer.Scheduler,
     event_loop: *loop.Loop,

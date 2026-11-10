@@ -242,6 +242,8 @@ test "framework: static files parse ranges and map MIME types" {
         "text/javascript; charset=utf-8",
         support.static_files.mime_type("app.js"),
     );
+    try std.testing.expectEqualStrings("font/woff2", support.static_files.mime_type("assets/regular.woff2"));
+    try std.testing.expectEqualStrings("font/woff2", support.static_files.mime_type("assets/bold.WOFF2"));
 }
 
 test "framework: static file handler serves a bounded range" {

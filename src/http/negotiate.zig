@@ -1,9 +1,10 @@
-//! Accept-header content negotiation over caller-supplied offers.
+//! Pure media-type and content-coding negotiation over caller-supplied offers.
 //!
-//! Parsing is best-effort and pure: malformed entries are dropped, entries past
-//! capacity are ignored, and the fixed-capacity registry never allocates.
+//! Media-type parsing is best-effort and capacity-bounded. Coding negotiation
+//! scans the full header so a late refusal is never dropped. Neither allocates.
 
 const std = @import("std");
+const fetch = @import("fetch.zig");
 
 /// Maximum number of parsed Accept entries kept by `parse`.
 pub const max_entries = 16;
@@ -23,6 +24,100 @@ pub const Accept = struct {
     entries: [max_entries]Entry = undefined,
     count: usize = 0,
 };
+
+/// Supported static representation codings; identity has no Content-Encoding.
+pub const Encoding = enum { identity, gzip, br };
+
+/// Caller-verified representations; no files are inspected by negotiation.
+pub const EncodingAvailability = struct {
+    identity: bool = true,
+    gzip: bool = false,
+    br: bool = false,
+};
+
+/// Optional explicit weights distinguish an absent wildcard from refusal.
+const EncodingWeights = struct {
+    identity: ?u16 = null,
+    gzip: ?u16 = null,
+    br: ?u16 = null,
+    wildcard: ?u16 = null,
+};
+
+/// Scans a caller-bounded field with constant storage and no retained slices.
+/// Duplicates use minimum quality; malformed known codings are refused.
+/// Unlisted identity scores 1000; ties prefer br, gzip, then identity.
+/// An absent field prefers identity. An empty field permits identity only.
+pub fn select_encoding(header: ?[]const u8, available: EncodingAvailability) ?Encoding {
+    var weights = EncodingWeights{};
+    if (header) |value| merge_encoding_field(&weights, value);
+    return choose_encoding(weights, header != null, available);
+}
+
+/// Applies the single-field rules to every Accept-Encoding field, including extras.
+/// RFC 9110 sections 5.3 and 12.5.3 combine field lines as comma-separated lists.
+/// Scans caller-bounded storage without copying fields or retaining slices.
+pub fn select_encoding_headers(headers: fetch.HeadersView, available: EncodingAvailability) ?Encoding {
+    var weights = EncodingWeights{};
+    var field_present = false;
+    var entries = headers.entries();
+    while (entries.next()) |entry| {
+        if (!std.ascii.eqlIgnoreCase(entry.name, "accept-encoding")) continue;
+        field_present = true;
+        merge_encoding_field(&weights, entry.value);
+    }
+    return choose_encoding(weights, field_present, available);
+}
+
+fn merge_encoding_field(weights: *EncodingWeights, value: []const u8) void {
+    var entries = std.mem.splitScalar(u8, value, ',');
+    while (entries.next()) |entry| merge_encoding_weight(weights, entry);
+}
+
+fn choose_encoding(weights: EncodingWeights, field_present: bool, available: EncodingAvailability) ?Encoding {
+    if (!field_present and available.identity) return .identity;
+    const wildcard = weights.wildcard orelse (if (field_present) @as(u16, 0) else 1000);
+    const identity = weights.identity orelse (if (weights.wildcard == 0) @as(u16, 0) else 1000);
+    const qualities = [_]u16{ weights.br orelse wildcard, weights.gzip orelse wildcard, identity };
+    const enabled = [_]bool{ available.br, available.gzip, available.identity };
+    const codings = [_]Encoding{ .br, .gzip, .identity };
+
+    var winner: ?Encoding = null;
+    var winning_quality: u16 = 0;
+    for (codings, qualities, enabled) |coding, quality, present| {
+        if (!present or quality <= winning_quality) continue;
+        winner = coding;
+        winning_quality = quality;
+    }
+    return winner;
+}
+
+fn merge_encoding_weight(weights: *EncodingWeights, raw_entry: []const u8) void {
+    const entry = std.mem.trim(u8, raw_entry, " \t");
+    const parameters = std.mem.indexOfScalar(u8, entry, ';') orelse entry.len;
+    const coding = std.mem.trim(u8, entry[0..parameters], " \t");
+    const slot: *?u16 = if (std.ascii.eqlIgnoreCase(coding, "identity"))
+        &weights.identity
+    else if (std.ascii.eqlIgnoreCase(coding, "gzip"))
+        &weights.gzip
+    else if (std.ascii.eqlIgnoreCase(coding, "br"))
+        &weights.br
+    else if (std.mem.eql(u8, coding, "*"))
+        &weights.wildcard
+    else
+        return;
+    const quality = parse_encoding_weight(entry[parameters..]) orelse 0;
+    slot.* = @min(slot.* orelse quality, quality);
+}
+
+/// Accept-Encoding allows only its optional weight, unlike media parameters.
+fn parse_encoding_weight(parameters: []const u8) ?u16 {
+    if (parameters.len == 0) return 1000;
+    const parameter = std.mem.trim(u8, parameters[1..], " \t");
+    const equals = std.mem.indexOfScalar(u8, parameter, '=') orelse return null;
+    const name = std.mem.trim(u8, parameter[0..equals], " \t");
+    if (!std.ascii.eqlIgnoreCase(name, "q")) return null;
+    return parse_quality(std.mem.trim(u8, parameter[equals + 1 ..], " \t"));
+}
 
 /// Media range split into borrowed type and subtype slices.
 const MediaRange = struct {
@@ -139,7 +234,7 @@ fn parse_quality(value: []const u8) ?u16 {
     if (value.len == 0) return null;
     if (value[0] == '0' and value.len == 1) return 0;
     if (value[0] == '1' and value.len == 1) return 1000;
-    if (value.len < 3 or value[1] != '.') return null;
+    if (value.len < 2 or value.len > 5 or value[1] != '.') return null;
 
     if (value[0] == '1') {
         for (value[2..]) |digit| {
@@ -147,7 +242,7 @@ fn parse_quality(value: []const u8) ?u16 {
         }
         return 1000;
     }
-    if (value[0] != '0' or value.len > 5) return null;
+    if (value[0] != '0') return null;
 
     var per_mille: u16 = 0;
     for (value[2..]) |digit| {

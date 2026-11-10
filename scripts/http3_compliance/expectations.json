@@ -17,6 +17,11 @@
     "body": "Hello from bounded HTTP/3",
     "body_sha256": "8f737cb0263db526cf6986f67f158b0b73f24738da1ec6fe31fee37c146191e8"
   },
+  "upload": {
+    "path": "/upload",
+    "bytes": 104857600,
+    "rss_growth_kib": 65536
+  },
   "malformed_cases": [
     "duplicate_method",
     "connection_specific_header",

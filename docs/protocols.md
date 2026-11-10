@@ -69,3 +69,9 @@ Lower-level methods such as `end_with_headers`, `begin_chunked`, and
 See [operations.md](operations.md) for the full verification matrix and
 [roadmap.md](roadmap.md) for the boundaries that are deliberate rather than
 pending.
+
+
+Live WebTransport/application-datagram activation remains disabled under the
+[deliberate boundaries](roadmap.md#deliberate-boundaries),
+with explicit restoration gates. Raw backend datagram primitives do not imply
+listener advertisement or session support.

@@ -12,10 +12,12 @@ Architect µWebZockets changes. Before planning, read `AGENTS.md`,
 and applicable `.agents/skills/*/SKILL.md` files.
 
 For module-boundary work, load `codebase-design`; for a deepening scan, load
-`improve-codebase-architecture`. Use `grilling` (via `grill-me`) to stress-test
-the proposed direction and `domain-modeling` when the plan changes repository
-vocabulary or records an ADR. Apply the vendored skill overrides in
-`AGENTS.md`, including the no-emoji output rule.
+`improve-codebase-architecture`; for a whole-codebase untangle pass, load
+`untangle-codebase` and keep its decision log outside the repository. Use
+`grilling` (via `grill-me`) to stress-test the proposed direction and
+`domain-modeling` when the plan changes repository vocabulary or records an
+ADR. Apply the vendored skill overrides in `AGENTS.md`, including the
+no-emoji output rule.
 
 # Responsibilities
 

@@ -36,8 +36,8 @@ pub const Artifacts = struct {
 
 /// Compiles BoringSSL, lsquic, libdeflate, and zlib with Zig's C and C++
 /// toolchains. No external build system or generated-file tool runs: every
-/// source list and generated artifact comes from the pinned packages, the
-/// pre-generated overlay, or the source tree.
+/// source list and generated artifact comes from the pinned packages or the
+/// repository source tree.
 pub fn configure(
     b: *std.Build,
     target: std.Build.ResolvedTarget,

@@ -1,3 +1,4 @@
+const body = @import("fuzz_support").fuzz_http_body;
 const parser = @import("fuzz_support").http_parser;
 
 const max_input_size = parser.max_request_line_size +
@@ -12,6 +13,7 @@ pub fn fuzz_one(input: []const u8) void {
     @memcpy(storage[0..input.len], input);
     const buffer = storage[0..input.len];
     const split = if (input.len == 0) 0 else @as(usize, input[0]) % (input.len + 1);
+    body.fuzz_one(input, split);
 
     var state = parser.HttpParser{};
     var request = parser.Request{};

@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const c = @import("c");
 const support = @import("test_support");
 
@@ -6,6 +7,7 @@ const tls = support.tls;
 const http2 = support.http2;
 const tcp = support.tcp;
 const net = std.Io.net;
+const stream_pattern = @import("stream_pattern.zig");
 
 test "tls: client-auth modes disable early data" {
     try std.testing.expect(tls.early_data_enabled(.none));
@@ -412,6 +414,376 @@ fn drive_handshake_pair(pair: MemoryPair) !HandshakePairOutcome {
         }
     }
     return outcome;
+}
+
+test "tls: HTTP1 streaming pattern matrix encrypts bounded chunks through memory BIOs" {
+    var server_context = try tls.TlsContext.init_ephemeral(.{});
+    defer server_context.deinit();
+    const client_context = c.SSL_CTX_new(c.TLS_method()) orelse return error.ClientContextCreationFailed;
+    defer c.SSL_CTX_free(client_context);
+    // The fixture exercises records against an ephemeral, self-signed peer.
+    c.SSL_CTX_set_verify(client_context, c.SSL_VERIFY_NONE, null);
+    var oversized: [64 * 1024]u8 = undefined;
+    @memset(&oversized, 0xcc);
+
+    for (stream_pattern.logical_sizes) |logical_size| {
+        const pair = try create_memory_pair(server_context.ctx, client_context);
+        defer free_memory_pair(pair);
+        if (c.SSL_set_alpn_protos(pair.client.ssl, "\x08http/1.1", 9) != 0) {
+            return error.ClientAlpnConfigurationFailed;
+        }
+        const outcome = try drive_handshake_pair(pair);
+        try std.testing.expectEqual(HandshakeOutcome.complete, outcome.server);
+        try std.testing.expectEqual(HandshakeOutcome.complete, outcome.client);
+        try std.testing.expectEqual(tls.ApplicationProtocol.http1, tls.negotiated_protocol(pair.server.ssl));
+        var ring: [16 * 1024]u8 = undefined;
+        var conn = tcp.TcpConnection{
+            .socket = undefined,
+            .io = std.testing.io,
+            .write_queue = &ring,
+            .is_writing = true,
+            // Model an armed read; the MemoryPair has no native socket.
+            .read_active = true,
+            .ssl = pair.server.ssl,
+            .network_bio = pair.server.outgoing,
+            .is_tls_handshake_done = true,
+        };
+        // The MemoryPair owns these borrowed handles and frees each BIO once.
+        defer {
+            conn.ssl = null;
+            conn.network_bio = null;
+        }
+        const queue = conn.write_queue;
+        var producer = stream_pattern.Producer{ .logical_size = logical_size, .target_size = 2 * logical_size };
+        var capture = stream_pattern.ChunkedCapture{ .body = .{ .expected_size = producer.target_size } };
+        var response = support.http_response.Response{ .target = .{ .tcp = &conn } };
+        try response.begin_stream("200 OK", "", &producer, stream_pattern.Producer.produce);
+        const queued = conn.write_len;
+        const pending = c.BIO_ctrl_pending(pair.server.outgoing);
+        try std.testing.expectError(error.WouldBlock, response.write_chunk(&oversized));
+        try std.testing.expectEqual(queued, conn.write_len);
+        try std.testing.expectEqual(pending, c.BIO_ctrl_pending(pair.server.outgoing));
+        var rounds: usize = 0;
+        while (rounds < 64) : (rounds += 1) {
+            try capture_tls_pattern(pair.client, &conn, &capture);
+            if (conn.stream_producer == null) break;
+            conn.write_len = 0;
+            conn.write_head = 0;
+            conn.pump_stream_body();
+        }
+        try std.testing.expect(rounds < 64);
+        try std.testing.expect(capture.head_seen and capture.ended);
+        try std.testing.expectEqual(producer.target_size, capture.body.offset);
+        try std.testing.expectEqual(@as(usize, 2), producer.logical_yields);
+        try std.testing.expect(producer.empty_writes >= 3);
+        if (logical_size != 1) try std.testing.expect(producer.blocked != 0);
+        try std.testing.expectEqual(queue.ptr, conn.write_queue.ptr);
+        try std.testing.expectEqual(queue.len, conn.write_queue.len);
+        const calls = producer.calls;
+        conn.pump_stream_body();
+        try std.testing.expectEqual(calls, producer.calls);
+    }
+}
+
+/// Decrypts one complete queue drain before validating its HTTP/1 chunk frames.
+fn capture_tls_pattern(client: MemorySsl, conn: *tcp.TcpConnection, capture: *stream_pattern.ChunkedCapture) !void {
+    const ciphertext = conn.write_queue[0..conn.write_len];
+    const encrypted_length: c_int = @intCast(ciphertext.len);
+    if (c.BIO_write(client.incoming, ciphertext.ptr, encrypted_length) != encrypted_length) {
+        return error.PatternBioWriteFailed;
+    }
+    var plaintext: [16 * 1024]u8 = undefined;
+    var length: usize = 0;
+    var rounds: usize = 0;
+    while (rounds < 64) : (rounds += 1) {
+        if (length == plaintext.len) return error.PatternPlaintextCapacity;
+        const read = c.SSL_read(client.ssl, plaintext[length..].ptr, @intCast(plaintext.len - length));
+        if (read > 0) {
+            length += @intCast(read);
+            continue;
+        }
+        if (c.SSL_get_error(client.ssl, read) != c.SSL_ERROR_WANT_READ) return error.PatternTlsReadFailed;
+        break;
+    }
+    if (rounds == 64) return error.PatternTlsReadLimit;
+    try capture.consume(plaintext[0..length]);
+}
+
+/// Default transport capacities with one live connection for socket proof.
+const SocketPatternApp = support.app.app(1);
+const socket_pattern_size = 100 * 1024;
+
+/// Caller-owned source and observations written only on the server loop.
+const SocketPatternState = struct {
+    source: stream_pattern.Producer = .{
+        // Socket callbacks yield only when a real queue drain can resume them.
+        .logical_size = socket_pattern_size + 8192,
+        .target_size = socket_pattern_size,
+    },
+    queue: ?[]u8 = null,
+    peak_queued: usize = 0,
+    completed: bool = false,
+    called_after_completion: bool = false,
+
+    fn handle(context: *anyopaque, _: *support.http_request.Request, response: *support.http_response.Response) void {
+        const state: *SocketPatternState = @ptrCast(@alignCast(context));
+        response.begin_stream("200 OK", "", state, produce) catch |err| {
+            state.source.begin_error = err;
+        };
+    }
+
+    fn produce(context: *anyopaque, response: *support.http_response.Response) anyerror!support.http_response.StreamStatus {
+        const state: *SocketPatternState = @ptrCast(@alignCast(context));
+        if (state.completed) {
+            state.called_after_completion = true;
+            return error.ProducerCalledAfterCompletion;
+        }
+        if (state.source.calls == 64) return error.ProducerRetryLimit;
+        const conn = switch (response.target) {
+            .tcp => |connection| connection,
+            else => return error.UnexpectedResponseTransport,
+        };
+        if (state.queue) |queue| {
+            if (queue.ptr != conn.write_queue.ptr or queue.len != conn.write_queue.len) {
+                return error.OutputStorageChanged;
+            }
+        } else {
+            state.queue = conn.write_queue;
+        }
+        // Exercise the ring even when plaintext direct sends could finish inline.
+        tcp.TcpConnection.begin_write_batch(conn);
+        defer tcp.TcpConnection.end_write_batch(conn);
+        const result = try stream_pattern.Producer.produce(&state.source, response);
+        if (conn.write_len > conn.write_queue.len) return error.OutputQueueOverflow;
+        state.peak_queued = @max(state.peak_queued, conn.write_len);
+        state.completed = response.is_complete();
+        return result;
+    }
+};
+
+/// Runs a stable application address until cross-thread shutdown drains it.
+const SocketPatternRunner = struct {
+    server: *SocketPatternApp,
+    failure: ?anyerror = null,
+
+    fn run(state: *SocketPatternRunner) void {
+        state.server.run() catch |err| {
+            state.failure = err;
+        };
+    }
+};
+
+/// Counts complete decrypted application records, excluding handshake tickets.
+const SocketRecordTrace = struct {
+    application_records: usize = 0,
+    largest_plaintext: usize = 0,
+};
+
+test "tls: socket streaming drains a 100 KiB pattern through bounded application records" {
+    try expect_socket_pattern(true);
+}
+
+test "tls: socket plaintext control drains the same 100 KiB streaming pattern" {
+    try expect_socket_pattern(false);
+}
+
+test "tls: socket receive timeout returns an error for a silent peer" {
+    const io = std.testing.io;
+    var address = try net.IpAddress.parse("127.0.0.1", 0);
+    var listener = try address.listen(io, .{});
+    defer listener.deinit(io);
+    var remote = try net.IpAddress.parse("127.0.0.1", listener.socket.address.getPort());
+    var client = try remote.connect(io, .{ .mode = .stream });
+    defer client.close(io);
+    var peer = try listener.accept(io);
+    defer peer.close(io);
+    try tcp.set_receive_timeout(client.socket.handle, 50);
+    var buffer: [1]u8 = undefined;
+    try std.testing.expectError(error.PatternSocketTimeout, read_pattern_socket(client.socket.handle, &buffer));
+}
+
+fn expect_socket_pattern(encrypted: bool) !void {
+    var allocations = std.testing.FailingAllocator.init(std.testing.allocator, .{
+        .fail_index = 1,
+        .resize_fail_index = 0,
+    });
+    var server = try SocketPatternApp.init_configured(std.testing.io, allocations.allocator(), .{ .max_connections = 1 });
+    defer server.deinit();
+    if (encrypted) server.tls_ctx = try tls.TlsContext.init_ephemeral(.{});
+    var state = SocketPatternState{};
+    const source = state.source.bytes[0..];
+    const queue = server.write_queue_storage;
+    try std.testing.expectEqual(@as(usize, 64 * 1024), queue.len);
+    _ = try server.get_context("/pattern", &state, SocketPatternState.handle);
+    try server.listen("127.0.0.1", 0);
+    const port = try tcp.listener_port(&server.listeners[0]);
+    var runner = SocketPatternRunner{ .server = &server };
+    const thread = try std.Thread.spawn(.{}, SocketPatternRunner.run, .{&runner});
+    var joined = false;
+    defer {
+        server.request_shutdown();
+        if (!joined) thread.join();
+    }
+
+    const trace = try read_socket_pattern(port, encrypted);
+    server.request_shutdown();
+    thread.join();
+    joined = true;
+    try std.testing.expect(runner.failure == null);
+    try std.testing.expect(state.source.begin_error == null);
+    try std.testing.expect(state.completed and !state.called_after_completion);
+    try std.testing.expectEqual(@as(usize, socket_pattern_size), state.source.offset);
+    try std.testing.expect(state.source.blocked > 0);
+    try std.testing.expect(state.source.calls > 1 and state.source.calls <= 64);
+    try std.testing.expectEqual(@as(usize, 0), state.source.logical_yields);
+    try std.testing.expect(state.peak_queued > 0 and state.peak_queued <= queue.len);
+    try std.testing.expectEqual(queue.ptr, server.write_queue_storage.ptr);
+    try std.testing.expectEqual(queue.len, server.write_queue_storage.len);
+    try std.testing.expectEqual(queue.ptr, state.queue.?.ptr);
+    try std.testing.expectEqual(queue.len, state.queue.?.len);
+    try std.testing.expectEqual(source.ptr, state.source.bytes[0..].ptr);
+    try std.testing.expectEqual(@as(usize, 8192), source.len);
+    // This observes the supplied Zig allocator, not BoringSSL's internal heap.
+    try std.testing.expectEqual(@as(usize, 1), allocations.allocations);
+    try std.testing.expectEqual(@as(usize, 0), allocations.resize_index);
+    try std.testing.expect(!allocations.has_induced_failure);
+    if (encrypted) {
+        try std.testing.expect(trace.application_records >= 7);
+        try std.testing.expect(trace.largest_plaintext <= 16 * 1024);
+    }
+}
+
+/// The generated certificate is only for this loopback correctness fixture.
+pub fn create_socket_client_context() !*c.SSL_CTX {
+    const context = c.SSL_CTX_new(c.TLS_method()) orelse return error.ClientContextCreationFailed;
+    errdefer c.SSL_CTX_free(context);
+    if (c.SSL_CTX_set_min_proto_version(context, c.TLS1_3_VERSION) != 1 or
+        c.SSL_CTX_set_max_proto_version(context, c.TLS1_3_VERSION) != 1)
+    {
+        return error.ClientContextCreationFailed;
+    }
+    c.SSL_CTX_set_verify(context, c.SSL_VERIFY_NONE, null);
+    return context;
+}
+
+fn read_socket_pattern(port: u16, encrypted: bool) !SocketRecordTrace {
+    const io = std.testing.io;
+    var address = try net.IpAddress.parse("127.0.0.1", port);
+    var stream = try address.connect(io, .{ .mode = .stream });
+    defer stream.close(io);
+    const handle = stream.socket.handle;
+    try set_cluster_client_timeout(handle);
+    const context = if (encrypted) try create_socket_client_context() else null;
+    defer if (context) |ctx| c.SSL_CTX_free(ctx);
+    const ssl = if (context) |ctx| c.SSL_new(ctx) orelse return error.SslCreationFailed else null;
+    defer if (ssl) |endpoint| c.SSL_free(endpoint);
+    const network_bio = if (ssl) |endpoint| try attach_client_bio(endpoint) else null;
+    defer if (network_bio) |bio| {
+        _ = c.BIO_free(bio);
+    };
+    if (ssl) |endpoint| {
+        c.SSL_set_connect_state(endpoint);
+        if (c.SSL_set_alpn_protos(endpoint, "\x08http/1.1", 9) != 0) return error.ClientAlpnConfigurationFailed;
+        try drive_client_handshake(io, handle, endpoint, network_bio.?);
+        try std.testing.expectEqual(tls.ApplicationProtocol.http1, tls.negotiated_protocol(endpoint));
+    }
+    const request = "GET /pattern HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    if (ssl) |endpoint| {
+        try ssl_write_all(io, handle, endpoint, network_bio.?, request);
+    } else {
+        try write_socket_request(io, handle, request);
+    }
+    return capture_socket_pattern(io, handle, ssl, network_bio);
+}
+
+/// Bounds partial writes of the small plaintext request independently of reads.
+pub fn write_socket_request(io: std.Io, handle: net.Socket.Handle, request: []const u8) !void {
+    var offset: usize = 0;
+    for (0..16) |_| {
+        if (offset == request.len) return;
+        const written = try io.vtable.netWrite(io.userdata, handle, request[offset..], &.{""}, 0);
+        if (written == 0) return error.RequestWriteStalled;
+        offset += written;
+    }
+    return error.RequestWriteLimit;
+}
+
+fn capture_socket_pattern(io: std.Io, handle: net.Socket.Handle, ssl: ?*c.SSL, network_bio: ?*c.BIO) !SocketRecordTrace {
+    var wire: [socket_pattern_size + 1024]u8 = undefined;
+    var length: usize = 0;
+    var plaintext: [16 * 1024]u8 = undefined;
+    var trace = SocketRecordTrace{};
+    var rounds: usize = 0;
+    while (rounds < 256) : (rounds += 1) {
+        const count = if (ssl) |endpoint|
+            try read_socket_application(io, handle, endpoint, network_bio.?, &plaintext)
+        else
+            try read_pattern_socket(handle, &plaintext);
+        if (count == 0) break;
+        if (count > wire.len - length) return error.PatternWireCapacity;
+        @memcpy(wire[length..][0..count], plaintext[0..count]);
+        length += count;
+        if (ssl != null) {
+            trace.application_records += 1;
+            trace.largest_plaintext = @max(trace.largest_plaintext, count);
+        }
+    }
+    if (rounds == 256) return error.PatternSocketReadLimit;
+    var capture = stream_pattern.ChunkedCapture{ .body = .{ .expected_size = socket_pattern_size } };
+    try capture.consume(wire[0..length]);
+    try std.testing.expect(capture.head_seen and capture.ended);
+    try std.testing.expectEqual(@as(usize, socket_pattern_size), capture.body.offset);
+    return trace;
+}
+
+/// Preserve receive-timeout errors so the socket fixture can unwind normally.
+pub fn read_pattern_socket(handle: net.Socket.Handle, buffer: []u8) !usize {
+    for (0..16) |_| {
+        if (comptime builtin.os.tag == .windows) {
+            const socket: c.SOCKET = @intCast(@intFromPtr(handle));
+            const length: c_int = @intCast(@min(buffer.len, std.math.maxInt(c_int)));
+            const count = c.recv(socket, @ptrCast(buffer.ptr), length, 0);
+            const receive_error = if (count < 0) c.WSAGetLastError() else 0;
+            if (count >= 0) return @intCast(count);
+            switch (receive_error) {
+                c.WSAEINTR => continue,
+                c.WSAEWOULDBLOCK, c.WSAETIMEDOUT => return error.PatternSocketTimeout,
+                else => return error.PatternSocketReadFailed,
+            }
+        }
+        const count = c.recv(handle, buffer.ptr, buffer.len, 0);
+        const receive_error = std.c.errno(count);
+        if (count >= 0) return @intCast(count);
+        switch (receive_error) {
+            .INTR => continue,
+            .AGAIN, .TIMEDOUT => return error.PatternSocketTimeout,
+            else => return error.PatternSocketReadFailed,
+        }
+    }
+    return error.PatternSocketReadFailed;
+}
+
+fn read_socket_application(io: std.Io, handle: net.Socket.Handle, ssl: *c.SSL, network_bio: *c.BIO, plaintext: *[16 * 1024]u8) !usize {
+    // Pinned BoringSSL ssl_lib.cc:846-950 and s3_pkt.cc:236-292 expose one
+    // application record per full-size read; post-handshake tickets are skipped.
+    try std.testing.expectEqual(@as(c_int, 0), c.SSL_pending(ssl));
+    for (0..64) |_| {
+        const count = c.SSL_read(ssl, plaintext, plaintext.len);
+        if (count > 0) {
+            try std.testing.expectEqual(@as(c_int, 0), c.SSL_pending(ssl));
+            return @intCast(count);
+        }
+        switch (c.SSL_get_error(ssl, count)) {
+            c.SSL_ERROR_ZERO_RETURN => return 0,
+            c.SSL_ERROR_WANT_READ => {
+                try flush_cluster_bio(io, handle, network_bio);
+                try fill_cluster_bio(io, handle, network_bio);
+            },
+            c.SSL_ERROR_WANT_WRITE => try flush_cluster_bio(io, handle, network_bio),
+            else => return error.PatternTlsReadFailed,
+        }
+    }
+    return error.PatternTlsReadLimit;
 }
 
 fn transfer_pending_bytes(source: *c.BIO, destination: *c.BIO) !void {
@@ -1314,7 +1686,7 @@ fn expect_h2_cluster_response(port: u16) !void {
 }
 
 /// Attaches a memory BIO pair to `ssl` and returns the network side.
-fn attach_client_bio(ssl: *c.SSL) !*c.BIO {
+pub fn attach_client_bio(ssl: *c.SSL) !*c.BIO {
     var ssl_bio: ?*c.BIO = null;
     var network_bio: ?*c.BIO = null;
     if (c.BIO_new_bio_pair(
@@ -1334,7 +1706,7 @@ fn set_cluster_client_timeout(handle: net.Socket.Handle) !void {
     return tcp.set_receive_timeout(handle, 5_000);
 }
 
-fn drive_client_handshake(
+pub fn drive_client_handshake(
     io: std.Io,
     handle: net.Socket.Handle,
     ssl: *c.SSL,
@@ -1355,7 +1727,7 @@ fn drive_client_handshake(
 }
 
 /// Drains ciphertext from a BIO to the socket.
-fn flush_cluster_bio(io: std.Io, handle: net.Socket.Handle, outgoing: *c.BIO) !void {
+pub fn flush_cluster_bio(io: std.Io, handle: net.Socket.Handle, outgoing: *c.BIO) !void {
     var buffer: [cluster_tls_bio_capacity]u8 = undefined;
     while (c.BIO_ctrl_pending(outgoing) > 0) {
         const pending: usize = @intCast(c.BIO_ctrl_pending(outgoing));
@@ -1393,7 +1765,7 @@ fn fill_cluster_bio(io: std.Io, handle: net.Socket.Handle, incoming: *c.BIO) !vo
     }
 }
 
-fn ssl_write_all(
+pub fn ssl_write_all(
     io: std.Io,
     handle: net.Socket.Handle,
     ssl: *c.SSL,

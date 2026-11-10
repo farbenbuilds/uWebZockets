@@ -131,6 +131,50 @@ test "$(sed -n '1p' "${artifact_dir}/curl.metadata")" = "${expected_http_version
 test "$(sed -n '2p' "${artifact_dir}/curl.metadata")" = "${expected_status}"
 test "$(sha256sum "${artifact_dir}/curl.body" | cut -d ' ' -f 1)" = "${expected_digest}"
 
+trace_endpoint="${endpoint}trace"
+curl --http3-only --insecure --fail-with-body --silent --show-error \
+  --connect-timeout 5 --max-time 10 \
+  --request TRACE \
+  --output "${artifact_dir}/trace.body" \
+  --write-out '%{http_version}\n%{response_code}\n' \
+  "${trace_endpoint}" >"${artifact_dir}/trace.metadata"
+test "$(sed -n '1p' "${artifact_dir}/trace.metadata")" = "${expected_http_version}"
+test "$(sed -n '2p' "${artifact_dir}/trace.metadata")" = "200"
+test "$(cat "${artifact_dir}/trace.body")" = "trace"
+
+# A live HTTP/3 socket-pair upload proves the route sink consumes 100 MB
+# without retaining it. RSS is sampled before and after the request; the
+# server slab and connection state are already resident after the GET above.
+upload_path="$(jq -r '.upload.path' "${expectations}")"
+upload_bytes="$(jq -r '.upload.bytes' "${expectations}")"
+rss_bound_kib="$(jq -r '.upload.rss_growth_kib' "${expectations}")"
+upload_file="${artifact_dir}/upload.bin"
+truncate -s "${upload_bytes}" "${upload_file}"
+rss_before_kib=0
+if [[ -r "/proc/${server_pid}/status" ]]; then
+  rss_before_kib="$(awk '/^VmRSS:/ {print $2}' "/proc/${server_pid}/status")"
+fi
+curl --http3-only --insecure --fail-with-body --silent --show-error \
+  --connect-timeout 5 --max-time 240 \
+  --header 'Content-Type: application/octet-stream' \
+  --header 'Expect:' \
+  --data-binary "@${upload_file}" \
+  --dump-header "${artifact_dir}/upload.headers" \
+  --output "${artifact_dir}/upload.body" \
+  --write-out '%{http_version}\n%{response_code}\n' \
+  "${endpoint}${upload_path#/}" >"${artifact_dir}/upload.metadata"
+test "$(sed -n '1p' "${artifact_dir}/upload.metadata")" = "${expected_http_version}"
+test "$(sed -n '2p' "${artifact_dir}/upload.metadata")" = "200"
+test "$(cat "${artifact_dir}/upload.body")" = "${upload_bytes}"
+if [[ "${rss_before_kib}" -ne 0 && -r "/proc/${server_pid}/status" ]]; then
+  rss_after_kib="$(awk '/^VmRSS:/ {print $2}' "/proc/${server_pid}/status")"
+  rss_growth_kib=$((rss_after_kib - rss_before_kib))
+  printf 'rss_before_kib=%s\nrss_after_kib=%s\nrss_growth_kib=%s\nrss_bound_kib=%s\n' \
+    "${rss_before_kib}" "${rss_after_kib}" "${rss_growth_kib}" "${rss_bound_kib}" \
+    >"${artifact_dir}/upload.rss"
+  test "${rss_growth_kib}" -le "${rss_bound_kib}"
+fi
+
 python3 "${script_dir}/aioquic_probe.py" \
   --expectations "${expectations}" \
   --output "${artifact_dir}/aioquic_results.json" \

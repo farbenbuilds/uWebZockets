@@ -27,8 +27,19 @@ is the standard encrypted one.
 - Stream lifecycle with an eight-stream request, body, response, and
   async-token slab carved from the startup allocation.
 - Partial DATA and trailers.
+- Route-level request-body streaming after completed HEADERS. DATA reaches the
+  sink without whole-body buffering; a paused stream retains a bounded suffix
+  and withholds stream credit, and trailer END_STREAM completes the sink. An
+  initial `expect: 100-continue` receives an interim 100 HEADERS block after
+  admission. Route captures beyond the inline 16 use per-stream overflow
+  storage, so streaming routes keep the configured capture capacity.
 - Connection-level and stream-level flow control.
 - Async response tokens and drain-driven producers, exactly as on HTTP/1.1.
+- Known-length file responses through `Response.stream_file`, bounded by both
+  flow-control windows and the configured output queue.
+- A bounded FIFO of blocked RST_STREAM intents. It is flushed before later
+  HEADERS or DATA so an output-pressured reset does not close healthy sibling
+  streams.
 
 No dynamic allocation happens on the steady-state path. `uz.http2` also exposes
 the frame and connection primitives directly, and `uz.http2_hpack` exposes a

@@ -31,6 +31,42 @@ pub const http3_available = @import("router/app.zig").http3_available;
 
 /// Borrowed, fixed-capacity HTTP request metadata passed to route callbacks.
 pub const Request = @import("http/request.zig").Request;
+/// Metadata-only upload view with unavailable full-body helpers.
+pub const StreamingRequest = @import("http/streaming_request.zig").StreamingRequest;
+/// Owned metadata snapshot whose views remain valid until deinit.
+pub const OwnedStreamingRequest = @import("http/streaming_request.zig").OwnedStreamingRequest;
+/// Closed full-body refusal error set for StreamingRequest.
+pub const BodyReadError = @import("http/streaming_request.zig").BodyReadError;
+/// Case-sensitive borrowed primary and overflow capture arrays.
+pub const RouteParamsView = @import("http/streaming_request.zig").RouteParamsView;
+/// Sink readiness after begin or a borrowed chunk.
+pub const BodyReadiness = @import("http/request_body.zig").BodyReadiness;
+/// Accepted prefix and readiness for one borrowed chunk.
+pub const BodyProgress = @import("http/request_body.zig").BodyProgress;
+/// Application-owned per-request sink context.
+pub const BodyBinding = @import("http/request_body.zig").BodyBinding;
+/// Logical upload and per-route, per-worker admission bounds.
+pub const BodyLimits = @import("http/request_body.zig").BodyLimits;
+/// Begins an upload and returns its binding.
+pub const BodyBeginFn = @import("http/request_body.zig").BodyBeginFn;
+/// Borrows a nonempty body chunk until return.
+pub const BodyChunkFn = @import("http/request_body.zig").BodyChunkFn;
+/// Owns upload completion and synchronous response cleanup.
+pub const BodyEndFn = @import("http/request_body.zig").BodyEndFn;
+/// Owns upload cancellation cleanup.
+pub const BodyCancelFn = @import("http/request_body.zig").BodyCancelFn;
+/// Borrowed immutable body sink callbacks.
+pub const BodySink = @import("http/request_body.zig").BodySink;
+/// Borrowed immutable route sink, limits and middleware policy.
+pub const BodyRoute = @import("http/request_body.zig").BodyRoute;
+/// Explicit authorization for a header-only global middleware chain.
+pub const BodyMiddlewarePolicy = @import("http/request_body.zig").BodyMiddlewarePolicy;
+/// Terminal cancellation cause independent of transport errors.
+pub const BodyCancelReason = @import("http/request_body.zig").BodyCancelReason;
+/// Generation, callback, pause or terminal delivery control errors.
+pub const BodyControlError = @import("http/request_body.zig").BodyControlError;
+/// Copyable loop-confined control whose inline operations may free sink state.
+pub const BodyControl = @import("http/request_body.zig").BodyControl;
 /// Allocator-owned request metadata for deferred or cross-thread work.
 pub const OwnedRequest = @import("http/request.zig").OwnedRequest;
 /// Bounded response writer passed to route callbacks.
@@ -41,6 +77,8 @@ pub const AsyncResponse = @import("http/response.zig").AsyncResponse;
 pub const StreamProducer = @import("http/response.zig").StreamProducer;
 /// Outcome of one drain-driven producer invocation.
 pub const StreamStatus = @import("http/response.zig").StreamStatus;
+/// Owned file descriptor and borrowed scratch for bounded response streaming.
+pub const FileSource = @import("http/response.zig").FileSource;
 /// Streaming JSON body writer returned by `Response.begin_json`.
 pub const JsonStream = @import("http/response.zig").JsonStream;
 /// Connection-owned state backing asynchronous response tokens.

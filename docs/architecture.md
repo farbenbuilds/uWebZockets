@@ -235,6 +235,19 @@ certificates. Request bytes accumulate in the connection's bounded request
 buffer, the strict parser proves completeness, and the router dispatches
 through middleware to a handler.
 
+### Streaming and static delivery
+
+Response producers stay drain-driven: a producer writes bounded chunks and
+returns `.pending` when the transport refuses more output. `file_transfer.zig`
+owns one bounded read window per active file response and copies accepted bytes
+into the transport's existing storage; `Response.stream_file` transfers the
+descriptor only after the head is accepted. Plaintext HTTP/1 keeps the kernel
+`sendfile` path. Static mounts use `cache.zig` validators, `negotiate.zig` for
+content coding, and `static_files.zig` for sidecar freshness and representation
+selection. `body_decoder.zig`, `request_body.zig`, `streaming_request.zig`, and
+`multipart_streaming.zig` are the pure request-body foundation. HTTP/1.1, TLS, HTTP/2, and HTTP/3 bind the sink live with pause/resume on
+every transport and 100 MB bounded-memory proofs.
+
 ### HTTP/2
 
 `src/core/tcp.zig` embeds one eight-stream server session per connection and
@@ -272,6 +285,13 @@ and tail latency hold up on lossy paths.
   transfer opens a temporary nonblocking window over the (blocking) io_uring
   socket and closes it before any completion is queued; stalled bytes fall back
   to a bounded dribble that reuses the idle TLS staging buffer.
+- `src/http/file_transfer.zig` owns bounded positional file progress for
+  `Response.stream_file`. HTTP/1 TCP owns one inline transfer slot, retains
+  the descriptor through output drain, and borrows separate caller scratch.
+  TLS uses the existing bounded record writer. HTTP/2 owns one transfer per
+  stream slot, bounded by frame/output capacity and both windows. HTTP/3 owns
+  one transfer per QuicStream and copies accepted bytes into body storage for
+  partial writes. Static-route integration remains separate feature-branch work.
 - `src/xdp/socket.zig` implements AF_XDP UMEM ownership rings and the TX path,
   and `src/xdp/transport.zig` exposes the bypass transport to callers that
   drive it directly. The server data path always serves through the standard

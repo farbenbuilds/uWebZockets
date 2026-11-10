@@ -56,7 +56,10 @@ into these regions, in order:
 `max_body_size`, rounded to a 16-byte boundary. Write queues start on a cache
 line. `required_bytes` and `carve` share one offset computation, so sizing and
 partitioning cannot drift apart. Pool storage is zeroed during initialization;
-every other region is written before it is read.
+every other region is written before it is read. File-transfer state is inline
+in each connection slot: it holds one descriptor, offset, remaining length, and
+a borrowed worker-local scratch pointer per active HTTP/1 or HTTP/2 response.
+It never stores file bytes, so large files do not grow the slab.
 
 `App.init` and `App.init_configured` allocate this block once and free it once;
 `App.init_from_slab` accepts caller-owned storage with the same contract. Each
@@ -141,7 +144,7 @@ The defaults are deliberately finite:
 | HTTP headers | 16 KiB total and 64 inline fields by default; `max_header_size` and `max_header_count` |
 | Query and form pairs | 32 default; compile-time `query.QueryParamsOf` capacity |
 | Cookie pairs | 32 default; compile-time `cookie.CookieJarOf` capacity |
-| HTTP request body | 16 KiB default; `ServerConfig.max_body_size` |
+| HTTP request body (buffered) | 16 KiB default; `ServerConfig.max_body_size`. Streaming routes bypass this ceiling through the bounded per-connection ingress window |
 | Routes | 256 radix nodes; `max_route_nodes` |
 | Parameterized routes | `max_pattern_routes` patterns; `max_route_params` captures per request (16 inline) |
 | Middleware | 32 callbacks; `max_middleware` |
@@ -156,7 +159,7 @@ The defaults are deliberately finite:
 | WebSocket message | 16 KiB with `App` |
 | WebSocket control payload | 125 bytes |
 | HTTP/3 decoded headers | `max_header_size` bytes (at most 65535 when HTTP/3 is enabled) and `max_header_count` fields (spill extras) |
-| HTTP/3 request body | `max_h3_body_size` |
+| HTTP/3 request body | Buffered requests use `max_h3_body_size`; streaming routes reuse the bounded per-stream ingress slab |
 | HTTP/3 response metadata | `max_h3_response_header_size`, `max_h3_response_header_count` |
 | HTTP/3 response body | configured write-queue capacity |
 | QUIC UDP payload | 2 KiB |

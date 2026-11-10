@@ -129,18 +129,18 @@ build, and a full-suite run. The decision is repeated in
 [docs/roadmap.md](docs/roadmap.md).
 
 The fuzz job runs Zig's native fuzzer for 100,000 iterations over bounded
-HTTP, HTTP/3 metadata, WebSocket extension, and zslay receive-state targets.
+HTTP, multipart streaming, HTTP/3 metadata, WebSocket extension, and zslay receive-state targets.
 Seed corpora include valid, fragmented, malformed, and control-frame inputs.
-It separately compiles the five sanitizer-coverage libFuzzer objects used by
+It separately compiles the six sanitizer-coverage libFuzzer objects used by
 OSS-Fuzz for HTTP framing, WebSocket masking, QUIC packet boundaries, query
-parsing, and cookie parsing.
+parsing, cookie parsing, and incremental multipart parsing.
 
 ## OSS-Fuzz compatibility
 
 The reusable `oss_fuzz.yml` workflow uses ClusterFuzzLite, so it does not
 assume or claim enrollment in the hosted OSS-Fuzz service. Its external-project
 Docker build copies the exact revision under test, verifies the Zig 0.16.0
-archive checksum, builds all five `LLVMFuzzerTestOneInput` entrypoints, links
+archive checksum, builds all six `LLVMFuzzerTestOneInput` entrypoints, links
 them with the OSS-Fuzz-provided Clang flags and libFuzzer engine, and retains
 all targets for the bad-build check. A bounded batch then executes every target
 in the OSS-Fuzz runner environment.
@@ -332,7 +332,7 @@ the same tag.
 - Run formatting, convention, and documentation link checks.
 - Run Debug tests and ReleaseSafe/ReleaseFast build checks.
 - Run the native Linux ASan/UBSan/LeakSanitizer and MSan passes.
-- Run the ClusterFuzzLite bad-build check and bounded batch for all five
+- Run the ClusterFuzzLite bad-build check and bounded batch for all six
   OSS-Fuzz targets.
 - Run Autobahn and h1spec compliance.
 - Verify third-party revisions and licenses. For a libxev fork pin, resolve the

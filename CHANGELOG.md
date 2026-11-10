@@ -3,6 +3,144 @@
 All notable changes to µWebZockets are documented in this file. The project
 uses Semantic Versioning.
 
+## [2.2.0] - 2026-11-10
+
+Minor release that closes the response-streaming and static-asset gaps carried
+from 2.1.x. Large files now leave the fixed user buffer on TLS, HTTP/2, and
+HTTP/3; static mounts can select fresh precompressed representations; and
+blocked HTTP/2 resets no longer close healthy sibling streams. The release
+also ships bounded live request-body streaming and the incremental-multipart
+contract. Default buffered request behavior, the C ABI layout, and the v2.1.6
+release are unchanged.
+
+### Added
+
+- Bounded known-length file responses through `Response.stream_file` and
+  `FileSource` on HTTP/1, TLS HTTP/1, HTTP/2, and HTTP/3. The transport owns
+  the descriptor after acceptance and closes it exactly once on completion,
+  reset, or failure. HEAD and empty files send headers without body reads.
+- Static sidecar selection for `.gz` and `.br` representations, including
+  `Vary`, `Content-Encoding`, representation-specific validators, freshness
+  checks, and encoded-range semantics. Enable with
+  `App.static(prefix, root, .{ .precompressed = true })`.
+- Pure content-coding negotiation over every `Accept-Encoding` field with
+  explicit refusal, wildcard weights, duplicate handling, and no allocation.
+- An incremental RFC 7578 multipart parser with caller-owned working storage,
+  bounded carry, explicit payload acknowledgement, strict metadata, and a
+  part-sink adapter with pause, resume, and once-only cancellation.
+- A metadata-only `StreamingRequest`, the `BodySink`/`BodyRoute` contract, the
+  `BodyState` lifecycle, and the pure HTTP/1 head/body decoder.
+- Live request-body streaming through `App.post_stream`, `put_stream`, and
+  `patch_stream` on HTTP/1.1, TLS HTTP/1.1, HTTP/2, and HTTP/3, with no
+  complete-body materialization. Every transport supports pause/resume through
+  `BodyControl`: H2 retains a bounded suffix and withholds stream credit, and
+  H3 stops reading and retains the bounded suffix. Live 100 MB uploads pass on
+  plaintext, TLS, HTTP/2, and HTTP/3 socket pairs; the HTTP/3 compliance client
+  measured RSS growth under 1 MiB against a 64 MiB bound. Streaming routes run
+  `headers_only` global middleware once, carry its response headers to body
+  end, send `100 Continue` where requested, and bind callbacks to the
+  per-request `BodyBinding.context`.
+- A bounded HTTP/2 reset FIFO so an output-blocked reset no longer closes
+  healthy sibling streams.
+- A Woff2 MIME mapping for static assets.
+- A 100 KiB TLS/plaintext producer-response proof and a true POST echo proof
+  with request-storage pinning.
+
+### Changed
+
+- `Response.begin_stream`, `begin_chunked`, `begin_json`, and `sse` refuse to
+  start a streaming response before the request body is complete. Buffered
+  handlers remain source-compatible because the default is complete.
+- HTTP/2 flushes retained resets before new HEADERS or DATA, and pending
+  resets are bounded by the configured stream capacity.
+- The timing wheel scans every overflow entry for the earliest migration time,
+  so one large clock advance cannot skip an earlier due timer behind a later
+  list head.
+- Static sidecar probes are skipped when identity wins the Accept-Encoding
+  negotiation even though the field is present.
+- The Nix development shell fetches the pinned zon2nix compiler from the
+  maintainer's GitHub mirror while preserving the exact commit and NAR hash.
+
+### Fixed
+
+- Response producers that return `.done` without successfully calling
+  `end_chunks` now fail closed. HTTP/2 resets only the affected stream; HTTP/3
+  returns 500 before headers or closes an already-started stream. A producer
+  that finishes the response is disarmed even if it later returns `.pending`.
+- HTTP/2 retains reset frames during output backpressure instead of closing
+  the connection.
+- Large static assets no longer return 413 on TLS, HTTP/2, or HTTP/3 when they
+  exceed the route scratch buffer.
+- `App.static` uses the Zig 0.16 `trimEnd` API and selects the directory index
+  from the normalized path, so percent-encoded trailing slashes resolve
+  correctly instead of returning 500.
+- `Response.append_header` validates the field name as one HTTP token before
+  joining it with the value, closing a CR/LF field-splitting path.
+- Chunk extensions now follow the RFC 9112 token/quoted-string grammar instead
+  of accepting an empty name or a missing value.
+- A truncated multipart entity reports `invalid_body` to the part sink rather
+  than `sink_failure`.
+- The HTTP/2 terminal file-head path keeps descriptor ownership unambiguous
+  when the peer has already closed the stream, and an H2 WebSocket close
+  callback's final frame is queued before the stream reset.
+- Direct `begin_buffered_file_response` callers now get the same empty-scratch
+  and range-overflow validation as `Response.stream_file`.
+- A static file head refused by bounded output pressure returns a retryable
+  503 instead of an internal error.
+- The shared RFC 9110 qvalue parser accepts one-digit fractional weights and
+  rejects overlong values consistently.
+- HTTP/2 streaming route matching now uses per-stream overflow capture storage,
+  so configured capture capacities above 16 no longer fall back to buffered
+  dispatch.
+- HTTP/3 pause/resume now retries a retained partial suffix through the shared
+  `BodyState.prepare_chunk` lifecycle instead of failing a chunk-state check.
+- HTTP/3 defers the buffered `Content-Length` ceiling until after route
+  selection, so a streaming route can accept a body larger than its per-stream
+  slab while buffered requests still return 413 before reading.
+- H1 streaming headers split across reads now stay on the streaming path
+  instead of falling back to buffered dispatch; H1 also honors
+  `Expect: 100-continue` and `Connection: close` after a streamed response.
+- A peer disconnect or protocol reset releases the H1 streaming sink exactly
+  once, clears the connection slot, and allows the slot to be reused without
+  stale body state.
+- H2/H3 sink failures, invalid progress, and deferred cancellation now deliver
+  the sink cancel callback and release the binding instead of leaking it.
+- H2/H3 streaming `BodyEndFn` responses can start chunked, JSON, stream, or
+  file responses and fail closed with a 500 when the sink leaves the response
+  incomplete.
+- Static source files are preflighted as regular files; a stable FIFO in the
+  published root returns 404 without a blocking open, just like sidecars.
+- HTTP parser delimiter diagnostics no longer count incomplete request-line
+  bytes twice.
+- The dead HTTP/2 body-cancel callback alias was removed.
+
+### Limits
+
+- `src/core/tcp.zig`, `src/router/app.zig`, `src/http2/server.zig`,
+  `src/http/response.zig`, and `src/quic/stream.zig` remain above the
+  1000-line review flag. The remaining split is explicitly approved for 2.3.0.
+- WebTransport, receive-side UDP GRO, the HttpArena `async` adapter, quiet-host
+  performance evidence, cluster/timer ownership extraction, and final fork
+  archives remain dated boundaries. See
+  [the deliberate boundaries](docs/roadmap.md#deliberate-boundaries).
+- kTLS remains a standalone helper owned by v3.5.0 SB-31. `io_uring_prep_splice`
+  remains conditional on measured benefit; plaintext `sendfile` is unchanged.
+- Framed file responses use bounded synchronous positional reads on the owning
+  loop. Asynchronous disk I/O remains a future optimization; plaintext
+  `sendfile` is unaffected.
+
+### Security
+
+- Static mounts now reject non-regular sidecar candidates and stable special
+  files before reads, and keep no-symlink path confinement for source and
+  sidecar representations. The operator-controlled filesystem boundary and the
+  remaining substitution race are documented in
+  [SECURITY.md](SECURITY.md).
+- The pinned h1spec test-only submodule still has no license notice. Its
+  previous MIT attribution is unverified and remains a maintainer item before
+  redistributing the submodule itself; it is not compiled into the library or
+  included in the package paths. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ## [2.1.6] - 2026-10-26
 
 Patch release that stops the timer scheduler from spinning on kqueue, pins the

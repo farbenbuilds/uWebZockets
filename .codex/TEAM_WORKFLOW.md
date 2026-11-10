@@ -37,6 +37,8 @@ Architecture work may use `codebase-design`,
 `improve-codebase-architecture`, `domain-modeling`, and `grilling`; the
 architect owns the vocabulary and the plan. Reviewers may add
 `thermo-nuclear-code-quality-review` as a second lens on structural diffs.
-`install-anti-slop` is limited to JS/TS tooling. Project overrides in
+Whole-codebase refactor requests may use `untangle-codebase`; its decision log
+stays outside the repository and every behavior-preserving slice runs the
+project gates. This repository has no JS/TS lint policy. Project overrides in
 `AGENTS.md` win over vendored defaults, including the no-emoji rule and the
 scratch-only architecture report.

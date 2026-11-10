@@ -1,8 +1,10 @@
 # OSS-Fuzz-compatible integration
 
-The integration builds five independent libFuzzer entrypoints:
+The integration builds six independent libFuzzer entrypoints:
 
 - `http_framing` exercises fragmented HTTP/1 framing and parser bounds.
+- `multipart_streaming` exercises arbitrary input splits, payload acknowledgement,
+  bounded carry and headers, terminal errors, and strict part metadata.
 - `ws_masking` compares whole-buffer and fragmented masking and checks reversibility.
 - `quic_packets` exercises QUIC varints plus WebTransport stream, datagram, and capsule boundaries.
 - `query_parse` exercises query slicing, percent/form decoding, and `Accept` negotiation, and asserts every borrowed slice stays inside the parsed input.
@@ -20,9 +22,13 @@ nix develop -c zig build oss-fuzz-smoke -Doptimize=ReleaseSafe
 object with `$CXXFLAGS` and `$LIB_FUZZING_ENGINE`, then installs matching seed
 corpora, dictionaries, and runtime options under `$OUT`.
 
+The external helper path builds the repository's default branch because
+`oss-fuzz/Dockerfile` clones it. Use the ClusterFuzzLite workflow when the
+checked-out revision under test must be used.
+
 The repository is not assumed to be enrolled in the hosted OSS-Fuzz service.
 `.clusterfuzzlite/` uses the same builder against the exact checked-out revision
-in CI. ClusterFuzzLite's bad-build check verifies that all five targets link
+in CI. ClusterFuzzLite's bad-build check verifies that all six targets link
 and start in the OSS-Fuzz runner, then a bounded batch run exercises each
 target.
 

@@ -111,7 +111,7 @@ const sources = [_][]const u8{
 };
 
 /// Builds a static `liblsquic.a` from the pinned lsquic, ls-qpack, and
-/// ls-hpack packages plus the pre-generated overlay.
+/// ls-hpack packages.
 pub fn build(
     b: *std.Build,
     target: std.Build.ResolvedTarget,

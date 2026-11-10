@@ -68,12 +68,8 @@ Use the highest-level helper that fits:
 | Chunked output you drive | `begin_chunked` / `write_chunk` / `end_chunks` |
 | A body produced as the transport drains | `res.begin_stream()` |
 | Server-Sent Events | `res.sse()` |
-| A file from disk | `res.send_file()` or `App.static` |
+| A file from disk | `res.send_file()`, `res.stream_file()`, or `App.static` |
 | Gzip from the per-worker pool | `res.end_gzip()` with `with_http_compression(true)` |
-
-`Response.begin_stream()` pulls chunks from an application callback only when
-the write queue and flow-control windows have room, so response size never
-depends on the queue size.
 
 `Response.end_gzip` compresses into the worker's startup-allocated scratch,
 emits `Content-Encoding: gzip` and `Vary: Accept-Encoding`, and never allocates
@@ -81,6 +77,59 @@ on the request path. The input must fit `ServerConfig.max_body_size`; the
 compressed result must also fit the transport's response capacity (HTTP/2 uses
 its configured response stride). Compression is opt-in; do not gzip responses
 that mix secrets with attacker-controlled input.
+
+#### Response producer backpressure
+
+`Response.begin_stream()` invokes its producer immediately, then resumes it
+when output drains or flow-control credit returns. A producer writes bounded
+chunks and returns `.pending` when `write_chunk` reports `error.WouldBlock`.
+Advance the body offset only after a write succeeds, and retry refused bytes
+on the next invocation. A successful write copies the bytes into transport
+storage; the producer context must remain valid while the callback is armed.
+
+Response size can exceed the write queue, but each individual write must fit
+the transport's payload bound. Split large logical chunks into bounded writes;
+framing and TLS records also occupy queue space. An atomic 64 KiB payload does
+not fit the default 64 KiB queue once that overhead is included. A refused
+oversized chunk does not become writable merely because the queue drains.
+
+An empty `write_chunk` is a no-op. Call `end_chunks` successfully before
+returning `.done`; retry `end_chunks` after backpressure as needed. Returning
+`.done` without terminal framing uses the transport's producer-failure path.
+After `end_chunks` succeeds, the callback is disarmed even if it returns
+`.pending`. Producer errors abort the HTTP/1 connection or affected HTTP/2/3
+stream; HTTP/3 can replace an unsent response with 500. HEAD and bodyless
+statuses cannot start a response producer.
+
+HTTP/2 retains blocked stream resets in fixed storage bounded by the configured
+concurrent-stream capacity. It releases the failed stream once and sends its
+reset before further response HEADERS or DATA, preserving healthy siblings
+under ordinary output backpressure. Exhausting that fixed reset storage or
+encountering a fatal transport error still fails closed.
+
+#### Bounded file responses
+
+`res.stream_file(status, headers, source)` sends a known-length file through
+HTTP/1, TLS HTTP/1, HTTP/2, or HTTP/3. `uz.FileSource` supplies the open file,
+`std.Io` context, nonempty scratch slice, offset, and length. The scratch and
+Io context must remain valid until completion or cancellation. Keep the
+scratch separate from transport storage and use it only on its owning loop,
+without concurrent or recursive use. Reads are bounded positional operations;
+this API does not provide asynchronous disk I/O.
+
+On success, the caller's response is ended and the transport owns the file,
+closing it once after completion or failure. Every returned error leaves the
+file with the caller. HEAD sends the declared length and closes the accepted
+file without reading; an empty file also completes without body reads. Bodyless
+statuses and successful CONNECT responses are refused before ownership changes.
+The response uses Content-Length and raw file bytes, without chunk delimiters.
+
+HTTP/2 bounds reads by both flow-control windows. HTTP/3 copies accepted bytes
+into its existing body storage before later partial writes. Both own a file
+per stream. Legacy custom targets without file support return
+FileStreamingUnsupported before accepting a descriptor.
+Plaintext send_file remains the kernel path. App.static integration follows
+separately. The ownership and framing decision is [ADR 0010](adr/0010-bounded-file-streaming.md).
 
 ## Routing
 
@@ -185,6 +234,11 @@ header can be set by the client.
 
 ## Static files
 
+Mount an operator-controlled asset directory. Untrusted users must not replace
+its entries, and publishers should replace regular files with regular files.
+Filesystem operations are synchronous; sidecar preflight cannot eliminate a
+hostile type-substitution race. See the [filesystem boundary](adr/0010-bounded-file-streaming.md#asset-filesystem-boundary).
+
 `App.static(prefix, root, options)` mounts a directory with directory-relative
 path confinement, symlinks disabled, MIME detection, ETag and Last-Modified
 validation, cache control, and one RFC 9110 byte range. `If-None-Match` handles
@@ -192,9 +246,40 @@ validation, cache control, and one RFC 9110 byte range. `If-None-Match` handles
 ETag or Last-Modified value before a range is applied. Plaintext `GET` and
 `HEAD` responses stream the file with the kernel `sendfile` boundary
 (`Response.send_file`), so assets are not capped by the per-route file buffer.
-TLS, HTTP/2, and HTTP/3 remain on the bounded buffered path.
+TLS, HTTP/2, and HTTP/3 stream through the handler's stable scratch, so whole
+files need not fit the route buffer. Legacy custom targets without file
+callbacks retain a bounded small-file fallback.
+
+`negotiate.select_encoding(header, available)` is a pure helper for choosing
+among caller-verified identity, gzip, and br representations. It scans the full
+borrowed header with constant storage, honors explicit refusals and wildcard
+weights, and returns null when every available representation is refused.
+Absent fields prefer identity; equal positive weights prefer br, gzip, then
+identity. Repeated codings use their minimum weight. The named
+`EncodingAvailability` defaults to identity only. The contract and malformed
+input policy are recorded in [ADR 0009](adr/0009-static-content-coding.md).
+Enable sidecars with `app.static("/assets", root, .{ .precompressed = true })`.
+Only confined regular `.gz`/`.br` files at least as new as the opened source are
+available. Selection uses every Accept-Encoding field; complete refusal returns
+406. Selected coding and metadata determine validators, lengths, and ranges;
+ranges address encoded bytes. Negotiable responses include Vary, and encoded
+responses include Content-Encoding. Default mounts preserve identity behavior.
+
+`negotiate.select_encoding_headers(req.headers(), available)` applies the same
+rules to every matching field, including overflow headers. It preserves late
+refusals and absent/empty distinctions without copying field values.
 
 ## Request and response helpers
+
+The accepted [request-streaming design](adr/0008-request-body-streaming.md)
+defines the opt-in sink contract shipped as `StreamingRequest`, `BodySink`,
+`BodyRoute`, and `BodyState`. HTTP/1.1, TLS HTTP/1.1, HTTP/2, and HTTP/3 bind it live through
+`App.post_stream`, `put_stream`, and `patch_stream`; a sink receives chunks as
+they arrive and can pause/resume with `BodyControl` on every transport. H2
+withholds stream credit and retains a bounded suffix; H3 stops reading and
+retains the bounded suffix. Live 100 MB uploads pass on plaintext, TLS, HTTP/2,
+and HTTP/3 socket pairs. See the
+[deliberate boundaries](roadmap.md#deliberate-boundaries).
 
 Framework modules expose zero-allocation query/form parsing with SIMD slicing
 and compile-time capacities, streaming chunked JSON (`Response.begin_json`),
@@ -206,6 +291,12 @@ CORS and security-header middleware, and SSE.
 
 Every helper reuses the existing bounded buffers and stays off the heap on the
 request path. For the full helper inventory, see [api.md](api.md).
+
+The standalone [incremental multipart parser](multipart.md) accepts arriving
+chunks with bounded caller storage and explicit payload acknowledgement. It is
+transport-agnostic and can feed a `BodySink` directly; live request streaming
+is available on HTTP/1.1, TLS, HTTP/2, and HTTP/3. See the
+[request-streaming contract](adr/0008-request-body-streaming.md).
 
 ## Integration with another parser
 

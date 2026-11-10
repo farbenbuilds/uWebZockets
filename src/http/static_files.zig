@@ -1,12 +1,22 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const Request = @import("request.zig").Request;
 const Response = @import("response.zig").Response;
 const cache = @import("cache.zig");
+const negotiate = @import("negotiate.zig");
+
+/// An opened regular representation owns its descriptor until selection or transfer.
+const Representation = struct {
+    file: std.Io.File,
+    stat: std.Io.File.Stat,
+    encoding: negotiate.Encoding,
+};
 
 pub const Options = struct {
     index: ?[]const u8 = "index.html",
     etag: bool = true,
     max_age: u32 = 0,
+    precompressed: bool = false,
 };
 
 pub const ByteRange = struct {
@@ -34,7 +44,12 @@ pub fn static_files(comptime file_capacity: usize) type {
         pub fn init(io: std.Io, root: []const u8, options: Options) !Self {
             if (options.index) |index| {
                 var index_buffer: [1024]u8 = undefined;
-                _ = try normalize_path(index, &index_buffer);
+                const normalized = try normalize_path(index, &index_buffer);
+                // Reject a configured index that request normalization would
+                // rewrite; accepting it would fail only after a live request.
+                if (normalized.len != index.len or !std.mem.eql(u8, normalized, index)) {
+                    return error.InvalidStaticIndex;
+                }
             }
             const directory = try std.Io.Dir.cwd().openDir(io, root, .{
                 .access_sub_paths = true,
@@ -52,8 +67,15 @@ pub fn static_files(comptime file_capacity: usize) type {
             const self: *Self = @ptrCast(@alignCast(context));
             self.serve(request, response) catch |err| switch (err) {
                 error.InvalidStaticPath, error.AccessDenied, error.SymLinkLoop => response.end_best_effort("403 Forbidden", ""),
-                error.FileNotFound, error.NotDir => response.end_best_effort("404 Not Found", ""),
+                error.FileNotFound, error.NotDir, error.NotRegularFile, error.IsDir => response.end_best_effort("404 Not Found", ""),
                 error.FileTooLarge => response.end_best_effort("413 Content Too Large", ""),
+                // A file head or first window can be refused before any bytes
+                // are queued. Treat it as bounded backpressure, not a 500.
+                error.WouldBlock => response.end_with_headers_best_effort(
+                    "503 Service Unavailable",
+                    "Retry-After: 1\r\n",
+                    "",
+                ),
                 else => response.end_best_effort("500 Internal Server Error", ""),
             };
         }
@@ -63,7 +85,7 @@ pub fn static_files(comptime file_capacity: usize) type {
             var path = try normalize_path(captured, &self.path_buffer);
             if (path.len == 0) {
                 path = self.options.index orelse return error.FileNotFound;
-            } else if (captured[captured.len - 1] == '/') {
+            } else if (path[path.len - 1] == '/') {
                 const index = self.options.index orelse return error.FileNotFound;
                 // normalize_path trims leading separators, so `path` may be a
                 // subslice; rebuild the index path from its real offset instead
@@ -80,15 +102,19 @@ pub fn static_files(comptime file_capacity: usize) type {
             }
             if (path.len == 0 or path[0] == '/') return error.InvalidStaticPath;
 
-            var file = try self.open_no_symlinks(path);
+            const representation = try self.select_file(path, request) orelse {
+                try response.end_with_headers("406 Not Acceptable", "Vary: Accept-Encoding\r\n", "");
+                return;
+            };
+            var file = representation.file;
             var file_owned = true;
             defer if (file_owned) file.close(self.io);
-            const stat = try file.stat(self.io);
-            if (stat.kind != .file) return error.FileNotFound;
+            const stat = representation.stat;
+            const coding: ?negotiate.Encoding = if (self.options.precompressed) representation.encoding else null;
 
             var etag_buffer: [80]u8 = undefined;
             const entity_tag = if (self.options.etag)
-                try format_etag(&etag_buffer, stat.size, stat.mtime.nanoseconds)
+                try format_etag(&etag_buffer, stat.size, stat.mtime.nanoseconds, coding)
             else
                 "";
             var modified_buffer: [32]u8 = undefined;
@@ -103,6 +129,7 @@ pub fn static_files(comptime file_capacity: usize) type {
                     self.options.max_age,
                     stat.size,
                     null,
+                    coding,
                 );
                 try response.end_with_headers("304 Not Modified", headers, "");
                 return;
@@ -116,8 +143,8 @@ pub fn static_files(comptime file_capacity: usize) type {
                     var content_range_buffer: [80]u8 = undefined;
                     const content_range = try std.fmt.bufPrint(
                         &content_range_buffer,
-                        "Content-Range: bytes */{d}\r\n",
-                        .{stat.size},
+                        "Content-Range: bytes */{d}\r\n{s}",
+                        .{ stat.size, if (coding != null) "Vary: Accept-Encoding\r\n" else "" },
                     );
                     try response.end_with_headers("416 Range Not Satisfiable", content_range, "");
                     return;
@@ -133,35 +160,136 @@ pub fn static_files(comptime file_capacity: usize) type {
                 self.options.max_age,
                 stat.size,
                 range,
+                coding,
             );
             const status = if (range != null) "206 Partial Content" else "200 OK";
             const offset: u64 = if (range) |selected| selected.start else 0;
             const length: u64 = if (range) |selected| selected.length() else stat.size;
 
-            // The kernel streams the file whenever the transport is plaintext,
-            // lifting the user-space buffer ceiling for large assets.
-            if (try_send_file(response, status, headers, file, offset, length)) {
+            // Plaintext keeps its kernel path; framed transports borrow the
+            // handler scratch while owning the descriptor independently.
+            if (try try_send_file(response, status, headers, file, offset, length)) {
                 file_owned = false;
                 return;
             }
 
-            if (stat.size > self.file_buffer.len) return error.FileTooLarge;
-            const bytes_read = try file.readPositionalAll(self.io, self.file_buffer[0..@intCast(stat.size)], 0);
-            if (bytes_read != @as(usize, @intCast(stat.size))) return error.UnexpectedEndOfFile;
-            if (range) |selected| {
-                const start: usize = @intCast(selected.start);
-                const end: usize = @intCast(selected.end + 1);
-                try response.end_with_headers(status, headers, self.file_buffer[start..end]);
+            response.stream_file(status, headers, .{
+                .io = self.io,
+                .file = file,
+                .buffer = &self.file_buffer,
+                .offset = offset,
+                .length = length,
+            }) catch |err| {
+                if (err != error.FileStreamingUnsupported) return err;
+                // Legacy targets have no file callback; preserve their bounded
+                // small-file behavior without masking transport failures.
+                if (stat.size > self.file_buffer.len) return error.FileTooLarge;
+                const bytes_read = try file.readPositionalAll(self.io, self.file_buffer[0..@intCast(stat.size)], 0);
+                if (bytes_read != @as(usize, @intCast(stat.size))) return error.UnexpectedEndOfFile;
+                if (range) |selected| {
+                    const start: usize = @intCast(selected.start);
+                    const end: usize = @intCast(selected.end + 1);
+                    try response.end_with_headers(status, headers, self.file_buffer[start..end]);
+                    return;
+                }
+                try response.end_with_headers(status, headers, self.file_buffer[0..bytes_read]);
                 return;
-            }
-            try response.end_with_headers(status, headers, self.file_buffer[0..bytes_read]);
+            };
+            file_owned = false;
         }
 
-        /// Attempts the kernel boundary path; false means stream in user space.
-        ///
-        /// Any error is retried through the buffered fallback, which owns the
-        /// same failure cases (closed peer, oversized headers, no kernel path)
-        /// and reports the real error when the response cannot be completed.
+        /// Holds at most three representation descriptors; releases every unselected one.
+        fn select_file(self: *Self, path: []const u8, request: *const Request) !?Representation {
+            const file = self.open_no_symlinks(path, true) catch |err| switch (err) {
+                error.NotRegularFile => return error.FileNotFound,
+                else => return err,
+            };
+            var source_owned = true;
+            defer if (source_owned) file.close(self.io);
+            const stat = try file.stat(self.io);
+            if (stat.kind != .file) return error.FileNotFound;
+            const source = Representation{ .file = file, .stat = stat, .encoding = .identity };
+            if (!self.options.precompressed) {
+                source_owned = false;
+                return source;
+            }
+            // Identity is the only possible choice when the client sent no
+            // Accept-Encoding field; skip two sidecar opens in that case.
+            var headers = request.header_entries();
+            var has_encoding = false;
+            while (headers.next()) |entry| {
+                if (std.ascii.eqlIgnoreCase(entry.name, "accept-encoding")) {
+                    has_encoding = true;
+                    break;
+                }
+            }
+            if (!has_encoding) {
+                source_owned = false;
+                return source;
+            }
+            // If identity wins even when both sidecars exist, neither file can
+            // change the selected representation; skip both probes.
+            const preferred = negotiate.select_encoding_headers(request.headers(), .{
+                .identity = true,
+                .gzip = true,
+                .br = true,
+            }) orelse return null;
+            if (preferred == .identity) {
+                source_owned = false;
+                return source;
+            }
+            var gzip = try self.open_sidecar(path, ".gz", stat.mtime.nanoseconds, .gzip);
+            defer if (gzip) |candidate| candidate.file.close(self.io);
+            var br = try self.open_sidecar(path, ".br", stat.mtime.nanoseconds, .br);
+            defer if (br) |candidate| candidate.file.close(self.io);
+            const encoding = negotiate.select_encoding_headers(request.headers(), .{
+                .gzip = gzip != null,
+                .br = br != null,
+            }) orelse return null;
+            switch (encoding) {
+                .identity => {
+                    source_owned = false;
+                    return source;
+                },
+                .gzip => {
+                    const selected = gzip.?;
+                    gzip = null;
+                    return selected;
+                },
+                .br => {
+                    const selected = br.?;
+                    br = null;
+                    return selected;
+                },
+            }
+        }
+
+        fn open_sidecar(self: *Self, path: []const u8, suffix: *const [3]u8, source_mtime: i96, encoding: negotiate.Encoding) !?Representation {
+            var buffer: [1024]u8 = undefined;
+            if (path.len > buffer.len - suffix.len) return null;
+            @memcpy(buffer[0..path.len], path);
+            @memcpy(buffer[path.len..][0..suffix.len], suffix);
+            const file = self.open_no_symlinks(buffer[0 .. path.len + suffix.len], true) catch |err| switch (err) {
+                // NameTooLong also covers a valid source leaf whose suffix
+                // exceeds the filesystem's component limit.
+                error.FileNotFound,
+                error.NotDir,
+                error.IsDir,
+                error.SymLinkLoop,
+                error.NotRegularFile,
+                error.NameTooLong,
+                => return null,
+                else => return err,
+            };
+            var owned = true;
+            defer if (owned) file.close(self.io);
+            const stat = try file.stat(self.io);
+            if (stat.kind != .file or stat.mtime.nanoseconds < source_mtime) return null;
+            owned = false;
+            return .{ .file = file, .stat = stat, .encoding = encoding };
+        }
+
+        /// Only an unavailable kernel path permits a different delivery path.
         fn try_send_file(
             response: *Response,
             status: []const u8,
@@ -169,9 +297,12 @@ pub fn static_files(comptime file_capacity: usize) type {
             file: std.Io.File,
             offset: u64,
             length: u64,
-        ) bool {
-            response.send_file(status, headers, file, offset, length) catch return false;
-            return response.is_complete();
+        ) !bool {
+            response.send_file(status, headers, file, offset, length) catch |err| switch (err) {
+                error.ZeroCopyUnavailable => return false,
+                else => return err,
+            };
+            return true;
         }
 
         /// Opens a relative path without following symlinks in any component.
@@ -179,7 +310,7 @@ pub fn static_files(comptime file_capacity: usize) type {
         /// Zig 0.16 ignores `resolve_beneath` on Linux, and `O_NOFOLLOW` only
         /// covers the final component, so each directory level is opened with
         /// `follow_symlinks = false` explicitly.
-        fn open_no_symlinks(self: *Self, path: []const u8) !std.Io.File {
+        fn open_no_symlinks(self: *Self, path: []const u8, regular_candidate: bool) !std.Io.File {
             var current = self.directory;
             var owns_current = false;
             defer if (owns_current) current.close(self.io);
@@ -196,6 +327,20 @@ pub fn static_files(comptime file_capacity: usize) type {
                 current = child;
                 owns_current = true;
                 component = next;
+            }
+            if (regular_candidate) {
+                // Reject special files before opening: a stable FIFO would
+                // otherwise block the worker in the readable open. Hostile
+                // regular-to-FIFO replacement after this check remains a
+                // documented operator-controlled filesystem boundary.
+                if (component.len > std.Io.Dir.max_name_bytes) return error.NotRegularFile;
+                const metadata = try current.statFile(self.io, component, .{ .follow_symlinks = false });
+                switch (metadata.kind) {
+                    .file => {},
+                    .directory => return error.IsDir,
+                    .sym_link => return error.SymLinkLoop,
+                    else => return error.NotRegularFile,
+                }
             }
             return current.openFile(self.io, component, .{
                 .allow_directory = false,
@@ -253,6 +398,7 @@ pub fn mime_type(path: []const u8) []const u8 {
     if (std.ascii.eqlIgnoreCase(extension, ".webp")) return "image/webp";
     if (std.ascii.eqlIgnoreCase(extension, ".ico")) return "image/x-icon";
     if (std.ascii.eqlIgnoreCase(extension, ".wasm")) return "application/wasm";
+    if (std.ascii.eqlIgnoreCase(extension, ".woff2")) return "font/woff2";
     if (std.ascii.eqlIgnoreCase(extension, ".txt")) return "text/plain; charset=utf-8";
     if (std.ascii.eqlIgnoreCase(extension, ".xml")) return "application/xml";
     if (std.ascii.eqlIgnoreCase(extension, ".pdf")) return "application/pdf";
@@ -289,7 +435,8 @@ fn normalize_path(input: []const u8, buffer: []u8) ![]const u8 {
     return std.mem.trimStart(u8, buffer[0..output_length], "/");
 }
 
-fn format_etag(buffer: []u8, size: u64, mtime_ns: i96) ![]const u8 {
+fn format_etag(buffer: []u8, size: u64, mtime_ns: i96, coding: ?negotiate.Encoding) ![]const u8 {
+    if (coding) |encoding| return std.fmt.bufPrint(buffer, "\"{s}-{x}-{x}\"", .{ @tagName(encoding), size, @as(u96, @bitCast(mtime_ns)) });
     return std.fmt.bufPrint(buffer, "\"{x}-{x}\"", .{ size, @as(u96, @bitCast(mtime_ns)) });
 }
 
@@ -355,9 +502,14 @@ fn format_headers(
     max_age: u32,
     size: u64,
     range: ?ByteRange,
+    coding: ?negotiate.Encoding,
 ) ![]const u8 {
     var writer: std.Io.Writer = .fixed(buffer);
     try writer.print("Content-Type: {s}\r\nAccept-Ranges: bytes\r\n", .{mime_type(path)});
+    if (coding) |encoding| {
+        try writer.writeAll("Vary: Accept-Encoding\r\n");
+        if (encoding != .identity) try writer.print("Content-Encoding: {s}\r\n", .{@tagName(encoding)});
+    }
     if (etag.len != 0) try writer.print("ETag: {s}\r\n", .{etag});
     if (modified.len != 0) try writer.print("Last-Modified: {s}\r\n", .{modified});
     if (max_age != 0) try writer.print("Cache-Control: public, max-age={d}\r\n", .{max_age});

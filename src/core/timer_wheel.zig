@@ -251,7 +251,8 @@ pub const Wheel = struct {
                 }
             }
         }
-        if (self.overflow_head) |node| {
+        var overflow = self.overflow_head;
+        while (overflow) |node| : (overflow = node.next) {
             const due = node.deadline_ms -| max_exact_delay_ms;
             if (earliest == null or due < earliest.?.due_ms) {
                 earliest = .{ .due_ms = due, .overflow = true };

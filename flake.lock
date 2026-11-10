@@ -133,11 +133,12 @@
         "rev": "1a73bc5e8ae4d0223fefbd00afc58fe0b7f7e718",
         "revCount": 1734,
         "type": "git",
-        "url": "https://git.jcollie.dev/jeff/zig-overlay.git"
+        "url": "https://github.com/jcollie/zig-overlay.git"
       },
       "original": {
+        "rev": "1a73bc5e8ae4d0223fefbd00afc58fe0b7f7e718",
         "type": "git",
-        "url": "https://git.jcollie.dev/jeff/zig-overlay.git"
+        "url": "https://github.com/jcollie/zig-overlay.git"
       }
     },
     "zig-overlay": {

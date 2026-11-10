@@ -17,6 +17,7 @@ const quic = @import("../quic/engine.zig");
 const quic_stream = @import("../quic/stream.zig");
 const udp = @import("../core/udp.zig");
 const request_module = @import("../http/request.zig");
+const request_body_module = @import("../http/request_body.zig");
 const Request = request_module.Request;
 const Response = @import("../http/response.zig").Response;
 const json_rpc_http = @import("../rpc/http.zig");
@@ -776,7 +777,7 @@ pub fn configured_app_with_route_params(
             }
 
             var route_buffer: [2048]u8 = undefined;
-            const base = if (prefix.len > 1) std.mem.trimRight(u8, prefix, "/") else "";
+            const base = if (prefix.len > 1) std.mem.trimEnd(u8, prefix, "/") else "";
             const route = std.fmt.bufPrint(&route_buffer, "{s}/*path", .{base}) catch {
                 return error.InvalidRoutePath;
             };
@@ -872,6 +873,48 @@ pub fn configured_app_with_route_params(
             handler: radix.ContextAsyncHandler,
         ) !*Self {
             return self.route_async_context(.get, path, context, handler);
+        }
+
+        /// Registers a borrowed request-body sink route for one method.
+        ///
+        /// The route must outlive the application. The transport validates
+        /// admission, framing, and pause/resume before invoking the sink.
+        pub fn stream(
+            self: *Self,
+            method: radix.HttpMethod,
+            path: []const u8,
+            route: *const request_body_module.BodyRoute,
+        ) !*Self {
+            try self.ensure_routes_mutable();
+            try self.router.route_stream(method, path, route);
+            return self;
+        }
+
+        /// Registers a request-body sink on POST.
+        pub fn post_stream(
+            self: *Self,
+            path: []const u8,
+            route: *const request_body_module.BodyRoute,
+        ) !*Self {
+            return self.stream(.post, path, route);
+        }
+
+        /// Registers a request-body sink on PUT.
+        pub fn put_stream(
+            self: *Self,
+            path: []const u8,
+            route: *const request_body_module.BodyRoute,
+        ) !*Self {
+            return self.stream(.put, path, route);
+        }
+
+        /// Registers a request-body sink on PATCH.
+        pub fn patch_stream(
+            self: *Self,
+            path: []const u8,
+            route: *const request_body_module.BodyRoute,
+        ) !*Self {
+            return self.stream(.patch, path, route);
         }
 
         /// Registers a WebSocket route with event callbacks.

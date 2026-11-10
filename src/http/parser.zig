@@ -1,5 +1,7 @@
 const std = @import("std");
 const simd = @import("../core/simd.zig");
+const body_decoder = @import("body_decoder.zig");
+const fetch = @import("fetch.zig");
 /// Request view populated by `consume`.
 pub const Request = @import("request.zig").Request;
 
@@ -41,17 +43,6 @@ fn is_decimal(value: []const u8) bool {
     if (value.len == 0) return false;
     for (value) |c| {
         if (c < '0' or c > '9') return false;
-    }
-    return true;
-}
-
-fn is_hexadecimal(value: []const u8) bool {
-    if (value.len == 0) return false;
-    for (value) |c| {
-        switch (c) {
-            '0'...'9', 'a'...'f', 'A'...'F' => {},
-            else => return false,
-        }
     }
     return true;
 }
@@ -161,405 +152,150 @@ fn enter_state(parser: *HttpParser, state: ParserState, offset: usize) void {
     parser.scan = offset;
 }
 
+/// Structurally admitted head; its views borrow the caller's header arrays and input.
+/// Keep both pinned through streaming admission and the resulting response lifetime.
+pub const HeadReady = struct {
+    framing: body_decoder.Framing,
+    header_end: usize,
+    headers: fetch.HeadersView,
+};
+
+/// Earliest legacy failure checkpoint, before later provisional fields can mask it.
+pub const BufferedHeadFailure = struct {
+    state: ParserState,
+    content_length: usize,
+    header_count: usize,
+    extra_header_count: usize,
+};
+
+/// A ready head precedes body policy and payload, even when all bytes arrived together.
+/// A failed structural scan still carries an earlier machine-width rejection, if any.
+pub const HeadResult = struct {
+    consumed: usize = 0,
+    ready: ?HeadReady = null,
+    buffered_failure: ?BufferedHeadFailure = null,
+};
+
+/// Parses only through initial headers, admitting logical u64 lengths provisionally.
+/// Select streaming only after ready; buffered fallback must call commit_head on errors too.
+/// Do not scan a completed head twice or resume consume before committing buffered policy.
+pub fn consume_head(parser: *HttpParser, req: *Request, buffer: []u8) HeadResult {
+    switch (parser.state) {
+        .method, .path, .protocol, .headers => {},
+        else => return .{ .consumed = parser.mark },
+    }
+    var result = HeadResult{};
+    result.consumed = consume_internal(parser, req, buffer, &result);
+    return result;
+}
+
+fn buffered_checkpoint(parser: *const HttpParser, req: *const Request, state: ParserState) BufferedHeadFailure {
+    return .{
+        .state = state,
+        .content_length = parser.content_length,
+        .header_count = req.header_count,
+        .extra_header_count = parser.extra_header_count,
+    };
+}
+
+/// Commits only the borrowed header views needed by a streaming request.
+pub fn commit_streaming_head(parser: *HttpParser, req: *Request) void {
+    req.extra_header_names = parser.extra_header_names[0..parser.extra_header_count];
+    req.extra_header_values = parser.extra_header_values[0..parser.extra_header_count];
+    req.extra_header_count = parser.extra_header_count;
+}
+
+/// Applies the unchanged buffered policy, committing overflow views only after acceptance.
+pub fn commit_head(parser: *HttpParser, req: *Request, result: HeadResult) bool {
+    if (result.buffered_failure) |failure| {
+        parser.state = failure.state;
+        parser.content_length = failure.content_length;
+        req.header_count = failure.header_count;
+        parser.extra_header_count = failure.extra_header_count;
+        return false;
+    }
+    const head = result.ready orelse return false;
+    commit_buffered_head(parser, req, head.header_end, head.framing == .chunked);
+    return true;
+}
+
+fn commit_buffered_head(parser: *HttpParser, req: *Request, header_end: usize, chunked: bool) void {
+    req.extra_header_names = parser.extra_header_names[0..parser.extra_header_count];
+    req.extra_header_values = parser.extra_header_values[0..parser.extra_header_count];
+    req.extra_header_count = parser.extra_header_count;
+    if (chunked) {
+        enter_state(parser, .chunk_size, header_end);
+        parser.body_start = parser.mark;
+        parser.body_length = 0;
+        return;
+    }
+    enter_state(parser, if (parser.content_length > 0) .body else .done, header_end);
+}
+
 /// Parses bytes into `req` and returns the prefix consumed by this request.
-///
-/// Request slices borrow `buffer`. Chunked bodies are compacted in place, so
-/// callers must retain the mutable buffer until request dispatch completes.
+/// Request slices borrow buffer; chunked bodies compact in place until dispatch completes.
 pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
+    return consume_internal(parser, req, buffer, null);
+}
+
+fn consume_internal(parser: *HttpParser, req: *Request, buffer: []u8, head_result: ?*HeadResult) usize {
     while (parser.mark < buffer.len) {
         switch (parser.state) {
-            .method => {
-                const search_start = parser.scan;
-                if (std.mem.indexOfScalar(u8, buffer[search_start..], ' ')) |space_idx| {
-                    parser.scan_work += space_idx + 1;
-                    const abs_space = search_start + space_idx;
-                    if (abs_space > parser.max_request_line_bytes) {
-                        parser.state = .error_headers_too_large;
-                        return buffer.len;
-                    }
-                    if (abs_space == parser.mark) {
-                        parser.state = .error_invalid;
-                        return buffer.len;
-                    }
-                    for (buffer[parser.mark..abs_space]) |c| {
-                        if (!is_tchar(c)) {
-                            parser.state = .error_invalid;
-                            return buffer.len;
-                        }
-                    }
-                    req.method = buffer[parser.mark..abs_space];
-                    enter_state(parser, .path, abs_space + 1);
-                } else {
-                    const pending = buffer.len - search_start;
-                    parser.scan_work += pending;
-                    // The CRLF pass keeps the existing error precedence: a
-                    // bare CR or LF before the missing space is invalid.
-                    if (std.mem.indexOfAny(u8, buffer[search_start..], "\r\n")) |crlf_idx| {
-                        parser.scan_work += crlf_idx + 1;
-                        parser.state = .error_invalid;
-                        return buffer.len;
-                    }
-                    parser.scan_work += pending;
-                    if (buffer.len > parser.max_request_line_bytes) {
-                        parser.state = .error_headers_too_large;
-                    }
-                    parser.scan = buffer.len;
-                    return buffer.len; // need more data
-                }
-            },
-            .path => {
-                const search_start = parser.scan;
-                if (std.mem.indexOfScalar(u8, buffer[search_start..], ' ')) |space_idx| {
-                    parser.scan_work += space_idx + 1;
-                    const abs_space = search_start + space_idx;
-                    const target = buffer[parser.mark..abs_space];
-                    if (abs_space > parser.max_request_line_bytes) {
-                        parser.state = .error_headers_too_large;
-                        return buffer.len;
-                    }
-                    const view = parse_request_target(req.method, target) orelse {
-                        parser.state = .error_invalid;
-                        return buffer.len;
-                    };
-                    req.target = target;
-                    req.path = view.path;
-                    req.query = view.query;
-                    enter_state(parser, .protocol, abs_space + 1);
-                } else {
-                    const pending = buffer.len - search_start;
-                    parser.scan_work += pending;
-                    if (std.mem.indexOfAny(u8, buffer[search_start..], "\r\n")) |crlf_idx| {
-                        parser.scan_work += crlf_idx + 1;
-                        parser.state = .error_invalid;
-                        return buffer.len;
-                    }
-                    parser.scan_work += pending;
-                    if (buffer.len > parser.max_request_line_bytes) {
-                        parser.state = .error_headers_too_large;
-                    }
-                    parser.scan = buffer.len;
+            .method => switch (parse_method(parser, req, buffer, parser.scan)) {
+                .advanced => {},
+                .need_more => return buffer.len,
+                .invalid => {
+                    parser.state = .error_invalid;
                     return buffer.len;
-                }
-            },
-            .protocol => {
-                const search_start = parser.scan;
-                if (std.mem.indexOfScalar(u8, buffer[search_start..], '\n')) |nl_idx| {
-                    parser.scan_work += nl_idx + 1;
-                    const abs_nl = search_start + nl_idx;
-                    if (abs_nl + 1 > parser.max_request_line_bytes) {
-                        parser.state = .error_headers_too_large;
-                        return buffer.len;
-                    }
-                    if (abs_nl > parser.mark and buffer[abs_nl - 1] == '\r') {
-                        const proto = buffer[parser.mark .. abs_nl - 1];
-                        if (!std.mem.eql(u8, proto, "HTTP/1.1")) {
-                            parser.state = .error_invalid;
-                            return buffer.len;
-                        }
-                        enter_state(parser, .headers, abs_nl + 1);
-                    } else {
-                        parser.state = .error_invalid;
-                        return buffer.len;
-                    }
-                } else {
-                    parser.scan_work += buffer.len - search_start;
-                    if (buffer.len > parser.max_request_line_bytes) {
-                        parser.state = .error_headers_too_large;
-                    }
-                    parser.scan = buffer.len;
+                },
+                .too_large => {
+                    parser.state = .error_headers_too_large;
                     return buffer.len;
-                }
+                },
             },
-            .headers => {
-                const search_start = parser.scan;
-                if (simd.index_of_header_end(buffer[search_start..])) |offset| {
-                    parser.scan_work += offset + 4;
-                    const end = search_start + offset;
-                    if (end - parser.mark > parser.max_header_bytes) {
-                        parser.state = .error_headers_too_large;
-                        return buffer.len;
-                    }
-
-                    var lines = std.mem.splitSequence(u8, buffer[parser.mark..end], "\r\n");
-                    var has_host = false;
-                    var has_cl = false;
-                    var has_te = false;
-                    var cl_too_large = false;
-
-                    while (lines.next()) |line| {
-                        if (line.len == 0) continue;
-                        if (std.mem.indexOf(u8, line, ":")) |colon| {
-                            const name = line[0..colon];
-                            if (name.len == 0) {
-                                parser.state = .error_invalid;
-                                return buffer.len;
-                            }
-                            for (name) |c| {
-                                if (!is_tchar(c)) {
-                                    parser.state = .error_invalid;
-                                    return buffer.len;
-                                }
-                            }
-
-                            var val_start = colon + 1;
-                            while (val_start < line.len and (line[val_start] == ' ' or line[val_start] == '\t')) {
-                                val_start += 1;
-                            }
-
-                            var val_end = line.len;
-                            while (val_end > val_start and (line[val_end - 1] == ' ' or line[val_end - 1] == '\t')) {
-                                val_end -= 1;
-                            }
-
-                            const value = line[val_start..val_end];
-
-                            if (!simd.valid_http_field_value(value)) {
-                                parser.state = .error_invalid;
-                                return buffer.len;
-                            }
-
-                            if (std.ascii.eqlIgnoreCase(name, "Host")) {
-                                if (has_host or value.len == 0) {
-                                    parser.state = .error_invalid;
-                                    return buffer.len;
-                                }
-                                has_host = true;
-                            }
-
-                            if (std.ascii.eqlIgnoreCase(name, "Transfer-Encoding")) {
-                                if (has_te or !std.ascii.eqlIgnoreCase(value, "chunked")) {
-                                    parser.state = .error_invalid;
-                                    return buffer.len;
-                                }
-                                has_te = true;
-                            }
-
-                            if (std.ascii.eqlIgnoreCase(name, "Content-Length")) {
-                                if (has_cl) {
-                                    parser.state = .error_invalid;
-                                    return buffer.len;
-                                }
-                                has_cl = true;
-                                if (!is_decimal(value)) {
-                                    parser.state = .error_invalid;
-                                    return buffer.len;
-                                }
-                                if (std.fmt.parseInt(usize, value, 10)) |len| {
-                                    if (len > parser.max_body_size) {
-                                        cl_too_large = true;
-                                    } else {
-                                        parser.content_length = len;
-                                    }
-                                } else |_| {
-                                    parser.state = .error_invalid;
-                                    return buffer.len;
-                                }
-                            }
-
-                            if (req.header_count >= req.header_names.len) {
-                                if (parser.extra_header_count >= parser.extra_header_names.len) {
-                                    parser.state = .error_headers_too_large;
-                                    return buffer.len;
-                                }
-                                parser.extra_header_names[parser.extra_header_count] = name;
-                                parser.extra_header_values[parser.extra_header_count] = value;
-                                parser.extra_header_count += 1;
-                            } else {
-                                req.header_names[req.header_count] = name;
-                                req.header_values[req.header_count] = value;
-                                req.header_count += 1;
-                            }
-                        } else {
-                            parser.state = .error_invalid;
-                            return buffer.len;
-                        }
-                    }
-
-                    if (!has_host) {
-                        parser.state = .error_invalid;
-                        return buffer.len;
-                    }
-
-                    // The framing conflict is invalid regardless of the
-                    // declared length, so it wins over the body-limit check.
-                    if (has_te and has_cl) {
-                        parser.state = .error_invalid;
-                        return buffer.len;
-                    }
-
-                    if (cl_too_large) {
-                        parser.state = .error_too_large;
-                        return buffer.len;
-                    }
-
-                    req.extra_header_names = parser.extra_header_names[0..parser.extra_header_count];
-                    req.extra_header_values = parser.extra_header_values[0..parser.extra_header_count];
-                    req.extra_header_count = parser.extra_header_count;
-
-                    if (has_te) {
-                        enter_state(parser, .chunk_size, end + 4);
-                        parser.body_start = parser.mark;
-                        parser.body_length = 0;
-                        continue;
-                    }
-
-                    if (parser.content_length > 0) {
-                        enter_state(parser, .body, end + 4);
-                        continue;
-                    }
-
-                    enter_state(parser, .done, end + 4);
-                    return parser.mark;
-                } else {
-                    parser.scan_work += buffer.len - search_start;
-                    if (buffer.len - parser.mark > parser.max_header_bytes) {
-                        parser.state = .error_headers_too_large;
-                    }
-                    // The four-byte terminator may straddle the delivery
-                    // boundary, so keep a three-byte overlap.
-                    parser.scan = @max(parser.mark, buffer.len -| 3);
+            .path => switch (parse_path(parser, req, buffer, parser.scan)) {
+                .advanced => {},
+                .need_more => return buffer.len,
+                .invalid => {
+                    parser.state = .error_invalid;
                     return buffer.len;
-                }
-            },
-            .body => {
-                const remaining = buffer.len - parser.mark;
-                if (remaining >= parser.content_length) {
-                    const body_end = parser.mark + parser.content_length;
-                    req.body = buffer[parser.mark..body_end];
-                    enter_state(parser, .done, body_end);
-                    return parser.mark;
-                } else {
+                },
+                .too_large => {
+                    parser.state = .error_headers_too_large;
                     return buffer.len;
-                }
+                },
             },
-            .chunk_size => {
-                const search_start = parser.scan;
-                if (std.mem.indexOfAny(u8, buffer[search_start..], "\r;")) |offset| {
-                    parser.scan_work += offset + 1;
-                    const end_idx = search_start + offset;
-                    const hex_str = buffer[parser.mark..end_idx];
-                    if (!is_hexadecimal(hex_str)) {
-                        parser.state = .error_invalid;
-                        return buffer.len;
-                    }
-                    if (std.fmt.parseInt(usize, hex_str, 16)) |len| {
-                        if (parser.body_length > parser.max_body_size or
-                            len > parser.max_body_size - parser.body_length)
-                        {
-                            parser.state = .error_too_large;
-                            return buffer.len;
-                        }
-                        parser.chunk_length = len;
-                        if (buffer[end_idx] == ';') {
-                            enter_state(parser, .chunk_ext, end_idx + 1);
-                        } else {
-                            if (end_idx + 1 < buffer.len) {
-                                if (buffer[end_idx + 1] != '\n') {
-                                    parser.state = .error_invalid;
-                                    return buffer.len;
-                                }
-                                if (len == 0) {
-                                    enter_state(parser, .chunk_trailer, end_idx + 2);
-                                } else {
-                                    enter_state(parser, .chunk_data, end_idx + 2);
-                                }
-                            } else {
-                                // The CR and LF may arrive separately.
-                                parser.scan = end_idx;
-                                return buffer.len;
-                            }
-                        }
-                        continue;
-                    } else |_| {
-                        parser.state = .error_invalid;
-                        return buffer.len;
-                    }
-                }
-                parser.scan_work += buffer.len - search_start;
-                parser.scan = buffer.len;
-                return buffer.len;
+            .protocol => switch (parse_protocol(parser, buffer, parser.scan)) {
+                .advanced => {},
+                .need_more => return buffer.len,
+                .invalid => {
+                    parser.state = .error_invalid;
+                    return buffer.len;
+                },
+                .too_large => {
+                    parser.state = .error_headers_too_large;
+                    return buffer.len;
+                },
             },
-            .chunk_ext => {
-                const search_start = parser.scan;
-                if (std.mem.indexOfScalar(u8, buffer[search_start..], '\r')) |offset| {
-                    parser.scan_work += offset + 1;
-                    const end_idx = search_start + offset;
-                    for (buffer[parser.mark..end_idx]) |c| {
-                        if ((c < 32 and c != '\t') or c == 127) {
-                            parser.state = .error_invalid;
-                            return buffer.len;
-                        }
-                    }
-                    if (end_idx + 1 < buffer.len) {
-                        if (buffer[end_idx + 1] != '\n') {
-                            parser.state = .error_invalid;
-                            return buffer.len;
-                        }
-                        if (parser.chunk_length == 0) {
-                            enter_state(parser, .chunk_trailer, end_idx + 2);
-                        } else {
-                            enter_state(parser, .chunk_data, end_idx + 2);
-                        }
-                        continue;
-                    } else {
-                        // The CR and LF may arrive separately.
-                        parser.scan = end_idx;
-                        return buffer.len;
-                    }
-                }
-                parser.scan_work += buffer.len - search_start;
-                parser.scan = buffer.len;
-                return buffer.len;
+            .headers => switch (parse_header_block(parser, req, buffer, parser.scan, head_result)) {
+                .need_more => return buffer.len,
+                .invalid => {
+                    parser.state = .error_invalid;
+                    return buffer.len;
+                },
+                .headers_too_large => {
+                    parser.state = .error_headers_too_large;
+                    return buffer.len;
+                },
+                .body_too_large => {
+                    parser.state = .error_too_large;
+                    return buffer.len;
+                },
+                .ready => |consumed| return consumed,
+                .continue_parsing => if (parser.state == .done) return parser.mark,
             },
-            .chunk_data => {
-                const available = buffer.len - parser.mark;
-                if (available >= parser.chunk_length) {
-                    const chunk_end = parser.mark + parser.chunk_length;
-                    const src = buffer[parser.mark..chunk_end];
-                    const dst = buffer[parser.body_start + parser.body_length .. parser.body_start + parser.body_length + parser.chunk_length];
-                    std.mem.copyForwards(u8, dst, src);
-                    parser.body_length += parser.chunk_length;
-                    enter_state(parser, .chunk_crlf, chunk_end);
-                    continue;
-                }
-                return buffer.len;
-            },
-            .chunk_crlf => {
-                if (buffer.len - parser.mark >= 2) {
-                    if (buffer[parser.mark] != '\r' or buffer[parser.mark + 1] != '\n') {
-                        parser.state = .error_invalid;
-                        return buffer.len;
-                    }
-                    enter_state(parser, .chunk_size, parser.mark + 2);
-                    continue;
-                }
-                return buffer.len;
-            },
-            .chunk_trailer => {
-                if (buffer.len - parser.mark >= 2) {
-                    if (buffer[parser.mark] == '\r' and buffer[parser.mark + 1] == '\n') {
-                        req.body = buffer[parser.body_start .. parser.body_start + parser.body_length];
-                        enter_state(parser, .done, parser.mark + 2);
-                        return parser.mark;
-                    }
-                }
-                const search_start = parser.scan;
-                if (simd.index_of_header_end(buffer[search_start..])) |relative_end| {
-                    parser.scan_work += relative_end + 4;
-                    const end_idx = search_start + relative_end;
-                    if (!valid_trailers(buffer[parser.mark..end_idx], parser.max_header_bytes)) {
-                        parser.state = .error_invalid;
-                        return buffer.len;
-                    }
-                    req.body = buffer[parser.body_start .. parser.body_start + parser.body_length];
-                    enter_state(parser, .done, end_idx + 4);
-                    return parser.mark;
-                }
-                parser.scan_work += buffer.len - search_start;
-                // The four-byte terminator may straddle the delivery
-                // boundary, so keep a three-byte overlap.
-                parser.scan = @max(parser.mark, buffer.len -| 3);
-                return buffer.len;
+            .body, .chunk_size, .chunk_ext, .chunk_data, .chunk_crlf, .chunk_trailer => {
+                return collect_body(parser, req, buffer);
             },
             .done, .error_invalid, .error_headers_too_large, .error_too_large => return parser.mark,
         }
@@ -568,34 +304,281 @@ pub fn consume(parser: *HttpParser, req: *Request, buffer: []u8) usize {
     return parser.mark;
 }
 
-fn valid_trailers(trailers: []const u8, max_bytes: usize) bool {
-    if (trailers.len > max_bytes) return false;
+/// One request-line parser outcome; the caller maps it to parser state.
+const LineOutcome = enum { advanced, need_more, invalid, too_large };
 
-    var field_count: usize = 0;
-    var lines = std.mem.splitSequence(u8, trailers, "\r\n");
+fn parse_method(parser: *HttpParser, req: *Request, buffer: []u8, search_start: usize) LineOutcome {
+    const space = std.mem.indexOfScalar(u8, buffer[search_start..], ' ') orelse {
+        const pending = buffer.len - search_start;
+        parser.scan_work += pending;
+        // Preserve the legacy precedence: a bare CR/LF before the missing
+        // space is invalid even when the line is still incomplete.
+        if (std.mem.indexOfAny(u8, buffer[search_start..], "\r\n")) |crlf| {
+            parser.scan_work += crlf + 1;
+            return .invalid;
+        }
+        if (buffer.len > parser.max_request_line_bytes) return .too_large;
+        parser.scan = buffer.len;
+        return .need_more;
+    };
+    parser.scan_work += space + 1;
+    const abs_space = search_start + space;
+    if (abs_space > parser.max_request_line_bytes) return .too_large;
+    if (abs_space == parser.mark) return .invalid;
+    for (buffer[parser.mark..abs_space]) |c| {
+        if (!is_tchar(c)) return .invalid;
+    }
+    req.method = buffer[parser.mark..abs_space];
+    enter_state(parser, .path, abs_space + 1);
+    return .advanced;
+}
+
+fn parse_path(parser: *HttpParser, req: *Request, buffer: []u8, search_start: usize) LineOutcome {
+    const space = std.mem.indexOfScalar(u8, buffer[search_start..], ' ') orelse {
+        const pending = buffer.len - search_start;
+        parser.scan_work += pending;
+        if (std.mem.indexOfAny(u8, buffer[search_start..], "\r\n")) |crlf| {
+            parser.scan_work += crlf + 1;
+            return .invalid;
+        }
+        if (buffer.len > parser.max_request_line_bytes) return .too_large;
+        parser.scan = buffer.len;
+        return .need_more;
+    };
+    parser.scan_work += space + 1;
+    const abs_space = search_start + space;
+    const target = buffer[parser.mark..abs_space];
+    if (abs_space > parser.max_request_line_bytes) return .too_large;
+    const view = parse_request_target(req.method, target) orelse return .invalid;
+    req.target = target;
+    req.path = view.path;
+    req.query = view.query;
+    enter_state(parser, .protocol, abs_space + 1);
+    return .advanced;
+}
+
+fn parse_protocol(parser: *HttpParser, buffer: []u8, search_start: usize) LineOutcome {
+    const newline = std.mem.indexOfScalar(u8, buffer[search_start..], '\n') orelse {
+        parser.scan_work += buffer.len - search_start;
+        if (buffer.len > parser.max_request_line_bytes) return .too_large;
+        parser.scan = buffer.len;
+        return .need_more;
+    };
+    parser.scan_work += newline + 1;
+    const abs_newline = search_start + newline;
+    if (abs_newline + 1 > parser.max_request_line_bytes) return .too_large;
+    if (abs_newline == parser.mark or buffer[abs_newline - 1] != '\r') return .invalid;
+    const proto = buffer[parser.mark .. abs_newline - 1];
+    if (!std.mem.eql(u8, proto, "HTTP/1.1")) return .invalid;
+    enter_state(parser, .headers, abs_newline + 1);
+    return .advanced;
+}
+
+/// Outcome of one complete initial-header block; the caller owns state changes.
+const HeaderOutcome = union(enum) {
+    need_more,
+    invalid,
+    headers_too_large,
+    body_too_large,
+    ready: usize,
+    continue_parsing,
+};
+
+/// Parses and validates initial fields, committing either streaming metadata or
+/// the buffered parser state. Returns `need_more` with `parser.scan` retained.
+fn parse_header_block(
+    parser: *HttpParser,
+    req: *Request,
+    buffer: []u8,
+    search_start: usize,
+    head_result: ?*HeadResult,
+) HeaderOutcome {
+    const offset = simd.index_of_header_end(buffer[search_start..]) orelse {
+        parser.scan_work += buffer.len - search_start;
+        if (buffer.len - parser.mark > parser.max_header_bytes) return .headers_too_large;
+        // The four-byte terminator may straddle the delivery boundary.
+        parser.scan = @max(parser.mark, buffer.len -| 3);
+        return .need_more;
+    };
+    parser.scan_work += offset + 4;
+    const end = search_start + offset;
+    if (end - parser.mark > parser.max_header_bytes) return .headers_too_large;
+
+    var lines = std.mem.splitSequence(u8, buffer[parser.mark..end], "\r\n");
+    var has_host = false;
+    var has_cl = false;
+    var has_te = false;
+    var cl_too_large = false;
+    var logical_length: u64 = 0;
+
     while (lines.next()) |line| {
-        field_count += 1;
-        if (field_count > 64) return false;
-
-        const colon = std.mem.indexOfScalar(u8, line, ':') orelse return false;
+        if (line.len == 0) continue;
+        const colon = std.mem.indexOfScalar(u8, line, ':') orelse return .invalid;
         const name = line[0..colon];
-        if (name.len == 0) return false;
+        if (name.len == 0) return .invalid;
         for (name) |c| {
-            if (!is_tchar(c)) return false;
+            if (!is_tchar(c)) return .invalid;
         }
 
-        if (std.ascii.eqlIgnoreCase(name, "Content-Length") or
-            std.ascii.eqlIgnoreCase(name, "Transfer-Encoding") or
-            std.ascii.eqlIgnoreCase(name, "Host"))
-        {
-            return false;
+        var val_start = colon + 1;
+        while (val_start < line.len and (line[val_start] == ' ' or line[val_start] == '\t')) {
+            val_start += 1;
+        }
+        var val_end = line.len;
+        while (val_end > val_start and (line[val_end - 1] == ' ' or line[val_end - 1] == '\t')) {
+            val_end -= 1;
+        }
+        const value = line[val_start..val_end];
+        if (!simd.valid_http_field_value(value)) return .invalid;
+
+        if (std.ascii.eqlIgnoreCase(name, "Host")) {
+            if (has_host or value.len == 0) return .invalid;
+            has_host = true;
         }
 
-        for (line[colon + 1 ..]) |c| {
-            if ((c < 32 and c != '\t') or c == 127) return false;
+        if (std.ascii.eqlIgnoreCase(name, "Transfer-Encoding")) {
+            if (has_te or !std.ascii.eqlIgnoreCase(value, "chunked")) return .invalid;
+            has_te = true;
+        }
+
+        if (std.ascii.eqlIgnoreCase(name, "Content-Length")) {
+            if (has_cl or !is_decimal(value)) return .invalid;
+            has_cl = true;
+            if (head_result) |result| {
+                logical_length = std.fmt.parseInt(u64, value, 10) catch return .invalid;
+                if (logical_length > std.math.maxInt(usize)) {
+                    result.buffered_failure = buffered_checkpoint(parser, req, .error_invalid);
+                } else if (logical_length > parser.max_body_size) {
+                    cl_too_large = true;
+                } else {
+                    parser.content_length = @intCast(logical_length);
+                }
+            } else {
+                const length = std.fmt.parseInt(usize, value, 10) catch return .invalid;
+                if (length > parser.max_body_size) {
+                    cl_too_large = true;
+                } else {
+                    parser.content_length = length;
+                }
+            }
+        }
+
+        if (req.header_count >= req.header_names.len) {
+            const extra_capacity = @min(parser.extra_header_names.len, parser.extra_header_values.len);
+            if (parser.extra_header_count >= extra_capacity) return .headers_too_large;
+            parser.extra_header_names[parser.extra_header_count] = name;
+            parser.extra_header_values[parser.extra_header_count] = value;
+            parser.extra_header_count += 1;
+        } else {
+            req.header_names[req.header_count] = name;
+            req.header_values[req.header_count] = value;
+            req.header_count += 1;
         }
     }
-    return true;
+
+    if (!has_host) return .invalid;
+    // The framing conflict is invalid regardless of the declared length.
+    if (has_te and has_cl) return .invalid;
+
+    if (head_result) |result| {
+        if (cl_too_large and result.buffered_failure == null) {
+            result.buffered_failure = buffered_checkpoint(parser, req, .error_too_large);
+        }
+        // RFC 9112 section 6.3: framing is structural; body storage policy follows routing.
+        result.ready = .{
+            .framing = if (has_te) .chunked else if (has_cl) .{ .content_length = logical_length } else .none,
+            .header_end = end + 4,
+            .headers = fetch.HeadersView.init_with_extra(
+                req.header_names[0..@min(req.header_count, req.header_names.len)],
+                req.header_values[0..@min(req.header_count, req.header_values.len)],
+                parser.extra_header_names[0..parser.extra_header_count],
+                parser.extra_header_values[0..parser.extra_header_count],
+            ),
+        };
+        return .{ .ready = end + 4 };
+    }
+    if (cl_too_large) return .body_too_large;
+    commit_buffered_head(parser, req, end + 4, has_te);
+    return .continue_parsing;
+}
+
+fn decoder_state(state: ParserState) body_decoder.State {
+    return switch (state) {
+        .body => .body,
+        .chunk_size => .chunk_size,
+        .chunk_ext => .chunk_ext,
+        .chunk_data => .chunk_data,
+        .chunk_crlf => .chunk_crlf,
+        .chunk_trailer => .chunk_trailer,
+        else => unreachable, // Only body states enter the collector.
+    };
+}
+
+fn project_decoder(parser: *const HttpParser) body_decoder.BodyDecoder {
+    return .{
+        .state = decoder_state(parser.state),
+        .limits = .{ .max_body_bytes = parser.max_body_size, .max_header_bytes = parser.max_header_bytes, .buffered = true },
+        .mark = parser.mark,
+        .scan = parser.scan,
+        .scan_work = parser.scan_work,
+        .chunk_length = parser.chunk_length,
+        .body_length = if (parser.state == .body) 0 else parser.body_length,
+        .remaining = if (parser.state == .body) parser.content_length else parser.chunk_length,
+    };
+}
+
+fn store_decoder(parser: *HttpParser, decoder: *const body_decoder.BodyDecoder, fixed: bool) void {
+    parser.state = switch (decoder.state) {
+        .body => .body,
+        .chunk_size => .chunk_size,
+        .chunk_ext => .chunk_ext,
+        .chunk_data => .chunk_data,
+        .chunk_crlf => .chunk_crlf,
+        .chunk_trailer => .chunk_trailer,
+        .done => .done,
+        .error_invalid => .error_invalid,
+        .error_too_large => .error_too_large,
+    };
+    parser.mark = decoder.mark;
+    parser.scan = decoder.scan;
+    parser.scan_work = decoder.scan_work;
+    parser.chunk_length = @intCast(decoder.chunk_length);
+    // Fixed-body completion never changed the legacy decoded-chunk counter.
+    if (!fixed) parser.body_length = @intCast(decoder.body_length);
+}
+
+fn collect_body(parser: *HttpParser, req: *Request, buffer: []u8) usize {
+    var decoder = project_decoder(parser);
+    const fixed = parser.state == .body;
+    const body_start = parser.mark;
+    while (decoder.mark < buffer.len) {
+        switch (body_decoder.next(&decoder, buffer)) {
+            .data => |bytes| {
+                if (!fixed) {
+                    const start = parser.body_start + @as(usize, @intCast(decoder.body_length));
+                    std.mem.copyForwards(u8, buffer[start..][0..bytes.len], bytes);
+                }
+                // The decoder offered exactly this borrowed prefix.
+                body_decoder.accept_payload(&decoder, bytes.len) catch unreachable;
+                if (fixed) {
+                    req.body = buffer[body_start..decoder.mark];
+                    store_decoder(parser, &decoder, fixed);
+                    return parser.mark;
+                }
+            },
+            .end => {
+                req.body = if (fixed) buffer[body_start..decoder.mark] else buffer[parser.body_start..][0..@intCast(decoder.body_length)];
+                store_decoder(parser, &decoder, fixed);
+                return parser.mark;
+            },
+            .need_more, .invalid, .too_large => {
+                store_decoder(parser, &decoder, fixed);
+                return buffer.len;
+            },
+        }
+    }
+    store_decoder(parser, &decoder, fixed);
+    return parser.mark;
 }
 
 /// Resets parser offsets and lengths before parsing the next request.

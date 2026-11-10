@@ -508,6 +508,7 @@ pub const ServerConfig = struct {
             .response_header_count = self.max_h2_response_header_count,
             .decoded_header_count = self.max_header_count,
             .dynamic_table_size = Http2Session.default_capacities.dynamic_table_size,
+            .route_param_extra_capacity = self.max_route_params -| request_module.max_route_params,
         };
     }
 

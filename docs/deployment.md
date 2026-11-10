@@ -23,8 +23,9 @@ the framework expects you to configure.
   `OPTIONS`, `TRACE`) before the handshake confirms; anything else gets
   `425 Too Early`.
   QUIC keeps early data disabled.
-- There is no hot certificate reload. Rotate by rolling a new process; keep the
-  old one draining until it exits. This is a dated decision, not an omission;
+- There is no hot certificate reload. Start a replacement, verify readiness,
+  then move traffic and drain old requests externally before shutdown; shutdown
+  cancels remaining active work. This is a dated decision;
   see [ADR 0003](adr/0003-tls-cluster-operational-boundaries.md) and
   [tls.md](tls.md).
 - A TLS cluster follows `build_cluster` -> `configure` -> `enable_https` ->
@@ -97,15 +98,17 @@ var server = try uz.Server.builder(init.io)
   `.data_path_unwired`, and the AF_XDP transport module stays available to
   callers that drive it directly. See [operations.md](operations.md).
 
-## 5. Shutdown and draining
+## 5. Shutdown and cleanup
 
 ```zig
 try app.catch_shutdown_signals();
 try app.run();
 ```
 
-- A signal requests the same drain path as `App.shutdown`: stop accepting,
-  cancel completions, drain connections, release the slab.
+- A signal requests the same cleanup path as `App.shutdown`: stop accepting,
+  close active connections, cancel producers/tokens, drain completions, and
+  release resources. Drain application requests through the traffic manager
+  before shutdown; this is not an automatic in-flight response drain.
 - `deinit` asserts drained state and panics if called from inside the loop.
   Always `defer app.deinit()`.
 - Clusters install one watcher with `Cluster.catch_shutdown_signals()` and

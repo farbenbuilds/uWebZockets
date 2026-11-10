@@ -1,0 +1,10 @@
+.{
+    .name = .uwebzockets_static_interop,
+    .version = "1.0.0",
+    .fingerprint = 0xf23b74adddd129a9,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .uwebzockets = .{ .path = "../.." },
+    },
+    .paths = .{ "build.zig", "build.zig.zon", "main.zig" },
+}
