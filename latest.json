@@ -4,7 +4,7 @@
     "formula": "candidate_median_rps >= baseline_median_rps * minimum_baseline_ratio",
     "minimum_baseline_ratio": 0.9,
     "passed": true,
-    "threshold_rps": 98441.973
+    "threshold_rps": 126748.638
   },
   "methodology": {
     "build_optimize": "ReleaseFast",
@@ -24,44 +24,44 @@
     }
   },
   "provenance": {
-    "baseline_flake_lock_sha256": "a83b090e14e3b52a5ee5453f5dace3dbb2d7264991fef5409ed8c764551ceb5a",
-    "baseline_sha": "f6756a297c47ce34d2f4d22da33b3cc4453f9bf5",
-    "candidate_flake_lock_sha256": "a83b090e14e3b52a5ee5453f5dace3dbb2d7264991fef5409ed8c764551ceb5a",
-    "candidate_sha": "f6756a297c47ce34d2f4d22da33b3cc4453f9bf5",
-    "event_name": "schedule",
+    "baseline_flake_lock_sha256": "94223deed9f5d74b7bd5e630a4491e9dc2ccb9ffcdfaceedff0afbf822149431",
+    "baseline_sha": "70a3e488bc6a754e63fd6f59690f68d9ca6e7d45",
+    "candidate_flake_lock_sha256": "94223deed9f5d74b7bd5e630a4491e9dc2ccb9ffcdfaceedff0afbf822149431",
+    "candidate_sha": "70a3e488bc6a754e63fd6f59690f68d9ca6e7d45",
+    "event_name": "workflow_dispatch",
     "git_ref": "refs/heads/main",
     "repository": "farbenbuilds/uWebZockets",
     "run_attempt": 1,
-    "run_id": 40176894022,
-    "workflow_run_url": "https://github.com/farbenbuilds/uWebZockets/actions/runs/40176894022"
+    "run_id": 42852431841,
+    "workflow_run_url": "https://github.com/farbenbuilds/uWebZockets/actions/runs/42852431841"
   },
-  "record_id": "40176894022-1-f6756a297c47",
-  "recorded_at": "2026-10-25T08:49:24Z",
+  "record_id": "42852431841-1-70a3e488bc6a",
+  "recorded_at": "2026-11-10T16:24:43Z",
   "results": {
     "baseline": {
-      "median_rps": 109379.97,
+      "median_rps": 140831.82,
       "samples_rps": [
-        109478.79,
-        109379.97,
-        101143.91
+        140831.82,
+        140623.26,
+        144523.44
       ]
     },
     "candidate": {
-      "median_rps": 108208.14,
+      "median_rps": 146595.18,
       "samples_rps": [
-        104332.3,
-        112643.05,
-        108208.14
+        146595.18,
+        144972.61,
+        146657.2
       ]
     },
-    "candidate_to_baseline_ratio": 0.9892866125306123
+    "candidate_to_baseline_ratio": 1.0409237060204148
   },
   "runner": {
     "architecture": "X64",
-    "cpu_model": "AMD EPYC 7763 64-Core Processor",
-    "image": "ubuntu24/20261023.334.3",
-    "kernel": "Linux 6.17.0-1022-azure #22-Ubuntu SMP Mon Jul 27 17:24:03 UTC 2026 x86_64 GNU/Linux",
-    "name": "GitHub Actions 1000005322",
+    "cpu_model": "AMD EPYC 9V45 96-Core Processor",
+    "image": "ubuntu24/20261101.360.1",
+    "kernel": "Linux 7.0.0-1017-azure #17~24.04.1-Ubuntu SMP PREEMPT Thu Sep 24 18:46:57 UTC 2026 x86_64 GNU/Linux",
+    "name": "GitHub Actions 1000006357",
     "os": "Linux"
   },
   "schema_version": 1,

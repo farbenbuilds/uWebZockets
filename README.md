@@ -6,6 +6,7 @@ See [CONTRACT.md](CONTRACT.md) for the guarantee and reproduction procedure.
 
 | Recorded UTC | Candidate | Candidate RPS | Baseline RPS | Ratio | Gate | Evidence |
 | --- | --- | ---: | ---: | ---: | --- | --- |
+| 2026-11-10T16:24:43Z | `70a3e488bc6a` | 146595.18 | 140831.82 | 1.0409 | pass | [record](records/2026/42852431841-1-70a3e488bc6a.json) |
 | 2026-10-25T08:49:24Z | `f6756a297c47` | 108208.14 | 109379.97 | 0.9893 | pass | [record](records/2026/40176894022-1-f6756a297c47.json) |
 | 2026-10-24T08:18:14Z | `f1cd472e20f5` | 153248.35 | 159774.96 | 0.9592 | pass | [record](records/2026/40077135119-1-f1cd472e20f5.json) |
 | 2026-10-23T08:55:58Z | `a74f1251389d` | 116213.50 | 111818.01 | 1.0393 | pass | [record](records/2026/39926000905-1-a74f1251389d.json) |
