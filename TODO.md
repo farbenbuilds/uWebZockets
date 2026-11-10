@@ -822,7 +822,9 @@ git push origin v1.9.0
 ## 5. Deferred feature track: GraphQL Wire Transport
 
 **Status:** deferred feature track, not part of 2.2.0. It remains available
-for a later minor release; no date is promised here.
+for a later minor release; no date is promised here. Re-declared on
+2026-11-10: all five G-* tasks are outside the 2.2.0 release and are not
+release blockers.
 
 **Objective:** bounded, zero-DOM GraphQL transport over HTTP and WebSocket
 without an application query execution engine.
