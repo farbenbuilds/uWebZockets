@@ -18,6 +18,45 @@ uses Semantic Versioning.
   `85bd081c9103c077a7cc98271d09334d0f1043d4` pending the separate `uwz/main`
   sync.
 
+## [2.3.0] - 2026-11-11
+
+### Added
+
+- Optional `uz.sql` with pure-Zig PostgreSQL framing, MD5/SCRAM-SHA-256,
+  PostgreSQL-compatible Unicode password preparation, and verified TLS 1.3.
+- Worker-local bounded connection pools, generation-checked leases and
+  waiters, prepared statements, bound pipelines, typed rows, transactions,
+  savepoints, deadlines, and plaintext/verified-TLS cancellation requests.
+- Checksum-protected embedded migrations with PostgreSQL advisory locks and
+  SQLite exclusive transactions, rollback, and execution bounds.
+- Optional SQLite 3.54.1 compiled by Zig, with startup-prepared statements,
+  WAL, foreign keys, busy handling, bounded results, and VM work budgets.
+- Explicit worker service hooks with readiness, bounded startup failures,
+  rollback, and reverse shutdown; owned service detail in cluster failures.
+- Runnable PostgreSQL database routes, SQLite CRUD, and transaction/outbox
+  examples; isolated PostgreSQL TLS CI, SQL fuzzing, and pool diagnostics.
+
+### Changed
+
+- SQL and SQLite are separately enabled with `-Dsql=true` and `-Dsqlite=true`.
+  The C ABI remains core-only.
+- Cluster execution lives in a dedicated module while preserving the public
+  worker-group surface.
+- Connection parking, HTTP/2 storage layout, async response completion, and
+  QUIC header-set lifetimes have dedicated owners with compatible aliases.
+  Parking slots use eight fewer bytes each without reducing capacity.
+- Release-owner-approved SQL-ALLOC-001 permits SQLite's internal C allocations;
+  PostgreSQL's query allocation checks and SQLite's execution/result bounds
+  remain enforced. See `docs/sql.md` and ADR 0013.
+
+### Security
+
+- SQL diagnostics omit credentials and parameter values. TLS chain/name and
+  SCRAM server-proof verification fail closed; cancellation quarantines
+  unknown transaction state and drains its owned completions.
+- Migration sources cannot escape their enclosing transactions, and checksum
+  or history changes fail closed with a bounded migration name.
+
 ## [2.2.0] - 2026-11-10
 
 Minor release that closes the response-streaming and static-asset gaps carried

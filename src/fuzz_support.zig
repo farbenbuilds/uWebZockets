@@ -7,3 +7,4 @@ pub const quic_packet = @import("quic/packet.zig");
 pub const quic_webtransport = @import("quic/webtransport.zig");
 pub const ws_mask = @import("ws/mask.zig");
 pub const multipart_streaming = @import("fuzz/multipart_streaming.zig");
+pub const sql_parse = @import("fuzz/sql_parse.zig");

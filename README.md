@@ -27,6 +27,15 @@ thread each, and reused without locking.
 [Client](docs/client.md) | [Deployment](docs/deployment.md) |
 [Operations](docs/operations.md) | [Roadmap](docs/roadmap.md)
 
+Optional worker-local database access is available through [SQL](docs/sql.md)
+with `-Dsql=true`; [module hooks](docs/modules.md) define startup and shutdown.
+The optional SQLite backend additionally requires `-Dsqlite=true` and uses
+the documented SQL-ALLOC-001 exception for upstream C allocations. The v2.3.0
+candidate still has an open strict allocation gate for PostgreSQL TLS:
+[the measured BoringSSL record path](benchmarks/results/sql_tls_allocation_v1/2026_11_11/README.md)
+allocates C heap memory after startup. SQL-ALLOC-002 is proposed, pending user
+approval; SQLite's exception does not cover it.
+
 ## Quick start
 
 With Nix installed, the shortest path to a running server is:
@@ -325,7 +334,7 @@ normal shutdown path; clusters use `Cluster.catch_shutdown_signals()`.
 ## Terminal development log
 
 `with_dev_log(true)` prints the `µWEBZOCKETS` wordmark and a Vite-style ready
-summary before the first accepting listener: `µWebZockets v2.2.0  ready in
+summary before the first accepting listener: `µWebZockets v2.3.0  ready in
 0.6 ms` followed by the `→ Local:` line; the elapsed time scales
 through nanoseconds, microseconds, milliseconds, and seconds. The wordmark
 collapses to a one-line `µWebZockets` mark when the terminal is narrower than

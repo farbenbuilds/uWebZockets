@@ -9,10 +9,38 @@ const max_udp_payload_size = @import("../quic/lsquic_api.zig").max_udp_payload_s
 
 const log = std.log.scoped(.udp);
 
+/// Pure Linux receive-message validation and bounded datagram views.
+pub const receive = @import("udp_receive.zig");
+
+/// Linux GRO availability; unsupported kernels retain ordinary reception.
+pub const GroStatus = union(enum) {
+    enabled,
+    unsupported: std.c.E,
+    disabled,
+};
+
+const receive_attempts = 8;
+const control_bytes = 256;
+
+const Received = struct {
+    batch: receive.Batch,
+    peer: std.Io.net.IpAddress,
+};
+
+const ReceiveOutcome = union(enum) {
+    received: Received,
+    would_block,
+    interrupted,
+    dropped: receive.ReceiveError,
+    failed: std.c.E,
+};
+
 /// Returns a bounded UDP/QUIC transport backed by completion-driven I/O.
 ///
-/// `Engine` must provide `init`, `start`, `process_datagram`, `process`,
-/// `next_timeout_ms`, `cooldown`, and `deinit` with the signatures used below.
+/// `Engine` provides `init`, `start`, `process`, `next_timeout_ms`, `cooldown`,
+/// `deinit`, and a datagram callback with the signatures used below.
+/// `process_datagram(data, peer)` retains the legacy bound-address contract.
+/// Optional `process_datagram_at(data, peer, local)` receives packet destinations.
 /// Packet storage is embedded and the transport allocates no receive buffers.
 /// Engine initialization may allocate according to the selected implementation.
 pub fn quic_transport(comptime Engine: type) type {
@@ -46,7 +74,13 @@ pub fn quic_transport(comptime Engine: type) type {
         /// Backend receive state owned by the active completion.
         read_state: xev.UDP.State = undefined,
         /// Fixed receive buffer reused after each callback returns.
-        read_buffer: [max_udp_payload_size]u8 = undefined,
+        read_buffer: [if (builtin.os.tag == .linux) receive.aggregate_bytes else max_udp_payload_size]u8 = undefined,
+        /// Linux ancillary storage reused only after the receive callback returns.
+        read_control: [if (builtin.os.tag == .linux) control_bytes else 0]u8 align(@alignOf(usize)) = undefined,
+        /// Kernel GRO support determined before reception starts.
+        gro_status: GroStatus = .disabled,
+        /// Successfully validated aggregates that carried UDP_GRO metadata.
+        gro_batches: u64 = 0,
         /// Whether a receive completion can reference this value.
         read_active: bool = false,
         /// Whether a receive-cancellation completion is outstanding.
@@ -79,6 +113,14 @@ pub fn quic_transport(comptime Engine: type) type {
             var socket = try xev.UDP.init(parsed_address);
             errdefer close_unregistered_socket(socket);
             try socket.bind(parsed_address);
+            const local_address = if (builtin.os.tag == .linux)
+                try linux_bound_address(xev.udp_fd(socket))
+            else
+                parsed_address;
+            const gro_status = if (builtin.os.tag == .linux)
+                try configure_linux_receive(xev.udp_fd(socket), local_address)
+            else
+                GroStatus.disabled;
 
             var engine = try Engine.init();
             errdefer engine.deinit();
@@ -88,10 +130,16 @@ pub fn quic_transport(comptime Engine: type) type {
                 .engine = engine,
                 .ssl_ctx = ssl_ctx,
                 .router = router,
-                .local_address = parsed_address,
+                .local_address = local_address,
                 .socket = socket,
                 .timer = timer,
+                .gro_status = gro_status,
             };
+        }
+
+        /// Fails a GRO-required verification run instead of accepting fallback.
+        pub fn require_gro(self: *const Self) error{GroUnavailable}!void {
+            if (self.gro_status != .enabled) return error.GroUnavailable;
         }
 
         /// Arms the UDP receive and QUIC timer completions.
@@ -112,15 +160,19 @@ pub fn quic_transport(comptime Engine: type) type {
             self.loop = loop;
             self.started = true;
             self.read_active = true;
-            self.socket.read(
-                loop,
-                &self.read_completion,
-                &self.read_state,
-                .{ .slice = &self.read_buffer },
-                Self,
-                self,
-                on_read,
-            );
+            if (builtin.os.tag == .linux) {
+                self.socket.poll(loop, &self.read_completion, .read, Self, self, on_read_ready);
+            } else {
+                self.socket.read(
+                    loop,
+                    &self.read_completion,
+                    &self.read_state,
+                    .{ .slice = &self.read_buffer },
+                    Self,
+                    self,
+                    on_read,
+                );
+            }
             self.start_timer();
         }
 
@@ -186,12 +238,75 @@ pub fn quic_transport(comptime Engine: type) type {
             };
             if (self.shutting_down) return .disarm;
             if (bytes_read != 0) {
-                self.engine.process_datagram(self.read_buffer[0..bytes_read], peer);
+                self.dispatch_packet(self.read_buffer[0..bytes_read], peer, self.local_address);
             }
             // A handler may have started shutdown during datagram processing.
             if (self.shutting_down) return .disarm;
             self.read_active = true;
             return .rearm;
+        }
+
+        fn on_read_ready(
+            user_data: ?*Self,
+            _: *xev.Loop,
+            _: *xev.Completion,
+            _: xev.UDP,
+            result: xev.PollError!xev.PollEvent,
+        ) xev.CallbackAction {
+            const self = user_data.?;
+            self.read_active = false;
+            _ = result catch |err| {
+                if (self.shutting_down or err == error.Canceled) return .disarm;
+                log.warn("udp readiness failed: {}", .{err});
+                self.shutdown();
+                return .disarm;
+            };
+            if (self.shutting_down) return .disarm;
+
+            var attempt: usize = 0;
+            while (attempt < receive_attempts) : (attempt += 1) {
+                const outcome = receive_linux(
+                    xev.udp_fd(self.socket),
+                    self.local_address,
+                    &self.read_buffer,
+                    &self.read_control,
+                );
+                switch (outcome) {
+                    .would_block => break,
+                    .interrupted => continue,
+                    .dropped => |err| {
+                        log.debug("udp message rejected: {}", .{err});
+                        continue;
+                    },
+                    .failed => |err| {
+                        log.warn("udp receive failed: {}", .{err});
+                        break;
+                    },
+                    .received => |received| {
+                        if (!self.dispatch_received(received)) return .disarm;
+                    },
+                }
+            }
+            self.read_active = true;
+            return .rearm;
+        }
+
+        fn dispatch_received(self: *Self, received: Received) bool {
+            var batch = received.batch;
+            if (batch.gro) self.gro_batches +|= 1;
+            while (batch.next()) |packet| {
+                self.dispatch_packet(packet, received.peer, batch.local_address);
+                if (self.shutting_down) return false;
+            }
+            return true;
+        }
+
+        fn dispatch_packet(self: *Self, data: []const u8, peer: std.Io.net.IpAddress, local: std.Io.net.IpAddress) void {
+            if (comptime @hasDecl(Engine, "process_datagram_at")) {
+                self.engine.process_datagram_at(data, peer, local);
+                return;
+            }
+            self.engine.process_datagram(data, peer);
         }
 
         fn close_socket(self: *Self) void {
@@ -344,4 +459,88 @@ pub fn quic_transport(comptime Engine: type) type {
 
 fn close_unregistered_socket(socket: xev.UDP) void {
     tcp.close_socket(xev.udp_fd(socket));
+}
+
+fn configure_linux_receive(fd: std.posix.socket_t, local: std.Io.net.IpAddress) !GroStatus {
+    const enabled: c_int = 1;
+    const level: c_int = if (local == .ip4) c.IPPROTO_IP else c.IPPROTO_IPV6;
+    const option: c_int = if (local == .ip4) c.IP_PKTINFO else c.IPV6_RECVPKTINFO;
+    if (c.setsockopt(fd, level, option, &enabled, @sizeOf(c_int)) != 0) return error.PacketInfoSetupFailed;
+    if (c.setsockopt(fd, receive.udp_level, receive.gro_type, &enabled, @sizeOf(c_int)) == 0) {
+        log.info("UDP receive GRO enabled", .{});
+        return .enabled;
+    }
+    const err: std.c.E = @enumFromInt(std.c._errno().*);
+    switch (err) {
+        .NOPROTOOPT, .OPNOTSUPP, .INVAL => {
+            log.warn("UDP receive GRO unavailable: {}; retaining ordinary datagrams", .{err});
+            return .{ .unsupported = err };
+        },
+        else => return error.GroSetupFailed,
+    }
+}
+
+fn linux_bound_address(fd: std.posix.socket_t) !std.Io.net.IpAddress {
+    var address: std.posix.sockaddr.storage = undefined;
+    var length: c.socklen_t = @sizeOf(std.posix.sockaddr.storage);
+    if (c.getsockname(fd, @ptrCast(&address), &length) != 0) return error.SocketAddressFailed;
+    return decode_native_address(&address, length);
+}
+
+fn decode_native_address(address: *const std.posix.sockaddr.storage, length: usize) receive.ReceiveError!std.Io.net.IpAddress {
+    if (length < @sizeOf(std.posix.sa_family_t) or length > @sizeOf(std.posix.sockaddr.storage)) return error.InvalidPeer;
+    switch (address.family) {
+        std.posix.AF.INET => {
+            if (length < @sizeOf(std.posix.sockaddr.in)) return error.InvalidPeer;
+            const value: *const std.posix.sockaddr.in = @ptrCast(address);
+            return .{ .ip4 = .{ .bytes = @bitCast(value.addr), .port = std.mem.bigToNative(u16, value.port) } };
+        },
+        std.posix.AF.INET6 => {
+            if (length < @sizeOf(std.posix.sockaddr.in6)) return error.InvalidPeer;
+            const value: *const std.posix.sockaddr.in6 = @ptrCast(address);
+            return .{ .ip6 = .{
+                .bytes = value.addr,
+                .port = std.mem.bigToNative(u16, value.port),
+                .flow = value.flowinfo,
+                .interface = .{ .index = value.scope_id },
+            } };
+        },
+        else => return error.InvalidPeer,
+    }
+}
+
+fn receive_linux(
+    fd: std.posix.socket_t,
+    local: std.Io.net.IpAddress,
+    payload: []u8,
+    control: []u8,
+) ReceiveOutcome {
+    var address: std.posix.sockaddr.storage = undefined;
+    var iov = c.struct_iovec{ .iov_base = payload.ptr, .iov_len = payload.len };
+    // recvmsg mutates these lengths and flags; each receive starts afresh.
+    var message = c.struct_msghdr{
+        .msg_name = &address,
+        .msg_namelen = @sizeOf(std.posix.sockaddr.storage),
+        .msg_iov = &iov,
+        .msg_iovlen = 1,
+        .msg_control = control.ptr,
+        .msg_controllen = @intCast(control.len),
+        .msg_flags = 0,
+    };
+    // io_uring UDP descriptors are blocking even though readiness is asynchronous.
+    const result = c.recvmsg(fd, &message, c.MSG_DONTWAIT);
+    if (result < 0) {
+        const err: std.c.E = @enumFromInt(std.c._errno().*);
+        return switch (err) {
+            .AGAIN => .would_block,
+            .INTR => .interrupted,
+            else => .{ .failed = err },
+        };
+    }
+    const length: usize = @intCast(result);
+    if (length > payload.len) return .{ .dropped = error.TruncatedDatagram };
+    if (message.msg_controllen > control.len) return .{ .dropped = error.TruncatedControl };
+    const peer = decode_native_address(&address, message.msg_namelen) catch |err| return .{ .dropped = err };
+    const batch = receive.decode(payload[0..length], control[0..message.msg_controllen], message.msg_flags, local) catch |err| return .{ .dropped = err };
+    return .{ .received = .{ .batch = batch, .peer = peer } };
 }

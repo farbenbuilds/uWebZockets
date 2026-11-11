@@ -152,6 +152,9 @@ jobs:
       - name: Fuzz bounded protocol parsers
         run: nix develop "path:." -c zig build fuzz --fuzz=100K -Doptimize=ReleaseSafe
 
+      - name: Fuzz UDP ancillary metadata and GRO boundaries
+        run: nix develop "path:." -c zig build udp-fuzz --fuzz=100K -Doptimize=ReleaseSafe
+
   artifacts:
     name: Cross-target compile checks
     runs-on: ubuntu-24.04

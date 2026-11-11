@@ -34,6 +34,11 @@
   "soak": {
     "malformed_requests": 300
   },
+  "sustained_requests": {
+    "requests": 1024,
+    "concurrency": 32,
+    "timeout_seconds": 5
+  },
   "accepted_rejections": [
     "stream_reset"
   ],

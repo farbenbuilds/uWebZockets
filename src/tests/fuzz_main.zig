@@ -12,6 +12,11 @@ const negotiate = support.negotiate;
 const hpack = support.http2_hpack;
 const multipart = support.multipart;
 
+comptime {
+    _ = @import("sql_fuzz_tests.zig");
+    _ = @import("udp_receive_fuzz_tests.zig");
+}
+
 test "fuzz: protocol parsers preserve bounded state" {
     try std.testing.fuzz({}, fuzz_protocol_parsers, .{
         .corpus = &.{

@@ -1601,6 +1601,23 @@ with dated restoration criteria in this section and
 - **kTLS integration and splice.** Keep the standalone helper and the
   measured-benefit condition recorded in the deliberate boundaries.
 
+The 2026-11-11 implementation extracts the cluster runtime, connection parking,
+HTTP/2 storage, response async lifecycle, and QUIC header-set ownership seams.
+Linux GRO now passes both backend regressions and the expanded HTTP/3 gate,
+including 1,024 sustained streams and wildcard source-address preservation.
+The separate XEV-008 poll-cancellation fix still requires maintained-fork
+integration. The current HttpArena adapter proposal is implemented and locally
+verified; its release pin, official run, and throughput acceptance remain open.
+See [the execution ledger](tasks/todo.md) and
+[protocol evidence](benchmarks/results/protocol_v2_3/2026_11_11/README.md).
+Complete active fork histories and their qpack/hpack companions are also
+[retained and replayed offline](benchmarks/results/dependency_archives_v2_3/2026_11_11/README.md).
+Second-machine resolution and native platform evidence remain open.
+A reviewed [local lsquic prerequisite](benchmarks/results/lsquic_uni_prerequisite_v1/2026_11_11/README.md)
+now implements outgoing uni streams and their required lifetime behavior.
+Reliable reset, session activation, compatible-client acceptance and published
+fork/pin integration remain required before WebTransport can be enabled.
+
 ### 8.3 Release verification
 
 The final source passed `zig fmt --check`, `scripts/check_conventions.sh`,
@@ -7081,17 +7098,19 @@ End of Part II.
 
 ### v2.3.0 checklist (`uz.sql`)
 
-- [ ] Module foundation (FS-0) starts/stops the SQL service per worker and
+- [x] Module foundation (FS-0) starts/stops the SQL service per worker and
       feature-gates it.
-- [ ] PostgreSQL wire parser (D-1) connects and authenticates, including
+- [x] PostgreSQL wire parser (D-1) connects and authenticates, including
       SCRAM-SHA-256 and TLS.
-- [ ] Per-core pool (D-2, D-3) runs with no locks or cross-thread sharing.
-- [ ] Typed rows (D-4, D-9) and transactions (D-7) are bounded and tested.
-- [ ] Migrations (D-8) are idempotent and checksum-protected.
-- [ ] SQLite (D-6) is optional and links only when enabled.
+- [x] Per-core pool (D-2, D-3) runs with no locks or cross-thread sharing.
+- [x] Typed rows (D-4, D-9) and transactions (D-7) are bounded and tested.
+- [x] Migrations (D-8) are idempotent and checksum-protected.
+- [x] SQLite (D-6) is optional and links only when enabled. The release owner
+      approved SQL-ALLOC-001 for upstream SQLite C allocations; bounded Zig
+      storage and PostgreSQL's allocation contract remain mandatory.
 - [ ] `/db`, `/queries`, `/updates` (D-5) exceed 300K RPS.
 - [ ] No request-path allocation; pool and row buffers are startup-owned.
-- [ ] `docs/sql.md` and the examples compile.
+- [x] `docs/sql.md` and the examples compile.
 
 ### v2.4.0 checklist (Comptime SSR Engine)
 

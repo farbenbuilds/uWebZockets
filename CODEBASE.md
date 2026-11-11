@@ -2,7 +2,7 @@
 
 ## Scope
 
-µWebZockets 2.2.0 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
+µWebZockets 2.3.0 is a Zig 0.16.0 HTTP/1.1, HTTP/2, WebSocket, and HTTP/3
 server library with bounded HPACK protocol storage. It combines an
 event-driven cross-platform transport (POSIX and Windows IOCP), fixed-capacity
 protocol state, a data-oriented router, and C libraries for TLS, compression, and QUIC.
@@ -31,7 +31,23 @@ libxev is reached through `src/core/xev.zig`, which selects io_uring when the
 kernel permits it and otherwise degrades to epoll so containers without
 io_uring still start and serve.
 
+`src/router/cluster_runtime.zig` owns worker construction and supervision.
+`src/core/connection_parking.zig` owns bounded pending delays; TCP owns timer
+effects and clears parking before application callbacks. HTTP/2 storage layout
+and carving live in `src/http2/session_storage.zig`; generation-checked response
+completion lives in `src/http/async_response.zig`. QUIC decoded field sections
+and one-shot release live in `src/quic/header_set.zig`. Existing public names
+remain direct aliases to these owners.
+
 ## Design rules
+
+Optional SQL lives under `src/sql/` and is enabled with `-Dsql=true`.
+Pure PostgreSQL protocol/authentication/row codecs are separate from the
+worker-owned asynchronous pool, transactions, and migration runners.
+`src/modules/service.zig` owns fixed-capacity lifecycle hooks; the core has no
+SQL dependency. The optional SQLite amalgamation links only with
+`-Dsqlite=true`. See [SQL](docs/sql.md), [module lifecycle](docs/modules.md),
+and [ADR 0013](docs/adr/0013-worker-local-sql.md) for ownership and acceptance limits.
 
 1. Data is grouped by access pattern. The pool's activity bitmap and the
    router's parallel node arrays are scanned independently from cold fields.

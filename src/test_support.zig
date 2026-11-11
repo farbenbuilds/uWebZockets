@@ -2,6 +2,18 @@ pub const fuzz_http_body = @import("fuzz_support.zig").fuzz_http_body;
 pub const streaming_request = @import("http/streaming_request.zig");
 pub const request_body = @import("http/request_body.zig");
 pub const public_api = @import("root.zig");
+/// Public aliases keep example tests within the existing production type graph.
+pub const Request = public_api.Request;
+pub const AsyncResponse = public_api.AsyncResponse;
+pub const Server = public_api.Server;
+pub const ServerConfig = public_api.ServerConfig;
+pub const modules = public_api.modules;
+pub const sql_protocol = @import("sql/protocol.zig");
+pub const sql_migrate = @import("sql/migrate.zig");
+pub const sql_fuzz = @import("fuzz/sql_parse.zig");
+pub const sql = if (@import("module_options").sql) @import("sql/root.zig") else struct {};
+pub const sql_sqlite = if (@import("module_options").sqlite) @import("sql/sqlite.zig") else struct {};
+pub const sql_migrate_sqlite = if (@import("module_options").sqlite) @import("sql/migrate_sqlite.zig") else struct {};
 pub const context = @import("core/context.zig");
 pub const loop = @import("core/loop.zig");
 pub const pool = @import("core/pool.zig");
@@ -59,6 +71,7 @@ pub const quic_validation = @import("quic/validation.zig");
 pub const webtransport = @import("quic/webtransport.zig");
 pub const datagram_ring = @import("quic/datagram_ring.zig");
 pub const udp = @import("core/udp.zig");
+pub const connection_parking = @import("core/connection_parking.zig");
 
 pub const app = @import("router/app.zig");
 pub const radix = @import("router/radix.zig");

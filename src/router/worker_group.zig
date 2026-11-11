@@ -7,6 +7,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const module_service = @import("../modules/service.zig");
 
 /// Lifecycle of a thread-per-core cluster.
 pub const Lifecycle = enum(u8) {
@@ -48,6 +49,13 @@ pub const FailurePhase = enum(u8) {
     cleanup,
 };
 
+/// Owned module startup detail independent of worker storage lifetime.
+pub const ServiceFailure = struct {
+    name: [module_service.max_name_bytes]u8 = @splat(0),
+    name_len: u8 = 0,
+    err: module_service.ServiceError,
+};
+
 /// First worker error observed by the supervisor.
 pub const WorkerFailure = struct {
     /// Zero-based index of the worker that failed.
@@ -56,6 +64,8 @@ pub const WorkerFailure = struct {
     phase: FailurePhase,
     /// Error returned by thread spawn, the worker loop, or cleanup.
     err: anyerror,
+    /// Owned bounded module detail survives worker storage cleanup.
+    service: ?ServiceFailure = null,
 };
 
 /// Thread-group start failure.
@@ -292,6 +302,24 @@ pub fn worker_group(comptime Context: type) type {
             self.failures += 1;
             if (self.first_failure == null) {
                 self.first_failure = .{ .index = index, .phase = phase, .err = err };
+            }
+        }
+
+        /// Records async module startup failure without borrowing worker storage.
+        pub fn record_startup_failure(
+            self: *Self,
+            index: usize,
+            err: anyerror,
+            startup_failure: module_service.Failure,
+        ) void {
+            std.debug.assert(startup_failure.name.len <= module_service.max_name_bytes);
+            var detail = ServiceFailure{ .err = startup_failure.err, .name_len = @intCast(startup_failure.name.len) };
+            @memcpy(detail.name[0..startup_failure.name.len], startup_failure.name);
+            self.lock_failure();
+            defer self.failure_lock.unlock();
+            self.failures += 1;
+            if (self.first_failure == null) {
+                self.first_failure = .{ .index = index, .phase = .run, .err = err, .service = detail };
             }
         }
 

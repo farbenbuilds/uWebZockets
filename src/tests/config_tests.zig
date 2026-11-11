@@ -235,10 +235,11 @@ test "config: default slab carries the router region at the end" {
     // Per-connection file slots, stream ids, HTTP/1 streaming state, and the
     // per-stream HTTP/2 body sink state are inline.
     // Five kqueue completions save 80 bytes per connection versus Linux.
+    // The parking action union saves eight bytes in each of nine slots.
     const expected_total: usize = switch (builtin.os.tag) {
-        .macos => 689_731_200,
-        .windows => 690_312_832,
-        else => 689_821_312,
+        .macos => 689_657_472,
+        .windows => 690_239_104,
+        else => 689_747_584,
     };
     comptime std.debug.assert(total == expected_total);
     try std.testing.expectEqual(expected_total, total);

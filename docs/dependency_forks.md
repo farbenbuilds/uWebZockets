@@ -225,6 +225,34 @@ One commit carries one patch. Do not mix formatting, dependency refreshes, or
 unrelated upstream merges into a `uwz` commit. A generated build input that is
 not a patch gets its own ledger row and commit.
 
+### Local proposals awaiting maintained-fork review, 2026-11-11
+
+These reviewed, tested commits are unpublished local proposals. They are not
+part of the active pins above. No library build or CI step reads or applies
+their review archives. Every commit records the required upstream reference,
+invariant, test evidence and retirement criterion.
+
+| Proposed ID | Fork | Local commit | Invariant and evidence | Retirement criterion |
+| --- | --- | --- | --- | --- |
+| XEV-008 | libxev | `5b2cde22c4ab8e472b4d810a2f7225ff95cd61d5` | Canceled io_uring polls report typed `Canceled`; native Debug/ReleaseSafe and both downstream Linux backends pass | Base contains equivalent mapping and lifecycle regression |
+| LSQ-003 | lsquic | `f2c1329fd116fa7f6d40d142aeb55359c4ad8501` | ACK callback types match exactly; strict real TLS sanitizer regression passes | Base provides equivalent typed callbacks |
+| LSQ-004 | lsquic | `f7bfd697c967f550bf59fc6a720f48a15d3191d7` | Physical QPACK storage remains valid at logical capacity zero; strict HTTP/3 sanitizer regression passes | Base handles zero capacity without zero-length VLAs |
+| LSQ-005 | lsquic | `5accc8aea1d4a0fb2e02530686ab1ab42527f98f` | Immediate engine destruction reclaims retired crypto exactly once; unchanged TLS-only LSan probe passes | Base reclaims service-only retired crypto |
+| LSQ-006 | lsquic | `1aaac18c467e8b19a481dc6ef96db2b798e76edc` | Framing tests enforce LSQ-001 stream errors, sibling isolation and header ownership; all 83 existing Linux cases pass | Base tests equivalent maintained error policy |
+| LSQ-007 | lsquic | `0f7382b17b38d7fb0496a0b75b3c66ace79e49e8` | Synchronous uni creation preserves credit and lifetime; eight real-engine groups pass three modes | Base provides equivalent creation and lifetime semantics |
+
+The lsquic [review evidence and incremental bundle](../benchmarks/results/lsquic_uni_prerequisite_v1/2026_11_11/README.md)
+also retain the baseline failures, independent reviews, source identities and
+cross-compilation limits. The XEV-008 handoff is at
+`/tmp/uwz-xev008-maintainer-handoff` in the implementation workspace.
+
+An authorized maintainer must import each proposal into a fork scratch branch,
+review it with a PR assignee and existing repository label, verify branch
+protections, and merge into the append-only integration branch. Then fetch the
+published integration commit, resolve fresh package hashes, update and compare
+all four manifest views, and run the required empty-cache and downstream gates.
+These local commit IDs are never substitutes for that integration process.
+
 ## Security and provenance review
 
 Each mirror sync and integration merge is a supply-chain review:

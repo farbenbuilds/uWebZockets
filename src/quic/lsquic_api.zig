@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const c = @import("c");
+const udp_control = @import("../core/udp_control.zig");
 
 pub const invalid_socket: std.posix.socket_t = if (builtin.os.tag == .windows)
     @ptrFromInt(std.math.maxInt(usize))
@@ -76,6 +77,8 @@ pub const Sockaddr = struct {
                 sockaddr.family = std.posix.AF.INET6;
                 sockaddr.port = std.mem.nativeToBig(u16, value.port);
                 sockaddr.addr = value.bytes;
+                sockaddr.flowinfo = value.flow;
+                sockaddr.scope_id = value.interface.index;
                 result.length = @sizeOf(std.posix.sockaddr.in6);
             },
         }
@@ -170,12 +173,23 @@ pub fn send_packets(
                 break;
             }
         } else {
+            var control: [128]u8 align(@alignOf(usize)) = undefined;
             var message = c.struct_msghdr{
                 .msg_name = @ptrCast(@constCast(spec.dest_sa)),
                 .msg_namelen = address_length,
                 .msg_iov = spec.iov,
                 .msg_iovlen = @intCast(spec.iovlen),
             };
+            if (builtin.os.tag == .linux) {
+                const control_length = append_source_control(&control, 0, spec.local_sa, spec.dest_sa.*.sa_family) catch {
+                    set_errno(.INVAL);
+                    break :packet_loop;
+                };
+                if (control_length != 0) {
+                    message.msg_control = &control;
+                    message.msg_controllen = @intCast(control_length);
+                }
+            }
             const written = c.sendmsg(fd, &message, c.MSG_DONTWAIT | c.MSG_NOSIGNAL);
             if (written < 0) break;
             if (@as(usize, @intCast(written)) != total_size) {
@@ -193,7 +207,7 @@ pub fn send_packets(
 const gso_max_segments = 64;
 const udp_segment_option: c_int = 103;
 
-/// Sends an equal-sized same-destination batch with one UDP_SEGMENT sendmsg.
+/// Sends an equal-sized same-peer/source batch with one UDP_SEGMENT sendmsg.
 ///
 /// Returns the segment count when the kernel accepted the batch, null when the
 /// batch is not eligible or the send failed before bytes were transmitted, and
@@ -230,6 +244,7 @@ fn send_segmented(
         if (spec.dest_sa.*.sa_family != first.dest_sa.*.sa_family) return null;
         const address = @as([*]const u8, @ptrCast(spec.dest_sa))[0..address_length];
         if (!std.mem.eql(u8, first_address, address)) return null;
+        if (!same_source(first.local_sa, spec.local_sa, first.dest_sa.*.sa_family)) return null;
 
         var packet_size: usize = 0;
         for (spec.iov[0..spec.iovlen]) |part| {
@@ -245,20 +260,10 @@ fn send_segmented(
         if (packet_size != segment_size) return null;
     }
 
-    const cmsg_data_offset = comptime std.mem.alignForward(
-        usize,
-        @sizeOf(c.struct_cmsghdr),
-        @alignOf(usize),
-    );
-    const cmsg_len = comptime cmsg_data_offset + @sizeOf(u16);
-    var control: [cmsg_len]u8 align(@alignOf(c.struct_cmsghdr)) = undefined;
-    const cmsg: *c.struct_cmsghdr = @ptrCast(&control);
-    cmsg.* = std.mem.zeroes(c.struct_cmsghdr);
-    cmsg.cmsg_len = @intCast(cmsg_len);
-    cmsg.cmsg_level = c.IPPROTO_UDP;
-    cmsg.cmsg_type = udp_segment_option;
-    const segment_value: *u16 = @ptrCast(@alignCast(&control[cmsg_data_offset]));
-    segment_value.* = @intCast(segment_size);
+    var control: [128]u8 align(@alignOf(usize)) = undefined;
+    const size: u16 = @intCast(segment_size);
+    var control_length = udp_control.append(&control, 0, c.IPPROTO_UDP, udp_segment_option, std.mem.asBytes(&size)) catch return null;
+    control_length = append_source_control(&control, control_length, first.local_sa, first.dest_sa.*.sa_family) catch return null;
 
     var message = c.struct_msghdr{
         .msg_name = @ptrCast(@constCast(first.dest_sa)),
@@ -266,7 +271,7 @@ fn send_segmented(
         .msg_iov = &iovecs,
         .msg_iovlen = @intCast(iov_count),
         .msg_control = &control,
-        .msg_controllen = cmsg.cmsg_len,
+        .msg_controllen = @intCast(control_length),
     };
     const written = c.sendmsg(fd, &message, c.MSG_DONTWAIT | c.MSG_NOSIGNAL);
     if (written < 0) return null;
@@ -279,6 +284,40 @@ fn send_segmented(
         return 0;
     }
     return segments;
+}
+
+fn same_source(first: [*c]const c.struct_sockaddr, second: [*c]const c.struct_sockaddr, family: c.sa_family_t) bool {
+    if (first == null or second == null) return first == second;
+    if (first.*.sa_family != family or second.*.sa_family != family) return false;
+    const length: usize = switch (family) {
+        c.AF_INET => @sizeOf(std.posix.sockaddr.in),
+        c.AF_INET6 => @sizeOf(std.posix.sockaddr.in6),
+        else => return false,
+    };
+    return std.mem.eql(u8, @as([*]const u8, @ptrCast(first))[0..length], @as([*]const u8, @ptrCast(second))[0..length]);
+}
+
+fn append_source_control(
+    control: []u8,
+    offset: usize,
+    source: [*c]const c.struct_sockaddr,
+    family: c.sa_family_t,
+) error{ InvalidSource, BufferTooSmall }!usize {
+    if (source == null) return offset;
+    if (source.*.sa_family != family) return error.InvalidSource;
+    if (family == c.AF_INET) {
+        const address: *const std.posix.sockaddr.in = @ptrCast(@alignCast(source));
+        const info = udp_control.PacketInfo4{
+            .interface = 0,
+            .specific_destination = @bitCast(address.addr),
+            .destination = @splat(0),
+        };
+        return udp_control.append(control, offset, c.IPPROTO_IP, c.IP_PKTINFO, std.mem.asBytes(&info));
+    }
+    if (family != c.AF_INET6) return error.InvalidSource;
+    const address: *const std.posix.sockaddr.in6 = @ptrCast(@alignCast(source));
+    const info = udp_control.PacketInfo6{ .destination = address.addr, .interface = address.scope_id };
+    return udp_control.append(control, offset, c.IPPROTO_IPV6, c.IPV6_PKTINFO, std.mem.asBytes(&info));
 }
 
 fn winsock_errno(wsa_error: c_int) std.c.E {

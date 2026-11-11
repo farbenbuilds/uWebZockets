@@ -281,6 +281,11 @@ fn streaming_route_surface(init: std.process.Init) !void {
 }
 
 pub fn main(init: std.process.Init) !void {
+    if (comptime @import("consumer_options").exercise_sql and @hasDecl(uz.sql, "Sql")) {
+        if (init.environ_map.get("UWZ_PACKAGE_CONSUMER_SQL") != null) {
+            try sql_surface(init.gpa);
+        }
+    }
     if (init.environ_map.get("UWZ_PACKAGE_CONSUMER_CLUSTER") != null) {
         try cluster_surface(init, std.heap.page_allocator);
     }
@@ -291,4 +296,32 @@ pub fn main(init: std.process.Init) !void {
     _ = try app.get("/", hello);
     try app.listen("0.0.0.0", 3000);
     try app.run();
+}
+
+fn sql_surface(allocator: std.mem.Allocator) !void {
+    var module = try uz.sql.Sql.init(allocator, .{
+        .user = "consumer",
+        .database = "consumer",
+        .allow_plaintext = true,
+    });
+    defer module.db.deinit();
+    const hooks: uz.modules.ServiceHooks = module.hooks();
+    _ = hooks;
+    const query_fn: *const fn (*uz.sql.Db, *uz.sql.Query) uz.sql.RuntimeError!void = &uz.sql.Db.query;
+    const begin_fn: *const fn (*uz.sql.Tx, *uz.sql.Query) uz.sql.RuntimeError!void = &uz.sql.Tx.begin;
+    _ = query_fn;
+    _ = begin_fn;
+    const migration = uz.sql.migrate.embedded(1, "consumer", "CREATE TABLE consumer(id INTEGER);");
+    _ = migration;
+    if (comptime @hasDecl(uz.sql.sqlite, "Db")) {
+        var statements: [1]uz.sql.sqlite.Prepared = undefined;
+        var lookaside: [8192]u8 align(8) = undefined;
+        var db = try uz.sql.sqlite.Db.init(.{}, &statements, &lookaside);
+        defer db.deinit();
+        try db.prepare(0, "SELECT ?1");
+        db.seal();
+        var rows = try db.query(0, &.{.{ .value = .{ .int8 = 42 } }});
+        defer rows.deinit();
+        _ = try rows.next();
+    }
 }

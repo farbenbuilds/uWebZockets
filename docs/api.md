@@ -8,6 +8,8 @@ map; each linked protocol document has the wire-level detail.
 - [quic.md](quic.md) — HTTP/3, QPACK, WebTransport status
 - [websocket.md](websocket.md) — RFC 6455, compression, pub/sub
 - [json_rpc.md](json_rpc.md) — JSON-RPC 2.0
+- [modules.md](modules.md) — bounded worker resource lifecycle
+- [sql.md](sql.md) — optional PostgreSQL, SQLite, typed rows, and migrations
 - [client.md](client.md) — outbound HTTP/1.1 client
 - [multipart.md](multipart.md) — bounded incremental multipart events and acknowledgement
 - [memory_model.md](memory_model.md) — capacities, slab layout, backpressure

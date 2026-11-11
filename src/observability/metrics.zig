@@ -19,6 +19,11 @@ pub const Slot = enum(u8) {
     xdp_frames_sent,
     xdp_kernel_bypass_fallbacks,
     kernel_bypass_active,
+    sql_active,
+    sql_idle,
+    sql_waiting,
+    sql_failed,
+    sql_reconnects,
 };
 
 const slot_fields = @typeInfo(Slot).@"enum".fields;
@@ -90,14 +95,14 @@ pub const Registry = struct {
 pub fn metric_name(comptime which: Slot) []const u8 {
     const tag = @tagName(which);
     return switch (which) {
-        .kernel_bypass_active => "uwz_" ++ tag,
+        .kernel_bypass_active, .sql_active, .sql_idle, .sql_waiting, .sql_failed => "uwz_" ++ tag,
         else => "uwz_" ++ tag ++ "_total",
     };
 }
 
 pub fn metric_kind(comptime which: Slot) []const u8 {
     return switch (which) {
-        .kernel_bypass_active => "gauge",
+        .kernel_bypass_active, .sql_active, .sql_idle, .sql_waiting, .sql_failed => "gauge",
         else => "counter",
     };
 }

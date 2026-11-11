@@ -333,8 +333,18 @@ pub fn quic_engine(
             self.stream_pool.deinit();
         }
 
-        /// Submits one peer datagram and immediately services ready connections.
+        /// Submits a datagram using the listener's bound local address.
         pub fn process_datagram(self: *Self, data: []const u8, peer: std.Io.net.IpAddress) void {
+            self.process_datagram_native(data, peer, &self.local_address);
+        }
+
+        /// Submits a datagram with its actual packet-info destination.
+        pub fn process_datagram_at(self: *Self, data: []const u8, peer: std.Io.net.IpAddress, local: std.Io.net.IpAddress) void {
+            const address = api.Sockaddr.init(local);
+            self.process_datagram_native(data, peer, &address);
+        }
+
+        fn process_datagram_native(self: *Self, data: []const u8, peer: std.Io.net.IpAddress, local: *const api.Sockaddr) void {
             const engine = self.engine orelse return;
             if (data.len == 0 or data.len > api.max_udp_payload_size) return;
 
@@ -346,7 +356,7 @@ pub fn quic_engine(
                 engine,
                 data.ptr,
                 data.len,
-                self.local_address.ptr(),
+                local.ptr(),
                 peer_address.ptr(),
                 self,
                 0,

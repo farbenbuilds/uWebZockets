@@ -1,0 +1,57 @@
+name: SQL integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: sql-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  sql:
+    name: PostgreSQL TLS and SQLite (sanitize=${{ matrix.sanitize }})
+    runs-on: ubuntu-24.04
+    environment: Testing
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitize: [false, true]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build
+        with:
+          cache-suffix: sql-${{ matrix.sanitize }}
+      - name: Live PostgreSQL TLS and SQLite tests
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:strict_string_checks=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: nix develop "path:." -c sh scripts/test_sql.sh -Doptimize=ReleaseSafe -Dsanitize=${{ matrix.sanitize }} --summary all
+      - name: Compile runnable SQL examples
+        run: nix develop "path:." -c zig build sql-examples -Dsql=true -Dsqlite=true -Doptimize=ReleaseSafe
+      - name: Compile a filtered SQL package consumer
+        if: matrix.sanitize == false
+        run: nix develop "path:." -c sh scripts/check_package_paths.sh -Dsql=true -Dsqlite=true
+      - name: Verify SQL feature exclusion
+        if: matrix.sanitize == false
+        run: nix develop "path:." -c sh scripts/check_sql_feature_gates.sh
+
+      - name: Fuzz PostgreSQL frames and migration checksums
+        if: matrix.sanitize == false
+        run: nix develop "path:." -c zig build sql-fuzz --fuzz=100K -Doptimize=ReleaseSafe
+
+      - name: Fuzz SQLite bound values
+        if: matrix.sanitize == false
+        run: nix develop "path:." -c zig build sqlite-fuzz --fuzz=100K -Dsql=true -Dsqlite=true -Doptimize=ReleaseSafe
