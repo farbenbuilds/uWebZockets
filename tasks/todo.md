@@ -42,6 +42,12 @@
       API and required lifetime fixes; eight real-engine groups in Debug,
       ReleaseSafe and strict sanitizers, all 83 existing native cases, and
       Windows/macOS production-library cross-compilation pass.
+- [x] Section 8.2 reliable-reset functional prerequisite: real lost-prefix
+      recovery, full-width metadata, frozen flow credit, header ownership,
+      obsolete ACKs and eight-stream ACK batching; 83 upstream Debug cases,
+      ten ReleaseSafe regressions, Windows/macOS production compilation and
+      native pinned quic-go interoperability pass. The proposal is local;
+      remaining smoke/security runs are deferred by the user.
 - [x] Release metadata synchronized to 2.3.0; no tag or publication.
 - [x] Independent slice reviews, findings resolved and changed work
       re-reviewed, including the final adapter and evidence package.
@@ -68,6 +74,12 @@
   crypto-cleanup fixes are reviewed local commits LSQ-003 through LSQ-007;
   `benchmarks/results/lsquic_uni_prerequisite_v1/2026_11_11/README.md` records
   their exact evidence and mandatory maintained-fork integration steps.
+  The reliable-reset functional proposal is now frozen at
+  `3640992bb231d3f0f2647e03fda6a2776fcc23ca`; its
+  [source and evidence](../benchmarks/results/lsquic_reliable_reset_prerequisite_v1/2026_11_13/README.md)
+  retain the passing regressions and independent native interoperability.
+  Draft-16 SETTINGS, long-lived CONNECT, child association, live session
+  integration, client acceptance and published fork/pin updates remain open.
 - Dependency provenance still encounters the user's pre-existing h1spec
   checkout mismatch. The recorded pin passed 33/33 tests in an isolated
   checkout; restoring the user's checkout awaits their answer.

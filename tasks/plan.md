@@ -183,3 +183,30 @@ functional evidence are preserved in the
 [checkpoint artifact](../benchmarks/results/lsquic_reliable_reset_checkpoint_v1/2026_11_12/README.md).
 Its handoff records pending functional checks and receive advertisement.
 The full v2.3.0 objective remains unfinished and paused.
+
+## Resumed functional prerequisites, 2026-11-13
+
+Implementation resumed after the checkpoint. The reliable-reset proposal is
+frozen at `3640992bb231d3f0f2647e03fda6a2776fcc23ca`; its
+[functional evidence](../benchmarks/results/lsquic_reliable_reset_prerequisite_v1/2026_11_13/README.md)
+records all 83 upstream Debug cases, ten ReleaseSafe regressions, both-role
+ACK batching and shrink recovery, native pinned quic-go interoperability and
+Windows/macOS production-library compilation. The final commit changes only
+tests. Native stream storage grows by 40 bytes; packet/frame storage and the
+settings layout remain unchanged. Independent review found no actionable
+issues. Remaining smoke/security runs are deferred by the user.
+
+The next isolated fork starts from that exact proposal. Add a named default-off
+draft-16 configuration and SETTINGS-completion callback, then generation,
+validated peer snapshots and quiescent notification. The legacy macro path
+emits obsolete settings and must remain disabled. Start with a compile RED
+for the missing public declarations, add declaration/default plumbing only,
+then require a real encrypted-engine wire RED before implementing generation.
+Verify disabled, enabled flow-off and enabled flow-on wire settings.
+
+Keep CONNECT admission and session policy in Zig. Classify children only at
+their initial association prefix, retain full 62-bit session IDs and actual
+encoded prefix lengths, and preserve that prefix floor across WT child resets
+and STOP_SENDING. Generic QUIC reset behavior stays independent of WT policy.
+Root pins and capability bits remain unchanged until maintained-fork review
+and publication. The full v2.3.0 objective remains active and incomplete.
