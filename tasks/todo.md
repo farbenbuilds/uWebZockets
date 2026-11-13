@@ -48,6 +48,11 @@
       ten ReleaseSafe regressions, Windows/macOS production compilation and
       native pinned quic-go interoperability pass. The proposal is local;
       remaining smoke/security runs are deferred by the user.
+- [x] Section 8.2 WebTransport SETTINGS prerequisite: opt-in draft-16 writer,
+      immutable peer query and quiescent notification; real encrypted
+      generation, fragmented/invalid control delivery and lifecycle regressions
+      pass in Debug, ReleaseSafe and ReleaseFast. Source and evidence are
+      archived; the proposal is unpublished and live sessions remain open.
 - [x] Release metadata synchronized to 2.3.0; no tag or publication.
 - [x] Independent slice reviews, findings resolved and changed work
       re-reviewed, including the final adapter and evidence package.
@@ -78,7 +83,11 @@
   `3640992bb231d3f0f2647e03fda6a2776fcc23ca`; its
   [source and evidence](../benchmarks/results/lsquic_reliable_reset_prerequisite_v1/2026_11_13/README.md)
   retain the passing regressions and independent native interoperability.
-  Draft-16 SETTINGS, long-lived CONNECT, child association, live session
+  The following local SETTINGS proposal is frozen at
+  `8b0ef12414cdcf7b8c20e0b9f4fceb321358c2d0`; its
+  [source and evidence](../benchmarks/results/lsquic_webtransport_settings_v1/2026_11_13/README.md)
+  preserve generation, immutable peer publication and control-delivery checks.
+  Published draft-16 SETTINGS, long-lived CONNECT, child association, live session
   integration, client acceptance and published fork/pin updates remain open.
 - Dependency provenance still encounters the user's pre-existing h1spec
   checkout mismatch. The recorded pin passed 33/33 tests in an isolated

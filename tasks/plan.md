@@ -137,6 +137,13 @@ and Go toolchain are verification tools outside the library build.
 
 ## Following WebTransport slice: live sessions
 
+SETTINGS checkpoint, 2026-11-13: local proposal
+`8b0ef12414cdcf7b8c20e0b9f4fceb321358c2d0` adds opt-in bounded generation,
+an immutable peer snapshot and quiescent notification. Its
+[source and functional evidence](../benchmarks/results/lsquic_webtransport_settings_v1/2026_11_13/README.md)
+are retained separately from root dependency integration. Smoke/security
+runs remain deferred. CONNECT and child-stream work is still required.
+
 After the reset candidate is reviewed, extend the fork's draft-16 SETTINGS,
 negotiation snapshot/notification, long-lived CONNECT and raw child-stream
 classification. Keep parsing and packet ownership in the fork; session
