@@ -53,6 +53,10 @@
       generation, fragmented/invalid control delivery and lifecycle regressions
       pass in Debug, ReleaseSafe and ReleaseFast. Source and evidence are
       archived; the proposal is unpublished and live sessions remain open.
+- [x] Section 8.2 stream-credit prerequisite: WT-only client uni admission and
+      advertisement agree; outgoing/incoming bidi credit follows initiator.
+      Real encrypted uni limits and four raw bidi halves pass in all three
+      build modes. The reviewed local proposal remains unpublished.
 - [x] Release metadata synchronized to 2.3.0; no tag or publication.
 - [x] Independent slice reviews, findings resolved and changed work
       re-reviewed, including the final adapter and evidence package.
@@ -87,6 +91,8 @@
   `8b0ef12414cdcf7b8c20e0b9f4fceb321358c2d0`; its
   [source and evidence](../benchmarks/results/lsquic_webtransport_settings_v1/2026_11_13/README.md)
   preserve generation, immutable peer publication and control-delivery checks.
+  The following [stream-credit proposal](../benchmarks/results/lsquic_webtransport_credit_v1/2026_11_13/README.md)
+  is frozen at `9f0088c58fe67cccf1871dc172c90c2ec6f97944`.
   Published draft-16 SETTINGS, long-lived CONNECT, child association, live session
   integration, client acceptance and published fork/pin updates remain open.
 - Dependency provenance still encounters the user's pre-existing h1spec

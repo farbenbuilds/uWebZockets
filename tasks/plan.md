@@ -144,6 +144,15 @@ an immutable peer snapshot and quiescent notification. Its
 are retained separately from root dependency integration. Smoke/security
 runs remain deferred. CONNECT and child-stream work is still required.
 
+Stream-credit checkpoint: local proposal
+`9f0088c58fe67cccf1871dc172c90c2ec6f97944` aligns WT client uni admission
+and advertisement and selects bidi send credit by initiator. The
+[functional evidence](../benchmarks/results/lsquic_webtransport_credit_v1/2026_11_13/README.md)
+retains actual peer transport parameters, exact uni exhaustion and four bidi
+halves. WT client bidi admission still needs to match its advertised limit
+when server child-stream classification is added. Ordinary HTTP defaults stay
+unchanged; root dependency integration remains separate.
+
 After the reset candidate is reviewed, extend the fork's draft-16 SETTINGS,
 negotiation snapshot/notification, long-lived CONNECT and raw child-stream
 classification. Keep parsing and packet ownership in the fork; session
