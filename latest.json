@@ -4,7 +4,7 @@
     "formula": "candidate_median_rps >= baseline_median_rps * minimum_baseline_ratio",
     "minimum_baseline_ratio": 0.9,
     "passed": true,
-    "threshold_rps": 142420.446
+    "threshold_rps": 142139.934
   },
   "methodology": {
     "build_optimize": "ReleaseFast",
@@ -32,36 +32,36 @@
     "git_ref": "refs/heads/main",
     "repository": "farbenbuilds/uWebZockets",
     "run_attempt": 1,
-    "run_id": 43414624182,
-    "workflow_run_url": "https://github.com/farbenbuilds/uWebZockets/actions/runs/43414624182"
+    "run_id": 43586030223,
+    "workflow_run_url": "https://github.com/farbenbuilds/uWebZockets/actions/runs/43586030223"
   },
-  "record_id": "43414624182-1-70a3e488bc6a",
-  "recorded_at": "2026-11-13T11:22:29Z",
+  "record_id": "43586030223-1-70a3e488bc6a",
+  "recorded_at": "2026-11-14T10:50:14Z",
   "results": {
     "baseline": {
-      "median_rps": 158244.94,
+      "median_rps": 157933.26,
       "samples_rps": [
-        163614.42,
-        158212.49,
-        158244.94
+        157933.26,
+        164166.17,
+        157907.63
       ]
     },
     "candidate": {
-      "median_rps": 157510.81,
+      "median_rps": 159338.99,
       "samples_rps": [
-        157945.88,
-        153274.33,
-        157510.81
+        159338.99,
+        163798.03,
+        154433.7
       ]
     },
-    "candidate_to_baseline_ratio": 0.9953607995301461
+    "candidate_to_baseline_ratio": 1.0089007850531293
   },
   "runner": {
     "architecture": "X64",
     "cpu_model": "INTEL(R) XEON(R) PLATINUM 8573C",
     "image": "ubuntu24/20261111.370.1",
     "kernel": "Linux 7.0.0-1017-azure #17~24.04.1-Ubuntu SMP PREEMPT Thu Sep 24 18:46:57 UTC 2026 x86_64 GNU/Linux",
-    "name": "GitHub Actions 1000006385",
+    "name": "GitHub Actions 1000006403",
     "os": "Linux"
   },
   "schema_version": 1,
