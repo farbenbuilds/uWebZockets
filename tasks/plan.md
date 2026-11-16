@@ -201,6 +201,54 @@ surface remains the application interface. Publish reviewed maintained-fork
 commits before synchronizing root dependency views or activating capabilities.
 These remaining steps are planned work, not completed release evidence.
 
+### Bounded Zig runtime implementation
+
+Develop the runtime against the real native proposal in an isolated Zig
+verification scaffold while production continues to reject unsupported CONNECT
+on its published pin. Compile the same project sources against both backends;
+do not replace native callbacks with a simulated backend, change production
+dependency views, or introduce a vendor overlay for local verification.
+
+1. Add a private native-contract check in `src/quic/webtransport/backend.zig`.
+   Name the required optional entry points and statuses; retain unsupported
+   behavior when any required contract is absent.
+2. Give `engine.zig` bounded generation-checked connection slots and explicit
+   stream contexts for unresolved, HTTP, CONNECT and child roles. A native
+   `PENDING` result does not guarantee a later child notification. Keep runtime
+   ownership in `webtransport/runtime.zig`, with native I/O in engine callbacks.
+   Retain closed connection storage until its stream callbacks release it.
+3. Bind named admission, datagram-delivery and connection-clear callbacks from
+   App after transport storage reaches its stable address. Store registered
+   route identity instead of borrowing released request-header path bytes.
+4. Admit CONNECT at completed headers through explicit application authorization
+   and Origin policy, before ordinary EOF dispatch. Generic CORS continuation
+   is not authorization. Reserve a session, mark the native CONNECT, send a
+   nonterminal 2xx and establish it; unwind failed admission. Decode capsules
+   incrementally with bounded carry and incremental unknown-payload skipping.
+5. Resolve native datagrams within a live connection/session generation and
+   dispatch through the existing App ring. Define a local receive ordinal;
+   HTTP Datagram input contains no application sequence field. Drain or expire
+   pending associations by session using supplied time, with bounded storage.
+6. Associate typed children using full-width IDs and directional prefix sizes.
+   Propagate reset, STOP and final-size closure once, retaining their contexts
+   through delayed final-size callbacks. Closing CONNECT terminates only its
+   session's children and pending traffic. Keep unsupported public child I/O
+   explicit; this work adds no public stream API.
+
+Keep storage linear in the configured connection/stream budgets. Do not embed
+a full-capacity session or pending slab in every connection. A first live
+single-session slice can advertise zero session-flow-control intent; complete
+bilateral reservation and data accounting before advertising positive limits
+or accepting multiple sessions. The multi-session requirement remains open.
+
+Verify repeated session ID zero on two connections, slot reuse, stable startup
+bindings, denied Origin/authentication, fragmented capsules, pending expiry,
+ring exhaustion, child reset/STOP ordering and healthy HTTP siblings. Retain
+exact project/proposal inputs and original commands for the real native
+Debug/ReleaseSafe/ReleaseFast cohort. Independent draft-16 client acceptance
+and publication remain separate activation gates. Smoke/security verification
+remains deferred by the user.
+
 ## Paused checkpoint, 2026-11-12
 
 The user paused implementation and requested a commit. The unpublished
