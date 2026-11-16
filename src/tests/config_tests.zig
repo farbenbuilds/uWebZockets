@@ -764,6 +764,51 @@ test "config: datagram and bypass presets validate and plan slabs" {
     );
 }
 
+test "config: WebTransport flow defaults and overrides preserve zero mode" {
+    const zero: support.webtransport.FlowLimits = .{};
+    inline for (.{ ServerConfig{}, Preset.microservice, Preset.websocket_chat, Preset.file_server, Preset.kernel_bypass, Preset.webtransport_realtime }) |preset| {
+        try std.testing.expectEqualDeep(zero, preset.webtransport_flow_limits);
+    }
+
+    const limits: config_module.WebTransportFlowLimits = .{
+        .data = 8192,
+        .streams_bidi = 8,
+        .streams_uni = 4,
+    };
+    const original = ServerConfig{ .max_connections = 2 };
+    const configured = original.with(.{ .webtransport_flow_limits = limits });
+    try std.testing.expectEqualDeep(limits, configured.webtransport_flow_limits);
+    try std.testing.expectEqualDeep(limits, configured.with(.{}).webtransport_flow_limits);
+    try std.testing.expectEqualDeep(zero, original.webtransport_flow_limits);
+    try std.testing.expectEqualDeep(zero, configured.with(.{ .webtransport_flow_limits = zero }).webtransport_flow_limits);
+    try std.testing.expectEqual(try original.slab_bytes(), try configured.slab_bytes());
+}
+
+test "config: WebTransport flow limits validate exact wire boundaries" {
+    const maximum_data = support.webtransport.max_quic_varint;
+    const maximum_streams = support.webtransport.max_stream_count;
+    try (ServerConfig{ .webtransport_flow_limits = .{
+        .data = maximum_data,
+        .streams_bidi = maximum_streams,
+        .streams_uni = maximum_streams,
+    } }).validate();
+
+    const invalid_limits = [_]config_module.WebTransportFlowLimits{
+        .{ .data = maximum_data + 1 },
+        .{ .streams_bidi = maximum_streams + 1 },
+        .{ .streams_uni = maximum_streams + 1 },
+        .{ .data = std.math.maxInt(u64) },
+        .{ .streams_bidi = std.math.maxInt(u64) },
+        .{ .streams_uni = std.math.maxInt(u64) },
+    };
+    for (invalid_limits) |limits| {
+        try std.testing.expectError(
+            error.InvalidWebTransportFlowLimits,
+            (ServerConfig{ .webtransport_flow_limits = limits }).validate(),
+        );
+    }
+}
+
 test "config: datagram regions are one fixed stride per connection" {
     const config = ServerConfig{
         .max_connections = 4,
@@ -916,6 +961,31 @@ test "config: builder exposes datagram, bypass, and observability knobs" {
     try std.testing.expectEqual(@as(usize, 2), server.datagram_rings.len);
     try std.testing.expectEqual(@as(usize, 2 * 4), server.datagram_session_ids.len);
     try std.testing.expectEqual(@as(usize, 4 * 128), server.datagram_stride);
+}
+
+test "config: WebTransport builder copies startup limits without changing App types" {
+    const baseline = builder_module.Server.builder(std.testing.io)
+        .with_max_clients(2)
+        .with_max_ws_message_size(1024)
+        .with_write_queue_size(4096)
+        .with_idle_timeout_ms(0);
+    const limits: support.webtransport.FlowLimits = .{
+        .data = 8192,
+        .streams_bidi = 8,
+        .streams_uni = 4,
+    };
+    const builder = baseline.with_webtransport_flow_limits(limits);
+    try std.testing.expect(@TypeOf(builder).AppType == @TypeOf(baseline).AppType);
+    try std.testing.expectEqualDeep(limits, builder.configuration().webtransport_flow_limits);
+
+    var configured = try builder.build(std.testing.allocator);
+    defer configured.deinit();
+    var default = try baseline.build(std.testing.allocator);
+    defer default.deinit();
+    try std.testing.expectEqualDeep(limits, configured.webtransport_flow_limits);
+    try std.testing.expectEqualDeep(support.webtransport.FlowLimits{}, default.webtransport_flow_limits);
+    try std.testing.expectEqualDeep(limits, configured.worker_config.webtransport_flow_limits);
+    try std.testing.expectEqual(default.slab.len, configured.slab.len);
 }
 
 test "config: builder exposes request limit knobs" {

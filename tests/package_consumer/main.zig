@@ -67,7 +67,13 @@ fn cluster_surface(init: std.process.Init, allocator: std.mem.Allocator) !void {
 }
 
 fn webtransport_stream_surface(init: std.process.Init, allocator: std.mem.Allocator) !void {
-    var app = try uz.Server.builder(init.io).with_max_clients(2).build(allocator);
+    const limits: uz.webtransport.FlowLimits = .{ .data = 8192, .streams_bidi = 8, .streams_uni = 4 };
+    const configuration = (uz.ServerConfig{}).with(.{ .webtransport_flow_limits = limits });
+    try configuration.validate();
+    var app = try uz.Server.builder(init.io)
+        .with_max_clients(2)
+        .with_webtransport_flow_limits(limits)
+        .build(allocator);
     defer app.deinit();
     _ = try app.webtransport_streams("/session", .{ .open = accept_webtransport_child, .writable = webtransport_writable });
     const Handle = uz.webtransport_stream.Handle;

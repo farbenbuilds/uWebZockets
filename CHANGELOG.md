@@ -26,14 +26,19 @@ uses Semantic Versioning.
 - CONNECT-owned session records and a bounded worker-wide identity index replace
   connection-wide session scalars. Close invalidates identity before callbacks;
   index churn reclaims tombstones without allocating. The flow-off one-session
-  restriction remains until positive flow control is implemented.
+  restriction remains pending multiple-session isolation verification.
 - Pure WebTransport session budgets validate cumulative data and child-stream
   limits. Bounded credit output coalesces consumption/closure grants while
-  retaining partial capsule writes; live positive-flow integration remains open.
+  retaining partial capsule writes.
 - Candidate receive accounting retains early child usage and reclaimed credit
   across child destruction, transfers it into CONNECT ownership, and charges
   native high-water deltas before child admission. NULL-context children retain
-  classification and final-size accounting; positive flow remains gated.
+  classification and final-size accounting.
+- Candidate positive session flow enforces early usage before CONNECT admission,
+  native child creation and accepted body-write budgets, and bounded MAX_* output.
+  `ServerConfig.webtransport_flow_limits` and the matching builder method capture
+  initial credit before listener startup. Flow requires bilateral intent and
+  the complete native receive observer; published pins remain unchanged.
 - `App.enable_http3` and `enable_http3_ephemeral` configure HTTPS and HTTP/3
   before listening on an application returned by `Server.builder`, preserving
   its configured capacities and installing both TLS contexts atomically.

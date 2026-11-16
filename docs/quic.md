@@ -121,11 +121,12 @@ and established traffic continues. Connection teardown clears both stores
 before generation reuse. Cooldown disables new unknown buffering for those
 generations before clearing pending traffic and terminal records.
 
-This candidate uses one session per connection with session flow control off.
+This candidate retains one session per connection. Session flow is off by
+default; positive startup limits require the complete native receive observer.
 It retains a registered route identity after releasing request headers and
 parses fragmented capsules with bounded carry. This is an implementation
 checkpoint, without published fork pins or independent draft-16 client
-acceptance. Session flow accounting and multi-session activation remain open;
+acceptance. Multi-session activation remains open;
 the later checkpoints below retain receive, transmit and outgoing-stream work.
 See the
 [App admission evidence](../benchmarks/results/webtransport_app_admission_v1/2026_11_16/README.md).
@@ -135,8 +136,8 @@ A startup-sized worker index maps the connection generation and full session
 ID to that CONNECT's global slot and stream generation. Child-parent checks
 resolve the slot directly; association and datagram routing use the index.
 Closing removes the index entry and record before callbacks. This keeps
-storage linear in global stream capacity without enabling multiple sessions
-before negotiated flow control is implemented.
+storage linear in global stream capacity. Multiple sessions still require
+independent cleanup and isolation verification.
 
 ### Child receive callbacks
 
@@ -169,7 +170,7 @@ Receive EOF/reset leaves BIDI sending open. Call
 `webtransport_stream_cancel(handle, application_code)` to cancel both halves.
 The latter preserves its first code; conflicting repeated cancellation fails.
 Operations schedule native work for transport processing without invoking
-application callbacks inline. Outgoing creation remains subsequent work.
+application callbacks inline.
 
 `webtransport_stream_stop(handle, application_code)` abandons receiving while
 sending remains open. Further payload, EOF and receive-reset callbacks stop;
@@ -286,8 +287,8 @@ The pure [session flow budget](../src/quic/webtransport/session_flow.zig) valida
 cumulative body/child limits and separates receipt, consumption and advertised
 credit. Its fixed capsule buffer retains partially accepted bytes and coalesces
 later grants with fair DATA/BIDI/UNI service. Centralized tests cover these
-transitions independently of I/O. Positive-flow integration and advertisement
-remain open.
+transitions independently of I/O. The candidate runtime uses these budgets
+when both endpoints advertise positive flow intent.
 
 Candidate native receive observers now record prefix-excluded body deltas before
 typed admission, with peer-created stream counts charged once at publication.
@@ -304,10 +305,56 @@ and retains its session identity before rejection. Debt exhaustion retires that
 SID before discarding counters; unremembered stream-debt loss blocks new unknown
 session admission independently of datagram buffering exhaustion. CONNECT checks
 this policy before invoking application admission.
-Published dependency pins and positive-flow advertisement remain unchanged.
+Published dependency pins remain unchanged.
 The [early-debt checkpoint](../benchmarks/results/webtransport_early_debt_v1/2026_11_17/README.md)
 retains the combined 77-case stream/debt driver and separate 33-case datagram
 driver in all three modes, with callback-order injection labeled separately.
+
+### Candidate session flow limits
+
+Set initial cumulative receive credit before starting the UDP listener:
+
+```zig
+const limits: uz.webtransport.FlowLimits = .{
+    .data = 64 * 1024,
+    .streams_bidi = 8,
+    .streams_uni = 8,
+};
+var server = try uz.Server.builder(init.io)
+    .with_max_clients(128)
+    .with_webtransport_flow_limits(limits)
+    .build(allocator);
+defer server.deinit();
+```
+
+The equivalent config field is `ServerConfig.webtransport_flow_limits`.
+Data is bounded by `2^62 - 1`; each child count by `2^60`, inclusive. Invalid
+configurations return `InvalidWebTransportFlowLimits`. Positive limits require
+the native receive observer and fail startup with `UnsupportedWebTransportFlow`
+when it is absent. The published pin still does not activate live WebTransport.
+
+Flow is negotiated only when each endpoint declares at least one nonzero
+initial limit. Otherwise the session retains legacy behavior and ignores
+session MAX/BLOCKED capsules. With flow enabled, early receive usage must fit
+the initial limits before the application CONNECT handler runs. Limits count
+cumulative child body bytes and peer-created children, including closed ones;
+association prefixes and CONNECT capsule bytes consume no session data credit.
+Native final-size gaps are included once, even after local STOP.
+
+Reads and final-known child closure replenish receive credit without waiting
+for BLOCKED capsules. CONNECT output retains one bounded partial capsule and
+advances advertised credit only after native acceptance of its complete bytes.
+Malformed capsules reset CONNECT with `H3_MESSAGE_ERROR`; non-increasing grants
+and stream limits above `2^60` use `WT_FLOW_CONTROL_ERROR` on negotiated flow.
+
+Outgoing creation checks session count credit before native construction and
+charges only successful ownership transfer. A failed or blocked attempt queues
+no delayed creation; retry explicitly from application scheduling after a peer
+grant. Writes return only the accepted prefix allowed by the peer's data
+credit. At zero credit, requested writable interest is retained without
+repeated callbacks; a later MAX_DATA schedules native writable service.
+RESET, STOP and FIN progress independently. Existing children and credit output
+continue while a session drains, although new child creation is rejected.
 
 ## Verification
 

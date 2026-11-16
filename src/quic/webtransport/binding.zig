@@ -2,6 +2,7 @@ const Request = @import("../../http/request.zig").Request;
 const Response = @import("../../http/response.zig").Response;
 const runtime = @import("runtime.zig");
 const child = @import("child_runtime.zig");
+const flow = @import("session_flow.zig");
 
 /// Identity in the immutable application datagram registry.
 pub const RouteId = @import("../../router/datagram.zig").RouteId;
@@ -74,6 +75,8 @@ pub const Binding = struct {
     clock: ClockCallback,
     /// Bound one payload, independently of the connection's complete ring slab.
     max_payload: usize,
+    /// Startup offer; all zero keeps the legacy single-session contract.
+    limits: flow.Limits = .{},
     /// Optional candidate consumer with userdata independent of App admission.
     child_consumer: ?ChildConsumer = null,
     child_selector: ?ChildSelector = null,

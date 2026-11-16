@@ -4,6 +4,7 @@ const pool = @import("../../core/pool.zig");
 const backend = @import("backend.zig");
 const session = @import("session.zig");
 const early_debt = @import("early_debt.zig");
+const session_control = @import("session_control.zig");
 const pending = @import("pending_datagrams.zig");
 const RouteId = @import("../../router/datagram.zig").RouteId;
 
@@ -19,6 +20,8 @@ pub const SessionNotice = struct {
 pub const SessionRecord = struct {
     notice: SessionNotice,
     receive_debt: early_debt.Debt = .{},
+    /// Negotiated positive flow owns its counters instead of legacy receive_debt.
+    flow: ?session_control.State = null,
     phase: session.SessionState = .accepting,
     notice_published: bool = false,
 };

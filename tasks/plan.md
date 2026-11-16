@@ -625,5 +625,12 @@ The append-only publication snapshot bit is queried at close, when ordinary
 typed notification has completed; connection teardown is abandonment instead.
 Full-pool BIDI classification uses a zero-consumption probe rather than erasing
 an unknown SID. CONNECT refuses retired identities before application admission.
-Positive limits still require receiver import/enforcement, send/create gates,
-capsule output and multi-session isolation before advertisement is enabled.
+The positive-flow increment imports and enforces retained debt before CONNECT
+authorization, clamps sends to the peer's budget and charges only accepted
+bytes/successful native child creation. DATA0 masks user writable interest while
+retaining it for MAX_DATA recovery; native control progress is independent.
+Receive reclamation queues bounded, fair CONNECT credit output, retaining partial
+capsules until full native acceptance. Startup config defaults to zero and
+requires the complete receive observer for positive advertisement. Bilateral
+intent enables flow; unilateral intent preserves legacy ignore behavior.
+Multiple sessions still require scoped cleanup and isolation verification.

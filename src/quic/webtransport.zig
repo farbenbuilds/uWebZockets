@@ -50,6 +50,8 @@ pub const decode_varint = varint.decode_varint;
 pub const encode_varint = varint.encode_varint;
 
 // Session identity, lifecycle slab, and draft session flow-control limits.
+/// Initial cumulative session body-byte and child-stream credits.
+pub const FlowLimits = @import("webtransport/session_flow.zig").Limits;
 pub const max_stream_count = session.max_stream_count;
 pub const valid_session_id = session.valid_session_id;
 pub const SessionState = session.SessionState;
