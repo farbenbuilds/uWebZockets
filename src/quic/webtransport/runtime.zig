@@ -3,16 +3,14 @@ const c = @import("c");
 const pool = @import("../../core/pool.zig");
 const backend = @import("backend.zig");
 const session = @import("session.zig");
+const pending = @import("pending_datagrams.zig");
 const RouteId = @import("../../router/datagram.zig").RouteId;
 
 /// Flow-off operation permits one session per connection, not per worker.
 const Sessions = session.session_slab(1);
 
 /// Worker-local identity that cannot resolve after its slot is reused.
-pub const ConnectionHandle = struct {
-    index: usize = 0,
-    generation: u64 = 0,
-};
+pub const ConnectionHandle = @import("identity.zig").ConnectionHandle;
 
 /// Native connection ownership retained until every stream releases its lease.
 pub const Connection = struct {
@@ -24,6 +22,9 @@ pub const Connection = struct {
     sessions: Sessions = .{},
     session_route: ?RouteId = null,
     session_stream: ?usize = null,
+    /// Exhaustion or cooldown disables new unknown associations for this generation.
+    unknown_early_disabled: bool = false,
+    /// Local dispatch attempts, including full-ring drops; never a wire sequence.
     receive_ordinal: u64 = 0,
 };
 
@@ -60,6 +61,41 @@ pub const StreamState = struct {
         state.info = info;
         state.role = if (info.association == .connect) .connect else .child;
         return true;
+    }
+};
+
+/// Startup allocation and pure pending-store geometry failures.
+pub const PendingStorageError = std.mem.Allocator.Error || pending.InitError;
+
+/// Owns the three slabs borrowed by the allocation-free pending store.
+pub const PendingDatagramStorage = struct {
+    store: pending.Store,
+
+    pub fn init(
+        allocator: std.mem.Allocator,
+        count: usize,
+        policy: pending.Policy,
+    ) PendingStorageError!PendingDatagramStorage {
+        const payload_size = std.math.mul(usize, count, policy.payload_stride) catch return error.StorageOverflow;
+        const entries = try allocator.alloc(pending.Entry, count);
+        errdefer allocator.free(entries);
+        const payloads = try allocator.alloc(u8, payload_size);
+        errdefer allocator.free(payloads);
+        const terminals = try allocator.alloc(pending.Terminal, count);
+        errdefer allocator.free(terminals);
+        return .{ .store = try pending.Store.init(.{
+            .entries = entries,
+            .payloads = payloads,
+            .terminals = terminals,
+        }, policy) };
+    }
+
+    pub fn deinit(storage: *PendingDatagramStorage, allocator: std.mem.Allocator) void {
+        std.debug.assert(storage.store.pending_count == 0);
+        std.debug.assert(storage.store.terminal_count == 0);
+        allocator.free(storage.store.storage.terminals);
+        allocator.free(storage.store.storage.payloads);
+        allocator.free(storage.store.storage.entries);
     }
 };
 

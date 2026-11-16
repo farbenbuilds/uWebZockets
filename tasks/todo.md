@@ -87,6 +87,15 @@
       pass in Debug, ReleaseSafe and ReleaseFast against unchanged production
       source. Exact proof scope and remaining gates are retained in
       `benchmarks/results/webtransport_app_routing_v1/2026_11_16/README.md`.
+- [x] Section 8.2 early datagrams: startup-bounded generation-scoped storage,
+      per-connection quota, FIFO replay after admission, supplied-time expiry,
+      exact HTTP/refusal/cancellation/Close cleanup, terminal-budget isolation
+      and callback-safe teardown. All 1009 centralized tests and the 33-test
+      native cohort in all three optimization modes pass. Early child-stream
+      association, multi-session
+      accounting, independent-client acceptance and published activation remain
+      open. Evidence is retained in
+      `benchmarks/results/webtransport_early_datagrams_v1/2026_11_16/README.md`.
 - [x] Release metadata synchronized to 2.3.0; no tag or publication.
 - [x] Independent slice reviews, findings resolved and changed work
       re-reviewed, including the final adapter and evidence package.
@@ -143,8 +152,11 @@
   The following [routing evidence](../benchmarks/results/webtransport_app_routing_v1/2026_11_16/README.md)
   verifies wire datagrams, ring lifetimes, held-SETTINGS admission/cancellation,
   fragmented capsules, DRAIN/Close and native cooldown without changing that
-  source or activation policy. Early associations and multi-session accounting
-  still await implementation.
+  source or activation policy. The following
+  [early-datagram implementation](../benchmarks/results/webtransport_early_datagrams_v1/2026_11_16/README.md)
+  adds bounded generation-scoped buffering and replay after admission.
+  Early child-stream association and multi-session accounting still await
+  implementation.
   Published draft-16 SETTINGS, long-lived CONNECT, child association, live session
   integration, client acceptance and published fork/pin updates remain open.
 - Dependency provenance still encounters the user's pre-existing h1spec

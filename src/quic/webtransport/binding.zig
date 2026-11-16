@@ -17,6 +17,8 @@ pub const AdmissionCallback = *const fn (*anyopaque, *Request, *Response) Admiss
 pub const DeliveryCallback = *const fn (*anyopaque, runtime.ConnectionHandle, RouteId, u64, u64, []const u8) bool;
 /// Invalidates queued application datagrams before connection identity reuse.
 pub const ClearCallback = *const fn (*anyopaque, runtime.ConnectionHandle) void;
+/// Supplies nonnegative monotonic microseconds at the transport boundary.
+pub const ClockCallback = *const fn (*anyopaque) u64;
 
 /// Borrowed application callbacks bound after the transport reaches its address.
 pub const Binding = struct {
@@ -24,4 +26,7 @@ pub const Binding = struct {
     admit: AdmissionCallback,
     deliver: DeliveryCallback,
     clear: ClearCallback,
+    clock: ClockCallback,
+    /// Bound one payload, independently of the connection's complete ring slab.
+    max_payload: usize,
 };

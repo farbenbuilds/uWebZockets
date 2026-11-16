@@ -14,6 +14,10 @@ uses Semantic Versioning.
   session ownership, registered datagram route identities and bounded
   incremental capsule parsing. The published dependency pin keeps live
   WebTransport disabled; candidate verification is retained separately.
+- Bounded early WebTransport datagram buffering with startup-owned storage,
+  generation-scoped FIFO replay after admission, monotonic expiry, exact
+  session cleanup and per-connection terminal-ID exhaustion policy. Ordinary
+  established-datagram dispatch adds no clock read or allocation.
 
 ### Fixed
 

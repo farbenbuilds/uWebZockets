@@ -1169,6 +1169,13 @@ pub fn configured_app_with_route_params(
             ring.clear();
         }
 
+        fn webtransport_time_us(context: *anyopaque) u64 {
+            const self: *Self = @ptrCast(@alignCast(context));
+            const now = std.Io.Clock.now(.awake, self.io).nanoseconds;
+            const microseconds = @divTrunc(@max(now, 0), std.time.ns_per_us);
+            return @intCast(@min(microseconds, std.math.maxInt(u64)));
+        }
+
         fn ensure_routes_mutable(self: *Self) !void {
             if (self.shutting_down or self.deinitialized) return error.ApplicationUnavailable;
             if (self.routes_locked) return error.RoutesLocked;
@@ -1586,6 +1593,8 @@ pub fn configured_app_with_route_params(
                     .admit = admit_webtransport,
                     .deliver = deliver_webtransport,
                     .clear = clear_webtransport,
+                    .clock = webtransport_time_us,
+                    .max_payload = self.datagram_rings[0].payload_stride,
                 });
             }
             const routes_were_locked = self.routes_locked;

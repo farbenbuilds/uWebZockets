@@ -102,12 +102,31 @@ supplied Origin; an `any` fallback or generic CORS continuation cannot admit
 the session. The conservative profile requires exactly one nonempty Origin.
 The handler must validate its value and all application credentials.
 
+Early candidate datagrams use separate startup-owned storage; they never reach
+App handlers or rings before admission. The global budget is four entries per
+configured engine connection, with at most four queued entries for any one
+connection. Payloads respect the configured per-datagram bound and the native
+2048-byte physical ceiling. Entries expire after one second of monotonic awake
+time. Replay preserves FIFO for each session and assigns the connection's
+local dispatch ordinal at delivery attempt, including ring-full drops; this
+ordinal is not a wire sequence number.
+
+Terminal stream identities share a separate global budget of four entries per
+configured engine connection. Retiring an HTTP, refused, cancelled or closed
+identity purges its queued entries. If the terminal
+budget fills, the affected connection drops further early datagrams for
+unconfirmed IDs until it closes, including IDs with data already queued.
+Previously queued future-session entries remain eligible for later admission,
+and established traffic continues. Connection teardown clears both stores
+before generation reuse. Cooldown disables new unknown buffering for those
+generations before clearing pending traffic and terminal records.
+
 This candidate uses one session per connection with session flow control off.
 It retains a registered route identity after releasing request headers and
 parses fragmented capsules with bounded carry. This is an implementation
 checkpoint, without published fork pins or independent draft-16 client
-acceptance. Public child-stream I/O, bounded early associations and multi-session
-flow accounting remain open. See the
+acceptance. Public child-stream I/O, early child-stream associations and
+multi-session flow accounting remain open. See the
 [App admission evidence](../benchmarks/results/webtransport_app_admission_v1/2026_11_16/README.md).
 
 ## Verification

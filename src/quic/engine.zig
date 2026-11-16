@@ -9,6 +9,7 @@ const runtime = @import("webtransport/runtime.zig");
 const wt_binding = @import("webtransport/binding.zig");
 const webtransport = @import("webtransport.zig");
 const capsule_stream = @import("webtransport/capsule_stream.zig");
+const pending = @import("webtransport/pending_datagrams.zig");
 const Response = @import("../http/response.zig").Response;
 const HeaderSet = stream.HeaderSet;
 
@@ -19,6 +20,16 @@ pub const available = true;
 
 /// lsquic congestion controller identifier for BBRv1 (`es_cc_algo`).
 const cc_algo_bbr: c_uint = 2;
+
+const pending_per_connection = 4;
+const pending_lifetime_us = std.time.us_per_s;
+
+/// Startup-only binding and pending-storage failures.
+pub const WebTransportBindError = runtime.PendingStorageError || error{
+    QuicEngineAlreadyStarted,
+    WebTransportAlreadyBound,
+    InvalidDatagramLimit,
+};
 
 /// One fixed-size outbound UDP packet buffer owned by the engine packet pool.
 pub const PacketSlot = struct {
@@ -147,6 +158,7 @@ pub fn quic_engine(
         connections: Connections,
         stream_contexts: []StreamContext,
         binding: ?wt_binding.Binding = null,
+        pending_datagrams: ?runtime.PendingDatagramStorage = null,
         header_pool: HeaderPool,
         packet_pool: PacketPool,
         header_storage: []u8,
@@ -268,8 +280,21 @@ pub fn quic_engine(
         }
 
         /// Binds application callbacks before native engine construction.
-        pub fn bind_webtransport(self: *Self, binding: wt_binding.Binding) error{QuicEngineAlreadyStarted}!void {
+        pub fn bind_webtransport(self: *Self, binding: wt_binding.Binding) WebTransportBindError!void {
             if (self.engine != null) return error.QuicEngineAlreadyStarted;
+            if (self.binding != null) return error.WebTransportAlreadyBound;
+            if (binding.max_payload == 0) return error.InvalidDatagramLimit;
+            if (comptime backend.available) {
+                self.pending_datagrams = try runtime.PendingDatagramStorage.init(
+                    std.heap.page_allocator,
+                    capacity * pending_per_connection,
+                    .{
+                        .payload_stride = api.max_udp_payload_size,
+                        .per_connection_limit = pending_per_connection,
+                        .lifetime_us = pending_lifetime_us,
+                    },
+                );
+            }
             self.binding = binding;
         }
 
@@ -365,6 +390,8 @@ pub fn quic_engine(
             if (self.global_acquired) api.release_global();
             self.global_acquired = false;
 
+            if (self.pending_datagrams) |*storage| storage.deinit(std.heap.page_allocator);
+            self.pending_datagrams = null;
             std.heap.page_allocator.free(self.response_body_storage);
             std.heap.page_allocator.free(self.response_header_storage);
             std.heap.page_allocator.free(self.request_body_storage);
@@ -424,6 +451,7 @@ pub fn quic_engine(
         }
 
         fn process_ready(self: *Self, engine: *c.lsquic_engine) void {
+            self.expire_pending_datagrams();
             if (c.lsquic_engine_has_unsent_packets(engine) != 0) {
                 c.lsquic_engine_send_unsent_packets(engine);
             }
@@ -458,6 +486,7 @@ pub fn quic_engine(
             if (self.in_cooldown) return;
             self.in_cooldown = true;
             defer self.in_cooldown = false;
+            self.cancel_pending_datagrams();
             c.lsquic_engine_cooldown(engine);
             c.lsquic_engine_process_conns(engine);
             self.retry_pending_resets();
@@ -471,10 +500,53 @@ pub fn quic_engine(
         pub fn next_timeout_ms(self: *Self) u64 {
             const engine = self.engine orelse return 1000;
             var microseconds: c_int = 0;
-            if (c.lsquic_engine_earliest_adv_tick(engine, &microseconds) == 0) return 1000;
-            if (microseconds <= 0) return 1;
-            const rounded: u64 = @divTrunc(@as(u64, @intCast(microseconds)) + 999, 1000);
-            return std.math.clamp(rounded, 1, 1000);
+            var delay: u64 = 1000;
+            if (c.lsquic_engine_earliest_adv_tick(engine, &microseconds) != 0) {
+                if (microseconds <= 0) return 1;
+                delay = std.math.clamp(@divTrunc(@as(u64, @intCast(microseconds)) + 999, 1000), 1, 1000);
+            }
+            const storage = if (self.pending_datagrams) |*active| active else return delay;
+            const deadline = storage.store.next_deadline() orelse return delay;
+            const binding = self.binding orelse return delay;
+            const remaining = deadline -| binding.clock(binding.context);
+            const rounded = remaining / 1000 + @intFromBool(remaining % 1000 != 0);
+            return @min(delay, std.math.clamp(rounded, 1, 1000));
+        }
+
+        fn expire_pending_datagrams(self: *Self) void {
+            const storage = if (self.pending_datagrams) |*active| active else return;
+            if (storage.store.pending_count == 0) return;
+            const binding = self.binding orelse return;
+            storage.store.expire(binding.clock(binding.context));
+        }
+
+        fn cancel_pending_datagrams(self: *Self) void {
+            const storage = if (self.pending_datagrams) |*active| active else return;
+            var connections = self.connections.pool.active.iterator(.{});
+            while (connections.next()) |index| {
+                const slot = &self.connections.pool.storage[index];
+                slot.unknown_early_disabled = true;
+                storage.store.clear_connection(slot.handle);
+            }
+            std.debug.assert(storage.store.pending_count == 0);
+            std.debug.assert(storage.store.terminal_count == 0);
+        }
+
+        fn retire_datagrams(self: *Self, connection: runtime.ConnectionHandle, id: u64) void {
+            if (id & 3 != 0) return;
+            const slot = self.connections.find(connection) orelse return;
+            if (slot.native == null) return;
+            const storage = if (self.pending_datagrams) |*active| active else return;
+            if (slot.unknown_early_disabled and storage.store.pending_count == 0) return;
+            if (storage.store.retire(.{ .connection = connection, .session_id = id }) == .exhausted) {
+                slot.unknown_early_disabled = true;
+            }
+        }
+
+        fn retire_stream_datagrams(self: *Self, context: *StreamContext) void {
+            if (self.pending_datagrams == null) return;
+            if (!context.state.lease.active) return;
+            self.retire_datagrams(context.state.lease.connection, c.lsquic_stream_id(context.http.stream));
         }
 
         fn acquire_header_set(
@@ -573,6 +645,7 @@ pub fn quic_engine(
         fn release_stream(context: *anyopaque, quic_stream: *QuicStream) void {
             const self: *Self = @ptrCast(@alignCast(context));
             const index = self.stream_pool.index_of(quic_stream) orelse unreachable;
+            self.retire_stream_datagrams(&self.stream_contexts[index]);
             self.close_session(&self.stream_contexts[index]);
             std.debug.assert(self.connections.release(&self.stream_contexts[index].state.lease));
             std.debug.assert(self.stream_pool.release(quic_stream));
@@ -598,6 +671,7 @@ pub fn quic_engine(
             if (self.connection_slot(conn) != slot) return;
             const handle = slot.handle;
             c.lsquic_conn_set_ctx(conn, null);
+            if (self.pending_datagrams) |*storage| storage.store.clear_connection(handle);
             if (self.binding) |binding| binding.clear(binding.context, handle);
             std.debug.assert(self.connections.close(handle));
             std.debug.assert(self.active_connections > 0);
@@ -645,17 +719,70 @@ pub fn quic_engine(
             const slot: *runtime.Connection = @ptrCast(@alignCast(raw_context));
             const self: *Self = @ptrCast(@alignCast(slot.owner));
             if (self.connection_slot(native) != slot or size > api.max_udp_payload_size) return;
-            const binding = self.binding orelse return;
+            if (self.binding == null) return;
             const bytes: [*]const u8 = @ptrCast(data orelse return);
             const datagram = webtransport.decode_datagram(bytes[0..size]) catch return;
-            const session = slot.sessions.find(datagram.session_id) orelse return;
-            const state = slot.sessions.state(session) catch return;
-            if (state != .established and state != .draining) return;
-            const route = slot.session_route orelse return;
-            if (slot.receive_ordinal == std.math.maxInt(u64)) return;
+            if (slot.peer) |peer| if (!backend.peer_requirements_met(peer, .server)) return;
+            if (slot.sessions.find(datagram.session_id)) |session| {
+                const state = slot.sessions.state(session) catch return;
+                if (state == .established or state == .draining) {
+                    _ = self.dispatch_associated_datagram(slot, datagram.session_id, datagram.payload);
+                    return;
+                }
+                if (state != .accepting) return;
+                self.enqueue_pending_datagram(slot, datagram, true);
+                return;
+            }
+            self.enqueue_pending_datagram(slot, datagram, false);
+        }
+
+        fn enqueue_pending_datagram(self: *Self, slot: *runtime.Connection, datagram: webtransport.Datagram, accepting: bool) void {
+            if (self.cooldown_pending or self.in_cooldown) return;
+            if (slot.unknown_early_disabled and !accepting) return;
+            const binding = self.binding orelse return;
+            if (datagram.payload.len > @min(binding.max_payload, api.max_udp_payload_size)) return;
+            const storage = if (self.pending_datagrams) |*active| active else return;
+            // Early unreliable traffic drops when any fixed admission bound rejects it.
+            storage.store.enqueue(.{
+                .connection = slot.handle,
+                .session_id = datagram.session_id,
+            }, datagram.payload, binding.clock(binding.context)) catch return;
+        }
+
+        fn dispatch_associated_datagram(self: *Self, slot: *runtime.Connection, session_id: u64, payload: []const u8) bool {
+            if (slot.native == null or self.cooldown_pending or self.in_cooldown) return false;
+            const binding = self.binding orelse return false;
+            const index = slot.session_stream orelse return false;
+            const context = &self.stream_contexts[index];
+            if (backend.admission_canceled(context.http.stream)) {
+                self.close_session(context);
+                return false;
+            }
+            const route = slot.session_route orelse return false;
+            if (slot.receive_ordinal == std.math.maxInt(u64)) return false;
             const ordinal = slot.receive_ordinal;
             slot.receive_ordinal += 1;
-            _ = binding.deliver(binding.context, slot.handle, route, datagram.session_id, ordinal, datagram.payload);
+            _ = binding.deliver(binding.context, slot.handle, route, session_id, ordinal, payload);
+            return true;
+        }
+
+        fn drain_pending_datagrams(self: *Self, connection: runtime.ConnectionHandle, session_id: u64) void {
+            const storage = if (self.pending_datagrams) |*active| active else return;
+            const binding = self.binding orelse return;
+            const key = pending.SessionKey{ .connection = connection, .session_id = session_id };
+            var payload: [api.max_udp_payload_size]u8 = undefined;
+            while (true) {
+                if (self.cooldown_pending or self.in_cooldown) return;
+                const slot = self.connections.find(connection) orelse return;
+                if (slot.native == null) return;
+                const session = slot.sessions.find(session_id) orelse return;
+                const state = slot.sessions.state(session) catch return;
+                if (state != .established and state != .draining) return;
+                // Every stored payload fits this fixed physical stride.
+                const taken = storage.store.take_into(key, binding.clock(binding.context), &payload) catch unreachable;
+                const datagram = taken orelse return;
+                if (!self.dispatch_associated_datagram(slot, session_id, payload[0..datagram.payload_length])) return;
+            }
         }
 
         fn on_new_stream(context: ?*anyopaque, lsquic_stream: ?*c.lsquic_stream) callconv(.c) ?*c.lsquic_stream_ctx {
@@ -667,6 +794,7 @@ pub fn quic_engine(
                 return null;
             };
             const stream_context = self.acquire_stream(raw_stream, connection) orelse {
+                self.retire_datagrams(connection.handle, c.lsquic_stream_id(raw_stream));
                 _ = c.lsquic_stream_close(raw_stream);
                 return null;
             };
@@ -720,24 +848,25 @@ pub fn quic_engine(
             const active: *StreamContext = @ptrCast(@alignCast(context orelse return));
             active.state.pending_settings = false;
             const self: *Self = @ptrCast(@alignCast(active.http.owner));
+            self.retire_stream_datagrams(active);
             self.clear_pending_reset(active);
             active.http.on_close();
         }
 
         fn on_stream_reset(native: ?*c.lsquic_stream, context: ?*c.lsquic_stream_ctx, _: c_int) callconv(.c) void {
             const active: *StreamContext = @ptrCast(@alignCast(context orelse return));
+            const self: *Self = @ptrCast(@alignCast(active.http.owner));
+            self.retire_stream_datagrams(active);
             if (active.state.pending_settings) {
                 active.state.pending_settings = false;
                 active.http.abort_connect();
                 return;
             }
             if (active.pending_reset != null) {
-                const self: *Self = @ptrCast(@alignCast(active.http.owner));
                 self.retry_reset(active);
                 return;
             }
             if (active.state.role != .connect) return;
-            const self: *Self = @ptrCast(@alignCast(active.http.owner));
             self.close_session(active);
             _ = c.lsquic_stream_close(native);
         }
@@ -776,7 +905,9 @@ pub fn quic_engine(
                 header_set.protocol != null and std.mem.eql(u8, header_set.protocol.?, "webtransport-h3"))
             {
                 self.admit_connect(context);
+                return true;
             }
+            if (!header_set.is_trailer) self.retire_stream_datagrams(context);
             return true;
         }
 
@@ -786,6 +917,7 @@ pub fn quic_engine(
             const slot = self.connections.find(context.state.lease.connection) orelse return;
             if (backend.admission_canceled(context.http.stream)) {
                 context.state.pending_settings = false;
+                self.retire_stream_datagrams(context);
                 context.http.abort_connect();
                 return;
             }
@@ -804,10 +936,12 @@ pub fn quic_engine(
                 return;
             }
             const origin = headers.request.get_unique_header("origin") orelse {
+                self.retire_stream_datagrams(context);
                 context.http.refuse_connect("400 Bad Request", "Exactly one Origin is required");
                 return;
             };
             if (origin.len == 0) {
+                self.retire_stream_datagrams(context);
                 context.http.refuse_connect("400 Bad Request", "Origin is empty");
                 return;
             }
@@ -820,22 +954,24 @@ pub fn quic_engine(
                 slot.native == null or self.cooldown_pending or self.in_cooldown or
                 backend.admission_canceled(context.http.stream))
             {
+                self.retire_stream_datagrams(context);
                 context.http.abort_connect();
                 return;
             }
             const route = switch (result) {
                 .accepted => |id| id,
                 .rejected => {
-                    finish_admission_refusal(context, response.is_complete());
+                    self.finish_admission_refusal(context, response.is_complete());
                     return;
                 },
             };
             if (!response.is_complete() or !context.http.connect_response_ready()) {
-                finish_admission_refusal(context, response.is_complete());
+                self.finish_admission_refusal(context, response.is_complete());
                 return;
             }
             const id = c.lsquic_stream_id(context.http.stream);
             const session = slot.sessions.open(id, false) catch {
+                self.retire_stream_datagrams(context);
                 context.http.abort_connect();
                 return;
             };
@@ -856,7 +992,8 @@ pub fn quic_engine(
             context.http.dispatched = true;
         }
 
-        fn finish_admission_refusal(context: *StreamContext, completed: bool) void {
+        fn finish_admission_refusal(self: *Self, context: *StreamContext, completed: bool) void {
+            self.retire_stream_datagrams(context);
             const code = context.http.response_status_code;
             if (completed and code >= 300 and code <= 599 and context.http.response_body_offset == 0) {
                 context.http.finish_connect_refusal();
@@ -890,10 +1027,12 @@ pub fn quic_engine(
             };
             context.http.release_connect_request();
             _ = c.lsquic_stream_wantread(context.http.stream, 1);
+            self.drain_pending_datagrams(slot.handle, c.lsquic_stream_id(context.http.stream));
         }
 
         fn close_session(self: *Self, context: *StreamContext) void {
             const session = context.state.session orelse return;
+            self.retire_stream_datagrams(context);
             context.state.session = null;
             const slot = self.connections.find(context.state.lease.connection) orelse return;
             slot.sessions.close(session) catch return;
@@ -903,6 +1042,7 @@ pub fn quic_engine(
         }
 
         fn reset_connect(self: *Self, context: *StreamContext, code: u64) void {
+            self.retire_stream_datagrams(context);
             self.close_session(context);
             if (context.pending_reset == null) {
                 context.pending_reset = code;

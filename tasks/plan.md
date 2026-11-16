@@ -282,6 +282,28 @@ This evidence changes no production source, dependency pin or activation
 policy. Early associations, typed children, multi-session accounting,
 independent-client acceptance and fork publication/pins remain open.
 
+Early-datagram implementation checkpoint, 2026-11-16: the candidate now copies
+unassociated datagrams into startup-owned global storage, bounded to four
+entries per engine connection and four per connection generation. FIFO replay
+begins after authorization, establishment and request-header release. Expiry
+uses supplied real monotonic awake time with a one-second lifetime; direct
+established dispatch adds no clock read. Local ordinals are assigned at
+dispatch attempts, including ring-full drops.
+
+HTTP, refused, cancelled and closed identities purge their exact pending key.
+Terminal identities never evict while their connection generation lives;
+terminal-budget exhaustion disables further unknown buffering only for that
+generation, while preserving previously queued future-session entries.
+Connection closure clears both tables before reuse. Cooldown cancels pending
+traffic, and replay revalidates connection/session state after every callback.
+The [early-datagram checkpoint](../benchmarks/results/webtransport_early_datagrams_v1/2026_11_16/README.md)
+retains reproduction inputs and validation: 1009 centralized tests, 16 pure
+queue cases in all three modes, and 33 native Zig tests (32 functional plus
+one import anchor) in Debug, ReleaseSafe and ReleaseFast. Independent reviews
+have no required findings. This implements datagram early
+association only; child-stream association and multi-session accounting remain
+open, together with independent-client and publication gates.
+
 Develop the runtime against the real native proposal in an isolated Zig
 verification scaffold while production continues to reject unsupported CONNECT
 on its published pin. Compile the same project sources against both backends;
