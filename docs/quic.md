@@ -356,6 +356,9 @@ repeated callbacks; a later MAX_DATA schedules native writable service.
 RESET, STOP and FIN progress independently. Existing children and credit output
 continue while a session drains, although new child creation is rejected.
 
+The [positive-flow checkpoint](../benchmarks/results/webtransport_positive_flow_v1/2026_11_17/README.md)
+retains the native matrix, exact source snapshots and relocatable replay.
+
 ## Verification
 
 The cross-implementation gate uses pinned curl/ngtcp2 and aioquic clients to
