@@ -180,7 +180,10 @@ A worker group can also terminate TLS itself. Call `enable_https` with PEM
 files, or `enable_https_ephemeral` for development, after `configure` and
 before `listen`; every worker then owns its own TLS context and loads or
 generates its credentials once at startup. TLS clusters are TCP-only:
-HTTP/3/QUIC clustering is not supported.
+HTTP/3/QUIC clustering is not supported. Candidate WebTransport stream and
+datagram registration share sixteen endpoint paths; stream-only registration
+requires no datagram buffers. See [child receive callbacks](docs/quic.md#child-receive-callbacks)
+for the public handles and the unpublished-backend requirement.
 
 ```zig
 const std = @import("std");

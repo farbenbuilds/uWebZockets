@@ -67,7 +67,8 @@ fn notifications(
     const key = state.key orelse return .not_live;
     if (!guard.live(guard.context, state)) return .not_live;
     if (state.ledger.take_reset()) |code| {
-        _ = state.begin_close(.peer_reset, code);
+        if (consumer.policy == .receive_only) _ = state.begin_close(.peer_reset, code);
+        if (consumer.policy == .duplex) _ = c.lsquic_stream_shutdown(raw, 0);
         consumer.reset(consumer.context, key, code, state.ledger.final_payload_size.?);
         if (!guard.live(guard.context, state)) return .not_live;
     }
@@ -92,8 +93,9 @@ pub fn read(
     if (!guard.live(guard.context, state)) return .not_live;
     if (!snapshot(raw, state, actions)) return .progress;
     if (notifications(raw, state, actions, consumer, guard) == .not_live) return .not_live;
+    if (state.ledger.receive_terminal != .none) return .progress;
     var bytes: [2048]u8 = undefined;
-    while (state.phase == .active) {
+    while (state.phase == .active and state.ledger.receive_terminal == .none) {
         if (!guard.live(guard.context, state)) return .not_live;
         const size = c.lsquic_stream_read(raw, &bytes, bytes.len);
         const read_error = if (size < 0) std.c.errno(size) else .SUCCESS;
@@ -143,9 +145,11 @@ fn eof(
         consumer.eof(consumer.context, state.key.?, state.ledger.final_payload_size.?);
         if (!guard.live(guard.context, state)) return .not_live;
     }
-    _ = state.begin_close(.completed, null);
     _ = c.lsquic_stream_shutdown(raw, 0);
-    if (state.metadata.direction == .bidi) _ = c.lsquic_stream_shutdown(raw, 1);
+    if (consumer.policy == .receive_only) {
+        _ = state.begin_close(.completed, null);
+        if (state.metadata.direction == .bidi) _ = c.lsquic_stream_shutdown(raw, 1);
+    }
     return .progress;
 }
 

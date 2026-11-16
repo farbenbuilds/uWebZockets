@@ -7,6 +7,11 @@ uses Semantic Versioning.
 
 ### Added
 
+- Public WebTransport child receive registration and App-affine generation
+  handles, explicit cancellation/send finish, and session lifecycle callbacks.
+  Streams and datagrams share sixteen endpoint paths; stream-only startup
+  allocates no datagram payload buffers. Live support still requires the
+  unpublished native proposal; duplex writes/outgoing streams remain open.
 - `App.enable_http3` and `enable_http3_ephemeral` configure HTTPS and HTTP/3
   before listening on an application returned by `Server.builder`, preserving
   its configured capacities and installing both TLS contexts atomically.

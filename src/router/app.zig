@@ -17,6 +17,10 @@ const quic_stream = @import("../quic/stream.zig");
 const wt_binding = @import("../quic/webtransport/binding.zig");
 const wt_runtime = @import("../quic/webtransport/runtime.zig");
 const wt_admission = @import("webtransport.zig");
+const wt_endpoints = @import("webtransport_endpoints.zig");
+const wt_stream = @import("../quic/webtransport/stream_api.zig");
+const wt_dispatch = @import("webtransport_child.zig");
+const wt_backend = @import("../quic/webtransport/backend.zig");
 const udp = @import("../core/udp.zig");
 const request_module = @import("../http/request.zig");
 const request_body_module = @import("../http/request_body.zig");
@@ -158,7 +162,6 @@ pub fn configured_app_with_route_params(
         const StaticFiles = static_files_module.static_files(static_file_capacity);
         const ClusterInbox = cluster_module.message_queue(max_ws_message_size);
         const DatagramRing = datagram_ring_module.DatagramRing;
-        const DatagramRouter = datagram_module.Router;
         const XdpTransport = xdp_transport_module.XdpTransport;
         const max_static_routes = 8;
         const default_config = config_module.ServerConfig{
@@ -220,7 +223,9 @@ pub fn configured_app_with_route_params(
         // WebTransport datagram state. The metadata arrays are SoA and the
         // payload slab is one fixed stride per connection, all carved from the
         // startup slab so no datagram ever allocates.
-        datagram_router: DatagramRouter = .{},
+        webtransport_endpoints: wt_endpoints.Registry = .{},
+        webtransport_streams_registered: bool = false,
+        webtransport_dispatch: wt_dispatch.Dispatcher = undefined,
         datagram_session_ids: []u64 = &.{},
         datagram_sequences: []u64 = &.{},
         datagram_payload_lengths: []u32 = &.{},
@@ -1081,8 +1086,39 @@ pub fn configured_app_with_route_params(
             handler: datagram_module.Handler,
         ) !*Self {
             try self.ensure_routes_mutable();
-            try self.datagram_router.register(path, handler, context);
+            _ = try self.webtransport_endpoints.register_datagram(path, handler, context);
             return self;
+        }
+
+        /// Registers child callbacks; CONNECT authorization remains explicit.
+        pub fn webtransport_streams(self: *Self, path: []const u8, callbacks: wt_stream.Callbacks) !*Self {
+            return self.webtransport_streams_context(path, self, callbacks);
+        }
+
+        /// Borrows path/context until native drain; callbacks run on this worker.
+        pub fn webtransport_streams_context(self: *Self, path: []const u8, context: *anyopaque, callbacks: wt_stream.Callbacks) !*Self {
+            try self.ensure_routes_mutable();
+            _ = try self.webtransport_endpoints.register_streams(path, callbacks, context);
+            self.webtransport_streams_registered = true;
+            return self;
+        }
+
+        /// Cancels an accepted child; its eventual closed callback releases ownership.
+        pub fn webtransport_stream_cancel(self: *Self, handle: wt_stream.Handle, code: u32) wt_stream.OperationError!void {
+            if (comptime !wt_backend.available) return error.Unsupported;
+            if (handle.owner != @intFromPtr(self)) return error.WrongApp;
+            if (self.shutting_down or self.deinitialized) return error.ShuttingDown;
+            const transport = if (self.quic_transport) |*active| active else return error.StaleHandle;
+            try transport.engine.cancel_webtransport_stream(handle, code);
+        }
+
+        /// Finishes BIDI sending independently of receive EOF/reset.
+        pub fn webtransport_stream_finish(self: *Self, handle: wt_stream.Handle) wt_stream.OperationError!void {
+            if (comptime !wt_backend.available) return error.Unsupported;
+            if (handle.owner != @intFromPtr(self)) return error.WrongApp;
+            if (self.shutting_down or self.deinitialized) return error.ShuttingDown;
+            const transport = if (self.quic_transport) |*active| active else return error.StaleHandle;
+            try transport.engine.finish_webtransport_stream(handle);
         }
 
         /// Delivers one inbound WebTransport datagram to its registered path.
@@ -1099,7 +1135,8 @@ pub fn configured_app_with_route_params(
             path: []const u8,
             payload: []const u8,
         ) bool {
-            const route = self.datagram_router.find(path) orelse return false;
+            const endpoint = self.webtransport_endpoints.find(path) orelse return false;
+            const route = endpoint.datagram orelse return false;
             const ring = self.datagram_ring_for(connection_index) orelse return false;
             ring.push(.{
                 .session_id = session_id,
@@ -1144,7 +1181,7 @@ pub fn configured_app_with_route_params(
         fn admit_webtransport(context: *anyopaque, request: *Request, response: *Response) wt_binding.AdmissionResult {
             const self: *Self = @ptrCast(@alignCast(context));
             if (self.shutting_down or self.deinitialized) return .rejected;
-            return wt_admission.admit(&self.router, &self.datagram_router, request, response);
+            return wt_admission.admit(&self.router, &self.webtransport_endpoints, request, response);
         }
 
         fn deliver_webtransport(
@@ -1159,7 +1196,7 @@ pub fn configured_app_with_route_params(
             if (self.shutting_down or self.deinitialized) return false;
             const transport = if (self.quic_transport) |*active| active else return false;
             if (transport.engine.connections.find(connection) == null) return false;
-            const route = self.datagram_router.get(route_id) orelse return false;
+            const route = self.webtransport_endpoints.get(route_id) orelse return false;
             return self.dispatch_datagram(connection.index, session_id, ordinal, route.path, payload);
         }
 
@@ -1589,15 +1626,19 @@ pub fn configured_app_with_route_params(
                 if (self.quic_transport) |*transport| transport.deinit();
                 self.quic_transport = null;
             }
-            if (self.datagram_rings.len != 0 and self.datagram_stride != 0) {
+            const datagrams_enabled = self.datagram_rings.len != 0 and self.datagram_stride != 0;
+            if (datagrams_enabled or self.webtransport_streams_registered) {
+                self.webtransport_dispatch = .{ .owner = @intFromPtr(self), .registry = &self.webtransport_endpoints, .legacy = self.webtransport_child_consumer };
                 try self.quic_transport.?.engine.bind_webtransport(.{
                     .context = self,
                     .admit = admit_webtransport,
                     .deliver = deliver_webtransport,
                     .clear = clear_webtransport,
                     .clock = webtransport_time_us,
-                    .max_payload = self.datagram_rings[0].payload_stride,
+                    .max_payload = if (datagrams_enabled) self.datagram_rings[0].payload_stride else 0,
                     .child_consumer = self.webtransport_child_consumer,
+                    .child_selector = if (self.webtransport_streams_registered) .{ .context = &self.webtransport_dispatch, .select = wt_dispatch.select } else null,
+                    .session_consumer = if (self.webtransport_streams_registered) .{ .context = &self.webtransport_dispatch, .open = wt_dispatch.session_open, .closed = wt_dispatch.session_closed } else null,
                 });
             }
             const routes_were_locked = self.routes_locked;

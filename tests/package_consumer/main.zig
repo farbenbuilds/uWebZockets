@@ -15,6 +15,7 @@ fn hello(_: *uz.Request, res: *uz.Response) void {
 fn cluster_surface(init: std.process.Init, allocator: std.mem.Allocator) !void {
     try request_body_surface(allocator);
     try streaming_route_surface(init);
+    try webtransport_stream_surface(init, allocator);
     const options: uz.ClusterOptions = .{};
     var group = try uz.Server.builder(init.io)
         .with_max_clients(8)
@@ -63,6 +64,21 @@ fn cluster_surface(init: std.process.Init, allocator: std.mem.Allocator) !void {
     try group.listen("127.0.0.1", 0);
     try group.catch_shutdown_signals();
     try group.deinit_checked();
+}
+
+fn webtransport_stream_surface(init: std.process.Init, allocator: std.mem.Allocator) !void {
+    var app = try uz.Server.builder(init.io).with_max_clients(2).build(allocator);
+    defer app.deinit();
+    _ = try app.webtransport_streams("/session", .{ .open = accept_webtransport_child });
+    const Handle = uz.webtransport_stream.Handle;
+    const finish: *const fn (*@TypeOf(app), Handle) uz.webtransport_stream.OperationError!void = &@TypeOf(app).webtransport_stream_finish;
+    const cancel: *const fn (*@TypeOf(app), Handle, u32) uz.webtransport_stream.OperationError!void = &@TypeOf(app).webtransport_stream_cancel;
+    _ = finish;
+    _ = cancel;
+}
+
+fn accept_webtransport_child(_: *anyopaque, _: uz.webtransport_stream.Info) bool {
+    return true;
 }
 
 const LegacyFormError = error{

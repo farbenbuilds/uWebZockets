@@ -196,6 +196,8 @@ pub const http2_server = @import("http2/server.zig");
 pub const http3_extensions = @import("quic/http3_extensions.zig");
 /// Bounded WebTransport-over-HTTP/3 draft protocol state.
 pub const webtransport = @import("quic/webtransport.zig");
+/// App-affine WebTransport child handles and borrowed receive callbacks.
+pub const webtransport_stream = @import("quic/webtransport/stream_api.zig");
 /// Fixed-capacity SoA queue for pending WebTransport datagrams.
 pub const datagram_ring = @import("quic/datagram_ring.zig");
 /// Fixed-capacity WebTransport datagram route table.

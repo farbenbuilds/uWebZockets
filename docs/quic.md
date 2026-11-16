@@ -95,7 +95,7 @@ but the live path remains capability-gated until a post-2.2.0 implementation and
 compliance gate land.
 
 The private runtime now binds App admission and datagram callbacks when built
-against the complete local native proposal. It requires an exact datagram
+against the complete local native proposal. It requires an exact WebTransport
 endpoint and an explicitly registered synchronous CONNECT handler. An empty,
 completed 2xx response from that handler approves both authentication and the
 supplied Origin; an `any` fallback or generic CORS continuation cannot admit
@@ -125,9 +125,58 @@ This candidate uses one session per connection with session flow control off.
 It retains a registered route identity after releasing request headers and
 parses fragmented capsules with bounded carry. This is an implementation
 checkpoint, without published fork pins or independent draft-16 client
-acceptance. Public child-stream I/O, early child-stream associations and
-multi-session flow accounting remain open. See the
+acceptance. Public duplex writes, outgoing children and multi-session flow
+accounting remain open. See the
 [App admission evidence](../benchmarks/results/webtransport_app_admission_v1/2026_11_16/README.md).
+
+### Child receive callbacks
+
+`App.webtransport_streams(path, callbacks)` and
+`webtransport_streams_context(path, context, callbacks)` register a child
+consumer. `uz.webtransport_stream` defines the named callbacks and handles.
+The endpoint table has sixteen distinct paths shared with `App.datagram`;
+adding the other capability to an existing path does not consume another
+slot. A duplicate capability returns `RouteAlreadyRegistered`. Paths and
+contexts are borrowed for the App lifetime, and registration locks with the
+other routes. The default callback context is the App itself; keep it at a
+stable address after registration. Stream-only applications need no datagram
+builder settings.
+
+An explicit synchronous CONNECT handler still authenticates and approves the
+Origin. `session_open` runs after establishment and request-header release,
+before queued children. `open` returns true to own one eventual `closed`
+notification. It is admission only: handle operations return `NotReady` until
+it returns. Rejection owns no close notification. A missing data callback
+rejects payload rather than silently discarding it.
+
+Data slices are borrowed until their callback returns. EOF follows actual
+native read zero; reset reports the full final payload size, including gaps.
+Application-mapped errors use `ErrorCode.application`; other full-width codes
+use `ErrorCode.http3`. Unknown final size remains null at close. Native close
+does not prove peer receipt or acknowledgment.
+
+Receive EOF/reset leaves BIDI sending open. Call
+`webtransport_stream_finish(handle)` to accept an empty FIN promise, or
+`webtransport_stream_cancel(handle, application_code)` to cancel both halves.
+The latter preserves its first code; conflicting repeated cancellation fails.
+Operations schedule native work for transport processing without invoking
+callbacks inline. Payload writes, writable notifications and outgoing
+creation are not exposed in this increment.
+
+Handles contain a stable App identity, global stream slot and never-wrapping
+generation; session handles also contain connection/session generations.
+They are worker-confined and cannot outlive their originating App. Wrong-App
+and reused handles fail without touching another stream. Session closure
+invalidates its handles before its callback; accepted children retain their
+own eventual close notification. A normal parent FIN or CLOSE_SESSION reports
+`session_closed`; cooldown reports `shutdown`, and connection loss reports
+`connection_closed`. CLOSE_SESSION preserves its application code. Root
+callback dispatch allocates no memory.
+Upstream native buffering has no allocation-free claim.
+
+These registration/types compile with the published pin; live operations
+return `Unsupported` there. The complete unpublished native proposal is still
+required to exercise the candidate path.
 
 ## Verification
 

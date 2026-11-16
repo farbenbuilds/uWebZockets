@@ -5,6 +5,8 @@ const RouteId = @import("../../router/datagram.zig").RouteId;
 
 /// Direction is independent of the native backend enum.
 pub const Direction = enum(u8) { uni, bidi };
+/// A global engine stream slot; generation zero is never publicly resolvable.
+pub const Location = struct { index: usize = 0, generation: u64 = 0 };
 /// Native child facts captured before an application parent is available.
 pub const Metadata = struct {
     connection: identity.ConnectionHandle,
@@ -12,6 +14,7 @@ pub const Metadata = struct {
     stream_id: u64,
     receive_prefix_size: u8,
     direction: Direction,
+    location: Location = .{},
 };
 /// Full transport IDs and both owner generations identify one admitted child.
 pub const Key = struct {
@@ -19,6 +22,8 @@ pub const Key = struct {
     session: session.SessionHandle,
     session_id: u64,
     stream_id: u64,
+    location: Location = .{},
+    route: RouteId = @enumFromInt(0),
 };
 /// Immutable facts supplied to the private open consumer.
 pub const Info = struct {
@@ -28,17 +33,7 @@ pub const Info = struct {
     receive_prefix_size: u8,
 };
 /// The first local closing cause survives callback reentry.
-pub const CloseReason = enum(u8) {
-    completed,
-    peer_reset,
-    rejected,
-    expired,
-    session_closed,
-    connection_closed,
-    consumer_cancelled,
-    shutdown,
-    protocol_error,
-};
+pub const CloseReason = @import("stream_api.zig").CloseReason;
 /// A close notification owns no borrowed native memory; unknown final stays null.
 pub const ClosedEvent = struct {
     key: Key,
@@ -104,6 +99,8 @@ pub const State = struct {
             .session = parent,
             .session_id = state.metadata.session_id,
             .stream_id = state.metadata.stream_id,
+            .location = state.metadata.location,
+            .route = route,
         };
         state.key = key;
         state.route = route;
@@ -146,8 +143,8 @@ pub const State = struct {
         if (state.consumer_owned and state.key == null) return error.InvalidTransition;
         const event: ?ClosedEvent = if (state.consumer_owned and !state.close_delivered) .{
             .key = state.key.?,
-            .reason = state.cancel_reason orelse .completed,
-            .code = state.cancel_code,
+            .reason = state.cancel_reason orelse if (state.ledger.receive_terminal == .reset) .peer_reset else .completed,
+            .code = if (state.cancel_reason != null) state.cancel_code else if (state.ledger.receive_terminal == .reset) state.ledger.reset_error else null,
             .final_payload_size = state.ledger.final_payload_size,
             .accounted_bytes = state.ledger.accounted_bytes,
         } else null;

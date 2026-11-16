@@ -483,3 +483,47 @@ encoded prefix lengths, and preserve that prefix floor across WT child resets
 and STOP_SENDING. Generic QUIC reset behavior stays independent of WT policy.
 Root pins and capability bits remain unchanged until maintained-fork review
 and publication. The full v2.3.0 objective remains active and incomplete.
+
+## Public WebTransport child streams, 2026-11-16
+
+The verified private receive consumer is the foundation for three increments:
+
+1. Add `webtransport_streams[_context]` registration, receive callbacks,
+   App-affine stream/session handles, cancellation, explicit send finish,
+   session notifications, and startup without datagram buffers.
+2. Add peer-BIDI writes, accepted-prefix ownership, independent receive/send
+   halves, one-shot writable notifications, and transport wake scheduling.
+3. Add immediate outgoing UNI/BIDI creation, constructor reservation rollback,
+   prefix exclusion, and explicit retry after stream-credit exhaustion.
+
+One immutable sixteen-path endpoint registry combines independent datagram and
+stream capabilities. An existing path can gain the other capability even when
+the table is full; duplicate capability registration is failure-atomic. Keep
+the standalone exported datagram router compatible. CONNECT authorization and
+the Origin decision remain explicit synchronous application handlers.
+
+Stream handles carry the stable App address, global stream slot, and a
+never-wrapping generation. Session handles also carry the connection and
+session generations. Resolution is constant-time and revalidates native and
+parent ownership. Handles belong to their originating App lifetime and worker.
+Callbacks borrow payload bytes for one call; contexts outlive native closure.
+
+`open` only decides admission. Operations return `NotReady` until acceptance;
+accepted children own one eventual `closed` callback, including callback-time
+shutdown. Rejected children own no close callback. Public receive EOF/reset
+does not finish BIDI sending. Applications explicitly finish or cancel; the
+private receive-only consumer retains its established automatic empty FIN.
+Closed dispatch uses captured endpoint identity after parent invalidation.
+
+Child-only startup allocates bounded retired-session identities but no pending
+datagram entries or payloads. Published backend pins and capability limits stay
+unchanged. Public operations return `Unsupported` with the published backend.
+No allocation claim covers upstream native stream buffering without evidence.
+
+Acceptance crosses public App methods: child-only startup, endpoint isolation,
+wrong-App and stale handles, generation reuse/exhaustion, independent halves,
+session/child close exactly once, and callback-time cancellation/shutdown. The
+existing seventeen native receive cases remain regression coverage. Later
+increments additionally prove BIDI echo/backpressure and outgoing credit
+recovery. Multi-session flow control, independent draft-16 client acceptance,
+maintained-fork publication and the remaining release gates stay open.

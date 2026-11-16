@@ -4,6 +4,33 @@ const Request = support.http_request.Request;
 const Response = support.http_response.Response;
 const radix = support.radix;
 
+fn accept_child(_: *anyopaque, _: support.webtransport_stream.Info) bool {
+    return true;
+}
+
+test "WebTransport public streams register without datagram buffers and lock with routes" {
+    var app = try support.Server.builder(std.testing.io).with_max_clients(2).build(std.testing.allocator);
+    defer app.deinit();
+    _ = try app.webtransport_streams("/streams", .{ .open = accept_child });
+    _ = try app.datagram("/streams", discard_datagram);
+    try std.testing.expectEqual(@as(usize, 0), app.datagram_rings.len);
+    try std.testing.expectEqual(@as(u8, 1), app.webtransport_endpoints.route_count);
+    try std.testing.expectError(error.RouteAlreadyRegistered, app.webtransport_streams("/streams", .{ .open = accept_child }));
+    app.routes_locked = true;
+    try std.testing.expectError(error.RoutesLocked, app.webtransport_streams("/other", .{ .open = accept_child }));
+}
+
+test "WebTransport public stream operations report unavailable published backend" {
+    if (comptime support.webtransport_backend.available) return;
+    var app = try support.Server.builder(std.testing.io).with_max_clients(1).build(std.testing.allocator);
+    defer app.deinit();
+    const handle = support.webtransport_stream.Handle{ .owner = @intFromPtr(&app), .index = 0, .generation = 1 };
+    try std.testing.expectError(error.Unsupported, app.webtransport_stream_cancel(handle, 7));
+    try std.testing.expectError(error.Unsupported, app.webtransport_stream_finish(handle));
+}
+
+fn discard_datagram(_: *anyopaque, _: u64, _: []const u8) void {}
+
 fn complete(_: *Request, response: *Response) void {
     response.end_best_effort("200 OK", "");
 }

@@ -9,6 +9,14 @@ const RouteId = @import("../../router/datagram.zig").RouteId;
 /// Flow-off operation permits one session per connection, not per worker.
 const Sessions = session.session_slab(1);
 
+/// Publication ownership captured before callbacks can invalidate the parent.
+pub const SessionNotice = struct {
+    connection: ConnectionHandle,
+    session: session.SessionHandle,
+    session_id: u64,
+    route: RouteId,
+};
+
 /// Worker-local identity that cannot resolve after its slot is reused.
 pub const ConnectionHandle = @import("identity.zig").ConnectionHandle;
 
@@ -23,6 +31,7 @@ pub const Connection = struct {
     sessions: Sessions = .{},
     session_route: ?RouteId = null,
     session_stream: ?usize = null,
+    session_notice: ?SessionNotice = null,
     /// Exhaustion or cooldown disables new unknown associations for this generation.
     unknown_early_disabled: bool = false,
     /// Local dispatch attempts, including full-ring drops; never a wire sequence.
@@ -72,6 +81,17 @@ pub const PendingStorageError = std.mem.Allocator.Error || pending.InitError;
 /// Owns the three slabs borrowed by the allocation-free pending store.
 pub const PendingDatagramStorage = struct {
     store: pending.Store,
+
+    /// Stream-only endpoints retain terminal identities without datagram slabs.
+    pub fn init_terminal_only(allocator: std.mem.Allocator, count: usize) PendingStorageError!PendingDatagramStorage {
+        const terminals = try allocator.alloc(pending.Terminal, count);
+        errdefer allocator.free(terminals);
+        return .{ .store = try pending.Store.init(.{
+            .entries = &.{},
+            .payloads = &.{},
+            .terminals = terminals,
+        }, .{ .payload_stride = 0, .per_connection_limit = 1, .lifetime_us = 0 }) };
+    }
 
     pub fn init(
         allocator: std.mem.Allocator,

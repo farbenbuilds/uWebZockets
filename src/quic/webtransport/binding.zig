@@ -34,7 +34,9 @@ pub const ChildStopCallback = *const fn (*anyopaque, child.Key, u64) void;
 /// Releases consumer ownership after native close, including parent teardown.
 pub const ChildClosedCallback = *const fn (*anyopaque, child.ClosedEvent) void;
 
-/// Private receive-only candidate consumer; context must outlive native close.
+/// Public duplex consumers retain sending after a receive terminal event.
+pub const ChildPolicy = enum(u8) { receive_only, duplex };
+/// Captured per child before open; context must outlive native close.
 pub const ChildConsumer = struct {
     context: *anyopaque,
     open: ChildOpenCallback,
@@ -43,7 +45,18 @@ pub const ChildConsumer = struct {
     reset: ChildResetCallback,
     stop: ChildStopCallback,
     closed: ChildClosedCallback,
+    policy: ChildPolicy = .receive_only,
 };
+
+/// Selects an immutable endpoint consumer before application open.
+pub const ChildSelectCallback = *const fn (*anyopaque, RouteId) ?ChildConsumer;
+/// Captured session identity remains usable after parent invalidation.
+pub const SessionOpenCallback = *const fn (*anyopaque, runtime.SessionNotice) void;
+pub const SessionClosedCallback = *const fn (*anyopaque, runtime.SessionNotice, child.CloseReason, ?u64) void;
+/// Selector userdata is independent of CONNECT admission userdata.
+pub const ChildSelector = struct { context: *anyopaque, select: ChildSelectCallback };
+/// Session lifecycle userdata remains valid through native drain.
+pub const SessionConsumer = struct { context: *anyopaque, open: SessionOpenCallback, closed: SessionClosedCallback };
 
 /// Borrowed application callbacks bound after the transport reaches its address.
 pub const Binding = struct {
@@ -56,4 +69,6 @@ pub const Binding = struct {
     max_payload: usize,
     /// Optional candidate consumer with userdata independent of App admission.
     child_consumer: ?ChildConsumer = null,
+    child_selector: ?ChildSelector = null,
+    session_consumer: ?SessionConsumer = null,
 };

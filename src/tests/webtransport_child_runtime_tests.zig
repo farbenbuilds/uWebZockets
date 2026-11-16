@@ -17,11 +17,14 @@ test "WebTransport child runtime captures full IDs and both generations" {
     full.stream_id = max_varint;
     full.receive_prefix_size = 16;
     full.direction = .uni;
+    full.location = .{ .index = 17, .generation = std.math.maxInt(u64) };
     var state = try child.State.init(full, std.math.maxInt(u64));
     const info = try state.begin_open(.{ .index = 23, .generation = std.math.maxInt(u64) - 1 }, @enumFromInt(15));
     try testing.expectEqualDeep(full.connection, info.key.connection);
     try testing.expectEqual(full.session_id, info.key.session_id);
     try testing.expectEqual(full.stream_id, info.key.stream_id);
+    try testing.expectEqualDeep(full.location, info.key.location);
+    try testing.expectEqual(@as(u8, 15), @intFromEnum(info.key.route));
     try testing.expectEqual(@as(u64, std.math.maxInt(u64) - 1), info.key.session.generation);
     try testing.expectEqual(@as(usize, 23), info.key.session.index);
     try testing.expectEqual(full.direction, info.direction);
@@ -55,6 +58,22 @@ test "WebTransport child runtime validates incoming metadata without fixing endp
     var other_role = metadata;
     other_role.stream_id = 5;
     _ = try child.State.init(other_role, 0);
+}
+
+test "WebTransport child runtime receive reset keeps active phase and survives independent send finish" {
+    var state = try child.State.init(metadata, 0);
+    _ = try state.begin_open(.{ .index = 0, .generation = 1 }, @enumFromInt(0));
+    try state.complete_open(true);
+    const code: u64 = (1 << 61) + 37;
+    _ = try state.ledger.observe(.{ .final_size = 8, .reliable_size = 3, .reset_error = code, .reset_visible = true });
+    try testing.expectEqual(code, state.ledger.take_reset().?);
+    try testing.expectEqual(child.Phase.active, state.phase);
+    const closed = (try state.finish_close()).?;
+    try testing.expectEqual(child.CloseReason.peer_reset, closed.reason);
+    try testing.expectEqual(code, closed.code.?);
+    try testing.expectEqual(@as(u64, 5), closed.final_payload_size.?);
+    try testing.expectEqual(@as(u64, 5), closed.accounted_bytes);
+    try testing.expect((try state.finish_close()) == null);
 }
 
 test "WebTransport child runtime pending reservation transfers once" {

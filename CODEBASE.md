@@ -500,12 +500,18 @@ rate-limit middleware, comptime schema validation, zero-copy cookie parsing
 and signing helpers, and WebSocket masking. The
 surface also includes `WsCompression`, fixed-capacity `json_rpc`,
 completion-driven `udp`, bounded
-`http2`, `http2_hpack`, `http3_extensions`, `webtransport`, `http3_available`,
+`http2`, `http2_hpack`, `http3_extensions`, `webtransport`, `webtransport_stream`, `http3_available`,
 `WebSocketStream`, BYOB and compression streams, abort controllers, Web Crypto,
 shared memory, kTLS, AF_XDP, the allocation-free terminal `dev_log` sink, and
 the transport-independent protocol core.
 It also exposes `init_http3` and `listen_udp` through the application type. Live lsquic
 engine, stream, packet, and QPACK callbacks remain internal.
+
+`webtransport_stream` names the App-affine child/session handles and borrowed
+receive callbacks. Stream and datagram registration share sixteen endpoint
+paths; stream-only startup retains bounded terminal IDs without datagram
+queues. The published backend still returns `Unsupported` for child handle
+operations. Public writes and outgoing children remain unfinished.
 
 The C ABI is declared by `include/uWebZockets.h` and implemented by
 `src/c_api.zig`. It provides versioned opaque handles, versioned integer error

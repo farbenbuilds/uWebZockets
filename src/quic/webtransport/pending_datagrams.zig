@@ -76,16 +76,17 @@ pub const Store = struct {
     terminal_count: usize = 0,
 
     pub fn init(storage: Storage, policy: Policy) InitError!Store {
-        if (storage.entries.len == 0) return error.InvalidCapacity;
-        if (policy.payload_stride == 0) return error.InvalidStride;
+        const terminal_only = storage.entries.len == 0;
+        if (terminal_only and (storage.terminals.len == 0 or policy.payload_stride != 0)) return error.InvalidCapacity;
+        if (!terminal_only and policy.payload_stride == 0) return error.InvalidStride;
         if (policy.per_connection_limit == 0) return error.InvalidConnectionLimit;
-        if (storage.entries.len > std.math.maxInt(usize) / policy.payload_stride) return error.StorageOverflow;
+        if (!terminal_only and storage.entries.len > std.math.maxInt(usize) / policy.payload_stride) return error.StorageOverflow;
         if (storage.payloads.len < storage.entries.len * policy.payload_stride) return error.PayloadStorageTooSmall;
         for (storage.entries, 0..) |*entry, index| {
             entry.* = .{ .next = if (index + 1 == storage.entries.len) no_index else index + 1 };
         }
         for (storage.terminals) |*terminal| terminal.* = .{};
-        return .{ .storage = storage, .policy = policy, .free_head = 0 };
+        return .{ .storage = storage, .policy = policy, .free_head = if (terminal_only) no_index else 0 };
     }
 
     /// Copies one payload after expiry and all admission bounds are checked.

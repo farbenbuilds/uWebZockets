@@ -3,12 +3,12 @@ const binding = @import("../quic/webtransport/binding.zig");
 const Request = @import("../http/request.zig").Request;
 const Response = @import("../http/response.zig").Response;
 const radix = @import("radix.zig");
-const datagram = @import("datagram.zig");
+const endpoints = @import("webtransport_endpoints.zig");
 
 /// The explicit handler's empty 2xx approves authentication and supplied Origin.
 pub fn admit(
     router: *const radix.Router,
-    routes: *const datagram.Router,
+    routes: *const endpoints.Registry,
     request: *Request,
     response: *Response,
 ) binding.AdmissionResult {
@@ -21,7 +21,7 @@ pub fn admit(
         return .rejected;
     }
     const route_id = routes.find_id(request.path) orelse {
-        response.end_best_effort("404 Not Found", "Datagram endpoint not found");
+        response.end_best_effort("404 Not Found", "WebTransport endpoint not found");
         return .rejected;
     };
     const matched = router.match_explicit_request(request, .connect) orelse {

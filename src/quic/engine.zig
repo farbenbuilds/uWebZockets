@@ -12,6 +12,7 @@ const capsule_stream = @import("webtransport/capsule_stream.zig");
 const pending = @import("webtransport/pending_datagrams.zig");
 const child_runtime = @import("webtransport/child_runtime.zig");
 const child_io = @import("webtransport/child_io.zig");
+const stream_api = @import("webtransport/stream_api.zig");
 const Response = @import("../http/response.zig").Response;
 const HeaderSet = stream.HeaderSet;
 
@@ -140,13 +141,17 @@ pub fn quic_engine(
         /// One sidecar per global stream slot, independent of connection count.
         const StreamContext = struct {
             http: *QuicStream,
+            generation: u64 = 0,
             state: runtime.StreamState = .{},
             capsules: capsule_stream.Decoder = .init(.{ .ignore_flow_control = true }),
             close_received: bool = false,
+            session_close_code: ?u64 = null,
             pending_reset: ?u64 = null,
             child: ?child_runtime.State = null,
             child_actions: child_io.Actions = .{},
             child_retry_counted: bool = false,
+            child_consumer: ?wt_binding.ChildConsumer = null,
+            child_send_finished: bool = false,
         };
 
         engine: ?*c.lsquic_engine = null,
@@ -180,6 +185,8 @@ pub fn quic_engine(
         pending_reset_count: usize = 0,
         pending_child_count: usize = 0,
         child_retry_count: usize = 0,
+        /// Shared by all stream roles; exhaustion rejects admission without reuse.
+        stream_generation: u64 = 0,
         children_shutdown: bool = false,
         global_acquired: bool = false,
         /// Depth of active lsquic callbacks; cooldown must not re-enter them.
@@ -291,19 +298,60 @@ pub fn quic_engine(
         pub fn bind_webtransport(self: *Self, binding: wt_binding.Binding) WebTransportBindError!void {
             if (self.engine != null) return error.QuicEngineAlreadyStarted;
             if (self.binding != null) return error.WebTransportAlreadyBound;
-            if (binding.max_payload == 0) return error.InvalidDatagramLimit;
+            if (binding.max_payload == 0 and binding.child_consumer == null and binding.child_selector == null) return error.InvalidDatagramLimit;
             if (comptime backend.available) {
-                self.pending_datagrams = try runtime.PendingDatagramStorage.init(
-                    std.heap.page_allocator,
-                    capacity * pending_per_connection,
-                    .{
-                        .payload_stride = api.max_udp_payload_size,
-                        .per_connection_limit = pending_per_connection,
-                        .lifetime_us = pending_lifetime_us,
-                    },
-                );
+                self.pending_datagrams = if (binding.max_payload == 0)
+                    try runtime.PendingDatagramStorage.init_terminal_only(std.heap.page_allocator, capacity * pending_per_connection)
+                else
+                    try runtime.PendingDatagramStorage.init(
+                        std.heap.page_allocator,
+                        capacity * pending_per_connection,
+                        .{
+                            .payload_stride = api.max_udp_payload_size,
+                            .per_connection_limit = pending_per_connection,
+                            .lifetime_us = pending_lifetime_us,
+                        },
+                    );
             }
             self.binding = binding;
+        }
+
+        fn resolve_child(self: *Self, handle: stream_api.Handle) stream_api.OperationError!*StreamContext {
+            if (comptime !backend.available) return error.Unsupported;
+            const binding = self.binding orelse return error.StaleHandle;
+            if (handle.owner != @intFromPtr(binding.context)) return error.WrongApp;
+            if (handle.generation == 0 or !self.stream_pool.is_active(handle.index)) return error.StaleHandle;
+            const context = &self.stream_contexts[handle.index];
+            if (context.generation != handle.generation) return error.StaleHandle;
+            const state = if (context.child) |*active| active else return error.StaleHandle;
+            if (state.phase == .closed) return error.StaleHandle;
+            if (state.phase == .opening) return error.NotReady;
+            if (!state.consumer_owned) return error.StaleHandle;
+            if (self.children_shutdown or self.cooldown_pending or self.in_cooldown) return error.ShuttingDown;
+            if (!child_live(context, state)) return error.SessionClosed;
+            return context;
+        }
+
+        /// Cancels both halves without running application callbacks inline.
+        pub fn cancel_webtransport_stream(self: *Self, handle: stream_api.Handle, code: u32) stream_api.OperationError!void {
+            const context = try self.resolve_child(handle);
+            const state = &context.child.?;
+            const native_code = webtransport.application_error_to_http3(code);
+            if (state.cancel_reason != null) {
+                if (state.cancel_reason == .consumer_cancelled and state.cancel_code == native_code) return;
+                return error.ConflictingIntent;
+            }
+            self.cancel_child(context, .consumer_cancelled, native_code);
+        }
+
+        /// Accepts an empty FIN promise; success does not imply peer delivery.
+        pub fn finish_webtransport_stream(self: *Self, handle: stream_api.Handle) stream_api.OperationError!void {
+            const context = try self.resolve_child(handle);
+            const state = &context.child.?;
+            if (state.metadata.direction == .uni or state.phase != .active or state.ledger.stop_error != null) return error.WriteClosed;
+            if (context.child_send_finished) return;
+            if (c.lsquic_stream_shutdown(context.http.stream, 1) != 0) return error.WriteClosed;
+            context.child_send_finished = true;
         }
 
         /// Starts the engine and borrows its TLS context and router until `deinit`.
@@ -509,6 +557,13 @@ pub fn quic_engine(
             defer self.in_cooldown = false;
             self.children_shutdown = true;
             self.cancel_children(null, null, .shutdown);
+            var connections = self.connections.pool.active.iterator(.{});
+            while (connections.next()) |index| {
+                const slot = &self.connections.pool.storage[index];
+                if (slot.session_notice == null) continue;
+                const parent = slot.session_stream orelse continue;
+                if (self.stream_pool.is_active(parent)) self.close_session(&self.stream_contexts[parent]);
+            }
             self.cancel_pending_datagrams();
             c.lsquic_engine_cooldown(engine);
             c.lsquic_engine_process_conns(engine);
@@ -568,8 +623,7 @@ pub fn quic_engine(
             if (id & 3 != 0) return;
             const slot = self.connections.find(connection) orelse return;
             if (slot.native == null) return;
-            const reason: child_runtime.CloseReason = if (native_connection_live(slot.native)) .session_closed else .connection_closed;
-            self.cancel_children(connection, id, reason);
+            self.cancel_children(connection, id, self.retirement_reason(slot.native));
             const storage = if (self.pending_datagrams) |*active| active else return;
             if (slot.unknown_early_disabled and storage.store.pending_count == 0) return;
             if (storage.store.retire(.{ .connection = connection, .session_id = id }) == .exhausted) {
@@ -687,13 +741,15 @@ pub fn quic_engine(
             self.sync_child_retry(context);
             if (result != .not_live) return;
             const slot = self.connections.find(context.state.lease.connection);
-            const reason: child_runtime.CloseReason = if (slot == null or !native_connection_live(slot.?.native))
-                .connection_closed
-            else if (self.children_shutdown or self.cooldown_pending or self.in_cooldown)
-                .shutdown
-            else
-                .session_closed;
+            const reason = self.retirement_reason(if (slot) |active| active.native else null);
             self.cancel_child(context, reason, webtransport.wt_session_gone);
+        }
+
+        /// A dead transport wins; a live parent preserves pending shutdown intent.
+        fn retirement_reason(self: *const Self, native: ?*c.lsquic_conn) child_runtime.CloseReason {
+            if (!native_connection_live(native)) return .connection_closed;
+            if (self.children_shutdown or self.cooldown_pending or self.in_cooldown) return .shutdown;
+            return .session_closed;
         }
 
         fn associate_child(self: *Self, context: *StreamContext) void {
@@ -710,7 +766,7 @@ pub fn quic_engine(
                 return;
             }
             const binding = self.binding orelse return;
-            if (binding.child_consumer == null) {
+            if (binding.child_consumer == null and binding.child_selector == null) {
                 self.cancel_child(context, .rejected, webtransport.application_error_to_http3(0));
                 return;
             }
@@ -730,8 +786,14 @@ pub fn quic_engine(
                 const phase = slot.sessions.state(parent) catch return;
                 if (phase == .established or phase == .draining) {
                     self.release_child_pending(context);
-                    const info = state.begin_open(parent, slot.session_route orelse return) catch return;
-                    const result = child_io.open(context.http.stream, state, &context.child_actions, info, binding.child_consumer.?, .{ .context = context, .live = child_live });
+                    const route = slot.session_route orelse return;
+                    context.child_consumer = if (binding.child_selector) |selector| selector.select(selector.context, route) else binding.child_consumer;
+                    const consumer = context.child_consumer orelse {
+                        self.cancel_child(context, .rejected, webtransport.application_error_to_http3(0));
+                        return;
+                    };
+                    const info = state.begin_open(parent, route) catch return;
+                    const result = child_io.open(context.http.stream, state, &context.child_actions, info, consumer, .{ .context = context, .live = child_live });
                     self.handle_child_result(context, result);
                     if (state.phase == .active) _ = c.lsquic_stream_wantread(context.http.stream, 1);
                     return;
@@ -767,6 +829,7 @@ pub fn quic_engine(
                 .stream_id = c.lsquic_stream_id(context.http.stream),
                 .receive_prefix_size = info.receive_prefix_size,
                 .direction = if (info.direction == .uni) .uni else .bidi,
+                .location = .{ .index = self.stream_pool.index_of(context.http).?, .generation = context.generation },
             }, binding.clock(binding.context) +| pending_lifetime_us) catch {
                 _ = c.lsquic_stream_close(context.http.stream);
                 return;
@@ -779,7 +842,7 @@ pub fn quic_engine(
             const state = if (context.child) |*active| active else return;
             if (state.phase == .waiting_parent) self.associate_child(context);
             if (state.phase != .active and state.phase != .closing) return;
-            const consumer = (self.binding orelse return).child_consumer orelse return;
+            const consumer = context.child_consumer orelse return;
             const result = child_io.read(context.http.stream, state, &context.child_actions, consumer, .{ .context = context, .live = child_live });
             self.handle_child_result(context, result);
         }
@@ -836,10 +899,12 @@ pub fn quic_engine(
         }
 
         fn acquire_stream(self: *Self, lsquic_stream: *c.lsquic_stream, connection: *runtime.Connection) ?*StreamContext {
+            if (self.stream_generation == std.math.maxInt(u64)) return null;
             const quic_stream = self.stream_pool.acquire() orelse return null;
             const index = self.stream_pool.index_of(quic_stream) orelse unreachable;
             const context = &self.stream_contexts[index];
-            context.* = .{ .http = quic_stream };
+            self.stream_generation += 1;
+            context.* = .{ .http = quic_stream, .generation = self.stream_generation };
             if (!self.connections.retain(connection.handle, &context.state.lease)) {
                 std.debug.assert(self.stream_pool.release(quic_stream));
                 return null;
@@ -919,6 +984,8 @@ pub fn quic_engine(
             const self: *Self = @ptrCast(@alignCast(slot.owner));
             if (self.connection_slot(conn) != slot) return;
             const handle = slot.handle;
+            const notice = slot.session_notice;
+            slot.session_notice = null;
             c.lsquic_conn_set_ctx(conn, null);
             if (self.pending_datagrams) |*storage| storage.store.clear_connection(handle);
             if (self.binding) |binding| binding.clear(binding.context, handle);
@@ -926,6 +993,7 @@ pub fn quic_engine(
             self.cancel_children(handle, null, .connection_closed);
             std.debug.assert(self.active_connections > 0);
             self.active_connections -= 1;
+            self.notify_session_closed(notice, .connection_closed, null);
         }
 
         fn connection_slot(self: *Self, connection: *c.lsquic_conn) ?*runtime.Connection {
@@ -1148,7 +1216,7 @@ pub fn quic_engine(
                 if (self.engine == null or slot == null or !native_connection_live(slot.?.native)) {
                     _ = state.begin_close(.connection_closed, null);
                 }
-                child_io.close(native orelse active.http.stream, state, if (self.binding) |binding| binding.child_consumer else null);
+                child_io.close(native orelse active.http.stream, state, active.child_consumer);
             }
             active.child_actions = .{};
             self.sync_child_retry(active);
@@ -1350,6 +1418,11 @@ pub fn quic_engine(
         }
 
         fn write_connect(self: *Self, context: *StreamContext) void {
+            if (self.children_shutdown or self.cooldown_pending or self.in_cooldown) {
+                self.close_session(context);
+                context.http.abort_connect();
+                return;
+            }
             const slot = self.connections.find(context.state.lease.connection) orelse return;
             const session = context.state.session orelse {
                 _ = c.lsquic_stream_wantwrite(context.http.stream, 0);
@@ -1374,6 +1447,22 @@ pub fn quic_engine(
             };
             context.http.release_connect_request();
             _ = c.lsquic_stream_wantread(context.http.stream, 1);
+            const binding = self.binding orelse return;
+            if (binding.session_consumer) |consumer| {
+                const notice = runtime.SessionNotice{
+                    .connection = slot.handle,
+                    .session = session,
+                    .session_id = c.lsquic_stream_id(context.http.stream),
+                    .route = slot.session_route orelse return,
+                };
+                slot.session_notice = notice;
+                self.callback_depth += 1;
+                defer self.leave_callback();
+                consumer.open(consumer.context, notice);
+                if (self.children_shutdown or self.cooldown_pending or self.in_cooldown or
+                    !native_connection_live(slot.native) or context.state.session == null or
+                    !std.meta.eql(context.state.session.?, session) or backend.admission_canceled(context.http.stream)) return;
+            }
             self.drain_pending_datagrams(slot.handle, c.lsquic_stream_id(context.http.stream));
             self.resume_session_children(slot.handle, c.lsquic_stream_id(context.http.stream));
         }
@@ -1387,10 +1476,22 @@ pub fn quic_engine(
             self.retire_stream_datagrams(context);
             context.state.session = null;
             const slot = self.connections.find(context.state.lease.connection) orelse return;
+            const notice = slot.session_notice;
+            slot.session_notice = null;
             slot.sessions.close(session) catch return;
             slot.session_route = null;
             slot.session_stream = null;
             if (self.binding) |binding| binding.clear(binding.context, slot.handle);
+            self.notify_session_closed(notice, self.retirement_reason(slot.native), context.session_close_code);
+        }
+
+        fn notify_session_closed(self: *Self, notice: ?runtime.SessionNotice, reason: child_runtime.CloseReason, code: ?u64) void {
+            const captured = notice orelse return;
+            const binding = self.binding orelse return;
+            const consumer = binding.session_consumer orelse return;
+            self.callback_depth += 1;
+            defer self.leave_callback();
+            consumer.closed(consumer.context, captured, reason, code);
         }
 
         fn reset_connect(self: *Self, context: *StreamContext, code: u64) void {
@@ -1488,8 +1589,9 @@ pub fn quic_engine(
                     return false;
                 },
                 .capsule => |capsule| switch (capsule) {
-                    .close_session => {
+                    .close_session => |closed| {
                         context.close_received = true;
+                        context.session_close_code = webtransport.application_error_to_http3(closed.application_error);
                         self.close_session(context);
                         _ = c.lsquic_stream_shutdown(context.http.stream, 1);
                     },
