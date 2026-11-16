@@ -91,9 +91,7 @@ pub const Store = struct {
     /// Copies one payload after expiry and all admission bounds are checked.
     pub fn enqueue(store: *Store, key: SessionKey, payload: []const u8, now_us: u64) EnqueueError!void {
         store.expire(now_us);
-        for (store.storage.terminals) |terminal| {
-            if (terminal.active and same_key(terminal.key, key)) return error.RetiredSession;
-        }
+        if (store.is_retired(key)) return error.RetiredSession;
         if (payload.len > store.policy.payload_stride) return error.PayloadTooLarge;
         if (store.connection_count(key.connection) >= store.policy.per_connection_limit) return error.ConnectionLimit;
         const index = store.free_head;
@@ -146,9 +144,7 @@ pub const Store = struct {
             if (same_key(entry.key, key)) store.remove(index);
             index = next;
         }
-        for (store.storage.terminals) |terminal| {
-            if (terminal.active and same_key(terminal.key, key)) return .remembered;
-        }
+        if (store.is_retired(key)) return .remembered;
         for (store.storage.terminals) |*terminal| {
             if (terminal.active) continue;
             terminal.* = .{ .key = key, .active = true };
@@ -156,6 +152,14 @@ pub const Store = struct {
             return .remembered;
         }
         return .exhausted;
+    }
+
+    /// Terminal keys remain exact until their connection generation is cleared.
+    pub fn is_retired(store: *const Store, key: SessionKey) bool {
+        for (store.storage.terminals) |terminal| {
+            if (terminal.active and same_key(terminal.key, key)) return true;
+        }
+        return false;
     }
 
     /// Connection teardown also releases its permanently remembered terminals.

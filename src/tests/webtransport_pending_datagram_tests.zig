@@ -26,6 +26,20 @@ fn expect_payload(store: *pending.Store, key: pending.SessionKey, now_us: u64, e
     try std.testing.expectEqualStrings(expected, output[0..taken.payload_length]);
 }
 
+test "WebTransport pending terminal lookup preserves full identity across reuse" {
+    var fixture = Fixture{};
+    var store = try fixture.init(4, 100);
+    const retired = session(0, 7, @as(u64, 1) << 40);
+    try std.testing.expect(!store.is_retired(retired));
+    try std.testing.expectEqual(pending.RetireResult.remembered, store.retire(retired));
+    try std.testing.expect(store.is_retired(retired));
+    try std.testing.expect(!store.is_retired(session(0, 8, retired.session_id)));
+    try std.testing.expect(!store.is_retired(session(1, 7, retired.session_id)));
+    try std.testing.expect(!store.is_retired(session(0, 7, 0)));
+    store.clear_connection(retired.connection);
+    try std.testing.expect(!store.is_retired(retired));
+}
+
 test "WebTransport pending datagrams copy input and retain matching FIFO across other keys" {
     var fixture = Fixture{};
     var store = try fixture.init(4, 100);

@@ -18,6 +18,7 @@ pub const Connection = struct {
     owner: *anyopaque = undefined,
     native: ?*c.lsquic_conn = null,
     stream_count: usize = 0,
+    pending_child_count: usize = 0,
     peer: ?backend.Peer = null,
     sessions: Sessions = .{},
     session_route: ?RouteId = null,
@@ -42,6 +43,7 @@ pub const StreamState = struct {
     lease: StreamLease = .{},
     info: ?backend.StreamInfo = null,
     role: StreamRole = .unresolved,
+    /// CONNECT reservations only; child parents live in child_runtime.State.
     session: ?session.SessionHandle = null,
     pending_settings: bool = false,
 

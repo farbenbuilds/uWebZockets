@@ -227,6 +227,8 @@ pub fn configured_app_with_route_params(
         datagram_rings: []DatagramRing = &.{},
         datagram_payloads: []u8 = &.{},
         datagram_stride: usize = 0,
+        /// Private candidate hook copied into the stable binding before start.
+        webtransport_child_consumer: ?wt_binding.ChildConsumer = null,
         // Kernel-bypass observability state.
         xdp_transport: ?*XdpTransport = null,
         transport_availability: xdp_transport_module.Availability = .{
@@ -1595,6 +1597,7 @@ pub fn configured_app_with_route_params(
                     .clear = clear_webtransport,
                     .clock = webtransport_time_us,
                     .max_payload = self.datagram_rings[0].payload_stride,
+                    .child_consumer = self.webtransport_child_consumer,
                 });
             }
             const routes_were_locked = self.routes_locked;

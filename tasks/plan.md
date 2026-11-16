@@ -331,6 +331,32 @@ Root pins and child callbacks remain unchanged. The refreshed CLI viewer
 permission on the maintained fork is READ; publication/pin integration and the child runtime
 work in step 6 remain required.
 
+Private incoming-child checkpoint, 2026-11-16: the candidate now associates
+peer UNI/BIDI children with a generation-checked authorized parent and an
+optional private receive consumer. An inline pure lifecycle retains consumer
+ownership through native close; the native I/O boundary delivers borrowed
+payload chunks and keeps RESET, STOP, final size and actual read EOF separate.
+The shared stream pool bounds classified waiting children globally, with four
+per connection and a real one-second expiry. Session retirement, shutdown and
+callback reentry cancel exact identities while retaining native close leases.
+Typed capacity rejection uses the new coded STOP operation; refusal before
+positive classification retains the existing generic stream-pool behavior.
+
+The first actual App/TLS/UDP case proves authorized CONNECT0, incoming UNI
+binary bytes with its association prefix excluded, full owner identities,
+one EOF/close notification, guarded process reentry and healthy ordinary HTTP
+on the same connection in Debug, ReleaseSafe and ReleaseFast. The unchanged
+33-case App admission/datagram cohort also passes Debug. All 1035 centralized
+functional tests pass; eleven
+pure child-lifecycle cases pass in all three optimization modes. The
+[incoming-child checkpoint](../benchmarks/results/webtransport_app_children_v1/2026_11_16/README.md)
+retains exact sources, original failures, commands, results and independent
+source/structural reviews. Actual-App BIDI, queue expiry/exhaustion, reset/STOP
+ordering, parent teardown and shutdown coverage remain required before this
+runtime slice is accepted. Public child I/O, application TX, multi-session
+flow accounting, independent-client acceptance and fork publication/pins
+remain open. Production activation is unchanged; v2.3.0 remains incomplete.
+
 Develop the runtime against the real native proposal in an isolated Zig
 verification scaffold while production continues to reject unsupported CONNECT
 on its published pin. Compile the same project sources against both backends;
