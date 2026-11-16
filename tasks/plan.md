@@ -614,3 +614,16 @@ and commits advertised credit only after full native acceptance. Round-robin
 selection prevents repeated DATA grants from starving BIDI/UNI grants. This
 module remains independent of I/O until early-debt retention and callback
 admission gates are wired into Root.
+
+The early-debt increment retains both used and reclaimed totals in fixed
+per-connection SID buckets, independent of child and pending-datagram lifetime.
+Native supplies body deltas before typed callbacks; typed publication charges
+peer-created stream counts once. App child admission waits for publication.
+Reads reclaim delivered bytes, and native final-known close reclaims the
+remaining body and closed peer-child count, including NULL Root contexts.
+The append-only publication snapshot bit is queried at close, when ordinary
+typed notification has completed; connection teardown is abandonment instead.
+Full-pool BIDI classification uses a zero-consumption probe rather than erasing
+an unknown SID. CONNECT refuses retired identities before application admission.
+Positive limits still require receiver import/enforcement, send/create gates,
+capsule output and multi-session isolation before advertisement is enabled.

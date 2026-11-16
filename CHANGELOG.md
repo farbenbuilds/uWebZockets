@@ -30,6 +30,10 @@ uses Semantic Versioning.
 - Pure WebTransport session budgets validate cumulative data and child-stream
   limits. Bounded credit output coalesces consumption/closure grants while
   retaining partial capsule writes; live positive-flow integration remains open.
+- Candidate receive accounting retains early child usage and reclaimed credit
+  across child destruction, transfers it into CONNECT ownership, and charges
+  native high-water deltas before child admission. NULL-context children retain
+  classification and final-size accounting; positive flow remains gated.
 - `App.enable_http3` and `enable_http3_ephemeral` configure HTTPS and HTTP/3
   before listening on an application returned by `Server.builder`, preserving
   its configured capacities and installing both TLS contexts atomically.
@@ -44,6 +48,9 @@ uses Semantic Versioning.
 
 ### Fixed
 
+- Candidate NULL-context classifier error handling recognizes a read half
+  already closed during HTTP header delivery, preserving later CONNECT
+  admission on the same connection.
 - Datagram-only WebTransport sessions retain queued application datagrams during
   graceful cooldown. Established CONNECT flushing no longer takes the accepting
   session shutdown path; published sessions still terminate and drain normally.

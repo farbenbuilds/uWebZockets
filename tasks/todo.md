@@ -250,8 +250,10 @@
   of readability, including NULL Root contexts and pre-callback enforcement.
 - [x] Add pure cumulative stream/data budgets, bounded coalescing credit output
   and atomic consumption/grant transitions; verify them independently of I/O.
-- [ ] Resolve bounded early-session accounting and integrate native receive
-  debit, positive stream/data limits, and credit capsule output.
+- [x] Retain early used/reclaimed receive debt through child destruction and
+  NULL contexts, transfer CONNECT ownership, and verify debit before callbacks.
+- [ ] Integrate positive receive-limit enforcement, send/create budgets and
+  credit capsule output with the retained accounting.
 - [ ] Enable and verify multiple sessions, independent routes and scoped cleanup.
 - [ ] Complete independent draft-16 acceptance, reviewed fork publication and
   the remaining full release requirements.

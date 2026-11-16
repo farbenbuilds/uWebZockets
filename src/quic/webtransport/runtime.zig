@@ -3,6 +3,7 @@ const c = @import("c");
 const pool = @import("../../core/pool.zig");
 const backend = @import("backend.zig");
 const session = @import("session.zig");
+const early_debt = @import("early_debt.zig");
 const pending = @import("pending_datagrams.zig");
 const RouteId = @import("../../router/datagram.zig").RouteId;
 
@@ -17,6 +18,7 @@ pub const SessionNotice = struct {
 /// CONNECT owns lifecycle and publication until its native stream closes.
 pub const SessionRecord = struct {
     notice: SessionNotice,
+    receive_debt: early_debt.Debt = .{},
     phase: session.SessionState = .accepting,
     notice_published: bool = false,
 };
@@ -35,6 +37,8 @@ pub const Connection = struct {
     session_count: usize = 0,
     /// Exhaustion or cooldown disables new unknown associations for this generation.
     unknown_early_disabled: bool = false,
+    /// Lost stream debt blocks fresh CONNECT identities independently of datagram buffering.
+    unknown_receive_disabled: bool = false,
     /// Local dispatch attempts, including full-ring drops; never a wire sequence.
     receive_ordinal: u64 = 0,
 };

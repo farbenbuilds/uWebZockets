@@ -4,9 +4,16 @@ const child_ledger = @import("child_ledger.zig");
 /// Compile-time native contract presence, independent of listener activation.
 pub const available = contract_available();
 
+/// The append-only receive observer is optional on older native contracts.
+pub const receive_available = receive_contract_available();
+
 const max_varint = (@as(u64, 1) << 62) - 1;
 const max_stream_count = @as(u64, 1) << 60;
 const max_prefix_size = 16;
+const native_publication_flag: c_uint = if (@hasDecl(c, "LSQUIC_SRS_WEBTRANSPORT_PUBLISHED"))
+    c.LSQUIC_SRS_WEBTRANSPORT_PUBLISHED
+else
+    0;
 
 /// Query status; every result except `ok` preserves the caller's output.
 pub const QueryResult = enum(u8) {
@@ -77,6 +84,13 @@ pub const StreamInfo = struct {
 /// Copied receive facts distinguish known RESET metadata from delivery.
 pub const ReceiveSnapshot = child_ledger.ReceiveSnapshot;
 
+/// High-water body accounting is independent of delivered reads and reset visibility.
+pub const ReceiveObservation = struct {
+    snapshot: ReceiveSnapshot = .{},
+    received_body: u64 = 0,
+    published: bool = false,
+};
+
 /// Advertised session limits; all zero selects single-session operation.
 pub const LocalLimits = struct {
     initial_max_data: u64 = 0,
@@ -90,10 +104,14 @@ pub const SettingsCallback = *const fn (?*c.lsquic_conn) callconv(.c) void;
 /// Quiescent child notification after native application context creation.
 pub const ChildCallback = *const fn (?*c.lsquic_stream, ?*c.lsquic_stream_ctx) callconv(.c) void;
 
+/// Native commits its deduplicated body cursor before calling this observer.
+pub const ReceiveCallback = *const fn (?*c.lsquic_stream, ?*c.lsquic_stream_ctx, u64) callconv(.c) void;
+
 /// Explicit callbacks installed only when the full native contract is present.
 pub const Callbacks = struct {
     settings: SettingsCallback,
     child: ChildCallback,
+    receive: ?ReceiveCallback = null,
 };
 
 /// Copies peer facts only after native negotiation completes.
@@ -183,17 +201,48 @@ pub fn read_receive(stream: ?*c.lsquic_stream, output: *ReceiveSnapshot) QueryRe
         c.LSQUIC_SRG_UNSUPPORTED => return .unsupported,
         else => return .invalid,
     }
+    output.* = decode_receive(native) orelse return .invalid;
+    return .ok;
+}
+
+/// Queries one synchronous native snapshot; failures preserve caller output.
+pub fn read_observation(stream: ?*c.lsquic_stream, info: StreamInfo, output: *ReceiveObservation) QueryResult {
+    if (comptime !receive_available) return .unsupported;
+    if (info.association != .child or !stream_info_valid(info)) return .invalid;
+    var native: c.struct_lsquic_stream_recv_state = undefined;
+    switch (c.lsquic_stream_get_recv_state(stream, &native)) {
+        c.LSQUIC_SRG_OK => {},
+        c.LSQUIC_SRG_UNSUPPORTED => return .unsupported,
+        else => return .invalid,
+    }
+    const snapshot = decode_receive(native) orelse return .invalid;
+    var observation = receive_observation(snapshot, native.received_end, info.receive_prefix_size) orelse return .invalid;
+    observation.published = native.flags & native_publication_flag != 0;
+    output.* = observation;
+    return .ok;
+}
+
+/// Reliable association bytes are excluded once, including at a hidden reset final size.
+pub fn receive_observation(snapshot: ReceiveSnapshot, received_end: u64, prefix: u8) ?ReceiveObservation {
+    if (!child_ledger.snapshot_valid(snapshot) or received_end > max_varint or received_end < prefix) return null;
+    if (prefix != 0 and (prefix < 3 or prefix > max_prefix_size)) return null;
+    if (snapshot.final_size) |size| if (size != received_end) return null;
+    return .{ .snapshot = snapshot, .received_body = received_end - prefix };
+}
+
+fn decode_receive(native: c.struct_lsquic_stream_recv_state) ?ReceiveSnapshot {
     const known_flags: c_uint = c.LSQUIC_SRS_FINAL_SIZE_KNOWN | c.LSQUIC_SRS_RESET_KNOWN |
         c.LSQUIC_SRS_RELIABLE_RESET_SEEN | c.LSQUIC_SRS_RESET_VISIBLE |
-        c.LSQUIC_SRS_STOP_SENDING_KNOWN | c.LSQUIC_SRS_FIN_RECEIVED | c.LSQUIC_SRS_READ_CANCELED;
-    if (native.flags & ~known_flags != 0) return .invalid;
+        c.LSQUIC_SRS_STOP_SENDING_KNOWN | c.LSQUIC_SRS_FIN_RECEIVED | c.LSQUIC_SRS_READ_CANCELED |
+        native_publication_flag;
+    if (native.flags & ~known_flags != 0) return null;
     const final_known = native.flags & c.LSQUIC_SRS_FINAL_SIZE_KNOWN != 0;
     const reset_known = native.flags & c.LSQUIC_SRS_RESET_KNOWN != 0;
     const stop_known = native.flags & c.LSQUIC_SRS_STOP_SENDING_KNOWN != 0;
     if ((!final_known and (native.final_size != 0 or native.reliable_size != 0)) or
         (!reset_known and native.reset_error_code != 0) or
         (!stop_known and native.stop_error_code != 0) or
-        (!reset_known and native.flags & c.LSQUIC_SRS_RELIABLE_RESET_SEEN != 0)) return .invalid;
+        (!reset_known and native.flags & c.LSQUIC_SRS_RELIABLE_RESET_SEEN != 0)) return null;
     const snapshot: ReceiveSnapshot = .{
         .final_size = if (final_known) native.final_size else null,
         .reliable_size = if (final_known) native.reliable_size else null,
@@ -203,9 +252,8 @@ pub fn read_receive(stream: ?*c.lsquic_stream, output: *ReceiveSnapshot) QueryRe
         .fin_received = native.flags & c.LSQUIC_SRS_FIN_RECEIVED != 0,
         .read_cancelled = native.flags & c.LSQUIC_SRS_READ_CANCELED != 0,
     };
-    if (!child_ledger.snapshot_valid(snapshot)) return .invalid;
-    output.* = snapshot;
-    return .ok;
+    if (!child_ledger.snapshot_valid(snapshot)) return null;
+    return snapshot;
 }
 
 /// Asserts application admission; native HTTP framing remains active for capsules.
@@ -280,11 +328,12 @@ pub fn configure(settings: *c.lsquic_engine_settings, limits: LocalLimits) Confi
     return .ok;
 }
 
-/// Installs the two optional callbacks atomically, preserving older interfaces.
+/// Installs available callbacks atomically, preserving older interfaces.
 pub fn install_callbacks(interface: *c.lsquic_stream_if, callbacks: Callbacks) bool {
     if (comptime !available) return false;
     interface.on_h3_settings = callbacks.settings;
     interface.on_webtransport_stream = callbacks.child;
+    if (comptime receive_available) interface.on_webtransport_receive = callbacks.receive;
     return true;
 }
 
@@ -390,4 +439,11 @@ fn contract_available() bool {
         @hasField(NativeLimits, "initial_max_data") and
         @hasField(NativeLimits, "initial_max_streams_bidi") and
         @hasField(NativeLimits, "initial_max_streams_uni");
+}
+
+fn receive_contract_available() bool {
+    if (!available) return false;
+    return @hasDecl(c, "LSQUIC_SRS_WEBTRANSPORT_PUBLISHED") and
+        @hasField(c.lsquic_stream_if, "on_webtransport_receive") and
+        @hasField(c.struct_lsquic_stream_recv_state, "received_end");
 }

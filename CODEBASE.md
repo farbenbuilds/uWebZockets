@@ -518,7 +518,11 @@ native blocking without a payload queue. Candidate local UNI/BIDI creation
 reserves a stream slot before native construction and defers admission to the
 ordinary open callback. CONNECT slots own session records, with a worker-wide
 startup-sized index for connection-generation/full-ID association and direct
-generation-checked parent lookup. Positive/multi-session flow remains unfinished.
+generation-checked parent lookup. Native high-water observers retain used and
+reclaimed receive totals in bounded early-SID buckets until CONNECT ownership;
+typed publication precedes child admission, including full-pool NULL-context
+classification. Datagram exhaustion and lost receive debt have distinct
+admission policies. Positive/multi-session flow remains unfinished.
 
 The C ABI is declared by `include/uWebZockets.h` and implemented by
 `src/c_api.zig`. It provides versioned opaque handles, versioned integer error

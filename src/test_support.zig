@@ -79,6 +79,7 @@ pub const webtransport_binding = @import("quic/webtransport/binding.zig");
 pub const webtransport_runtime = @import("quic/webtransport/runtime.zig");
 pub const webtransport_session_index = @import("quic/webtransport/session_index.zig");
 pub const webtransport_session_flow = @import("quic/webtransport/session_flow.zig");
+pub const webtransport_early_debt = @import("quic/webtransport/early_debt.zig");
 pub const webtransport_capsule_stream = @import("quic/webtransport/capsule_stream.zig");
 pub const webtransport_pending_datagrams = @import("quic/webtransport/pending_datagrams.zig");
 pub const datagram_ring = @import("quic/datagram_ring.zig");

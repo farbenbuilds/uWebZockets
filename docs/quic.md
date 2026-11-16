@@ -278,14 +278,33 @@ Positive flow and multiple-session activation remain subsequent work.
 
 The [native receive-observer prerequisite](../benchmarks/results/lsquic_receive_observer_v1/2026_11_17/README.md)
 retains high-water/delta observation and lifecycle regressions. It remains an
-unpublished proposal; Root does not yet consume it for positive flow accounting.
+unpublished proposal; positive flow enforcement remains gated. The subsequent
+[publication snapshot checkpoint](../benchmarks/results/lsquic_receive_publication_v1/2026_11_17/README.md)
+adds the native publication bit needed for NULL-context close reconciliation.
 
 The pure [session flow budget](../src/quic/webtransport/session_flow.zig) validates
 cumulative body/child limits and separates receipt, consumption and advertised
 credit. Its fixed capsule buffer retains partially accepted bytes and coalesces
 later grants with fair DATA/BIDI/UNI service. Centralized tests cover these
-transitions independently of I/O. Live integration, early-child debt and positive
-flow advertisement remain open.
+transitions independently of I/O. Positive-flow integration and advertisement
+remain open.
+
+Candidate native receive observers now record prefix-excluded body deltas before
+typed admission, with peer-created stream counts charged once at publication.
+Known-session receipt resolves its indexed CONNECT record before any retired-ID
+scan; only unknown associations scan the bounded retirement store.
+Early usage and reclaimed bytes/closed children persist in four startup-owned
+SID slots per connection until CONNECT takes ownership. Reads and final gaps
+are not charged again. Closing a child reclaims its remaining final body debt;
+whole-connection teardown discards its exact generation. An append-only native
+publication snapshot bit distinguishes NULL-context children at close.
+
+When Root's stream pool is full, a BIDI classifier probe consumes no child body
+and retains its session identity before rejection. Debt exhaustion retires that
+SID before discarding counters; unremembered stream-debt loss blocks new unknown
+session admission independently of datagram buffering exhaustion. CONNECT checks
+this policy before invoking application admission.
+Published dependency pins and positive-flow advertisement remain unchanged.
 
 ## Verification
 
