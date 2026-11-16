@@ -57,6 +57,11 @@
       advertisement agree; outgoing/incoming bidi credit follows initiator.
       Real encrypted uni limits and four raw bidi halves pass in all three
       build modes. The reviewed local proposal remains unpublished.
+- [x] Section 8.2 native child-stream functional slice: creation, classification,
+      directional metadata, reset/STOP ordering, rejected negotiation and
+      GOAWAY isolation pass 65 scenarios in all three modes, all 83 native
+      Debug cases and Windows/macOS production compilation. Source and evidence
+      are archived; runtime integration and publication remain open.
 - [x] Release metadata synchronized to 2.3.0; no tag or publication.
 - [x] Independent slice reviews, findings resolved and changed work
       re-reviewed, including the final adapter and evidence package.
@@ -95,9 +100,12 @@
   is frozen at `9f0088c58fe67cccf1871dc172c90c2ec6f97944`.
   The incomplete [child-stream checkpoint](../benchmarks/results/lsquic_webtransport_children_checkpoint_v1/2026_11_16/README.md)
   is saved at `a1947ce3a4ceeb98413e53014cc87f72b6d89869`: 41 focused Debug
-  scenarios pass, but delayed SETTINGS still allows reset notification before
-  typed publication. The failing regression remains intact; final review and
-  full functional gates remain open.
+  scenarios passed at that point, while delayed SETTINGS still allowed reset
+  notification before typed publication. The following reviewed
+  [functional slice](../benchmarks/results/lsquic_webtransport_children_v1/2026_11_16/README.md)
+  is frozen at `2e229b3e0a9bb293c4d7f74f7532e09213b8cb5c`; it fixes that
+  regression, placement errors and GOAWAY interactions. Child-specific loss
+  campaigns and independent compatible-client acceptance remain open.
   Published draft-16 SETTINGS, long-lived CONNECT, child association, live session
   integration, client acceptance and published fork/pin updates remain open.
 - Dependency provenance still encounters the user's pre-existing h1spec
@@ -111,10 +119,16 @@
   `5b2cde22c4ab8e472b4d810a2f7225ff95cd61d5`; the verified incremental
   maintainer bundle and instructions are in
   `/tmp/uwz-xev008-maintainer-handoff`. This unpublished commit is not a pin.
-  Current GitHub credentials have read-only access to the libxev and lsquic
-  forks.
+  Fork write permissions must be rechecked before publication.
 - The TLS C-allocation audit retains the failed strict gate. SQLite's
   SQL-ALLOC-001 approval does not approve proposed SQL-ALLOC-002.
+  Read-only diagnosis against the exact BoringSSL pin resolves both observed
+  malloc return PCs to `SSLBuffer::EnsureCap`; read/write attribution remains
+  a source-based inference because the trace captured no parent stacks.
+  `SSL_MODE_RELEASE_BUFFERS` and read-ahead compatibility APIs are no-ops in
+  that pin; its buffer pool stores certificates. No supported per-session
+  record-buffer retention API was found. A reviewed dependency change or an
+  explicitly approved exception is still required; accounting is unchanged.
 - Native Windows, second-machine fork resolution and designated quiet-host
   runs still require their specified environments. Cross-compilation is
   recorded separately and cannot substitute for those runtime gates.

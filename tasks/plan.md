@@ -163,6 +163,16 @@ pending. Complete callback ordering and remaining lifetime/recovery cases before
 final review, full functional gates or runtime integration. This is a saved
 work-in-progress checkpoint, not a completed prerequisite.
 
+Reviewed native follow-up: local proposal
+`2e229b3e0a9bb293c4d7f74f7532e09213b8cb5c` resolves the checkpoint's
+reset-publication failure and adds STOP final-size preservation, immediate
+lengthless-type placement errors and GOAWAY isolation. Its
+[source and functional evidence](../benchmarks/results/lsquic_webtransport_children_v1/2026_11_16/README.md)
+retain 65 scenarios in all three modes, all 83 native Debug cases, cross-target
+production compilation and compiler-derived ABI constants. The proposal remains
+unpublished; child loss campaigns, independent client acceptance and the Zig
+runtime below remain required.
+
 After the reset candidate is reviewed, extend the fork's draft-16 SETTINGS,
 negotiation snapshot/notification, long-lived CONNECT and raw child-stream
 classification. Keep parsing and packet ownership in the fork; session
