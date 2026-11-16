@@ -604,3 +604,13 @@ adapting private observation helpers to the new records. Add index failure,
 namespace, generation and allocation-bound tests, plus actual lifecycle
 regressions. Run formatting, conventions, version, functional unit, ReleaseSafe
 compile, ReleaseFast library and downstream-consumer checks, then commit/push.
+
+The pure flow prerequisite keeps cumulative usage separate from advertised and
+desired limits. Native's deduplicated body delta is the only receive debit;
+reads and final gaps must not charge it again. Consumption and peer-child
+closure replenish desired credit without reducing lifetime usage or waiting for
+BLOCKED capsules. One 13-byte output buffer retains an immutable partial capsule
+and commits advertised credit only after full native acceptance. Round-robin
+selection prevents repeated DATA grants from starving BIDI/UNI grants. This
+module remains independent of I/O until early-debt retention and callback
+admission gates are wired into Root.

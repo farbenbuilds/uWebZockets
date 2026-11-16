@@ -280,6 +280,13 @@ The [native receive-observer prerequisite](../benchmarks/results/lsquic_receive_
 retains high-water/delta observation and lifecycle regressions. It remains an
 unpublished proposal; Root does not yet consume it for positive flow accounting.
 
+The pure [session flow budget](../src/quic/webtransport/session_flow.zig) validates
+cumulative body/child limits and separates receipt, consumption and advertised
+credit. Its fixed capsule buffer retains partially accepted bytes and coalesces
+later grants with fair DATA/BIDI/UNI service. Centralized tests cover these
+transitions independently of I/O. Live integration, early-child debt and positive
+flow advertisement remain open.
+
 ## Verification
 
 The cross-implementation gate uses pinned curl/ngtcp2 and aioquic clients to

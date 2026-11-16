@@ -248,8 +248,10 @@
   verify index namespace, stale-handle, capacity and allocation invariants.
 - [x] Add and verify native receive high-water/delta observation independently
   of readability, including NULL Root contexts and pre-callback enforcement.
-- [ ] Resolve bounded early-session accounting and implement positive stream/
-  data budgets, final reset gaps, and credit capsule output.
+- [x] Add pure cumulative stream/data budgets, bounded coalescing credit output
+  and atomic consumption/grant transitions; verify them independently of I/O.
+- [ ] Resolve bounded early-session accounting and integrate native receive
+  debit, positive stream/data limits, and credit capsule output.
 - [ ] Enable and verify multiple sessions, independent routes and scoped cleanup.
 - [ ] Complete independent draft-16 acceptance, reviewed fork publication and
   the remaining full release requirements.

@@ -27,6 +27,9 @@ uses Semantic Versioning.
   connection-wide session scalars. Close invalidates identity before callbacks;
   index churn reclaims tombstones without allocating. The flow-off one-session
   restriction remains until positive flow control is implemented.
+- Pure WebTransport session budgets validate cumulative data and child-stream
+  limits. Bounded credit output coalesces consumption/closure grants while
+  retaining partial capsule writes; live positive-flow integration remains open.
 - `App.enable_http3` and `enable_http3_ephemeral` configure HTTPS and HTTP/3
   before listening on an application returned by `Server.builder`, preserving
   its configured capacities and installing both TLS contexts atomically.
