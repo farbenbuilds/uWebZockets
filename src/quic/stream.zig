@@ -46,6 +46,9 @@ const RequestPhase = enum(u8) {
     complete,
 };
 
+/// Flushes queued native bytes without ending the write side.
+pub const FlushFn = *const fn (?*c.lsquic_stream) callconv(.c) c_int;
+
 /// lsquic stream entry points the response state machine calls.
 ///
 /// Production binds `lsquic_stream_io`; tests substitute a fake so producer
@@ -60,6 +63,7 @@ pub const StreamIo = struct {
         [*c]const c.lsquic_http_headers_t,
         c_int,
     ) callconv(.c) c_int,
+    flush: FlushFn,
     shutdown: *const fn (?*c.lsquic_stream, c_int) callconv(.c) c_int,
     close: *const fn (?*c.lsquic_stream) callconv(.c) c_int,
 };
@@ -71,6 +75,7 @@ pub const lsquic_stream_io: StreamIo = .{
     .wantwrite = c.lsquic_stream_wantwrite,
     .write = c.lsquic_stream_write,
     .send_headers = c.lsquic_stream_send_headers,
+    .flush = c.lsquic_stream_flush,
     .shutdown = c.lsquic_stream_shutdown,
     .close = c.lsquic_stream_close,
 };
@@ -857,6 +862,70 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
                 .begin_stream_fn = begin_stream_response,
                 .stream_file_fn = begin_file_response,
             };
+        }
+
+        /// Success is still buffered: CONNECT must keep both transport halves open.
+        pub fn connect_response_ready(self: *const Self) bool {
+            if (self.release_fn == null or self.response_phase != .ready or self.headers_sent) return false;
+            if (self.response_status_code < 200 or self.response_status_code >= 300) return false;
+            if (self.response_body_length != 0) return false;
+            for (0..self.response_header_count) |index| {
+                const start = self.response_name_offsets[index];
+                const name = self.response_header_storage[start..][0..self.response_name_lengths[index]];
+                if (std.mem.eql(u8, name, "content-length")) return false;
+            }
+            return true;
+        }
+
+        /// Commits only the prepared response head, without ordinary HTTP FIN.
+        pub fn send_connect_head(self: *Self) bool {
+            if (!self.connect_response_ready()) return false;
+            if (!self.send_headers()) return false;
+            self.headers_sent = true;
+            self.response_phase = .streaming;
+            // Native header completion must retain a callback to flush without FIN.
+            return true;
+        }
+
+        /// Called after native header completion, including a credit-blocked head.
+        pub fn flush_connect_head(self: *Self) bool {
+            if (!self.headers_sent or self.response_phase != .streaming) return false;
+            if (io.flush(self.stream) != 0) return false;
+            _ = io.wantwrite(self.stream, 0);
+            return true;
+        }
+
+        /// Replaces an unsent admission result with a complete refusal.
+        pub fn refuse_connect(self: *Self, status: []const u8, body: []const u8) void {
+            if (self.headers_sent) {
+                self.close_now();
+                return;
+            }
+            self.clear_stream_producer();
+            self.response_phase = .idle;
+            self.response_body_length = 0;
+            self.response_body_offset = 0;
+            self.queue_error(status, body);
+        }
+
+        /// Preserves an application's prepared non-success refusal.
+        pub fn finish_connect_refusal(self: *Self) void {
+            self.dispatched = true;
+            _ = io.wantread(self.stream, 0);
+            if (io.shutdown(self.stream, 0) != 0) self.close_now();
+        }
+
+        /// Cancels unsent success and owns no application response after return.
+        pub fn abort_connect(self: *Self) void {
+            self.clear_stream_producer();
+            self.release_connect_request();
+            self.close_now();
+        }
+
+        /// The admitted route identity must be copied before request storage ends.
+        pub fn release_connect_request(self: *Self) void {
+            if (self.header_set) |headers| headers.release();
+            self.header_set = null;
         }
 
         fn end_response(context: *anyopaque, status: []const u8, headers: []const u8, body: []const u8) !void {

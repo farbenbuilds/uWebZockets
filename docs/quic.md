@@ -18,6 +18,11 @@ try server.run();
 For local development, `init_http3_ephemeral` generates an in-memory
 certificate; see [tls.md](tls.md).
 
+After `Server.builder(...).build(...)`, call `enable_http3(cert_path,
+key_path)` or `enable_http3_ephemeral()` on the resulting application before
+listening. This retains the builder's connection, stream and datagram
+capacities while installing isolated TCP and QUIC TLS contexts.
+
 ## Request path
 
 The adapter decodes HTTP/3 pseudo-headers directly into the existing `Request`
@@ -73,8 +78,8 @@ bookkeeping, and replay-aware early-data policy. `uz.webtransport` supplies
 bounded draft-16 settings, CONNECT/origin checks, sessions, stream and datagram
 association, capsules, flow control, and error mapping.
 
-Those extension modules are **not connected to the live lsquic listener**. The
-maintained fork backend currently exposes raw datagrams but not the complete
+The **published dependency pin does not activate WebTransport**. Its
+maintained fork backend exposes raw datagrams but not the complete
 extended CONNECT, outgoing unidirectional stream, or reset-at interfaces they
 require, and the build does not yet enable the WebTransport server compile
 option. Completed CONNECT dispatch returns `501 Not Implemented`; headers alone
@@ -88,6 +93,22 @@ records the exact backend blockers and the accepted implementation plan. The
 maintained `farbenbuilds/lsquic` fork can carry the missing server interfaces,
 but the live path remains capability-gated until a post-2.2.0 implementation and
 compliance gate land.
+
+The private runtime now binds App admission and datagram callbacks when built
+against the complete local native proposal. It requires an exact datagram
+endpoint and an explicitly registered synchronous CONNECT handler. An empty,
+completed 2xx response from that handler approves both authentication and the
+supplied Origin; an `any` fallback or generic CORS continuation cannot admit
+the session. The conservative profile requires exactly one nonempty Origin.
+The handler must validate its value and all application credentials.
+
+This candidate uses one session per connection with session flow control off.
+It retains a registered route identity after releasing request headers and
+parses fragmented capsules with bounded carry. This is an implementation
+checkpoint, without published fork pins or independent draft-16 client
+acceptance. Public child-stream I/O, bounded early associations and multi-session
+flow accounting remain open. See the
+[App admission evidence](../benchmarks/results/webtransport_app_admission_v1/2026_11_16/README.md).
 
 ## Verification
 

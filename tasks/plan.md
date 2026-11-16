@@ -232,6 +232,31 @@ through production engine processing and UDP transmission. The
 retain that functional scope. Positive typed-child engine integration awaits
 the session binding/admission slices; WT negotiation remains disabled.
 
+Steps 3–4 checkpoint, 2026-11-16: App supplies stable named admission,
+datagram-delivery and clear callbacks after storing its transport. The
+capability-gated candidate admits explicit synchronous CONNECT routes at
+completed headers, requires application authentication and Origin approval,
+retains registered route identity after header release, and establishes a
+nonterminal response. A configured builder can enable HTTP/3 without losing
+its capacities. The initial profile permits one session per connection with
+session flow control off; it does not satisfy the multi-session requirement.
+
+All 991 centralized published-pin tests pass. Eight actual App/TLS cases pass
+in Debug, ReleaseSafe and ReleaseFast: header-time success, Origin/auth
+refusals, explicit-method and middleware policy, independent session zero on
+two connections, excess-session and incompatible-peer resets, cooldown
+reentry, credit-blocked reset recovery and delayed FIN. The pure capsule
+decoder's 16 cases also pass in all three modes. The
+[App admission checkpoint](../benchmarks/results/webtransport_app_admission_v1/2026_11_16/README.md)
+retains exact sources, candidate identities, original failures,
+commands and limits. Independent review has no remaining required findings.
+
+Native datagram delivery/ring-clear verification, pending-SETTINGS cancellation
+execution, early association buffering, typed children, multi-session flow
+accounting and the independent draft-16 client remain open. The published
+dependency views are unchanged and do not activate WT. These checkpoints do
+not complete the runtime slice or v2.3.0; smoke/security runs remain deferred.
+
 Develop the runtime against the real native proposal in an isolated Zig
 verification scaffold while production continues to reject unsupported CONNECT
 on its published pin. Compile the same project sources against both backends;

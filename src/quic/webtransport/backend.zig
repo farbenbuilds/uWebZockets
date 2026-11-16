@@ -33,6 +33,9 @@ pub const ConfigureResult = enum(u8) {
     unsupported,
 };
 
+/// A blocked reset retains its requested error until native write credit resumes.
+pub const ResetResult = enum(u8) { ok, blocked, unsupported, invalid, closed };
+
 /// Role of the endpoint checking its peer's prerequisites.
 pub const EndpointRole = enum(u8) { client, server };
 
@@ -177,6 +180,27 @@ pub fn create_child(connection: ?*c.lsquic_conn, session_id: u64, direction: Dir
     return create_result(c.lsquic_conn_make_webtransport_stream(connection, session_id, kind));
 }
 
+/// Zero uses ordinary RESET_STREAM; native children preserve their prefix floor.
+pub fn reset_stream(stream: ?*c.lsquic_stream, application_error: u64) ResetResult {
+    if (comptime !available) return .unsupported;
+    return switch (c.lsquic_stream_reset_at(stream, application_error, 0)) {
+        c.LSQUIC_SRA_OK => .ok,
+        c.LSQUIC_SRA_BLOCKED => .blocked,
+        c.LSQUIC_SRA_UNSUPPORTED => .unsupported,
+        c.LSQUIC_SRA_CLOSED => .closed,
+        else => .invalid,
+    };
+}
+
+/// Known cancellation prevents admission even before its reset callback is due.
+pub fn admission_canceled(stream: ?*c.lsquic_stream) bool {
+    if (comptime !available) return false;
+    var state: c.struct_lsquic_stream_recv_state = undefined;
+    if (c.lsquic_stream_get_recv_state(stream, &state) != c.LSQUIC_SRG_OK) return true;
+    return state.flags & (c.LSQUIC_SRS_RESET_KNOWN | c.LSQUIC_SRS_STOP_SENDING_KNOWN |
+        c.LSQUIC_SRS_READ_CANCELED) != 0;
+}
+
 /// Enables native draft-16 negotiation with bounded session limits.
 ///
 /// The caller supplies an HTTP engine and its datagram callback. No listener
@@ -245,6 +269,15 @@ fn contract_available() bool {
         "lsquic_stream_reset_at",
         "lsquic_stream_get_recv_state",
         "lsquic_stream_get_reset_error",
+        "struct_lsquic_stream_recv_state",
+        "LSQUIC_SRG_OK",
+        "LSQUIC_SRS_RESET_KNOWN",
+        "LSQUIC_SRS_STOP_SENDING_KNOWN",
+        "LSQUIC_SRS_READ_CANCELED",
+        "LSQUIC_SRA_OK",
+        "LSQUIC_SRA_BLOCKED",
+        "LSQUIC_SRA_UNSUPPORTED",
+        "LSQUIC_SRA_CLOSED",
         "struct_lsquic_webtransport_peer",
         "struct_lsquic_webtransport_stream_info",
         "enum_lsquic_webtransport_stream_kind",

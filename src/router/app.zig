@@ -14,6 +14,9 @@ const ClientAuthConfig = @import("../crypto/tls.zig").ClientAuthConfig;
 const TlsContext = @import("../crypto/tls.zig").TlsContext;
 const quic = @import("../quic/engine.zig");
 const quic_stream = @import("../quic/stream.zig");
+const wt_binding = @import("../quic/webtransport/binding.zig");
+const wt_runtime = @import("../quic/webtransport/runtime.zig");
+const wt_admission = @import("webtransport.zig");
 const udp = @import("../core/udp.zig");
 const request_module = @import("../http/request.zig");
 const request_body_module = @import("../http/request_body.zig");
@@ -491,10 +494,19 @@ pub fn configured_app_with_route_params(
         pub fn init_http3(io: std.Io, cert_path: [:0]const u8, key_path: [:0]const u8) !Self {
             var instance = try Self.init(io);
             errdefer instance.deinit();
-            instance.tls_ctx = try TlsContext.init(cert_path, key_path);
-            instance.quic_tls_ctx = try TlsContext.init_http3(cert_path, key_path);
-            instance.http3_enabled = true;
+            try instance.enable_http3(cert_path, key_path);
             return instance;
+        }
+
+        /// Enables HTTPS and HTTP/3 on a configured application before listening.
+        pub fn enable_http3(self: *Self, cert_path: [:0]const u8, key_path: [:0]const u8) !void {
+            try self.require_http3_enable_available();
+            var tcp_tls = try TlsContext.init(cert_path, key_path);
+            errdefer tcp_tls.deinit();
+            const quic_tls = try TlsContext.init_http3(cert_path, key_path);
+            self.tls_ctx = tcp_tls;
+            self.quic_tls_ctx = quic_tls;
+            self.http3_enabled = true;
         }
 
         /// Initializes an HTTPS application with an in-memory self-signed
@@ -514,10 +526,29 @@ pub fn configured_app_with_route_params(
         pub fn init_http3_ephemeral(io: std.Io) !Self {
             var instance = try Self.init(io);
             errdefer instance.deinit();
-            instance.tls_ctx = try TlsContext.init_ephemeral(.{});
-            instance.quic_tls_ctx = try TlsContext.init_http3_ephemeral(.{});
-            instance.http3_enabled = true;
+            try instance.enable_http3_ephemeral();
             return instance;
+        }
+
+        /// Enables development HTTPS/HTTP3 credentials without changing capacities.
+        pub fn enable_http3_ephemeral(self: *Self) !void {
+            try self.require_http3_enable_available();
+            var tcp_tls = try TlsContext.init_ephemeral(.{});
+            errdefer tcp_tls.deinit();
+            const quic_tls = try TlsContext.init_http3_ephemeral(.{});
+            self.tls_ctx = tcp_tls;
+            self.quic_tls_ctx = quic_tls;
+            self.http3_enabled = true;
+        }
+
+        fn require_http3_enable_available(self: *const Self) error{
+            ApplicationUnavailable,
+            AlreadyListening,
+            TlsAlreadyEnabled,
+        }!void {
+            if (self.shutting_down or self.deinitialized or self.running) return error.ApplicationUnavailable;
+            if (self.routes_locked or self.listener_count != 0 or self.quic_transport != null) return error.AlreadyListening;
+            if (self.tls_ctx != null or self.quic_tls_ctx != null or self.http3_enabled) return error.TlsAlreadyEnabled;
         }
 
         /// Releases this application's TLS context exactly once.
@@ -1108,6 +1139,36 @@ pub fn configured_app_with_route_params(
             return &self.datagram_rings[connection_index];
         }
 
+        fn admit_webtransport(context: *anyopaque, request: *Request, response: *Response) wt_binding.AdmissionResult {
+            const self: *Self = @ptrCast(@alignCast(context));
+            if (self.shutting_down or self.deinitialized) return .rejected;
+            return wt_admission.admit(&self.router, &self.datagram_router, request, response);
+        }
+
+        fn deliver_webtransport(
+            context: *anyopaque,
+            connection: wt_runtime.ConnectionHandle,
+            route_id: wt_binding.RouteId,
+            session_id: u64,
+            ordinal: u64,
+            payload: []const u8,
+        ) bool {
+            const self: *Self = @ptrCast(@alignCast(context));
+            if (self.shutting_down or self.deinitialized) return false;
+            const transport = if (self.quic_transport) |*active| active else return false;
+            if (transport.engine.connections.find(connection) == null) return false;
+            const route = self.datagram_router.get(route_id) orelse return false;
+            return self.dispatch_datagram(connection.index, session_id, ordinal, route.path, payload);
+        }
+
+        fn clear_webtransport(context: *anyopaque, connection: wt_runtime.ConnectionHandle) void {
+            const self: *Self = @ptrCast(@alignCast(context));
+            const transport = if (self.quic_transport) |*active| active else return;
+            if (transport.engine.connections.find(connection) == null) return;
+            const ring = self.datagram_ring_for(connection.index) orelse return;
+            ring.clear();
+        }
+
         fn ensure_routes_mutable(self: *Self) !void {
             if (self.shutting_down or self.deinitialized) return error.ApplicationUnavailable;
             if (self.routes_locked) return error.RoutesLocked;
@@ -1519,9 +1580,18 @@ pub fn configured_app_with_route_params(
                 if (self.quic_transport) |*transport| transport.deinit();
                 self.quic_transport = null;
             }
-            try self.quic_transport.?.start(self.loop.get_xev_loop());
-
+            if (self.datagram_rings.len != 0 and self.datagram_stride != 0) {
+                try self.quic_transport.?.engine.bind_webtransport(.{
+                    .context = self,
+                    .admit = admit_webtransport,
+                    .deliver = deliver_webtransport,
+                    .clear = clear_webtransport,
+                });
+            }
+            const routes_were_locked = self.routes_locked;
             self.routes_locked = true;
+            errdefer self.routes_locked = routes_were_locked;
+            try self.quic_transport.?.start(self.loop.get_xev_loop());
 
             if (self.services.count != 0) {
                 self.defer_ready_endpoint(address, port, true, true);

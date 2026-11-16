@@ -39,6 +39,10 @@ const FakeStream = struct {
         return 0;
     }
 
+    fn flush(_: ?*c.lsquic_stream) callconv(.c) c_int {
+        return 0;
+    }
+
     fn shutdown(raw: ?*c.lsquic_stream, how: c_int) callconv(.c) c_int {
         const fake = from(raw);
         if (how != 1) {
@@ -60,6 +64,7 @@ const FakeStream = struct {
         .wantwrite = want,
         .write = write,
         .send_headers = send_headers,
+        .flush = flush,
         .shutdown = shutdown,
         .close = close,
     };

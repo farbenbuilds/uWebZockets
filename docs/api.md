@@ -40,6 +40,12 @@ the pool, request buffers, message regions, write queues, router storage, and
 optional compression scratch. `ServerConfig` presets are listed in
 [memory_model.md](memory_model.md).
 
+To add HTTPS and HTTP/3 to this configured value, call
+`server.enable_http3(cert_path, key_path)` before listening, or use
+`server.enable_http3_ephemeral()` for local development. The configured
+capacities remain in effect. Bind QUIC with `listen_udp`; see
+[quic.md](quic.md) and [tls.md](tls.md#production-pem-files).
+
 ## Lifecycle
 
 ```zig
@@ -57,7 +63,8 @@ try app.run();                             // blocks until shutdown drains
 `listen` is the one-endpoint convenience wrapper. `listen_all` replaces it; it
 returns `error.AlreadyListening` after either call. A `.tls = true` endpoint
 requires an HTTPS initializer (`init_https`, `init_https_ephemeral`, or
-`init_http3`) before the listen call.
+`init_http3`) or a successful `enable_http3` / `enable_http3_ephemeral` call
+before the listen call.
 
 | Step | Rules |
 | --- | --- |

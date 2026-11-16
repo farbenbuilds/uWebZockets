@@ -2,6 +2,11 @@ const std = @import("std");
 const c = @import("c");
 const pool = @import("../../core/pool.zig");
 const backend = @import("backend.zig");
+const session = @import("session.zig");
+const RouteId = @import("../../router/datagram.zig").RouteId;
+
+/// Flow-off operation permits one session per connection, not per worker.
+const Sessions = session.session_slab(1);
 
 /// Worker-local identity that cannot resolve after its slot is reused.
 pub const ConnectionHandle = struct {
@@ -16,6 +21,10 @@ pub const Connection = struct {
     native: ?*c.lsquic_conn = null,
     stream_count: usize = 0,
     peer: ?backend.Peer = null,
+    sessions: Sessions = .{},
+    session_route: ?RouteId = null,
+    session_stream: ?usize = null,
+    receive_ordinal: u64 = 0,
 };
 
 /// One noncopyable stream reference; release consumes this caller-owned value.
@@ -32,6 +41,8 @@ pub const StreamState = struct {
     lease: StreamLease = .{},
     info: ?backend.StreamInfo = null,
     role: StreamRole = .unresolved,
+    session: ?session.SessionHandle = null,
+    pending_settings: bool = false,
 
     pub fn mark_http(state: *StreamState) bool {
         if (state.role != .unresolved and state.role != .http) return false;
@@ -122,6 +133,12 @@ pub fn connection_table(comptime capacity: usize) type {
         pub fn close(self: *Self, handle: ConnectionHandle) bool {
             const connection = self.find(handle) orelse return false;
             if (connection.native == null) return false;
+            if (connection.sessions.open_count() != 0) {
+                const active = connection.sessions.find(connection.sessions.session_ids[0]) orelse return false;
+                connection.sessions.close(active) catch return false;
+            }
+            connection.session_route = null;
+            connection.session_stream = null;
             connection.native = null;
             if (connection.stream_count == 0) std.debug.assert(self.pool.release(connection));
             return true;

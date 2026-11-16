@@ -55,6 +55,8 @@ comptime {
     _ = @import("quic_phase3_tests.zig");
 
     _ = @import("webtransport_runtime_tests.zig");
+    _ = @import("webtransport_admission_tests.zig");
+    _ = @import("webtransport_capsule_stream_tests.zig");
     _ = @import("query_tests.zig");
     _ = @import("rpc_tests.zig");
     _ = @import("router_tests.zig");

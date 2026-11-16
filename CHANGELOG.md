@@ -5,6 +5,16 @@ uses Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- `App.enable_http3` and `enable_http3_ephemeral` configure HTTPS and HTTP/3
+  before listening on an application returned by `Server.builder`, preserving
+  its configured capacities and installing both TLS contexts atomically.
+- Private capability-gated WebTransport CONNECT admission, connection-scoped
+  session ownership, registered datagram route identities and bounded
+  incremental capsule parsing. The published dependency pin keeps live
+  WebTransport disabled; candidate verification is retained separately.
+
 ### Fixed
 
 - The scheduled benchmark publisher refreshes the narrative contract document
