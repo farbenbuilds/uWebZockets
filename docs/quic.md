@@ -178,6 +178,12 @@ These registration/types compile with the published pin; live operations
 return `Unsupported` there. The complete unpublished native proposal is still
 required to exercise the candidate path.
 
+The [public receive checkpoint](../benchmarks/results/webtransport_public_receive_v1/2026_11_16/README.md)
+retains 26 actual App cases in all three optimization modes, exact source
+inputs and a relocatable replay. It does not establish accepting-phase
+cooldown staging, outgoing streams, positive session flow control or an
+independent draft-16 client.
+
 ## Verification
 
 The cross-implementation gate uses pinned curl/ngtcp2 and aioquic clients to

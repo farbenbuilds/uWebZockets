@@ -118,6 +118,16 @@
       remain open; this does not complete WT activation.
 - [x] Independent slice reviews, findings resolved and changed work
       re-reviewed, including the final adapter and evidence package.
+- [x] Section 8.2 public child receive checkpoint: shared sixteen-path endpoint
+      registration, App-affine generation handles, receive/session callbacks,
+      cancellation, explicit BIDI finish and child-only startup. The 26 actual
+      public App cases pass in Debug, ReleaseSafe and ReleaseFast on source
+      commit `7ecfc6b9285779e89b99a95dc910efa8f8403c46`; 1049 functional tests
+      and final ReleaseSafe compilation/ReleaseFast library checks pass.
+      `benchmarks/results/webtransport_public_receive_v1/2026_11_16/README.md`
+      retains exact scope, historical failures and reproducible inputs. Public
+      duplex writes/outgoing streams, multi-session flow, independent-client
+      acceptance and publication remain open.
 - [x] Requirement-by-requirement audit and retained final check results in
       `benchmarks/results/release_candidate_v2_3/2026_11_11/README.md`.
 - [ ] Every required release gate passes; open results are listed below.
@@ -181,8 +191,11 @@
   local UNI credit proposal. The following
   [callback/reset evidence](../benchmarks/results/webtransport_child_callbacks_v1/2026_11_16/README.md)
   verifies callback shutdown, Close-before-FIN, reliable reset ordering and
-  final accounting. Public child I/O/TX and multi-session flow accounting
-  remain required.
+  final accounting. The
+  [public receive checkpoint](../benchmarks/results/webtransport_public_receive_v1/2026_11_16/README.md)
+  adds endpoint callbacks, generation handles, cancellation, explicit send
+  finish and session events. Public duplex writes/outgoing streams and
+  multi-session flow accounting remain required.
   Published draft-16 SETTINGS, long-lived CONNECT, child association, live session
   integration, client acceptance and published fork/pin updates remain open.
 - Dependency provenance still encounters the user's pre-existing h1spec
