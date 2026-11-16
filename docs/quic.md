@@ -235,6 +235,11 @@ retains actual stream/connection credit recovery, accepted-buffer copying,
 one-shot callbacks and loop-only deadline wakes. C-boundary injected failures
 are labeled separately from the actual native cohort.
 
+The [local STOP/RESET checkpoint](../benchmarks/results/webtransport_public_half_v1/2026_11_17/README.md)
+retains 51 actual App cases in all three optimization modes, including independent
+half progress, callback reentry, immutable codes and whole-cancel composition.
+Native half-control error-return faults remain unforced.
+
 ## Verification
 
 The cross-implementation gate uses pinned curl/ngtcp2 and aioquic clients to
