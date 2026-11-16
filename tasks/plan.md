@@ -381,6 +381,27 @@ public I/O/TX, flow accounting, independent-client and publication gates remain
 required. Close-before-parent-FIN child cancellation is not established by
 this new teardown case. Pins and activation remain unchanged.
 
+Incoming-child callback/reset checkpoint, 2026-11-16: all 17 actual App cases
+now pass in Debug, ReleaseSafe and ReleaseFast. Fully buffered multi-chunk
+tests exposed reads after a callback aborted its native connection; the
+existing guard now checks native status. Visible resets exposed an unfinished
+application receive half; terminal STOP cleanup now completes it. A waiting
+child also rechecks cancellation before association, suppressing a late open
+after visible reset while preserving hidden reliable-reset admission.
+
+The cohort proves open/data cooldown ownership, post-abort suppression,
+declined-open/data semantics, and full final accounting despite partial
+delivery. Parent Close cancellation is now observed before client FIN.
+Independent full-width BIDI STOP/RESET, reliable-data-before-reset ordering,
+final-gap charging and visible-reset/future-session isolation pass against
+unchanged native proposals. The
+[callback/reset evidence](../benchmarks/results/webtransport_child_callbacks_v1/2026_11_16/README.md)
+retains original failures, exact sources, commands and clear reviews. Root
+1035 functional tests and release builds pass; the existing 33-case App cohort
+passes Debug. Public child I/O/TX, multi-session flow accounting,
+independent-client acceptance and publication remain full-goal requirements.
+Production pins and activation are unchanged; v2.3.0 remains incomplete.
+
 Develop the runtime against the real native proposal in an isolated Zig
 verification scaffold while production continues to reject unsupported CONNECT
 on its published pin. Compile the same project sources against both backends;

@@ -668,7 +668,7 @@ pub fn quic_engine(
             const key = state.key orelse return false;
             if (!std.meta.eql(key.connection, context.state.lease.connection)) return false;
             const slot = self.connections.find(key.connection) orelse return false;
-            if (slot.native == null or slot.session_route != state.route) return false;
+            if (!native_connection_live(slot.native) or slot.session_route != state.route) return false;
             const current_parent = slot.sessions.find(key.session_id) orelse return false;
             if (!std.meta.eql(current_parent, key.session)) return false;
             const session_state = slot.sessions.state(key.session) catch return false;
@@ -699,6 +699,16 @@ pub fn quic_engine(
         fn associate_child(self: *Self, context: *StreamContext) void {
             const state = if (context.child) |*active| active else return;
             if (state.phase != .waiting_parent) return;
+            var received: backend.ReceiveSnapshot = .{};
+            if (backend.read_receive(context.http.stream, &received) != .ok) {
+                self.cancel_child(context, .protocol_error, webtransport.h3_message_error);
+                return;
+            }
+            // A waiting child can reset after its initial registration.
+            if (received.read_cancelled or received.reset_visible) {
+                self.cancel_child(context, .peer_reset, received.reset_error orelse webtransport.wt_session_gone);
+                return;
+            }
             const binding = self.binding orelse return;
             if (binding.child_consumer == null) {
                 self.cancel_child(context, .rejected, webtransport.application_error_to_http3(0));
@@ -761,13 +771,6 @@ pub fn quic_engine(
                 _ = c.lsquic_stream_close(context.http.stream);
                 return;
             };
-            var received: backend.ReceiveSnapshot = .{};
-            if (backend.read_receive(context.http.stream, &received) == .ok and
-                (received.read_cancelled or received.reset_visible))
-            {
-                self.cancel_child(context, .peer_reset, received.reset_error orelse webtransport.wt_session_gone);
-                return;
-            }
             self.associate_child(context);
         }
 

@@ -168,6 +168,8 @@ pub fn retry(raw: *c.lsquic_stream, state: *child.State, actions: *Actions) void
     if (actions.stop) {
         const result = backend.stop_receiving(raw, code);
         actions.stop = result == .blocked;
+        // Native RESET visibility need not close the application's read half.
+        if (result == .closed) _ = c.lsquic_stream_shutdown(raw, 0);
         if (result == .invalid or result == .unsupported) {
             log.warn("child receive cancellation failed: {s}", .{@tagName(result)});
             // Native terminal/error state can no longer accept a new code.

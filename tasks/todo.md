@@ -107,6 +107,15 @@
       83 upstream Debug cases pass. This does not complete WT activation.
       Exact scope and remaining work are retained in
       `benchmarks/results/webtransport_child_lifecycle_v1/2026_11_16/README.md`.
+- [x] Section 8.2 incoming-child callback/reset safety: native-status guards
+      after callbacks, completed terminal RX cleanup and refreshed waiting
+      cancellation checks. All 17 actual App cases pass in three modes,
+      including prebuffered callback shutdown/abort, Close-before-FIN,
+      independent full-width STOP/RESET and reliable final-gap accounting.
+      `benchmarks/results/webtransport_child_callbacks_v1/2026_11_16/README.md`
+      retains the original failures, source and verification. Public child
+      I/O/TX, multi-session flow, independent-client and publication gates
+      remain open; this does not complete WT activation.
 - [x] Independent slice reviews, findings resolved and changed work
       re-reviewed, including the final adapter and evidence package.
 - [x] Requirement-by-requirement audit and retained final check results in
@@ -169,8 +178,11 @@
   connects the receive consumer and bounded child association. The
   [lifecycle checkpoint](../benchmarks/results/webtransport_child_lifecycle_v1/2026_11_16/README.md)
   adds actual BIDI/early/expiry/capacity/teardown evidence and the reviewed
-  local UNI credit proposal. Callback shutdown, broader child RESET/STOP,
-  public child I/O/TX and multi-session flow accounting remain required.
+  local UNI credit proposal. The following
+  [callback/reset evidence](../benchmarks/results/webtransport_child_callbacks_v1/2026_11_16/README.md)
+  verifies callback shutdown, Close-before-FIN, reliable reset ordering and
+  final accounting. Public child I/O/TX and multi-session flow accounting
+  remain required.
   Published draft-16 SETTINGS, long-lived CONNECT, child association, live session
   integration, client acceptance and published fork/pin updates remain open.
 - Dependency provenance still encounters the user's pre-existing h1spec
