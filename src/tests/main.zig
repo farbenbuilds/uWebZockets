@@ -56,6 +56,7 @@ comptime {
 
     _ = @import("webtransport_runtime_tests.zig");
     _ = @import("webtransport_child_ledger_tests.zig");
+    _ = @import("webtransport_child_runtime_tests.zig");
     _ = @import("webtransport_admission_tests.zig");
     _ = @import("webtransport_capsule_stream_tests.zig");
     _ = @import("webtransport_pending_datagram_tests.zig");
