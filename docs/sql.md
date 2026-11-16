@@ -57,6 +57,12 @@ numbers describe the audited query, not every possible TLS interaction.
 The strict total-allocation gate is failed. Proposed SQL-ALLOC-002 remains
 pending explicit user approval and is separate from SQLite's approved exception.
 
+An isolated [record-buffer reservation experiment](../benchmarks/results/sql_tls_retention_v1/2026_11_17/README.md)
+counts zero allocator calls for 256 warmed verified-TLS cached queries using a
+temporary native API and 131070 reserved bytes per SQL connection. Production
+code and pins are unchanged. Native integration, failure cases and other
+post-handshake allocation paths remain unproven; the strict gate remains open.
+
 ## Rows and transactions
 
 Query callbacks receive a bounded `Rows` iterator. `Row.get(T, index)` supports
