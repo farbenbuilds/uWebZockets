@@ -153,6 +153,16 @@ halves. WT client bidi admission still needs to match its advertised limit
 when server child-stream classification is added. Ordinary HTTP defaults stay
 unchanged; root dependency integration remains separate.
 
+Child-stream checkpoint, 2026-11-16: unpublished proposal
+`a1947ce3a4ceeb98413e53014cc87f72b6d89869` retains raw child creation,
+incremental classification, directional metadata and reset-prefix handling.
+Its [source and results](../benchmarks/results/lsquic_webtransport_children_checkpoint_v1/2026_11_16/README.md)
+record 41 passing focused Debug scenarios and one unresolved `pending-reset`
+failure: reset notification can precede typed publication while SETTINGS are
+pending. Complete callback ordering and remaining lifetime/recovery cases before
+final review, full functional gates or runtime integration. This is a saved
+work-in-progress checkpoint, not a completed prerequisite.
+
 After the reset candidate is reviewed, extend the fork's draft-16 SETTINGS,
 negotiation snapshot/notification, long-lived CONNECT and raw child-stream
 classification. Keep parsing and packet ownership in the fork; session

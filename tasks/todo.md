@@ -93,6 +93,11 @@
   preserve generation, immutable peer publication and control-delivery checks.
   The following [stream-credit proposal](../benchmarks/results/lsquic_webtransport_credit_v1/2026_11_13/README.md)
   is frozen at `9f0088c58fe67cccf1871dc172c90c2ec6f97944`.
+  The incomplete [child-stream checkpoint](../benchmarks/results/lsquic_webtransport_children_checkpoint_v1/2026_11_16/README.md)
+  is saved at `a1947ce3a4ceeb98413e53014cc87f72b6d89869`: 41 focused Debug
+  scenarios pass, but delayed SETTINGS still allows reset notification before
+  typed publication. The failing regression remains intact; final review and
+  full functional gates remain open.
   Published draft-16 SETTINGS, long-lived CONNECT, child association, live session
   integration, client acceptance and published fork/pin updates remain open.
 - Dependency provenance still encounters the user's pre-existing h1spec
