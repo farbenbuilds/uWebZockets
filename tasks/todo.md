@@ -66,6 +66,11 @@
       and real candidate TLS, SETTINGS, CONNECT and four child directions pass.
       The ten-test candidate cohort passes Debug, ReleaseSafe and ReleaseFast;
       bounded engine/session integration and listener activation remain open.
+- [x] Section 8.2 bounded QUIC connection ownership: generation-checked slots,
+      retained stream leases, indexed native stream contexts and immutable peer
+      snapshots. All 971 centralized tests pass; actual TLS/HTTP body, abort
+      cleanup and slot reuse run through the real engine and UDP send path.
+      WebTransport session binding and positive engine child acceptance remain open.
 - [x] Release metadata synchronized to 2.3.0; no tag or publication.
 - [x] Independent slice reviews, findings resolved and changed work
       re-reviewed, including the final adapter and evidence package.
@@ -113,6 +118,9 @@
   The private Zig adapter and its real TLS scaffold are retained in the
   [backend evidence](../benchmarks/results/webtransport_zig_backend_v1/2026_11_16/README.md).
   This leaf does not yet connect sessions, application routing or datagrams.
+  The following [engine ownership slice](../benchmarks/results/webtransport_zig_engine_v1/2026_11_16/README.md)
+  connects bounded connection slots and stream contexts to actual engine
+  callbacks. Local and published listeners still leave WT negotiation off.
   Published draft-16 SETTINGS, long-lived CONNECT, child association, live session
   integration, client acceptance and published fork/pin updates remain open.
 - Dependency provenance still encounters the user's pre-existing h1spec

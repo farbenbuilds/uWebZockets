@@ -50,6 +50,7 @@ comptime {
     _ = @import("negotiate_tests.zig");
     _ = @import("observability_tests.zig");
     _ = @import("quic_tests.zig");
+    _ = @import("quic_connection_tests.zig");
     _ = @import("quic_stream_lifecycle_tests.zig");
     _ = @import("quic_phase3_tests.zig");
 

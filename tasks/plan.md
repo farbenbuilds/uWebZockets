@@ -221,6 +221,17 @@ limits, long-lived CONNECT and both initiators/directions of raw children.
 The [source, scaffold and results](../benchmarks/results/webtransport_zig_backend_v1/2026_11_16/README.md)
 retain exact inputs. Step 2 and subsequent runtime integration remain open.
 
+Step 2 ownership checkpoint: connection slots and stream sidecars now back
+the actual engine callbacks. Closed slots retain their generation until every
+stream releases its lease; exhausted generations never wrap. Candidate HTTP
+headers establish HTTP classification before body reads, and completed peer
+facts are cached once. All 971 centralized tests pass. A real TLS client drives
+partial/completed POST bodies, native contexts, abort cleanup and slot reuse
+through production engine processing and UDP transmission. The
+[scaffold and results](../benchmarks/results/webtransport_zig_engine_v1/2026_11_16/README.md)
+retain that functional scope. Positive typed-child engine integration awaits
+the session binding/admission slices; WT negotiation remains disabled.
+
 Develop the runtime against the real native proposal in an isolated Zig
 verification scaffold while production continues to reject unsupported CONNECT
 on its published pin. Compile the same project sources against both backends;

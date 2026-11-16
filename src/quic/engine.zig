@@ -4,6 +4,8 @@ const pool = @import("../core/pool.zig");
 const Router = @import("../router/radix.zig").Router;
 const api = @import("lsquic_api.zig");
 const stream = @import("stream.zig");
+const backend = @import("webtransport/backend.zig");
+const runtime = @import("webtransport/runtime.zig");
 const HeaderSet = stream.HeaderSet;
 
 const log = std.log.scoped(.quic);
@@ -113,9 +115,16 @@ pub fn quic_engine(
     const StreamPool = pool.freelist_pool(QuicStream, capacity);
     const HeaderPool = pool.freelist_pool(HeaderSet, header_slot_count);
     const PacketPool = pool.freelist_pool(PacketSlot, packet_slot_count);
+    const Connections = runtime.connection_table(capacity);
 
     return struct {
         const Self = @This();
+
+        /// One sidecar per global stream slot, independent of connection count.
+        const StreamContext = struct {
+            http: *QuicStream,
+            state: runtime.StreamState = .{},
+        };
 
         engine: ?*c.lsquic_engine = null,
         ssl_ctx: *c.SSL_CTX = undefined,
@@ -128,6 +137,8 @@ pub fn quic_engine(
         packet_interface: c.lsquic_packout_mem_if = std.mem.zeroes(c.lsquic_packout_mem_if),
         engine_api: c.lsquic_engine_api = std.mem.zeroes(c.lsquic_engine_api),
         stream_pool: StreamPool,
+        connections: Connections,
+        stream_contexts: []StreamContext,
         header_pool: HeaderPool,
         packet_pool: PacketPool,
         header_storage: []u8,
@@ -158,6 +169,10 @@ pub fn quic_engine(
             }
             var stream_pool = try StreamPool.init();
             errdefer stream_pool.deinit();
+            var connections = try Connections.init();
+            errdefer connections.deinit();
+            const stream_contexts = try std.heap.page_allocator.alloc(StreamContext, capacity);
+            errdefer std.heap.page_allocator.free(stream_contexts);
             var header_pool = try HeaderPool.init();
             errdefer header_pool.deinit();
             var packet_pool = try PacketPool.init();
@@ -198,6 +213,8 @@ pub fn quic_engine(
 
             return .{
                 .stream_pool = stream_pool,
+                .connections = connections,
+                .stream_contexts = stream_contexts,
                 .header_pool = header_pool,
                 .packet_pool = packet_pool,
                 .header_storage = header_storage,
@@ -280,6 +297,10 @@ pub fn quic_engine(
             self.stream_interface.on_write = on_stream_write;
             self.stream_interface.on_close = on_stream_close;
             self.stream_interface.on_hset_in = on_header_set_available;
+            _ = backend.install_callbacks(&self.stream_interface, .{
+                .settings = on_peer_settings,
+                .child = on_webtransport_stream,
+            });
 
             self.header_interface = std.mem.zeroes(c.lsquic_hset_if);
             self.header_interface.hsi_create_header_set = create_header_set;
@@ -319,6 +340,7 @@ pub fn quic_engine(
             std.debug.assert(self.header_pool.count_active() == 0);
             std.debug.assert(self.packet_pool.count_active() == 0);
             std.debug.assert(self.active_connections == 0);
+            std.debug.assert(self.connections.pool.count_active() == 0);
             if (self.global_acquired) api.release_global();
             self.global_acquired = false;
 
@@ -330,6 +352,8 @@ pub fn quic_engine(
             std.heap.page_allocator.free(self.header_extra_storage);
             self.packet_pool.deinit();
             self.header_pool.deinit();
+            std.heap.page_allocator.free(self.stream_contexts);
+            self.connections.deinit();
             self.stream_pool.deinit();
         }
 
@@ -462,9 +486,15 @@ pub fn quic_engine(
             std.debug.assert(self.header_pool.release(header_set));
         }
 
-        fn acquire_stream(self: *Self, lsquic_stream: *c.lsquic_stream) ?*QuicStream {
+        fn acquire_stream(self: *Self, lsquic_stream: *c.lsquic_stream, connection: *runtime.Connection) ?*StreamContext {
             const quic_stream = self.stream_pool.acquire() orelse return null;
             const index = self.stream_pool.index_of(quic_stream) orelse unreachable;
+            const context = &self.stream_contexts[index];
+            context.* = .{ .http = quic_stream };
+            if (!self.connections.retain(connection.handle, &context.state.lease)) {
+                std.debug.assert(self.stream_pool.release(quic_stream));
+                return null;
+            }
             const body_start = index * stream_capacities.request_body_size;
             const response_header_start = index * stream_capacities.response_header_size;
             const response_body_start = index * response_capacity;
@@ -499,57 +529,131 @@ pub fn quic_engine(
                 header_extra_names,
                 header_extra_values,
             );
-            return quic_stream;
+            var info: backend.StreamInfo = .{};
+            switch (backend.read_stream(lsquic_stream, &info)) {
+                .ok => std.debug.assert(context.state.classify(info)),
+                .unsupported => context.state.role = .http,
+                .pending => {},
+                .invalid => {
+                    quic_stream.on_close();
+                    return null;
+                },
+            }
+            return context;
         }
 
         fn release_stream(context: *anyopaque, quic_stream: *QuicStream) void {
             const self: *Self = @ptrCast(@alignCast(context));
+            const index = self.stream_pool.index_of(quic_stream) orelse unreachable;
+            std.debug.assert(self.connections.release(&self.stream_contexts[index].state.lease));
             std.debug.assert(self.stream_pool.release(quic_stream));
         }
 
         fn on_new_connection(context: ?*anyopaque, connection: ?*c.lsquic_conn) callconv(.c) ?*c.lsquic_conn_ctx {
             const self: *Self = @ptrCast(@alignCast(context orelse return null));
             const conn = connection orelse return null;
-            if (self.active_connections >= capacity) {
+            const slot = self.connections.acquire(self, conn) orelse {
                 c.lsquic_conn_abort(conn);
                 return null;
-            }
+            };
             self.active_connections += 1;
-            return @ptrCast(self);
+            self.cache_peer(slot);
+            return @ptrCast(slot);
         }
 
         fn on_connection_closed(connection: ?*c.lsquic_conn) callconv(.c) void {
             const conn = connection orelse return;
             const context = c.lsquic_conn_get_ctx(conn) orelse return;
-            const self: *Self = @ptrCast(@alignCast(context));
-            if (self.active_connections != 0) self.active_connections -= 1;
+            const slot: *runtime.Connection = @ptrCast(@alignCast(context));
+            const self: *Self = @ptrCast(@alignCast(slot.owner));
+            if (self.connection_slot(conn) != slot) return;
+            const handle = slot.handle;
             c.lsquic_conn_set_ctx(conn, null);
+            std.debug.assert(self.connections.close(handle));
+            std.debug.assert(self.active_connections > 0);
+            self.active_connections -= 1;
+        }
+
+        fn connection_slot(self: *Self, connection: *c.lsquic_conn) ?*runtime.Connection {
+            const raw = c.lsquic_conn_get_ctx(connection) orelse return null;
+            const slot: *runtime.Connection = @ptrCast(@alignCast(raw));
+            const index = self.connections.pool.index_of(slot) orelse return null;
+            if (!self.connections.pool.is_active(index)) return null;
+            if (slot.owner != @as(*anyopaque, @ptrCast(self)) or slot.native != connection) return null;
+            return slot;
+        }
+
+        fn cache_peer(self: *Self, slot: *runtime.Connection) void {
+            if (slot.peer != null) return;
+            const native = slot.native orelse return;
+            var peer: backend.Peer = .{};
+            if (backend.read_peer(native, &peer) == .ok) {
+                std.debug.assert(self.connections.cache_peer(slot.handle, peer));
+            }
+        }
+
+        fn on_peer_settings(connection: ?*c.lsquic_conn) callconv(.c) void {
+            const native = connection orelse return;
+            const raw = c.lsquic_conn_get_ctx(native) orelse return;
+            const slot: *runtime.Connection = @ptrCast(@alignCast(raw));
+            const self: *Self = @ptrCast(@alignCast(slot.owner));
+            if (self.connection_slot(native) != slot) return;
+            self.cache_peer(slot);
         }
 
         fn on_new_stream(context: ?*anyopaque, lsquic_stream: ?*c.lsquic_stream) callconv(.c) ?*c.lsquic_stream_ctx {
             const self: *Self = @ptrCast(@alignCast(context orelse return null));
             const raw_stream = lsquic_stream orelse return null;
-            const quic_stream = self.acquire_stream(raw_stream) orelse {
+            const native_connection = c.lsquic_stream_conn(raw_stream) orelse return null;
+            const connection = self.connection_slot(native_connection) orelse {
                 _ = c.lsquic_stream_close(raw_stream);
                 return null;
             };
+            const stream_context = self.acquire_stream(raw_stream, connection) orelse {
+                _ = c.lsquic_stream_close(raw_stream);
+                return null;
+            };
+            // Native readability drives buffered HEADERS and child prefixes.
             _ = c.lsquic_stream_wantread(raw_stream, 1);
-            return @ptrCast(quic_stream);
+            return @ptrCast(stream_context);
         }
 
-        fn on_stream_read(_: ?*c.lsquic_stream, context: ?*c.lsquic_stream_ctx) callconv(.c) void {
-            const quic_stream: *QuicStream = @ptrCast(@alignCast(context orelse return));
-            quic_stream.on_read();
+        fn on_stream_read(native: ?*c.lsquic_stream, context: ?*c.lsquic_stream_ctx) callconv(.c) void {
+            const raw = native orelse return;
+            const active: *StreamContext = @ptrCast(@alignCast(context orelse return));
+            if (active.state.role == .unresolved and !attach_native_headers(raw, active)) {
+                // FIN/reset without headers must not leave a readable spin.
+                _ = c.lsquic_stream_close(raw);
+                return;
+            }
+            if (active.state.role != .http) {
+                _ = c.lsquic_stream_close(raw);
+                return;
+            }
+            active.http.on_read();
         }
 
-        fn on_stream_write(_: ?*c.lsquic_stream, context: ?*c.lsquic_stream_ctx) callconv(.c) void {
-            const quic_stream: *QuicStream = @ptrCast(@alignCast(context orelse return));
-            quic_stream.on_write();
+        fn on_stream_write(native: ?*c.lsquic_stream, context: ?*c.lsquic_stream_ctx) callconv(.c) void {
+            const active: *StreamContext = @ptrCast(@alignCast(context orelse return));
+            if (active.state.role != .http) {
+                _ = c.lsquic_stream_close(native);
+                return;
+            }
+            active.http.on_write();
         }
 
         fn on_stream_close(_: ?*c.lsquic_stream, context: ?*c.lsquic_stream_ctx) callconv(.c) void {
-            const quic_stream: *QuicStream = @ptrCast(@alignCast(context orelse return));
-            quic_stream.on_close();
+            const active: *StreamContext = @ptrCast(@alignCast(context orelse return));
+            active.http.on_close();
+        }
+
+        fn on_webtransport_stream(native: ?*c.lsquic_stream, context: ?*c.lsquic_stream_ctx) callconv(.c) void {
+            const raw = native orelse return;
+            const active: *StreamContext = @ptrCast(@alignCast(context orelse return));
+            var info: backend.StreamInfo = .{};
+            if (backend.read_stream(raw, &info) == .ok) _ = active.state.classify(info);
+            // Session admission and public child I/O are not bound yet.
+            _ = c.lsquic_stream_close(raw);
         }
 
         fn on_header_set_available(
@@ -557,13 +661,21 @@ pub fn quic_engine(
             context: ?*c.lsquic_stream_ctx,
         ) callconv(.c) void {
             const raw_stream = lsquic_stream orelse return;
-            const quic_stream: *QuicStream = @ptrCast(@alignCast(context orelse return));
-            const raw_header_set = c.lsquic_stream_get_hset(raw_stream) orelse {
+            const active: *StreamContext = @ptrCast(@alignCast(context orelse return));
+            if (!attach_native_headers(raw_stream, active)) {
                 _ = c.lsquic_stream_close(raw_stream);
-                return;
-            };
+            }
+        }
+
+        fn attach_native_headers(raw_stream: *c.lsquic_stream, context: *StreamContext) bool {
+            const raw_header_set = c.lsquic_stream_get_hset(raw_stream) orelse return false;
             const header_set: *HeaderSet = @ptrCast(@alignCast(raw_header_set));
-            quic_stream.attach_headers(header_set);
+            if (!context.state.mark_http()) {
+                header_set.release();
+                return false;
+            }
+            context.http.attach_headers(header_set);
+            return true;
         }
 
         fn create_header_set(
@@ -576,7 +688,9 @@ pub fn quic_engine(
             var quic_stream: ?*QuicStream = null;
             if (lsquic_stream) |raw_stream| {
                 if (c.lsquic_stream_get_ctx(raw_stream)) |raw_context| {
-                    quic_stream = @ptrCast(@alignCast(raw_context));
+                    const active: *StreamContext = @ptrCast(@alignCast(raw_context));
+                    if (active.state.role == .child or active.state.role == .connect) return null;
+                    quic_stream = active.http;
                 }
             }
             const is_trailer = if (quic_stream) |active|

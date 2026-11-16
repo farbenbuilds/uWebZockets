@@ -70,6 +70,7 @@ pub const quic_stream = @import("quic/stream.zig");
 pub const quic_validation = @import("quic/validation.zig");
 pub const webtransport = @import("quic/webtransport.zig");
 pub const webtransport_backend = @import("quic/webtransport/backend.zig");
+pub const webtransport_runtime = @import("quic/webtransport/runtime.zig");
 pub const datagram_ring = @import("quic/datagram_ring.zig");
 pub const udp = @import("core/udp.zig");
 pub const connection_parking = @import("core/connection_parking.zig");
