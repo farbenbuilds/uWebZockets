@@ -215,6 +215,11 @@ inputs and a relocatable replay. It does not establish accepting-phase
 cooldown staging, outgoing streams, positive session flow control or an
 independent draft-16 client.
 
+The [peer-BIDI transmit checkpoint](../benchmarks/results/webtransport_public_tx_v1/2026_11_17/README.md)
+retains actual stream/connection credit recovery, accepted-buffer copying,
+one-shot callbacks and loop-only deadline wakes. C-boundary injected failures
+are labeled separately from the actual native cohort.
+
 ## Verification
 
 The cross-implementation gate uses pinned curl/ngtcp2 and aioquic clients to

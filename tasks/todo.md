@@ -128,6 +128,16 @@
       retains exact scope, historical failures and reproducible inputs. Public
       duplex writes/outgoing streams, multi-session flow, independent-client
       acceptance and publication remain open.
+- [x] Section 8.2 peer-BIDI transmission checkpoint: accepted-prefix writes,
+      one-shot writable events, actual typed-publication readiness and bounded
+      timer wakes. Source `78fc2d62300c4fdf5cccf57efc3acdb798a1be97` passes
+      1063 functional tests. Its 37 actual native cases pass in all three
+      modes, including real stream/connection credit and loop-only deadline wakes.
+      C-boundary ownership/errno fault tests, io_uring/epoll wake proofs,
+      package/examples and Windows/macOS compilation are retained in
+      `benchmarks/results/webtransport_public_tx_v1/2026_11_17/README.md`.
+      Local half-stop/reset commands, outgoing streams, multi-session flow,
+      independent-client acceptance and publication remain open.
 - [x] Requirement-by-requirement audit and retained final check results in
       `benchmarks/results/release_candidate_v2_3/2026_11_11/README.md`.
 - [ ] Every required release gate passes; open results are listed below.
@@ -194,8 +204,11 @@
   final accounting. The
   [public receive checkpoint](../benchmarks/results/webtransport_public_receive_v1/2026_11_16/README.md)
   adds endpoint callbacks, generation handles, cancellation, explicit send
-  finish and session events. Public duplex writes/outgoing streams and
-  multi-session flow accounting remain required.
+  finish and session events. The
+  [peer-BIDI transmit checkpoint](../benchmarks/results/webtransport_public_tx_v1/2026_11_17/README.md)
+  adds writes, one-shot writable events and deferred timer service. Local
+  half-stop/reset commands, outgoing streams and multi-session flow accounting
+  remain required.
   Published draft-16 SETTINGS, long-lived CONNECT, child association, live session
   integration, client acceptance and published fork/pin updates remain open.
 - Dependency provenance still encounters the user's pre-existing h1spec
