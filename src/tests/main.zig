@@ -58,6 +58,7 @@ comptime {
     _ = @import("webtransport_session_index_tests.zig");
     _ = @import("webtransport_session_flow_tests.zig");
     _ = @import("webtransport_early_debt_tests.zig");
+    _ = @import("webtransport_session_control_tests.zig");
     _ = @import("webtransport_child_ledger_tests.zig");
     _ = @import("webtransport_child_runtime_tests.zig");
     _ = @import("webtransport_child_tx_tests.zig");
