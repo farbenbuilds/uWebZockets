@@ -58,6 +58,9 @@ pub const OperationError = error{
 /// A positive write result always transfers that prefix to native ownership.
 pub const WriteError = OperationError || error{ WouldBlock, WriteFailed, WriteTooLarge };
 
+/// Immediate creation failures never queue a later stream request.
+pub const CreateError = OperationError || error{ WouldBlock, CapacityExceeded, GenerationExhausted, OutOfMemory };
+
 /// The first closing cause is preserved through callback reentry.
 pub const CloseReason = enum(u8) {
     completed,

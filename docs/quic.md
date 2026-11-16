@@ -224,6 +224,24 @@ These registration/types compile with the published pin; live operations
 return `Unsupported` there. The complete unpublished native proposal is still
 required to exercise the candidate path.
 
+`webtransport_stream_create(session_handle, direction)` creates a local UNI or
+BIDI child and returns its handle without calling application callbacks inline.
+The later `open` callback receives `initiator.local` and explicitly accepts
+ownership, just as for a peer child. Accepted-only operations return `NotReady`
+until then. Rejection owns no close callback. A local UNI stream only sends;
+it receives no data, EOF or reset callbacks, and its native receive final size
+remains null. Local BIDI receive accounting starts at payload offset zero.
+
+Creation requires an established session; draining sessions reject new children.
+Root reserves its stream slot and connection lease before native construction.
+`CapacityExceeded`, `GenerationExhausted`, `WakeFailed` and native creation
+failures release that reservation. `WouldBlock` queues no delayed request;
+retry explicitly after credit becomes available. Failed attempts before the
+native stream callback do not consume a handle generation. Payload offset
+bounds exclude the local association prefix.
+The peer must grant both stream-count and byte credit for that prefix; a
+stream-count allowance with zero BIDI byte credit still returns `WouldBlock`.
+
 The [public receive checkpoint](../benchmarks/results/webtransport_public_receive_v1/2026_11_16/README.md)
 retains 26 actual App cases in all three optimization modes, exact source
 inputs and a relocatable replay. It does not establish accepting-phase

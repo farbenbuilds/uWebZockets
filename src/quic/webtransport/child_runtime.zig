@@ -28,6 +28,8 @@ pub fn complete_write(consumed: usize, status: WriteStatus) WriteAttempt {
 
 /// Direction is independent of the native backend enum.
 pub const Direction = enum(u8) { uni, bidi };
+/// The initiating endpoint owns the stream's association prefix.
+pub const Initiator = stream_api.Initiator;
 /// A global engine stream slot; generation zero is never publicly resolvable.
 pub const Location = struct { index: usize = 0, generation: u64 = 0 };
 /// Native child facts captured before an application parent is available.
@@ -37,8 +39,20 @@ pub const Metadata = struct {
     stream_id: u64,
     receive_prefix_size: u8,
     direction: Direction,
+    send_prefix_size: u8 = 0,
+    initiator: Initiator = .peer,
     location: Location = .{},
 };
+
+/// A locally initiated UNI child has no receive half to observe or cancel.
+pub fn has_receive(metadata: Metadata) bool {
+    return metadata.direction == .bidi or metadata.initiator == .peer;
+}
+
+/// A peer-initiated UNI child cannot accept payload, FIN or RESET for sending.
+pub fn has_send(metadata: Metadata) bool {
+    return metadata.direction == .bidi or metadata.initiator == .local;
+}
 /// Full transport IDs and both owner generations identify one admitted child.
 pub const Key = struct {
     connection: identity.ConnectionHandle,
@@ -54,6 +68,7 @@ pub const Info = struct {
     route: RouteId,
     direction: Direction,
     receive_prefix_size: u8,
+    initiator: Initiator = .peer,
 };
 /// The first local closing cause survives callback reentry.
 pub const CloseReason = stream_api.CloseReason;
@@ -86,10 +101,12 @@ pub const State = struct {
     cancel_reason: ?CloseReason = null,
     cancel_code: ?u64 = null,
 
-    /// A peer child always has an actual receive prefix; endpoint role is external.
+    /// Only the initiating half carries an association prefix in native offsets.
     pub fn init(metadata: Metadata, deadline_us: u64) StateError!State {
+        const prefix = if (metadata.initiator == .local) metadata.send_prefix_size else metadata.receive_prefix_size;
+        const opposite_prefix = if (metadata.initiator == .local) metadata.receive_prefix_size else metadata.send_prefix_size;
         if (metadata.connection.generation == 0 or !session.valid_session_id(metadata.session_id) or
-            metadata.stream_id > (1 << 62) - 1 or metadata.receive_prefix_size < 3 or
+            metadata.stream_id > (1 << 62) - 1 or prefix < 3 or prefix > 16 or opposite_prefix != 0 or
             (metadata.direction == .uni) != (metadata.stream_id & 2 != 0)) return error.InvalidMetadata;
         return .{
             .metadata = metadata,
@@ -134,6 +151,7 @@ pub const State = struct {
             .route = route,
             .direction = state.metadata.direction,
             .receive_prefix_size = state.metadata.receive_prefix_size,
+            .initiator = state.metadata.initiator,
         };
     }
 

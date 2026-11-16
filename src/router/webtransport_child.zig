@@ -50,7 +50,7 @@ fn open(context: *anyopaque, info: child.Info) bool {
         .session_id = info.key.session_id,
         .stream_id = info.key.stream_id,
         .direction = if (info.direction == .uni) .uni else .bidi,
-        .initiator = .peer,
+        .initiator = info.initiator,
     });
 }
 

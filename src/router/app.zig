@@ -1103,6 +1103,15 @@ pub fn configured_app_with_route_params(
             return self;
         }
 
+        /// Creates a child for later admission; no application callback runs inline.
+        pub fn webtransport_stream_create(self: *Self, session: wt_stream.SessionHandle, direction: wt_stream.Direction) wt_stream.CreateError!wt_stream.Handle {
+            if (comptime !wt_backend.available) return error.Unsupported;
+            if (session.owner != @intFromPtr(self)) return error.WrongApp;
+            if (self.shutting_down or self.deinitialized) return error.ShuttingDown;
+            const transport = if (self.quic_transport) |*active| active else return error.StaleHandle;
+            return transport.engine.create_webtransport_stream(session, direction);
+        }
+
         /// Transfers the returned prefix; the caller retains and retries its suffix.
         pub fn webtransport_stream_write(self: *Self, handle: wt_stream.Handle, bytes: []const u8) wt_stream.WriteError!usize {
             if (comptime !wt_backend.available) return error.Unsupported;

@@ -514,8 +514,9 @@ queues. The published backend still returns `Unsupported` for child handle
 operations. Peer-BIDI writes transfer only the returned prefix, with one-shot
 writable events and deferred timer service. Candidate STOP and RESET controls
 retain independent immutable codes, preserve the opposite half and retry
-native blocking without a payload queue. Outgoing children and multi-session
-flow remain unfinished.
+native blocking without a payload queue. Candidate local UNI/BIDI creation
+reserves a stream slot before native construction and defers admission to the
+ordinary open callback. Positive/multi-session flow remains unfinished.
 
 The C ABI is declared by `include/uWebZockets.h` and implemented by
 `src/c_api.zig`. It provides versioned opaque handles, versioned integer error

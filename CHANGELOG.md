@@ -11,15 +11,18 @@ uses Semantic Versioning.
   handles, explicit cancellation/send finish, and session lifecycle callbacks.
   Streams and datagrams share sixteen endpoint paths; stream-only startup
   allocates no datagram payload buffers. Live support still requires the
-  unpublished native proposal; outgoing streams remain open.
+  unpublished native proposal.
 - Candidate WebTransport peer-BIDI writes, explicit one-shot writable events
   and deferred UDP service requests. Writes transfer only the returned prefix,
   preserve ownership through native/flush failures, and use actual native
-  publication as the readiness boundary. Outgoing creation, multi-session flow
+  publication as the readiness boundary. Multi-session flow
   and published activation remain open.
 - Candidate WebTransport STOP and RESET controls preserve independent halves
   and their first error codes. STOP suppresses receive callbacks while retaining
   final-size accounting; RESET preserves receiving and disables sending.
+- Candidate local WebTransport UNI/BIDI creation reserves bounded Root storage
+  before native construction and defers admission through the existing open
+  callback. Blocked attempts queue no delayed creation request.
 - `App.enable_http3` and `enable_http3_ephemeral` configure HTTPS and HTTP/3
   before listening on an application returned by `Server.builder`, preserving
   its configured capacities and installing both TLS contexts atomically.

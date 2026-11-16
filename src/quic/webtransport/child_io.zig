@@ -111,7 +111,7 @@ fn notifications(
     if (!state.consumer_owned) return .progress;
     const key = state.key orelse return .not_live;
     if (!guard.live(guard.context, state)) return .not_live;
-    if (actions.stop_code == null) if (state.ledger.take_reset()) |code| {
+    if (child.has_receive(state.metadata) and actions.stop_code == null) if (state.ledger.take_reset()) |code| {
         if (consumer.policy == .receive_only) _ = state.begin_close(.peer_reset, code);
         if (consumer.policy == .duplex) _ = c.lsquic_stream_shutdown(raw, 0);
         consumer.reset(consumer.context, key, code, state.ledger.final_payload_size.?);
@@ -138,7 +138,7 @@ pub fn read(
     if (!guard.live(guard.context, state)) return .not_live;
     if (!snapshot(raw, state, actions)) return .progress;
     if (notifications(raw, state, actions, consumer, guard) == .not_live) return .not_live;
-    if (actions.stop_code != null or state.ledger.receive_terminal != .none) return .progress;
+    if (!child.has_receive(state.metadata) or actions.stop_code != null or state.ledger.receive_terminal != .none) return .progress;
     var bytes: [2048]u8 = undefined;
     while (state.phase == .active and actions.stop_code == null and state.ledger.receive_terminal == .none) {
         if (!guard.live(guard.context, state)) return .not_live;
@@ -206,11 +206,11 @@ pub fn cancel(raw: *c.lsquic_stream, state: *child.State, actions: *Actions, rea
         state.complete_open(false) catch |err| log.err("child cancelled open failed: {s}", .{@errorName(err)});
     }
     if (state.cancel_code) |first_code| {
-        if (actions.stop_code == null) {
+        if (child.has_receive(state.metadata) and actions.stop_code == null) {
             actions.stop_code = first_code;
             actions.stop = true;
         }
-        if (state.metadata.direction == .bidi and actions.reset_code == null) {
+        if (child.has_send(state.metadata) and actions.reset_code == null) {
             actions.reset_code = first_code;
             actions.reset = true;
         }

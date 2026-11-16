@@ -28,6 +28,7 @@ test "WebTransport child runtime captures full IDs and both generations" {
     try testing.expectEqual(@as(u64, std.math.maxInt(u64) - 1), info.key.session.generation);
     try testing.expectEqual(@as(usize, 23), info.key.session.index);
     try testing.expectEqual(full.direction, info.direction);
+    try testing.expectEqual(child.Initiator.peer, info.initiator);
     try testing.expectEqual(@as(u8, 16), info.receive_prefix_size);
     try testing.expectEqual(@as(u8, 15), @intFromEnum(info.route));
     try testing.expectEqual(@as(u64, std.math.maxInt(u64)), state.deadline_us);
@@ -199,4 +200,108 @@ test "WebTransport child runtime waiting cancellation releases pending ownership
     const closed = state;
     try testing.expectError(error.InvalidTransition, state.begin_open(.{ .index = 0, .generation = 1 }, @enumFromInt(0)));
     try testing.expectEqualDeep(closed, state);
+}
+
+test "WebTransport child runtime local metadata retains sending prefix and initiator" {
+    for ([_]child.Direction{ .uni, .bidi }) |direction| {
+        for ([_]u8{ 3, 16 }) |prefix| {
+            var local = metadata;
+            local.initiator = .local;
+            local.stream_id = if (direction == .uni) 7 else 5;
+            local.direction = direction;
+            local.receive_prefix_size = 0;
+            local.send_prefix_size = prefix;
+            var state = try child.State.init(local, 37);
+            const info = try state.begin_open(.{ .index = 0, .generation = 1 }, @enumFromInt(2));
+            try testing.expectEqual(child.Initiator.local, info.initiator);
+            try testing.expectEqual(direction, info.direction);
+            try testing.expectEqual(@as(u8, 0), info.receive_prefix_size);
+            try testing.expectEqual(prefix, state.metadata.send_prefix_size);
+            try testing.expectEqual(@as(u8, 0), state.ledger.receive_prefix_size);
+            try state.complete_open(true);
+            try testing.expect(state.consumer_owned);
+        }
+    }
+}
+
+test "WebTransport child runtime association prefixes belong only to their initiating half" {
+    for ([_]u8{ 0, 1, 2, 17, 255 }) |prefix| {
+        var invalid = metadata;
+        invalid.receive_prefix_size = prefix;
+        try testing.expectError(error.InvalidMetadata, child.State.init(invalid, 0));
+        invalid = metadata;
+        invalid.initiator = .local;
+        invalid.receive_prefix_size = 0;
+        invalid.send_prefix_size = prefix;
+        try testing.expectError(error.InvalidMetadata, child.State.init(invalid, 0));
+    }
+    for ([_]u8{ 1, 3, 16, 255 }) |prefix| {
+        var invalid = metadata;
+        invalid.send_prefix_size = prefix;
+        try testing.expectError(error.InvalidMetadata, child.State.init(invalid, 0));
+        invalid = metadata;
+        invalid.initiator = .local;
+        invalid.receive_prefix_size = prefix;
+        invalid.send_prefix_size = 3;
+        try testing.expectError(error.InvalidMetadata, child.State.init(invalid, 0));
+    }
+    var local = metadata;
+    local.initiator = .local;
+    local.receive_prefix_size = 0;
+    local.send_prefix_size = 3;
+    var invalid = local;
+    invalid.connection.generation = 0;
+    try testing.expectError(error.InvalidMetadata, child.State.init(invalid, 0));
+    invalid = local;
+    invalid.session_id = 2;
+    try testing.expectError(error.InvalidMetadata, child.State.init(invalid, 0));
+    invalid = local;
+    invalid.stream_id = max_varint + 1;
+    try testing.expectError(error.InvalidMetadata, child.State.init(invalid, 0));
+    invalid = local;
+    invalid.direction = .uni;
+    try testing.expectError(error.InvalidMetadata, child.State.init(invalid, 0));
+}
+
+const HalfCase = struct { initiator: child.Initiator, direction: child.Direction, receive: bool, send: bool };
+
+test "WebTransport child runtime halves follow direction and initiating endpoint" {
+    const cases = [_]HalfCase{
+        .{ .initiator = .peer, .direction = .uni, .receive = true, .send = false },
+        .{ .initiator = .local, .direction = .uni, .receive = false, .send = true },
+        .{ .initiator = .peer, .direction = .bidi, .receive = true, .send = true },
+        .{ .initiator = .local, .direction = .bidi, .receive = true, .send = true },
+    };
+    for (cases) |case| {
+        var value = metadata;
+        value.initiator = case.initiator;
+        value.direction = case.direction;
+        try testing.expectEqual(case.receive, child.has_receive(value));
+        try testing.expectEqual(case.send, child.has_send(value));
+    }
+}
+
+test "WebTransport child runtime local send prefix never enters receive accounting" {
+    var local = metadata;
+    local.initiator = .local;
+    local.receive_prefix_size = 0;
+    local.send_prefix_size = 16;
+    var state = try child.State.init(local, 0);
+    _ = try state.begin_open(.{ .index = 0, .generation = 1 }, @enumFromInt(0));
+    try state.complete_open(true);
+    _ = try state.ledger.record_read(5);
+    _ = try state.ledger.observe(.{ .final_size = 5, .reliable_size = 5, .fin_received = true });
+    try testing.expect(try state.ledger.record_eof());
+    const received = (try state.finish_close()).?;
+    try testing.expectEqual(@as(?u64, 5), received.final_payload_size);
+    try testing.expectEqual(@as(u64, 5), received.accounted_bytes);
+
+    local.direction = .uni;
+    local.stream_id = 7;
+    var send_only = try child.State.init(local, 0);
+    _ = try send_only.begin_open(.{ .index = 0, .generation = 1 }, @enumFromInt(0));
+    try send_only.complete_open(true);
+    const closed = (try send_only.finish_close()).?;
+    try testing.expectEqual(@as(?u64, null), closed.final_payload_size);
+    try testing.expectEqual(@as(u64, 0), closed.accounted_bytes);
 }
