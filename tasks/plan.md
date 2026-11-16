@@ -319,6 +319,18 @@ to generation-checked child sidecars, bounded early-child association, an
 explicit byte consumer, public child I/O and session flow accounting remain
 required; this foundation does not complete step 6 or v2.3.0.
 
+Coded receive-cancellation prerequisite, 2026-11-16: bounded early-child
+rejection requires an exact STOP_SENDING error on incoming UNI, which the
+earlier native API could not express. The new unpublished proposal adds that
+operation, retains queued-STOP/final-size ownership, preserves local writes
+and legacy shutdown, and carries full-width errors through wire and logging.
+The [coded-STOP checkpoint](../benchmarks/results/webtransport_coded_stop_v1/2026_11_16/README.md)
+retains the native commit, strong-wrapper 15-case three-mode proof, native C
+regressions, event-log RED/GREEN, Root 1023-test verification and reviews.
+Root pins and child callbacks remain unchanged. The refreshed CLI viewer
+permission on the maintained fork is READ; publication/pin integration and the child runtime
+work in step 6 remain required.
+
 Develop the runtime against the real native proposal in an isolated Zig
 verification scaffold while production continues to reject unsupported CONNECT
 on its published pin. Compile the same project sources against both backends;

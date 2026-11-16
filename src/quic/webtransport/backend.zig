@@ -37,6 +37,9 @@ pub const ConfigureResult = enum(u8) {
 /// A blocked reset retains its requested error until native write credit resumes.
 pub const ResetResult = enum(u8) { ok, blocked, unsupported, invalid, closed };
 
+/// Receive cancellation retains its error independently of the sending half.
+pub const StopResult = enum(u8) { ok, blocked, unsupported, invalid, closed };
+
 /// Role of the endpoint checking its peer's prerequisites.
 pub const EndpointRole = enum(u8) { client, server };
 
@@ -233,6 +236,21 @@ pub fn reset_stream(stream: ?*c.lsquic_stream, application_error: u64) ResetResu
     };
 }
 
+/// Cancels receiving with the exact QUIC error while preserving local writes.
+///
+/// A successful call queues STOP even for an unread received FIN. Unknown
+/// final size still requires retaining the native stream until `on_close`.
+pub fn stop_receiving(stream: ?*c.lsquic_stream, application_error: u64) StopResult {
+    if (comptime !available) return .unsupported;
+    return switch (c.lsquic_stream_stop_sending(stream, application_error)) {
+        c.LSQUIC_SST_OK => .ok,
+        c.LSQUIC_SST_BLOCKED => .blocked,
+        c.LSQUIC_SST_UNSUPPORTED => .unsupported,
+        c.LSQUIC_SST_CLOSED => .closed,
+        else => .invalid,
+    };
+}
+
 /// Known cancellation prevents admission even before its reset callback is due.
 pub fn admission_canceled(stream: ?*c.lsquic_stream) bool {
     if (comptime !available) return false;
@@ -308,6 +326,7 @@ fn contract_available() bool {
         "lsquic_stream_accept_webtransport",
         "lsquic_conn_make_webtransport_stream",
         "lsquic_stream_reset_at",
+        "lsquic_stream_stop_sending",
         "lsquic_stream_get_recv_state",
         "lsquic_stream_get_reset_error",
         "struct_lsquic_stream_recv_state",
@@ -324,6 +343,11 @@ fn contract_available() bool {
         "LSQUIC_SRA_BLOCKED",
         "LSQUIC_SRA_UNSUPPORTED",
         "LSQUIC_SRA_CLOSED",
+        "LSQUIC_SST_OK",
+        "LSQUIC_SST_BLOCKED",
+        "LSQUIC_SST_UNSUPPORTED",
+        "LSQUIC_SST_INVALID",
+        "LSQUIC_SST_CLOSED",
         "struct_lsquic_webtransport_peer",
         "struct_lsquic_webtransport_stream_info",
         "enum_lsquic_webtransport_stream_kind",

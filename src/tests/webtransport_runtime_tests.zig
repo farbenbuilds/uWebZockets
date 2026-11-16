@@ -57,6 +57,11 @@ test "WebTransport native backend rejects operations without a connection" {
     try std.testing.expectEqual(expected, backend.create_child(null, 0, .uni));
 }
 
+test "WebTransport native backend rejects receive cancellation without a stream" {
+    const expected: backend.StopResult = if (backend.available) .invalid else .unsupported;
+    try std.testing.expectEqual(expected, backend.stop_receiving(null, 0x3994bd84));
+}
+
 test "WebTransport native backend configures bounded opt-in atomically" {
     var settings = std.mem.zeroes(c.lsquic_engine_settings);
     const original = settings;
