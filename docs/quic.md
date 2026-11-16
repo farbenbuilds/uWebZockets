@@ -305,6 +305,9 @@ SID before discarding counters; unremembered stream-debt loss blocks new unknown
 session admission independently of datagram buffering exhaustion. CONNECT checks
 this policy before invoking application admission.
 Published dependency pins and positive-flow advertisement remain unchanged.
+The [early-debt checkpoint](../benchmarks/results/webtransport_early_debt_v1/2026_11_17/README.md)
+retains the combined 77-case stream/debt driver and separate 33-case datagram
+driver in all three modes, with callback-order injection labeled separately.
 
 ## Verification
 
