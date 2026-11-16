@@ -98,8 +98,19 @@ pub fn inject(
     dependencies.link(test_module);
     sanitizer.attach(test_module);
 
-    const centralized_tests = b.addTest(.{ .root_module = test_module });
+    const test_filter = b.option([]const u8, "test-filter", "Select centralized tests by name");
+    const test_filters: []const []const u8 = if (test_filter) |filter|
+        b.allocator.dupe([]const u8, &.{filter}) catch @panic("out of memory")
+    else
+        &.{};
+    const centralized_tests = b.addTest(.{
+        .root_module = test_module,
+        .filters = test_filters,
+    });
     const run_tests = sanitizers.add_run_artifact(b, centralized_tests, sanitizer.run);
+    const unit_test_step = b.step("test-unit", "Run centralized Zig tests");
+    unit_test_step.dependOn(&run_tests.step);
+    unit_test_step.dependOn(&archive_check.step);
     if (sql_config.sqlite_enabled) {
         const sqlite_fuzz_tests = b.addTest(.{
             .root_module = test_module,

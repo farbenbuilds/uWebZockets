@@ -463,6 +463,15 @@ Every step appends `-Doptimize=ReleaseSafe` for production builds. Sources live
 in [`examples/`](examples/), with walkthroughs in
 [`examples/readme_examples_test.md`](examples/readme_examples_test.md).
 
+## Development checks
+
+`zig build test` runs the complete default test target, including the C API
+smoke test. `zig build test-unit` runs the centralized Zig tests and archive
+symbol check. To select centralized tests by name, use
+`zig build test-unit -Dtest-filter='WebTransport native backend'`.
+`zig build test-compile` compiles the test and consumer targets without
+executing them.
+
 ## Documentation
 
 | Document | Contents |

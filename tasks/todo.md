@@ -62,6 +62,10 @@
       GOAWAY isolation pass 65 scenarios in all three modes, all 83 native
       Debug cases and Windows/macOS production compilation. Source and evidence
       are archived; runtime integration and publication remain open.
+- [x] Section 8.2 private Zig backend contract: published-pin unsupported paths
+      and real candidate TLS, SETTINGS, CONNECT and four child directions pass.
+      The ten-test candidate cohort passes Debug, ReleaseSafe and ReleaseFast;
+      bounded engine/session integration and listener activation remain open.
 - [x] Release metadata synchronized to 2.3.0; no tag or publication.
 - [x] Independent slice reviews, findings resolved and changed work
       re-reviewed, including the final adapter and evidence package.
@@ -106,6 +110,9 @@
   is frozen at `2e229b3e0a9bb293c4d7f74f7532e09213b8cb5c`; it fixes that
   regression, placement errors and GOAWAY interactions. Child-specific loss
   campaigns and independent compatible-client acceptance remain open.
+  The private Zig adapter and its real TLS scaffold are retained in the
+  [backend evidence](../benchmarks/results/webtransport_zig_backend_v1/2026_11_16/README.md).
+  This leaf does not yet connect sessions, application routing or datagrams.
   Published draft-16 SETTINGS, long-lived CONNECT, child association, live session
   integration, client acceptance and published fork/pin updates remain open.
 - Dependency provenance still encounters the user's pre-existing h1spec

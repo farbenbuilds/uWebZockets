@@ -213,6 +213,14 @@ These remaining steps are planned work, not completed release evidence.
 
 ### Bounded Zig runtime implementation
 
+Step 1 checkpoint, 2026-11-16: the private native-contract adapter now compiles
+against the published pin and the real local candidate. All 964 centralized
+published-pin tests pass. The candidate's ten-test TLS and component cohort
+passes Debug, ReleaseSafe and ReleaseFast, including positive 64-bit peer
+limits, long-lived CONNECT and both initiators/directions of raw children.
+The [source, scaffold and results](../benchmarks/results/webtransport_zig_backend_v1/2026_11_16/README.md)
+retain exact inputs. Step 2 and subsequent runtime integration remain open.
+
 Develop the runtime against the real native proposal in an isolated Zig
 verification scaffold while production continues to reject unsupported CONNECT
 on its published pin. Compile the same project sources against both backends;
