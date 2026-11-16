@@ -357,6 +357,30 @@ runtime slice is accepted. Public child I/O, application TX, multi-session
 flow accounting, independent-client acceptance and fork publication/pins
 remain open. Production activation is unchanged; v2.3.0 remains incomplete.
 
+Incoming-child lifecycle checkpoint, 2026-11-16: nine real App/TLS/UDP cases
+now pass in Debug, ReleaseSafe and ReleaseFast, with all 33 existing App cases
+also green in each mode. Actual preauthorization byte previews and waiting
+reservations/deadlines strengthen the early-arrival and expiry proofs. Capacity
+tests exposed the native constructor's metadata publication gap; Root defers
+full-pool peer UNI refusal to the typed callback without taking a slot. A
+prefix-only FIN regression now proves terminal orphan cleanup on the live
+connection. Parent Close0 plus FIN preserves a sibling connection and pending
+SID4; subsequent CONNECT4 admits the retained bytes. Abort/reuse preserves an
+unknown final size and records connection closure before session teardown.
+
+The same unchanged initial-credit test exposed a native half-window deadlock
+with persistent streams. Local proposal
+`005ab244169f269689e511d6b77dd2187e318df1` schedules WT-enabled HTTP UNI credit
+on close through the existing coalesced flag and bounded generator. All 65
+native WT scenarios and 83 upstream Debug cases pass; the Root 1035-test suite
+and release builds pass. The
+[lifecycle evidence](../benchmarks/results/webtransport_child_lifecycle_v1/2026_11_16/README.md)
+retains complete proposal source/history, causal RED/GREEN results and clear
+changed-work reviews. Callback shutdown, broader child RESET/STOP ordering,
+public I/O/TX, flow accounting, independent-client and publication gates remain
+required. Close-before-parent-FIN child cancellation is not established by
+this new teardown case. Pins and activation remain unchanged.
+
 Develop the runtime against the real native proposal in an isolated Zig
 verification scaffold while production continues to reject unsupported CONNECT
 on its published pin. Compile the same project sources against both backends;

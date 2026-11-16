@@ -97,6 +97,16 @@
       open. Evidence is retained in
       `benchmarks/results/webtransport_early_datagrams_v1/2026_11_16/README.md`.
 - [x] Release metadata synchronized to 2.3.0; no tag or publication.
+- [x] Section 8.2 private incoming-child lifecycle checkpoint: generation-checked
+      association, bounded early receive, coded capacity refusal, native-close
+      ownership and unknown final sizes. Nine actual App cases and the existing
+      33-case cohort pass in all three modes. Global refusal, terminal orphan
+      cleanup and connection-abort cause ordering have retained regressions.
+      Local native UNI credit proposal `005ab244169f269689e511d6b77dd2187e318df1`
+      resolves the cross-initial-window deadlock; 65 native WT scenarios and
+      83 upstream Debug cases pass. This does not complete WT activation.
+      Exact scope and remaining work are retained in
+      `benchmarks/results/webtransport_child_lifecycle_v1/2026_11_16/README.md`.
 - [x] Independent slice reviews, findings resolved and changed work
       re-reviewed, including the final adapter and evidence package.
 - [x] Requirement-by-requirement audit and retained final check results in
@@ -155,8 +165,12 @@
   source or activation policy. The following
   [early-datagram implementation](../benchmarks/results/webtransport_early_datagrams_v1/2026_11_16/README.md)
   adds bounded generation-scoped buffering and replay after admission.
-  Early child-stream association and multi-session accounting still await
-  implementation.
+  The following [private incoming-child checkpoint](../benchmarks/results/webtransport_app_children_v1/2026_11_16/README.md)
+  connects the receive consumer and bounded child association. The
+  [lifecycle checkpoint](../benchmarks/results/webtransport_child_lifecycle_v1/2026_11_16/README.md)
+  adds actual BIDI/early/expiry/capacity/teardown evidence and the reviewed
+  local UNI credit proposal. Callback shutdown, broader child RESET/STOP,
+  public child I/O/TX and multi-session flow accounting remain required.
   Published draft-16 SETTINGS, long-lived CONNECT, child association, live session
   integration, client acceptance and published fork/pin updates remain open.
 - Dependency provenance still encounters the user's pre-existing h1spec

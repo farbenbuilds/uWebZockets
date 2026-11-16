@@ -568,7 +568,8 @@ pub fn quic_engine(
             if (id & 3 != 0) return;
             const slot = self.connections.find(connection) orelse return;
             if (slot.native == null) return;
-            self.cancel_children(connection, id, .session_closed);
+            const reason: child_runtime.CloseReason = if (native_connection_live(slot.native)) .session_closed else .connection_closed;
+            self.cancel_children(connection, id, reason);
             const storage = if (self.pending_datagrams) |*active| active else return;
             if (slot.unknown_early_disabled and storage.store.pending_count == 0) return;
             if (storage.store.retire(.{ .connection = connection, .session_id = id }) == .exhausted) {
@@ -686,7 +687,7 @@ pub fn quic_engine(
             self.sync_child_retry(context);
             if (result != .not_live) return;
             const slot = self.connections.find(context.state.lease.connection);
-            const reason: child_runtime.CloseReason = if (slot == null or slot.?.native == null)
+            const reason: child_runtime.CloseReason = if (slot == null or !native_connection_live(slot.?.native))
                 .connection_closed
             else if (self.children_shutdown or self.cooldown_pending or self.in_cooldown)
                 .shutdown
@@ -1042,9 +1043,13 @@ pub fn quic_engine(
             const stream_context = self.acquire_stream(raw_stream, connection) orelse {
                 self.retire_datagrams(connection.handle, c.lsquic_stream_id(raw_stream));
                 var info: backend.StreamInfo = .{};
-                if (backend.read_stream(raw_stream, &info) == .ok and info.association == .child) {
-                    _ = backend.stop_receiving(raw_stream, webtransport.wt_buffered_stream_rejected);
-                    if (info.direction == .bidi) _ = backend.reset_stream(raw_stream, webtransport.wt_buffered_stream_rejected);
+                const result = backend.read_stream(raw_stream, &info);
+                if (result == .ok and reject_unowned_child(raw_stream, info)) return null;
+                if (backend.available and self.binding != null and result == .pending and
+                    c.lsquic_stream_id(raw_stream) & 3 == 2)
+                {
+                    // The UNI interface switches before native typed publication.
+                    _ = c.lsquic_stream_wantread(raw_stream, 0);
                     return null;
                 }
                 _ = c.lsquic_stream_close(raw_stream);
@@ -1053,6 +1058,33 @@ pub fn quic_engine(
             // Native readability drives buffered HEADERS and child prefixes.
             _ = c.lsquic_stream_wantread(raw_stream, 1);
             return @ptrCast(stream_context);
+        }
+
+        fn reject_unowned_child(raw: *c.lsquic_stream, info: backend.StreamInfo) bool {
+            if (info.association != .child or info.initiator != .peer) return false;
+            switch (backend.stop_receiving(raw, webtransport.wt_buffered_stream_rejected)) {
+                .ok => {},
+                // A consumed prefix plus FIN still leaves the app read half open.
+                .closed => _ = c.lsquic_stream_shutdown(raw, 0),
+                .blocked, .invalid, .unsupported => |status| {
+                    log.warn("unowned child receive cancellation failed: {s}", .{@tagName(status)});
+                    _ = c.lsquic_stream_close(raw);
+                },
+            }
+            if (info.direction == .bidi) _ = backend.reset_stream(raw, webtransport.wt_buffered_stream_rejected);
+            return true;
+        }
+
+        fn native_connection_live(connection: ?*c.lsquic_conn) bool {
+            const native = connection orelse return false;
+            return switch (c.lsquic_conn_status(native, null, 0)) {
+                c.LSCONN_ST_CONNECTED,
+                c.LSCONN_ST_HSK_IN_PROGRESS,
+                c.LSCONN_ST_GOING_AWAY,
+                c.LSCONN_ST_PEER_GOING_AWAY,
+                => true,
+                else => false,
+            };
         }
 
         fn on_stream_read(native: ?*c.lsquic_stream, context: ?*c.lsquic_stream_ctx) callconv(.c) void {
@@ -1110,15 +1142,8 @@ pub fn quic_engine(
             self.release_child_pending(active);
             if (active.child) |*state| {
                 const slot = self.connections.find(active.state.lease.connection);
-                if (self.engine == null or slot == null or slot.?.native == null) {
+                if (self.engine == null or slot == null or !native_connection_live(slot.?.native)) {
                     _ = state.begin_close(.connection_closed, null);
-                } else {
-                    const status = c.lsquic_conn_status(slot.?.native, null, 0);
-                    if (status != c.LSCONN_ST_CONNECTED and status != c.LSCONN_ST_HSK_IN_PROGRESS and
-                        status != c.LSCONN_ST_GOING_AWAY and status != c.LSCONN_ST_PEER_GOING_AWAY)
-                    {
-                        _ = state.begin_close(.connection_closed, null);
-                    }
                 }
                 child_io.close(native orelse active.http.stream, state, if (self.binding) |binding| binding.child_consumer else null);
             }
@@ -1157,6 +1182,18 @@ pub fn quic_engine(
 
         fn on_webtransport_stream(native: ?*c.lsquic_stream, context: ?*c.lsquic_stream_ctx) callconv(.c) void {
             const raw = native orelse return;
+            if (context == null) {
+                const connection = c.lsquic_stream_conn(raw) orelse return;
+                const raw_owner = c.lsquic_conn_get_ctx(connection) orelse return;
+                const slot: *runtime.Connection = @ptrCast(@alignCast(raw_owner));
+                const self: *Self = @ptrCast(@alignCast(slot.owner));
+                if (self.connection_slot(connection) != slot) return;
+                var orphan_info: backend.StreamInfo = .{};
+                if (backend.read_stream(raw, &orphan_info) != .ok or !reject_unowned_child(raw, orphan_info)) {
+                    _ = c.lsquic_stream_close(raw);
+                }
+                return;
+            }
             const active: *StreamContext = @ptrCast(@alignCast(context orelse return));
             var info: backend.StreamInfo = .{};
             if (backend.read_stream(raw, &info) != .ok or !active.state.classify(info)) {
