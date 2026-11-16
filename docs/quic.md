@@ -271,6 +271,15 @@ The [outgoing-stream checkpoint](../benchmarks/results/webtransport_public_outgo
 retains 67 actual App cases in all three modes, including local UNI/BIDI
 creation, real MAX_STREAMS recovery and the bounded local receive-window fix.
 
+The [session-record checkpoint](../benchmarks/results/webtransport_session_records_v1/2026_11_17/README.md)
+retains the 67 stream cases and a separate 33-case datagram driver in all three
+modes, including publication-aware cooldown and global session-index cleanup.
+Positive flow and multiple-session activation remain subsequent work.
+
+The [native receive-observer prerequisite](../benchmarks/results/lsquic_receive_observer_v1/2026_11_17/README.md)
+retains high-water/delta observation and lifecycle regressions. It remains an
+unpublished proposal; Root does not yet consume it for positive flow accounting.
+
 ## Verification
 
 The cross-implementation gate uses pinned curl/ngtcp2 and aioquic clients to

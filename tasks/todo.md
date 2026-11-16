@@ -246,7 +246,7 @@
   rejection of a second simultaneous session.
 - [x] Retain all 67 native cases with updated private observation helpers and
   verify index namespace, stale-handle, capacity and allocation invariants.
-- [ ] Add and verify native receive high-water/delta observation independently
+- [x] Add and verify native receive high-water/delta observation independently
   of readability, including NULL Root contexts and pre-callback enforcement.
 - [ ] Resolve bounded early-session accounting and implement positive stream/
   data budgets, final reset gaps, and credit capsule output.
