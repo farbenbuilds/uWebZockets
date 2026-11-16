@@ -50,6 +50,7 @@ pub const OperationError = error{
     ShuttingDown,
     WriteClosed,
     ConflictingIntent,
+    ControlFailed,
     WakeFailed,
     NoWritableCallback,
 };

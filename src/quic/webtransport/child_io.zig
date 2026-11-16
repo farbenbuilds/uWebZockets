@@ -16,7 +16,8 @@ pub const Guard = struct { context: *anyopaque, live: LiveCallback };
 pub const Result = enum(u8) { progress, not_live };
 /// Native cancellation retries retain the first immutable error.
 pub const Actions = struct {
-    started: bool = false,
+    stop_code: ?u64 = null,
+    reset_code: ?u64 = null,
     stop: bool = false,
     reset: bool = false,
 };
@@ -110,12 +111,12 @@ fn notifications(
     if (!state.consumer_owned) return .progress;
     const key = state.key orelse return .not_live;
     if (!guard.live(guard.context, state)) return .not_live;
-    if (state.ledger.take_reset()) |code| {
+    if (actions.stop_code == null) if (state.ledger.take_reset()) |code| {
         if (consumer.policy == .receive_only) _ = state.begin_close(.peer_reset, code);
         if (consumer.policy == .duplex) _ = c.lsquic_stream_shutdown(raw, 0);
         consumer.reset(consumer.context, key, code, state.ledger.final_payload_size.?);
         if (!guard.live(guard.context, state)) return .not_live;
-    }
+    };
     if (state.ledger.take_stop()) |code| {
         consumer.stop(consumer.context, key, code);
         if (!guard.live(guard.context, state)) return .not_live;
@@ -137,9 +138,9 @@ pub fn read(
     if (!guard.live(guard.context, state)) return .not_live;
     if (!snapshot(raw, state, actions)) return .progress;
     if (notifications(raw, state, actions, consumer, guard) == .not_live) return .not_live;
-    if (state.ledger.receive_terminal != .none) return .progress;
+    if (actions.stop_code != null or state.ledger.receive_terminal != .none) return .progress;
     var bytes: [2048]u8 = undefined;
-    while (state.phase == .active and state.ledger.receive_terminal == .none) {
+    while (state.phase == .active and actions.stop_code == null and state.ledger.receive_terminal == .none) {
         if (!guard.live(guard.context, state)) return .not_live;
         const size = c.lsquic_stream_read(raw, &bytes, bytes.len);
         const read_error = if (size < 0) std.c.errno(size) else .SUCCESS;
@@ -153,7 +154,7 @@ pub fn read(
         if (!snapshot(raw, state, actions)) return .progress;
         if (size <= 0) {
             if (notifications(raw, state, actions, consumer, guard) == .not_live) return .not_live;
-            if (state.phase != .active) return .progress;
+            if (state.phase != .active or actions.stop_code != null) return .progress;
             if (size == 0) return eof(raw, state, actions, consumer, guard);
             if (read_error != .AGAIN) cancel(raw, state, actions, .protocol_error, wt.wt_session_gone);
             return .progress;
@@ -204,17 +205,23 @@ pub fn cancel(raw: *c.lsquic_stream, state: *child.State, actions: *Actions, rea
         // Root calls this after open returns, or before invoking an invalid open.
         state.complete_open(false) catch |err| log.err("child cancelled open failed: {s}", .{@errorName(err)});
     }
-    if (!actions.started and state.cancel_code != null) {
-        actions.* = .{ .started = true, .stop = true, .reset = state.metadata.direction == .bidi };
+    if (state.cancel_code) |first_code| {
+        if (actions.stop_code == null) {
+            actions.stop_code = first_code;
+            actions.stop = true;
+        }
+        if (state.metadata.direction == .bidi and actions.reset_code == null) {
+            actions.reset_code = first_code;
+            actions.reset = true;
+        }
     }
-    retry(raw, state, actions);
+    retry(raw, actions);
 }
 
 /// A pending write cancellation may need connection-level credit to resume.
-pub fn retry(raw: *c.lsquic_stream, state: *child.State, actions: *Actions) void {
-    const code = state.cancel_code orelse return;
+pub fn retry(raw: *c.lsquic_stream, actions: *Actions) void {
     if (actions.stop) {
-        const result = backend.stop_receiving(raw, code);
+        const result = backend.stop_receiving(raw, actions.stop_code.?);
         actions.stop = result == .blocked;
         // Native RESET visibility need not close the application's read half.
         if (result == .closed) _ = c.lsquic_stream_shutdown(raw, 0);
@@ -225,12 +232,12 @@ pub fn retry(raw: *c.lsquic_stream, state: *child.State, actions: *Actions) void
         }
     }
     if (actions.reset) {
-        const result = backend.reset_stream(raw, code);
+        const result = backend.reset_stream(raw, actions.reset_code.?);
         actions.reset = result == .blocked;
         // A prior peer STOP can already own the immutable native write error.
         if (result == .invalid or result == .unsupported) _ = c.lsquic_stream_shutdown(raw, 1);
     }
-    _ = c.lsquic_stream_wantread(raw, 0);
+    if (actions.stop_code != null) _ = c.lsquic_stream_wantread(raw, 0);
 }
 
 /// Native close is authoritative even when the parent or connection is gone.

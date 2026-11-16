@@ -160,8 +160,23 @@ Receive EOF/reset leaves BIDI sending open. Call
 `webtransport_stream_cancel(handle, application_code)` to cancel both halves.
 The latter preserves its first code; conflicting repeated cancellation fails.
 Operations schedule native work for transport processing without invoking
-application callbacks inline. Local half-stop/reset commands and outgoing
-creation remain subsequent work.
+application callbacks inline. Outgoing creation remains subsequent work.
+
+`webtransport_stream_stop(handle, application_code)` abandons receiving while
+sending remains open. Further payload, EOF and receive-reset callbacks stop;
+final-size accounting and peer STOP notifications continue until native close.
+After a peer FIN or RESET, success can mean local abandonment without sending
+a new wire STOP. `webtransport_stream_reset(handle, application_code)` resets
+only sending and immediately disables writes, finish and writable events.
+Receiving can continue. RESET after finish returns `WriteClosed`.
+
+Each half preserves its first accepted code independently. Identical repeats
+succeed without requesting another wake; different repeats return
+`ConflictingIntent`. A later whole cancellation fills only missing half
+intents. Native credit blocking retains the request for retry. Both operations
+require accepted ownership and native publication, and invoke no callbacks
+inline. `ControlFailed` reports an unexpected native rejection before a new
+intent was accepted.
 
 `webtransport_stream_write(handle, bytes)` returns the prefix copied into
 native ownership. Retain only the suffix for retry; the accepted prefix may

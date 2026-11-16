@@ -344,7 +344,7 @@ pub fn quic_engine(
         fn send_context(self: *Self, handle: stream_api.Handle) stream_api.OperationError!*StreamContext {
             const context = try self.resolve_child(handle, .accepted);
             const state = &context.child.?;
-            if (state.metadata.direction != .bidi or state.phase != .active) return error.WriteClosed;
+            if (state.metadata.direction != .bidi or state.phase != .active or context.child_actions.reset_code != null) return error.WriteClosed;
             if (!context.transmit.published) return error.NotReady;
             if (!child_io.observe_receive(context.http.stream, state)) return error.WriteClosed;
             if (state.ledger.stop_error != null) {
@@ -397,7 +397,8 @@ pub fn quic_engine(
             }
             const consumer = context.child_consumer orelse return error.NoWritableCallback;
             if (consumer.writable == null) return error.NoWritableCallback;
-            if (state.metadata.direction != .bidi or (state.phase != .active and state.phase != .opening) or context.transmit.finish_requested) return error.WriteClosed;
+            if (state.metadata.direction != .bidi or (state.phase != .active and state.phase != .opening) or
+                context.transmit.finish_requested or context.child_actions.reset_code != null) return error.WriteClosed;
             if (!child_io.observe_receive(context.http.stream, state) or state.ledger.stop_error != null) {
                 context.transmit.writable_requested = false;
                 sync_child_write(context);
@@ -420,6 +421,56 @@ pub fn quic_engine(
             try self.reserve_child_wake();
             context.transmit.writable_requested = false;
             self.cancel_child(context, .consumer_cancelled, native_code);
+        }
+
+        /// Abandons receiving; native final-size observation and sending remain live.
+        pub fn stop_webtransport_stream(self: *Self, handle: stream_api.Handle, code: u32) stream_api.OperationError!void {
+            const context = try self.resolve_child(handle, .accepted);
+            const state = &context.child.?;
+            if (!context.transmit.published) return error.NotReady;
+            const native_code = webtransport.application_error_to_http3(code);
+            if (context.child_actions.stop_code) |first| {
+                if (first == native_code) return;
+                return error.ConflictingIntent;
+            }
+            if (state.phase != .active) return error.ControlFailed;
+            try self.reserve_child_wake();
+            const result = backend.stop_receiving(context.http.stream, native_code);
+            switch (result) {
+                .ok, .blocked => {},
+                // Peer FIN/RESET can already own the terminal receive state.
+                .closed => _ = c.lsquic_stream_shutdown(context.http.stream, 0),
+                .unsupported => return error.Unsupported,
+                .invalid => return error.ControlFailed,
+            }
+            context.child_actions.stop_code = native_code;
+            context.child_actions.stop = result == .blocked;
+            _ = c.lsquic_stream_wantread(context.http.stream, 0);
+            self.sync_child_retry(context);
+        }
+
+        /// A retained reset intent ends only sending, including while native credit blocks.
+        pub fn reset_webtransport_stream(self: *Self, handle: stream_api.Handle, code: u32) stream_api.OperationError!void {
+            const resolved = try self.resolve_child(handle, .accepted);
+            const native_code = webtransport.application_error_to_http3(code);
+            if (resolved.child_actions.reset_code) |first| {
+                if (first == native_code) return;
+                return error.ConflictingIntent;
+            }
+            const context = try self.send_context(handle);
+            if (context.transmit.finish_requested) return error.WriteClosed;
+            try self.reserve_child_wake();
+            const result = backend.reset_stream(context.http.stream, native_code);
+            switch (result) {
+                .ok, .blocked => {},
+                .closed => return error.WriteClosed,
+                .unsupported => return error.Unsupported,
+                .invalid => return error.ControlFailed,
+            }
+            context.child_actions.reset_code = native_code;
+            context.child_actions.reset = result == .blocked;
+            context.transmit.writable_requested = false;
+            self.sync_child_retry(context);
         }
 
         /// Native retains accepted bytes and FIN; success is not peer delivery.
@@ -732,7 +783,8 @@ pub fn quic_engine(
         fn sync_child_write(context: *StreamContext) void {
             const state = if (context.child) |*active| active else return;
             if (state.metadata.direction != .bidi) return;
-            if ((state.phase != .active and state.phase != .opening) or state.ledger.stop_error != null) context.transmit.writable_requested = false;
+            if ((state.phase != .active and state.phase != .opening) or state.ledger.stop_error != null or
+                context.child_actions.reset_code != null) context.transmit.writable_requested = false;
             const user_interest = context.transmit.writable_requested and context.transmit.published and
                 !context.transmit.finish_requested and state.consumer_owned and child_live(context, state);
             _ = c.lsquic_stream_wantwrite(context.http.stream, @intFromBool(context.child_actions.reset or user_interest));
@@ -741,7 +793,7 @@ pub fn quic_engine(
         fn notify_child_writable(self: *Self, context: *StreamContext) void {
             const state = if (context.child) |*active| active else return;
             if (!context.transmit.writable_requested or !context.transmit.published or
-                context.transmit.finish_requested or state.phase != .active)
+                context.transmit.finish_requested or context.child_actions.reset_code != null or state.phase != .active)
             {
                 sync_child_write(context);
                 return;
@@ -822,8 +874,8 @@ pub fn quic_engine(
             while (streams.next()) |index| {
                 const context = &self.stream_contexts[index];
                 if (!context.child_retry_counted) continue;
-                const state = if (context.child) |*active| active else continue;
-                child_io.retry(context.http.stream, state, &context.child_actions);
+                if (context.child == null) continue;
+                child_io.retry(context.http.stream, &context.child_actions);
                 self.sync_child_retry(context);
             }
         }
@@ -1300,7 +1352,7 @@ pub fn quic_engine(
             if (active.state.role == .child) {
                 const self: *Self = @ptrCast(@alignCast(active.http.owner));
                 self.register_child(active);
-                if (active.child) |*state| child_io.retry(active.http.stream, state, &active.child_actions);
+                if (active.child != null) child_io.retry(active.http.stream, &active.child_actions);
                 self.sync_child_retry(active);
                 self.notify_child_writable(active);
                 return;

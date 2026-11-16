@@ -15,8 +15,11 @@ uses Semantic Versioning.
 - Candidate WebTransport peer-BIDI writes, explicit one-shot writable events
   and deferred UDP service requests. Writes transfer only the returned prefix,
   preserve ownership through native/flush failures, and use actual native
-  publication as the readiness boundary. Local half-stop/reset, outgoing
-  creation, multi-session flow and published activation remain open.
+  publication as the readiness boundary. Outgoing creation, multi-session flow
+  and published activation remain open.
+- Candidate WebTransport STOP and RESET controls preserve independent halves
+  and their first error codes. STOP suppresses receive callbacks while retaining
+  final-size accounting; RESET preserves receiving and disables sending.
 - `App.enable_http3` and `enable_http3_ephemeral` configure HTTPS and HTTP/3
   before listening on an application returned by `Server.builder`, preserving
   its configured capacities and installing both TLS contexts atomically.

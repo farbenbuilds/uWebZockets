@@ -1130,6 +1130,24 @@ pub fn configured_app_with_route_params(
             try transport.engine.cancel_webtransport_stream(handle, code);
         }
 
+        /// Stops receive callbacks while preserving sending and final-size accounting.
+        pub fn webtransport_stream_stop(self: *Self, handle: wt_stream.Handle, code: u32) wt_stream.OperationError!void {
+            if (comptime !wt_backend.available) return error.Unsupported;
+            if (handle.owner != @intFromPtr(self)) return error.WrongApp;
+            if (self.shutting_down or self.deinitialized) return error.ShuttingDown;
+            const transport = if (self.quic_transport) |*active| active else return error.StaleHandle;
+            try transport.engine.stop_webtransport_stream(handle, code);
+        }
+
+        /// Resets sending with its first code; receiving remains independent.
+        pub fn webtransport_stream_reset(self: *Self, handle: wt_stream.Handle, code: u32) wt_stream.OperationError!void {
+            if (comptime !wt_backend.available) return error.Unsupported;
+            if (handle.owner != @intFromPtr(self)) return error.WrongApp;
+            if (self.shutting_down or self.deinitialized) return error.ShuttingDown;
+            const transport = if (self.quic_transport) |*active| active else return error.StaleHandle;
+            try transport.engine.reset_webtransport_stream(handle, code);
+        }
+
         /// Finishes BIDI sending independently of receive EOF/reset.
         pub fn webtransport_stream_finish(self: *Self, handle: wt_stream.Handle) wt_stream.OperationError!void {
             if (comptime !wt_backend.available) return error.Unsupported;

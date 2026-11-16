@@ -512,8 +512,10 @@ receive callbacks. Stream and datagram registration share sixteen endpoint
 paths; stream-only startup retains bounded terminal IDs without datagram
 queues. The published backend still returns `Unsupported` for child handle
 operations. Peer-BIDI writes transfer only the returned prefix, with one-shot
-writable events and deferred timer service. Local half-stop/reset commands,
-outgoing children and multi-session flow remain unfinished.
+writable events and deferred timer service. Candidate STOP and RESET controls
+retain independent immutable codes, preserve the opposite half and retry
+native blocking without a payload queue. Outgoing children and multi-session
+flow remain unfinished.
 
 The C ABI is declared by `include/uWebZockets.h` and implemented by
 `src/c_api.zig`. It provides versioned opaque handles, versioned integer error
