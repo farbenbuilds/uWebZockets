@@ -50,7 +50,7 @@ Verify `manifest.sha256`, extract `raw_evidence_archive.tgz`, then verify its
 internal `files.sha256`. All 1500 payload hashes were independently checked.
 The final 263 fixture source/build inputs match the Root commit byte for byte.
 The combined 77-case Debug driver also passes after extraction at another
-path; its raw output is retained as `relocated_debug.log`.
+path; its raw output is retained as `relocated_debug.log.gz`.
 
 The archive retains exact fixture/source snapshots, replay overrides, raw
 logs, source manifests, reviews and isolated regression inputs. The fixture
