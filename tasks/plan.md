@@ -304,6 +304,21 @@ have no required findings. This implements datagram early
 association only; child-stream association and multi-session accounting remain
 open, together with independent-client and publication gates.
 
+Child receive-accounting foundation, 2026-11-16: a pure per-child ledger now
+accounts payload reads and native final size without charging the association
+prefix or the same final gap twice. Typed receive snapshots preserve unknown
+sizes and separate RESET knowledge/visibility, STOP, FIN and read cancellation.
+EOF requires an actual read returning zero; only native close or connection
+destruction ends observation. Invalid transitions preserve state.
+
+The [child-ledger checkpoint](../benchmarks/results/webtransport_child_ledger_v1/2026_11_16/README.md)
+retains twelve pure cases in all three modes, real native TLS snapshot proofs,
+1022 centralized functional tests, release builds and independent reviews.
+Engine/App child behavior and production pins are unchanged. Attaching ledgers
+to generation-checked child sidecars, bounded early-child association, an
+explicit byte consumer, public child I/O and session flow accounting remain
+required; this foundation does not complete step 6 or v2.3.0.
+
 Develop the runtime against the real native proposal in an isolated Zig
 verification scaffold while production continues to reject unsupported CONNECT
 on its published pin. Compile the same project sources against both backends;

@@ -1,4 +1,5 @@
 const c = @import("c");
+const child_ledger = @import("child_ledger.zig");
 
 /// Compile-time native contract presence, independent of listener activation.
 pub const available = contract_available();
@@ -69,6 +70,9 @@ pub const StreamInfo = struct {
     direction: Direction = .bidi,
     initiator: Initiator = .peer,
 };
+
+/// Copied receive facts distinguish known RESET metadata from delivery.
+pub const ReceiveSnapshot = child_ledger.ReceiveSnapshot;
 
 /// Advertised session limits; all zero selects single-session operation.
 pub const LocalLimits = struct {
@@ -161,6 +165,43 @@ pub fn read_stream(stream: ?*c.lsquic_stream, output: *StreamInfo) QueryResult {
     };
     if (!stream_info_valid(info)) return .invalid;
     output.* = info;
+    return .ok;
+}
+
+/// Copies validated receive metadata while the native stream is still valid.
+///
+/// STOP does not imply a final size, and FIN receipt does not imply read EOF.
+/// The caller may query during `on_close`, but never after that callback.
+pub fn read_receive(stream: ?*c.lsquic_stream, output: *ReceiveSnapshot) QueryResult {
+    if (comptime !available) return .unsupported;
+    var native: c.struct_lsquic_stream_recv_state = undefined;
+    switch (c.lsquic_stream_get_recv_state(stream, &native)) {
+        c.LSQUIC_SRG_OK => {},
+        c.LSQUIC_SRG_UNSUPPORTED => return .unsupported,
+        else => return .invalid,
+    }
+    const known_flags: c_uint = c.LSQUIC_SRS_FINAL_SIZE_KNOWN | c.LSQUIC_SRS_RESET_KNOWN |
+        c.LSQUIC_SRS_RELIABLE_RESET_SEEN | c.LSQUIC_SRS_RESET_VISIBLE |
+        c.LSQUIC_SRS_STOP_SENDING_KNOWN | c.LSQUIC_SRS_FIN_RECEIVED | c.LSQUIC_SRS_READ_CANCELED;
+    if (native.flags & ~known_flags != 0) return .invalid;
+    const final_known = native.flags & c.LSQUIC_SRS_FINAL_SIZE_KNOWN != 0;
+    const reset_known = native.flags & c.LSQUIC_SRS_RESET_KNOWN != 0;
+    const stop_known = native.flags & c.LSQUIC_SRS_STOP_SENDING_KNOWN != 0;
+    if ((!final_known and (native.final_size != 0 or native.reliable_size != 0)) or
+        (!reset_known and native.reset_error_code != 0) or
+        (!stop_known and native.stop_error_code != 0) or
+        (!reset_known and native.flags & c.LSQUIC_SRS_RELIABLE_RESET_SEEN != 0)) return .invalid;
+    const snapshot: ReceiveSnapshot = .{
+        .final_size = if (final_known) native.final_size else null,
+        .reliable_size = if (final_known) native.reliable_size else null,
+        .reset_error = if (reset_known) native.reset_error_code else null,
+        .reset_visible = native.flags & c.LSQUIC_SRS_RESET_VISIBLE != 0,
+        .stop_error = if (stop_known) native.stop_error_code else null,
+        .fin_received = native.flags & c.LSQUIC_SRS_FIN_RECEIVED != 0,
+        .read_cancelled = native.flags & c.LSQUIC_SRS_READ_CANCELED != 0,
+    };
+    if (!child_ledger.snapshot_valid(snapshot)) return .invalid;
+    output.* = snapshot;
     return .ok;
 }
 
@@ -271,8 +312,13 @@ fn contract_available() bool {
         "lsquic_stream_get_reset_error",
         "struct_lsquic_stream_recv_state",
         "LSQUIC_SRG_OK",
+        "LSQUIC_SRG_UNSUPPORTED",
+        "LSQUIC_SRS_FINAL_SIZE_KNOWN",
         "LSQUIC_SRS_RESET_KNOWN",
+        "LSQUIC_SRS_RELIABLE_RESET_SEEN",
+        "LSQUIC_SRS_RESET_VISIBLE",
         "LSQUIC_SRS_STOP_SENDING_KNOWN",
+        "LSQUIC_SRS_FIN_RECEIVED",
         "LSQUIC_SRS_READ_CANCELED",
         "LSQUIC_SRA_OK",
         "LSQUIC_SRA_BLOCKED",
@@ -307,6 +353,9 @@ fn contract_available() bool {
     };
     inline for (declarations) |name| {
         if (!@hasDecl(c, name)) return false;
+    }
+    inline for (.{ "final_size", "reliable_size", "reset_error_code", "stop_error_code", "flags" }) |name| {
+        if (!@hasField(c.struct_lsquic_stream_recv_state, name)) return false;
     }
     if (!@hasField(c.lsquic_stream_if, "on_h3_settings") or
         !@hasField(c.lsquic_stream_if, "on_webtransport_stream") or

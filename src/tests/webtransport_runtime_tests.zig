@@ -34,6 +34,22 @@ test "WebTransport native backend preserves stream output on unavailable handles
     try std.testing.expectEqualDeep(original, info);
 }
 
+test "WebTransport native backend preserves receive output on unavailable handles" {
+    var state: backend.ReceiveSnapshot = .{
+        .final_size = 19,
+        .reliable_size = 7,
+        .reset_error = 37,
+        .reset_visible = true,
+        .stop_error = 41,
+        .fin_received = true,
+        .read_cancelled = true,
+    };
+    const original = state;
+    const expected: backend.QueryResult = if (backend.available) .invalid else .unsupported;
+    try std.testing.expectEqual(expected, backend.read_receive(null, &state));
+    try std.testing.expectEqualDeep(original, state);
+}
+
 test "WebTransport native backend rejects operations without a connection" {
     const expected: backend.CreateResult = if (backend.available) .invalid else .unsupported;
     try std.testing.expectEqual(expected, backend.accept_connect(null));
