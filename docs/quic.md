@@ -258,6 +258,10 @@ retains 51 actual App cases in all three optimization modes, including independe
 half progress, callback reentry, immutable codes and whole-cancel composition.
 Native half-control error-return faults remain unforced.
 
+The [outgoing-stream checkpoint](../benchmarks/results/webtransport_public_outgoing_v1/2026_11_17/README.md)
+retains 67 actual App cases in all three modes, including local UNI/BIDI
+creation, real MAX_STREAMS recovery and the bounded local receive-window fix.
+
 ## Verification
 
 The cross-implementation gate uses pinned curl/ngtcp2 and aioquic clients to
