@@ -6,15 +6,19 @@ const session = @import("session.zig");
 const pending = @import("pending_datagrams.zig");
 const RouteId = @import("../../router/datagram.zig").RouteId;
 
-/// Flow-off operation permits one session per connection, not per worker.
-const Sessions = session.session_slab(1);
-
 /// Publication ownership captured before callbacks can invalidate the parent.
 pub const SessionNotice = struct {
     connection: ConnectionHandle,
     session: session.SessionHandle,
     session_id: u64,
     route: RouteId,
+};
+
+/// CONNECT owns lifecycle and publication until its native stream closes.
+pub const SessionRecord = struct {
+    notice: SessionNotice,
+    phase: session.SessionState = .accepting,
+    notice_published: bool = false,
 };
 
 /// Worker-local identity that cannot resolve after its slot is reused.
@@ -28,10 +32,7 @@ pub const Connection = struct {
     stream_count: usize = 0,
     pending_child_count: usize = 0,
     peer: ?backend.Peer = null,
-    sessions: Sessions = .{},
-    session_route: ?RouteId = null,
-    session_stream: ?usize = null,
-    session_notice: ?SessionNotice = null,
+    session_count: usize = 0,
     /// Exhaustion or cooldown disables new unknown associations for this generation.
     unknown_early_disabled: bool = false,
     /// Local dispatch attempts, including full-ring drops; never a wire sequence.
@@ -182,6 +183,7 @@ pub fn connection_table(comptime capacity: usize) type {
             lease.active = false;
             connection.stream_count -= 1;
             if (connection.native == null and connection.stream_count == 0) {
+                std.debug.assert(connection.session_count == 0);
                 std.debug.assert(self.pool.release(connection));
             }
             return true;
@@ -191,14 +193,11 @@ pub fn connection_table(comptime capacity: usize) type {
         pub fn close(self: *Self, handle: ConnectionHandle) bool {
             const connection = self.find(handle) orelse return false;
             if (connection.native == null) return false;
-            if (connection.sessions.open_count() != 0) {
-                const active = connection.sessions.find(connection.sessions.session_ids[0]) orelse return false;
-                connection.sessions.close(active) catch return false;
-            }
-            connection.session_route = null;
-            connection.session_stream = null;
             connection.native = null;
-            if (connection.stream_count == 0) std.debug.assert(self.pool.release(connection));
+            if (connection.stream_count == 0) {
+                std.debug.assert(connection.session_count == 0);
+                std.debug.assert(self.pool.release(connection));
+            }
             return true;
         }
 

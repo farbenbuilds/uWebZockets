@@ -516,7 +516,9 @@ writable events and deferred timer service. Candidate STOP and RESET controls
 retain independent immutable codes, preserve the opposite half and retry
 native blocking without a payload queue. Candidate local UNI/BIDI creation
 reserves a stream slot before native construction and defers admission to the
-ordinary open callback. Positive/multi-session flow remains unfinished.
+ordinary open callback. CONNECT slots own session records, with a worker-wide
+startup-sized index for connection-generation/full-ID association and direct
+generation-checked parent lookup. Positive/multi-session flow remains unfinished.
 
 The C ABI is declared by `include/uWebZockets.h` and implemented by
 `src/c_api.zig`. It provides versioned opaque handles, versioned integer error

@@ -23,6 +23,10 @@ uses Semantic Versioning.
 - Candidate local WebTransport UNI/BIDI creation reserves bounded Root storage
   before native construction and defers admission through the existing open
   callback. Blocked attempts queue no delayed creation request.
+- CONNECT-owned session records and a bounded worker-wide identity index replace
+  connection-wide session scalars. Close invalidates identity before callbacks;
+  index churn reclaims tombstones without allocating. The flow-off one-session
+  restriction remains until positive flow control is implemented.
 - `App.enable_http3` and `enable_http3_ephemeral` configure HTTPS and HTTP/3
   before listening on an application returned by `Server.builder`, preserving
   its configured capacities and installing both TLS contexts atomically.
@@ -37,6 +41,9 @@ uses Semantic Versioning.
 
 ### Fixed
 
+- Datagram-only WebTransport sessions retain queued application datagrams during
+  graceful cooldown. Established CONNECT flushing no longer takes the accepting
+  session shutdown path; published sessions still terminate and drain normally.
 - The scheduled benchmark publisher refreshes the narrative contract document
   while keeping the executable contract parameters and schema immutable. This
   lets documented harness clarifications publish without rejecting every later

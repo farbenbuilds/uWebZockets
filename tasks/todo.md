@@ -238,3 +238,18 @@
 - Retained fork histories and same-machine offline replay are in
   `benchmarks/results/dependency_archives_v2_3/2026_11_11/README.md`.
   The existing h1spec license uncertainty still needs release-owner resolution.
+
+## WebTransport session ownership and flow control, 2026-11-17
+
+- [x] Move session identity, route, phase and callback ownership into global
+  CONNECT stream records with an O(N) startup-sized index; preserve flow-off
+  rejection of a second simultaneous session.
+- [x] Retain all 67 native cases with updated private observation helpers and
+  verify index namespace, stale-handle, capacity and allocation invariants.
+- [ ] Add and verify native receive high-water/delta observation independently
+  of readability, including NULL Root contexts and pre-callback enforcement.
+- [ ] Resolve bounded early-session accounting and implement positive stream/
+  data budgets, final reset gaps, and credit capsule output.
+- [ ] Enable and verify multiple sessions, independent routes and scoped cleanup.
+- [ ] Complete independent draft-16 acceptance, reviewed fork publication and
+  the remaining full release requirements.

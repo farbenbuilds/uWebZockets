@@ -13,6 +13,7 @@ const pending = @import("webtransport/pending_datagrams.zig");
 const child_runtime = @import("webtransport/child_runtime.zig");
 const child_io = @import("webtransport/child_io.zig");
 const stream_api = @import("webtransport/stream_api.zig");
+const session_index = @import("webtransport/session_index.zig");
 const Response = @import("../http/response.zig").Response;
 const HeaderSet = stream.HeaderSet;
 
@@ -28,7 +29,7 @@ const pending_per_connection = 4;
 const pending_lifetime_us = std.time.us_per_s;
 
 /// Startup-only binding and pending-storage failures.
-pub const WebTransportBindError = runtime.PendingStorageError || error{
+pub const WebTransportBindError = runtime.PendingStorageError || session_index.InitError || error{
     QuicEngineAlreadyStarted,
     WebTransportAlreadyBound,
     InvalidDatagramLimit,
@@ -143,6 +144,7 @@ pub fn quic_engine(
             http: *QuicStream,
             generation: u64 = 0,
             state: runtime.StreamState = .{},
+            session_record: ?runtime.SessionRecord = null,
             capsules: capsule_stream.Decoder = .init(.{ .ignore_flow_control = true }),
             close_received: bool = false,
             session_close_code: ?u64 = null,
@@ -180,6 +182,7 @@ pub fn quic_engine(
         connections: Connections,
         stream_contexts: []StreamContext,
         binding: ?wt_binding.Binding = null,
+        session_index: ?session_index.Index = null,
         pending_datagrams: ?runtime.PendingDatagramStorage = null,
         header_pool: HeaderPool,
         packet_pool: PacketPool,
@@ -313,6 +316,8 @@ pub fn quic_engine(
             if (self.binding != null) return error.WebTransportAlreadyBound;
             if (binding.max_payload == 0 and binding.child_consumer == null and binding.child_selector == null) return error.InvalidDatagramLimit;
             if (comptime backend.available) {
+                var index = try session_index.Index.init(std.heap.page_allocator, capacity);
+                errdefer index.deinit(std.heap.page_allocator);
                 self.pending_datagrams = if (binding.max_payload == 0)
                     try runtime.PendingDatagramStorage.init_terminal_only(std.heap.page_allocator, capacity * pending_per_connection)
                 else
@@ -325,11 +330,29 @@ pub fn quic_engine(
                             .lifetime_us = pending_lifetime_us,
                         },
                     );
+                self.session_index = index;
             }
             self.binding = binding;
         }
 
         const ChildAccess = enum { accepted, interest };
+
+        fn session_context(self: *Self, connection: runtime.ConnectionHandle, handle: webtransport.SessionHandle) ?*StreamContext {
+            if (handle.generation == 0 or !self.stream_pool.is_active(handle.index)) return null;
+            const context = &self.stream_contexts[handle.index];
+            if (context.generation != handle.generation or !context.state.lease.active or
+                !std.meta.eql(context.state.lease.connection, connection) or context.state.session == null or
+                !std.meta.eql(context.state.session.?, handle)) return null;
+            const record = context.session_record orelse return null;
+            if (!std.meta.eql(record.notice.connection, connection) or !std.meta.eql(record.notice.session, handle)) return null;
+            return context;
+        }
+
+        fn find_session(self: *Self, connection: runtime.ConnectionHandle, id: u64) ?*StreamContext {
+            const index = if (self.session_index) |*active| active else return null;
+            const handle = index.find(.{ .connection = connection, .session_id = id }) orelse return null;
+            return self.session_context(connection, handle);
+        }
 
         fn outgoing_parent(self: *Self, handle: stream_api.SessionHandle) stream_api.CreateError!OutgoingParent {
             if (comptime !backend.available) return error.Unsupported;
@@ -338,18 +361,15 @@ pub fn quic_engine(
             if (self.children_shutdown or self.cooldown_pending or self.in_cooldown) return error.ShuttingDown;
             const connection = self.connections.find(.{ .index = handle.connection_index, .generation = handle.connection_generation }) orelse return error.StaleHandle;
             const session = webtransport.SessionHandle{ .index = handle.index, .generation = handle.generation };
-            const phase = connection.sessions.state(session) catch return error.StaleHandle;
+            const parent = self.session_context(connection.handle, session) orelse return error.StaleHandle;
+            const record = parent.session_record.?;
+            const phase = record.phase;
             if (phase == .accepting) return error.NotReady;
             if (phase != .established or !native_connection_live(connection.native)) return error.SessionClosed;
-            const index = connection.session_stream orelse return error.SessionClosed;
-            if (!self.stream_pool.is_active(index)) return error.SessionClosed;
-            const parent = &self.stream_contexts[index];
-            if (!parent.state.lease.active or !std.meta.eql(parent.state.lease.connection, connection.handle) or
-                parent.state.session == null or !std.meta.eql(parent.state.session.?, session)) return error.SessionClosed;
             const raw = parent.http.stream;
             if (c.lsquic_stream_get_ctx(raw) != @as(?*c.lsquic_stream_ctx, @ptrCast(parent)) or
                 backend.admission_canceled(raw)) return error.SessionClosed;
-            const route = connection.session_route orelse return error.SessionClosed;
+            const route = record.notice.route;
             const consumer = if (binding.child_selector) |selector| selector.select(selector.context, route) else binding.child_consumer;
             return .{ .connection = connection, .consumer = consumer orelse return error.Unsupported };
         }
@@ -368,8 +388,7 @@ pub fn quic_engine(
                 std.debug.assert(self.stream_pool.release(context.http));
             };
             try self.reserve_child_wake();
-            const parent_index = parent.connection.session_stream.?;
-            const session_id = c.lsquic_stream_id(self.stream_contexts[parent_index].http.stream);
+            const session_id = self.stream_contexts[session.index].session_record.?.notice.session_id;
             const kind: backend.Direction = if (direction == .uni) .uni else .bidi;
             self.construction = .{ .context = context, .connection = parent.connection.handle, .session_id = session_id, .direction = kind };
             defer self.construction = null;
@@ -663,6 +682,8 @@ pub fn quic_engine(
             std.debug.assert(self.pending_child_count == 0);
             std.debug.assert(self.child_retry_count == 0);
             std.debug.assert(self.connections.pool.count_active() == 0);
+            if (self.session_index) |*index| index.deinit(std.heap.page_allocator);
+            self.session_index = null;
             if (self.global_acquired) api.release_global();
             self.global_acquired = false;
 
@@ -766,12 +787,13 @@ pub fn quic_engine(
             defer self.in_cooldown = false;
             self.children_shutdown = true;
             self.cancel_children(null, null, .shutdown);
-            var connections = self.connections.pool.active.iterator(.{});
-            while (connections.next()) |index| {
-                const slot = &self.connections.pool.storage[index];
-                if (slot.session_notice == null) continue;
-                const parent = slot.session_stream orelse continue;
-                if (self.stream_pool.is_active(parent)) self.close_session(&self.stream_contexts[parent]);
+            var sessions = self.stream_pool.active.iterator(.{});
+            while (sessions.next()) |index| {
+                const parent = &self.stream_contexts[index];
+                const record = parent.session_record orelse continue;
+                // Unpublished sessions retain queued datagrams until native teardown.
+                if (!record.notice_published) continue;
+                self.close_session(parent);
             }
             self.cancel_pending_datagrams();
             c.lsquic_engine_cooldown(engine);
@@ -967,16 +989,12 @@ pub fn quic_engine(
             const key = state.key orelse return false;
             if (!std.meta.eql(key.connection, context.state.lease.connection)) return false;
             const slot = self.connections.find(key.connection) orelse return false;
-            if (!native_connection_live(slot.native) or slot.session_route != state.route) return false;
-            const current_parent = slot.sessions.find(key.session_id) orelse return false;
-            if (!std.meta.eql(current_parent, key.session)) return false;
-            const session_state = slot.sessions.state(key.session) catch return false;
+            if (!native_connection_live(slot.native)) return false;
+            const parent = self.session_context(key.connection, key.session) orelse return false;
+            const record = parent.session_record.?;
+            if (record.notice.session_id != key.session_id or record.notice.route != state.route) return false;
+            const session_state = record.phase;
             if (session_state != .established and session_state != .draining) return false;
-            const parent_index = slot.session_stream orelse return false;
-            if (!self.stream_pool.is_active(parent_index)) return false;
-            const parent = &self.stream_contexts[parent_index];
-            if (parent.state.session == null or !std.meta.eql(parent.state.session.?, key.session)) return false;
-            if (!std.meta.eql(parent.state.lease.connection, key.connection)) return false;
             if (backend.admission_canceled(parent.http.stream)) return false;
             if (c.lsquic_stream_id(context.http.stream) != key.stream_id) return false;
             return c.lsquic_stream_get_ctx(context.http.stream) == @as(?*c.lsquic_stream_ctx, @ptrCast(context));
@@ -1027,11 +1045,13 @@ pub fn quic_engine(
                 self.cancel_child(context, .session_closed, webtransport.wt_session_gone);
                 return;
             };
-            if (slot.sessions.find(state.metadata.session_id)) |parent| {
-                const phase = slot.sessions.state(parent) catch return;
+            if (self.find_session(slot.handle, state.metadata.session_id)) |parent_context| {
+                const record = parent_context.session_record.?;
+                const parent = record.notice.session;
+                const phase = record.phase;
                 if (phase == .established or phase == .draining) {
                     self.release_child_pending(context);
-                    const route = slot.session_route orelse return;
+                    const route = record.notice.route;
                     context.child_consumer = context.child_consumer orelse if (binding.child_selector) |selector| selector.select(selector.context, route) else binding.child_consumer;
                     const consumer = context.child_consumer orelse {
                         self.cancel_child(context, .rejected, webtransport.application_error_to_http3(0));
@@ -1244,8 +1264,6 @@ pub fn quic_engine(
             const self: *Self = @ptrCast(@alignCast(slot.owner));
             if (self.connection_slot(conn) != slot) return;
             const handle = slot.handle;
-            const notice = slot.session_notice;
-            slot.session_notice = null;
             c.lsquic_conn_set_ctx(conn, null);
             if (self.pending_datagrams) |*storage| storage.store.clear_connection(handle);
             if (self.binding) |binding| binding.clear(binding.context, handle);
@@ -1253,7 +1271,12 @@ pub fn quic_engine(
             self.cancel_children(handle, null, .connection_closed);
             std.debug.assert(self.active_connections > 0);
             self.active_connections -= 1;
-            self.notify_session_closed(notice, .connection_closed, null);
+            var streams = self.stream_pool.active.iterator(.{});
+            while (streams.next()) |index| {
+                const parent = &self.stream_contexts[index];
+                const record = parent.session_record orelse continue;
+                if (std.meta.eql(record.notice.connection, handle)) self.close_session(parent);
+            }
         }
 
         fn connection_slot(self: *Self, connection: *c.lsquic_conn) ?*runtime.Connection {
@@ -1301,8 +1324,8 @@ pub fn quic_engine(
             const bytes: [*]const u8 = @ptrCast(data orelse return);
             const datagram = webtransport.decode_datagram(bytes[0..size]) catch return;
             if (slot.peer) |peer| if (!backend.peer_requirements_met(peer, .server)) return;
-            if (slot.sessions.find(datagram.session_id)) |session| {
-                const state = slot.sessions.state(session) catch return;
+            if (self.find_session(slot.handle, datagram.session_id)) |parent| {
+                const state = parent.session_record.?.phase;
                 if (state == .established or state == .draining) {
                     _ = self.dispatch_associated_datagram(slot, datagram.session_id, datagram.payload);
                     return;
@@ -1330,13 +1353,12 @@ pub fn quic_engine(
         fn dispatch_associated_datagram(self: *Self, slot: *runtime.Connection, session_id: u64, payload: []const u8) bool {
             if (slot.native == null or self.cooldown_pending or self.in_cooldown) return false;
             const binding = self.binding orelse return false;
-            const index = slot.session_stream orelse return false;
-            const context = &self.stream_contexts[index];
+            const context = self.find_session(slot.handle, session_id) orelse return false;
             if (backend.admission_canceled(context.http.stream)) {
                 self.close_session(context);
                 return false;
             }
-            const route = slot.session_route orelse return false;
+            const route = context.session_record.?.notice.route;
             if (slot.receive_ordinal == std.math.maxInt(u64)) return false;
             const ordinal = slot.receive_ordinal;
             slot.receive_ordinal += 1;
@@ -1353,8 +1375,8 @@ pub fn quic_engine(
                 if (self.cooldown_pending or self.in_cooldown) return;
                 const slot = self.connections.find(connection) orelse return;
                 if (slot.native == null) return;
-                const session = slot.sessions.find(session_id) orelse return;
-                const state = slot.sessions.state(session) catch return;
+                const parent = self.find_session(connection, session_id) orelse return;
+                const state = parent.session_record.?.phase;
                 if (state != .established and state != .draining) return;
                 // Every stored payload fits this fixed physical stride.
                 const taken = storage.store.take_into(key, binding.clock(binding.context), &payload) catch unreachable;
@@ -1610,7 +1632,7 @@ pub fn quic_engine(
                 self.reset_connect(context, webtransport.h3_message_error);
                 return;
             }
-            if (slot.sessions.open_count() != 0) {
+            if (slot.session_count != 0) {
                 self.reset_connect(context, webtransport.h3_request_rejected);
                 return;
             }
@@ -1649,14 +1671,19 @@ pub fn quic_engine(
                 return;
             }
             const id = c.lsquic_stream_id(context.http.stream);
-            const session = slot.sessions.open(id, false) catch {
+            const session = webtransport.SessionHandle{
+                .index = self.stream_pool.index_of(context.http).?,
+                .generation = context.generation,
+            };
+            const index = if (self.session_index) |*active| active else return;
+            index.insert(.{ .connection = slot.handle, .session_id = id }, session) catch {
                 self.retire_stream_datagrams(context);
                 context.http.abort_connect();
                 return;
             };
             context.state.session = session;
-            slot.session_route = route;
-            slot.session_stream = self.stream_pool.index_of(context.http).?;
+            context.session_record = .{ .notice = .{ .connection = slot.handle, .session = session, .session_id = id, .route = route } };
+            slot.session_count += 1;
             if (backend.accept_connect(context.http.stream) != .ok) {
                 self.close_session(context);
                 context.http.abort_connect();
@@ -1682,7 +1709,11 @@ pub fn quic_engine(
         }
 
         fn write_connect(self: *Self, context: *StreamContext) void {
-            if (self.children_shutdown or self.cooldown_pending or self.in_cooldown) {
+            const retain_datagrams = if (context.session_record) |record|
+                !record.notice_published and (record.phase == .established or record.phase == .draining)
+            else
+                false;
+            if ((self.children_shutdown or self.cooldown_pending or self.in_cooldown) and !retain_datagrams) {
                 self.close_session(context);
                 context.http.abort_connect();
                 return;
@@ -1692,7 +1723,8 @@ pub fn quic_engine(
                 _ = c.lsquic_stream_wantwrite(context.http.stream, 0);
                 return;
             };
-            const state = slot.sessions.state(session) catch return;
+            const record = if (context.session_record) |*active| active else return;
+            const state = record.phase;
             if (state != .accepting) {
                 if (!context.http.flush_connect_head()) {
                     self.close_session(context);
@@ -1705,21 +1737,13 @@ pub fn quic_engine(
                 context.http.abort_connect();
                 return;
             }
-            slot.sessions.establish(session) catch {
-                self.reset_connect(context, webtransport.h3_message_error);
-                return;
-            };
+            record.phase = .established;
             context.http.release_connect_request();
             _ = c.lsquic_stream_wantread(context.http.stream, 1);
             const binding = self.binding orelse return;
             if (binding.session_consumer) |consumer| {
-                const notice = runtime.SessionNotice{
-                    .connection = slot.handle,
-                    .session = session,
-                    .session_id = c.lsquic_stream_id(context.http.stream),
-                    .route = slot.session_route orelse return,
-                };
-                slot.session_notice = notice;
+                const notice = record.notice;
+                record.notice_published = true;
                 self.callback_depth += 1;
                 defer self.leave_callback();
                 consumer.open(consumer.context, notice);
@@ -1737,16 +1761,17 @@ pub fn quic_engine(
                 return;
             }
             const session = context.state.session orelse return;
+            const record = context.session_record.?;
+            const index = &self.session_index.?;
+            const slot = self.connections.find(record.notice.connection).?;
             self.retire_stream_datagrams(context);
             context.state.session = null;
-            const slot = self.connections.find(context.state.lease.connection) orelse return;
-            const notice = slot.session_notice;
-            slot.session_notice = null;
-            slot.sessions.close(session) catch return;
-            slot.session_route = null;
-            slot.session_stream = null;
+            context.session_record = null;
+            std.debug.assert(index.remove(.{ .connection = record.notice.connection, .session_id = record.notice.session_id }, session));
+            std.debug.assert(slot.session_count != 0);
+            slot.session_count -= 1;
             if (self.binding) |binding| binding.clear(binding.context, slot.handle);
-            self.notify_session_closed(notice, self.retirement_reason(slot.native), context.session_close_code);
+            self.notify_session_closed(if (record.notice_published) record.notice else null, self.retirement_reason(slot.native), context.session_close_code);
         }
 
         fn notify_session_closed(self: *Self, notice: ?runtime.SessionNotice, reason: child_runtime.CloseReason, code: ?u64) void {
@@ -1803,10 +1828,7 @@ pub fn quic_engine(
         }
 
         fn read_connect(self: *Self, context: *StreamContext) void {
-            if (context.state.session) |session| {
-                const slot = self.connections.find(context.state.lease.connection) orelse return;
-                if ((slot.sessions.state(session) catch return) == .accepting) return;
-            }
+            if (context.session_record) |record| if (record.phase == .accepting) return;
             var buffer: [2048]u8 = undefined;
             while (true) {
                 const size = c.lsquic_stream_read(context.http.stream, &buffer, buffer.len);
@@ -1860,9 +1882,9 @@ pub fn quic_engine(
                         _ = c.lsquic_stream_shutdown(context.http.stream, 1);
                     },
                     .drain_session => {
-                        const slot = self.connections.find(context.state.lease.connection) orelse return false;
-                        const session = context.state.session orelse return false;
-                        slot.sessions.drain(session) catch return false;
+                        const record = if (context.session_record) |*active| active else return false;
+                        if (record.phase != .established and record.phase != .draining) return false;
+                        record.phase = .draining;
                     },
                     // Zero local limits leave session flow control disabled.
                     else => {},

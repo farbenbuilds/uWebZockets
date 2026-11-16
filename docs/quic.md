@@ -125,9 +125,18 @@ This candidate uses one session per connection with session flow control off.
 It retains a registered route identity after releasing request headers and
 parses fragmented capsules with bounded carry. This is an implementation
 checkpoint, without published fork pins or independent draft-16 client
-acceptance. Public duplex writes, outgoing children and multi-session flow
-accounting remain open. See the
+acceptance. Session flow accounting and multi-session activation remain open;
+the later checkpoints below retain receive, transmit and outgoing-stream work.
+See the
 [App admission evidence](../benchmarks/results/webtransport_app_admission_v1/2026_11_16/README.md).
+
+Each CONNECT stream owns its session route, phase and callback publication.
+A startup-sized worker index maps the connection generation and full session
+ID to that CONNECT's global slot and stream generation. Child-parent checks
+resolve the slot directly; association and datagram routing use the index.
+Closing removes the index entry and record before callbacks. This keeps
+storage linear in global stream capacity without enabling multiple sessions
+before negotiated flow control is implemented.
 
 ### Child receive callbacks
 

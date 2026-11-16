@@ -568,3 +568,39 @@ RX EOF/reset, RX after STOP, handle rejection, callback reentry and a loop-only
 wake test without manually calling the engine. Retain the RX26 regression.
 Local stop/reset commands and outgoing construction are subsequent increments;
 multi-session flow and publication remain required for full activation.
+
+## WebTransport session ownership and flow control, 2026-11-17
+
+The complete target remains positive session flow control and multiple sessions
+on one connection, followed by independent-client acceptance and publication.
+Keep flow advertisement disabled until receive high-water, early associations,
+stream/data accounting and credit output are all enforced.
+
+1. Replace connection-owned session scalars with CONNECT-owned records and one
+   startup-sized worker index from connection generation/full session ID to
+   global stream slot/generation. Retain the flow-off one-session gate. Child
+   parent validation uses direct slot/generation checks; association and datagram
+   lookup use the index. Close invalidates records and mappings before callbacks.
+2. Extend a separate append-only native candidate with receive high-water and
+   quiescent, deduplicated prefix-excluded deltas, independent of readability.
+   Charge before typed/read application callbacks, including NULL Root contexts,
+   out-of-order data, hidden resets and canceled reads. Preserve Native005.
+3. Add per-session monotonic stream/data budgets and bounded capsule output.
+   Resolve accounting for early and globally rejected children before enabling
+   positive limits. Enforce limits before payload delivery and preserve final
+   reset gaps; never wait for blocked capsules to replenish consumed credit.
+   Gate peer admission until stream/debit accounting is established, including
+   metadata available before typed publication. Oversized stream grants and
+   non-increasing limits are session flow errors, distinct from malformed
+   capsule framing.
+4. Enable multiple sessions only with negotiated positive flow, retaining O(N)
+   storage, distinct routes, independent lifecycle callbacks and scoped cleanup.
+5. Verify the combined native/client path, publish reviewed fork changes and
+   run the remaining release gates. User-deferred smoke/security campaigns stay
+   separate from ordinary functional verification.
+
+The ownership increment must preserve all existing 67 native cases while
+adapting private observation helpers to the new records. Add index failure,
+namespace, generation and allocation-bound tests, plus actual lifecycle
+regressions. Run formatting, conventions, version, functional unit, ReleaseSafe
+compile, ReleaseFast library and downstream-consumer checks, then commit/push.
