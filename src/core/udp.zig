@@ -19,6 +19,9 @@ pub const GroStatus = union(enum) {
     disabled,
 };
 
+/// Owner-loop wake failures; no engine operation runs during a request.
+pub const WakeError = error{ NotStarted, ShuttingDown, WakeFailed };
+
 const receive_attempts = 8;
 const control_bytes = 256;
 
@@ -93,6 +96,10 @@ pub fn quic_transport(comptime Engine: type) type {
         timer_active: bool = false,
         /// Whether a timer-cancellation completion is outstanding.
         timer_cancel_active: bool = false,
+        /// Coalesced work to service after the current timer retires.
+        process_requested: bool = false,
+        /// Public operations inside engine callbacks use the current pass.
+        engine_processing: bool = false,
         /// Whether completions were armed on an event loop.
         started: bool = false,
         /// Whether shutdown has begun and no work may be rearmed.
@@ -176,6 +183,18 @@ pub fn quic_transport(comptime Engine: type) type {
             self.start_timer();
         }
 
+        /// Requests one deferred engine pass from the owning loop thread.
+        ///
+        /// Flush failures leave the wake and cancellation ownership unchanged.
+        pub fn request_process(self: *Self) WakeError!void {
+            if (self.shutting_down) return error.ShuttingDown;
+            if (!self.started) return error.NotStarted;
+            if (self.engine_processing or self.process_requested) return;
+            try self.stop_timer();
+            self.process_requested = true;
+            self.start_timer();
+        }
+
         /// Starts cooldown and cancels every completion that owns transport state.
         ///
         /// This operation is idempotent and asynchronous after `start`; continue
@@ -183,8 +202,9 @@ pub fn quic_transport(comptime Engine: type) type {
         pub fn shutdown(self: *Self) void {
             if (self.shutting_down) return;
             self.shutting_down = true;
+            self.process_requested = false;
             self.engine.cooldown();
-            self.stop_timer();
+            self.stop_timer() catch |err| log.err("quic timer shutdown cancel failed: {}", .{err});
             self.close_socket();
         }
 
@@ -197,7 +217,8 @@ pub fn quic_transport(comptime Engine: type) type {
                 !self.read_active and
                 !self.read_cancel_active and
                 !self.timer_active and
-                !self.timer_cancel_active;
+                !self.timer_cancel_active and
+                !self.engine_processing;
         }
 
         /// Releases the engine, timer, and socket resources.
@@ -302,6 +323,8 @@ pub fn quic_transport(comptime Engine: type) type {
         }
 
         fn dispatch_packet(self: *Self, data: []const u8, peer: std.Io.net.IpAddress, local: std.Io.net.IpAddress) void {
+            self.engine_processing = true;
+            defer self.engine_processing = false;
             if (comptime @hasDecl(Engine, "process_datagram_at")) {
                 self.engine.process_datagram_at(data, peer, local);
                 return;
@@ -384,22 +407,28 @@ pub fn quic_transport(comptime Engine: type) type {
         }
 
         fn start_timer(self: *Self) void {
-            if (self.timer_active or self.shutting_down) return;
+            if (self.timer_active or self.timer_cancel_active or self.shutting_down) return;
             const loop = self.loop orelse return;
             self.timer_active = true;
             self.timer.run(
                 loop,
                 &self.timer_completion,
-                self.engine.next_timeout_ms(),
+                if (self.process_requested) 0 else self.engine.next_timeout_ms(),
                 Self,
                 self,
                 on_timer,
             );
         }
 
-        fn stop_timer(self: *Self) void {
+        fn stop_timer(self: *Self) WakeError!void {
             if (!self.timer_active or self.timer_cancel_active) return;
-            const loop = self.loop orelse return;
+            const loop = self.loop orelse return error.NotStarted;
+            // Queued kqueue/IOCP timers otherwise lose their target callback.
+            // Root's watchers defer results; raw IOCP job objects are excluded.
+            xev.submit(loop) catch |err| {
+                log.err("quic timer submit before cancel failed: {}", .{err});
+                return error.WakeFailed;
+            };
             self.timer_cancel_active = true;
             self.timer.cancel(
                 loop,
@@ -413,31 +442,29 @@ pub fn quic_transport(comptime Engine: type) type {
 
         fn on_timer(
             user_data: ?*Self,
-            loop: *xev.Loop,
-            completion: *xev.Completion,
+            _: *xev.Loop,
+            _: *xev.Completion,
             result: anyerror!void,
         ) xev.CallbackAction {
             const self = user_data.?;
             self.timer_active = false;
             _ = result catch |err| {
-                if (self.shutting_down or err == error.Canceled) return .disarm;
+                if (self.shutting_down) return .disarm;
+                if (err == error.Canceled) {
+                    self.start_timer();
+                    return .disarm;
+                }
                 log.err("quic timer error: {}", .{err});
                 return .disarm;
             };
             if (self.shutting_down) return .disarm;
 
+            self.process_requested = false;
+            self.engine_processing = true;
             self.engine.process();
-            // A handler may have started shutdown during processing.
-            if (self.shutting_down) return .disarm;
-            self.timer_active = true;
-            self.timer.run(
-                loop,
-                completion,
-                self.engine.next_timeout_ms(),
-                Self,
-                self,
-                on_timer,
-            );
+            self.engine_processing = false;
+            // Both timer callbacks must retire before this completion is reused.
+            self.start_timer();
             return .disarm;
         }
 
@@ -452,6 +479,7 @@ pub fn quic_transport(comptime Engine: type) type {
                 if (err != error.NotFound) log.debug("quic timer cancel error: {}", .{err});
             };
             self.timer_cancel_active = false;
+            self.start_timer();
             return .disarm;
         }
     };

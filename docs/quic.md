@@ -160,8 +160,39 @@ Receive EOF/reset leaves BIDI sending open. Call
 `webtransport_stream_cancel(handle, application_code)` to cancel both halves.
 The latter preserves its first code; conflicting repeated cancellation fails.
 Operations schedule native work for transport processing without invoking
-callbacks inline. Payload writes, writable notifications and outgoing
-creation are not exposed in this increment.
+application callbacks inline. Local half-stop/reset commands and outgoing
+creation remain subsequent work.
+
+`webtransport_stream_write(handle, bytes)` returns the prefix copied into
+native ownership. Retain only the suffix for retry; the accepted prefix may
+be overwritten as soon as the call returns. A nonempty zero-progress write
+returns `WouldBlock`. A valid empty write returns zero without scheduling
+service. Accepted payload offsets cannot exceed the QUIC 62-bit bound.
+
+An optional `writable(context, handle)` callback reports one requested sending
+opportunity. Partial/blocked writes arm it when configured. Use
+`webtransport_stream_want_writable(handle, true)` to request an opportunity
+explicitly, and false to disarm. Enabling without a callback returns
+`NoWritableCallback`. Interest is disabled before notification; explicitly
+rearm or attempt another partial write to request a later callback. Returning
+from the callback does not rearm it. Without a callback, retry the suffix from
+application scheduling.
+
+Interest may be recorded during `open`, but sending and notifications wait for
+both accepted ownership and the actual native typed publication. Write/finish
+return `NotReady` before that boundary. Peer STOP disables sending and writable
+interest while receiving can continue. Receive EOF/reset does not close TX.
+Submit every intended byte before finish; finish retains the accepted native
+payload and FIN, and further writes return `WriteClosed`.
+
+Native copying is tracked independently of the write return value. A native or
+flush failure after consuming a prefix still returns its positive byte count;
+the stream then closes with an internal failure. Never resend that prefix.
+Zero-consumption failures return `WriteFailed` or `WriteClosed` as applicable.
+`WakeFailed` means deferred service could not be reserved before mutation, so
+that call consumed no input. The UDP transport coalesces external service
+requests through its existing timer and waits for both timer and cancellation
+completion before reuse. No engine processing runs inline from a wake request.
 
 Handles contain a stable App identity, global stream slot and never-wrapping
 generation; session handles also contain connection/session generations.

@@ -25,6 +25,8 @@ pub const ClockCallback = *const fn (*anyopaque) u64;
 pub const ChildOpenCallback = *const fn (*anyopaque, child.Info) bool;
 /// True consumes the complete borrowed chunk; false cancels this child.
 pub const ChildDataCallback = *const fn (*anyopaque, child.Key, []const u8) bool;
+/// One deferred, explicitly requested sending opportunity.
+pub const ChildWritableCallback = *const fn (*anyopaque, child.Key) void;
 /// Reports native read EOF after all final payload bytes were consumed.
 pub const ChildEofCallback = *const fn (*anyopaque, child.Key, u64) void;
 /// Reports one visible receive reset and its prefix-excluded final size.
@@ -46,7 +48,12 @@ pub const ChildConsumer = struct {
     stop: ChildStopCallback,
     closed: ChildClosedCallback,
     policy: ChildPolicy = .receive_only,
+    writable: ?ChildWritableCallback = null,
 };
+
+/// Reserves a future transport pass before native operations consume input.
+pub const WakeError = error{WakeFailed};
+pub const WakeCallback = *const fn (*anyopaque) WakeError!void;
 
 /// Selects an immutable endpoint consumer before application open.
 pub const ChildSelectCallback = *const fn (*anyopaque, RouteId) ?ChildConsumer;
@@ -71,4 +78,5 @@ pub const Binding = struct {
     child_consumer: ?ChildConsumer = null,
     child_selector: ?ChildSelector = null,
     session_consumer: ?SessionConsumer = null,
+    wake: ?WakeCallback = null,
 };

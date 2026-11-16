@@ -69,13 +69,19 @@ fn cluster_surface(init: std.process.Init, allocator: std.mem.Allocator) !void {
 fn webtransport_stream_surface(init: std.process.Init, allocator: std.mem.Allocator) !void {
     var app = try uz.Server.builder(init.io).with_max_clients(2).build(allocator);
     defer app.deinit();
-    _ = try app.webtransport_streams("/session", .{ .open = accept_webtransport_child });
+    _ = try app.webtransport_streams("/session", .{ .open = accept_webtransport_child, .writable = webtransport_writable });
     const Handle = uz.webtransport_stream.Handle;
     const finish: *const fn (*@TypeOf(app), Handle) uz.webtransport_stream.OperationError!void = &@TypeOf(app).webtransport_stream_finish;
     const cancel: *const fn (*@TypeOf(app), Handle, u32) uz.webtransport_stream.OperationError!void = &@TypeOf(app).webtransport_stream_cancel;
+    const write: *const fn (*@TypeOf(app), Handle, []const u8) uz.webtransport_stream.WriteError!usize = &@TypeOf(app).webtransport_stream_write;
+    const want: *const fn (*@TypeOf(app), Handle, bool) uz.webtransport_stream.OperationError!void = &@TypeOf(app).webtransport_stream_want_writable;
     _ = finish;
     _ = cancel;
+    _ = write;
+    _ = want;
 }
+
+fn webtransport_writable(_: *anyopaque, _: uz.webtransport_stream.Handle) void {}
 
 fn accept_webtransport_child(_: *anyopaque, _: uz.webtransport_stream.Info) bool {
     return true;

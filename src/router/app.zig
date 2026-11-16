@@ -1103,6 +1103,24 @@ pub fn configured_app_with_route_params(
             return self;
         }
 
+        /// Transfers the returned prefix; the caller retains and retries its suffix.
+        pub fn webtransport_stream_write(self: *Self, handle: wt_stream.Handle, bytes: []const u8) wt_stream.WriteError!usize {
+            if (comptime !wt_backend.available) return error.Unsupported;
+            if (handle.owner != @intFromPtr(self)) return error.WrongApp;
+            if (self.shutting_down or self.deinitialized) return error.ShuttingDown;
+            const transport = if (self.quic_transport) |*active| active else return error.StaleHandle;
+            return transport.engine.write_webtransport_stream(handle, bytes);
+        }
+
+        /// Requests one deferred sending opportunity; rearm explicitly after delivery.
+        pub fn webtransport_stream_want_writable(self: *Self, handle: wt_stream.Handle, enabled: bool) wt_stream.OperationError!void {
+            if (comptime !wt_backend.available) return error.Unsupported;
+            if (handle.owner != @intFromPtr(self)) return error.WrongApp;
+            if (self.shutting_down or self.deinitialized) return error.ShuttingDown;
+            const transport = if (self.quic_transport) |*active| active else return error.StaleHandle;
+            try transport.engine.want_webtransport_stream_writable(handle, enabled);
+        }
+
         /// Cancels an accepted child; its eventual closed callback releases ownership.
         pub fn webtransport_stream_cancel(self: *Self, handle: wt_stream.Handle, code: u32) wt_stream.OperationError!void {
             if (comptime !wt_backend.available) return error.Unsupported;
@@ -1213,6 +1231,12 @@ pub fn configured_app_with_route_params(
             const now = std.Io.Clock.now(.awake, self.io).nanoseconds;
             const microseconds = @divTrunc(@max(now, 0), std.time.ns_per_us);
             return @intCast(@min(microseconds, std.math.maxInt(u64)));
+        }
+
+        fn wake_webtransport(context: *anyopaque) wt_binding.WakeError!void {
+            const self: *Self = @ptrCast(@alignCast(context));
+            const transport = if (self.quic_transport) |*active| active else return error.WakeFailed;
+            transport.request_process() catch return error.WakeFailed;
         }
 
         fn ensure_routes_mutable(self: *Self) !void {
@@ -1639,6 +1663,7 @@ pub fn configured_app_with_route_params(
                     .child_consumer = self.webtransport_child_consumer,
                     .child_selector = if (self.webtransport_streams_registered) .{ .context = &self.webtransport_dispatch, .select = wt_dispatch.select } else null,
                     .session_consumer = if (self.webtransport_streams_registered) .{ .context = &self.webtransport_dispatch, .open = wt_dispatch.session_open, .closed = wt_dispatch.session_closed } else null,
+                    .wake = wake_webtransport,
                 });
             }
             const routes_were_locked = self.routes_locked;

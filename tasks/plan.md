@@ -527,3 +527,44 @@ existing seventeen native receive cases remain regression coverage. Later
 increments additionally prove BIDI echo/backpressure and outgoing credit
 recovery. Multi-session flow control, independent draft-16 client acceptance,
 maintained-fork publication and the remaining release gates stay open.
+
+## Public WebTransport peer-BIDI transmission, 2026-11-17
+
+Add `webtransport_stream_write(handle, bytes)` and
+`webtransport_stream_want_writable(handle, enabled)`, plus an optional named
+one-shot writable callback. Keep caller payload storage borrowed only during
+the write call. A positive count transfers exactly that prefix; the caller
+retains its suffix. A nonempty zero-progress call returns `WouldBlock`.
+Partial/blocked writes arm one opportunity when a callback is configured;
+otherwise the caller retries explicitly. Enabling interest without a handler
+returns `NoWritableCallback`. Empty valid writes return zero without waking.
+
+An inline `TransmitState` records typed native publication, FIN intent,
+writable interest and total accepted payload bytes. Native metadata alone is
+insufficient for raw sending: activate I/O only at the typed callback. Interest
+may be recorded during admission, but notification waits for acceptance and
+publication. Peer STOP disables TX; receive EOF/reset leaves TX usable. Finish
+retains accepted native bytes and FIN without claiming peer delivery.
+
+Use synchronous native `writef` with a bounded stack reader. Native buffering
+can consume input and then fail, so track reader consumption independently of
+the native return value. Positive consumption must still return its count;
+queue a terminal internal stream failure separately. The pure ownership oracle
+must cover failure after consumption, alongside real native partial writes.
+Bound accepted bytes by the QUIC offset limit and add no Root payload queue.
+
+Reserve deferred service after complete handle/readiness/STOP validation and
+before native mutation. A named binding wake callback can return `WakeFailed`
+without consuming input. During an active native callback, the current pass
+owns service. The UDP transport coalesces external requests through its existing
+deadline timer: flush queued timer submission, cancel, wait for target and
+cancel acknowledgment to retire, then rearm at zero. Keep processing guarded
+across both packet and timer entry points; never process the engine inline or
+create a zero-delay self-wake loop. Shutdown drains the same completion pair.
+
+Verify binary echo, real stream and connection credit exhaustion/recovery,
+accepted-prefix copying and suffix-only retry, one-shot rearm/no-spin, TX after
+RX EOF/reset, RX after STOP, handle rejection, callback reentry and a loop-only
+wake test without manually calling the engine. Retain the RX26 regression.
+Local stop/reset commands and outgoing construction are subsequent increments;
+multi-session flow and publication remain required for full activation.

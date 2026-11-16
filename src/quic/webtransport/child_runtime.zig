@@ -2,6 +2,29 @@ const identity = @import("identity.zig");
 const session = @import("session.zig");
 const child_ledger = @import("child_ledger.zig");
 const RouteId = @import("../../router/datagram.zig").RouteId;
+const stream_api = @import("stream_api.zig");
+
+/// Sending facts occupy the existing stream sidecar, independently of RX.
+pub const TransmitState = struct {
+    published: bool = false,
+    finish_requested: bool = false,
+    writable_requested: bool = false,
+    accepted_bytes: u64 = 0,
+};
+
+/// Native observations supplied by the I/O boundary after a nonempty write.
+pub const WriteStatus = enum(u8) { progress, blocked, closed, failed };
+/// Failure after a positive result still transfers that prefix to native storage.
+pub const WriteAttempt = struct { result: stream_api.WriteError!usize, failed: bool };
+
+pub fn complete_write(consumed: usize, status: WriteStatus) WriteAttempt {
+    if (consumed != 0) return .{ .result = consumed, .failed = status == .closed or status == .failed };
+    return switch (status) {
+        .progress, .blocked => .{ .result = error.WouldBlock, .failed = false },
+        .closed => .{ .result = error.WriteClosed, .failed = false },
+        .failed => .{ .result = error.WriteFailed, .failed = true },
+    };
+}
 
 /// Direction is independent of the native backend enum.
 pub const Direction = enum(u8) { uni, bidi };
@@ -33,7 +56,7 @@ pub const Info = struct {
     receive_prefix_size: u8,
 };
 /// The first local closing cause survives callback reentry.
-pub const CloseReason = @import("stream_api.zig").CloseReason;
+pub const CloseReason = stream_api.CloseReason;
 /// A close notification owns no borrowed native memory; unknown final stays null.
 pub const ClosedEvent = struct {
     key: Key,

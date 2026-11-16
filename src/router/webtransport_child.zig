@@ -38,7 +38,7 @@ fn stream_binding(active: *const Dispatcher, route: binding.RouteId) ?endpoints.
 pub fn select(context: *anyopaque, route: binding.RouteId) ?binding.ChildConsumer {
     const active = dispatcher(context);
     if (stream_binding(active, route) == null) return active.legacy;
-    return .{ .context = context, .open = open, .data = data, .eof = eof, .reset = reset, .stop = stop, .closed = closed, .policy = .duplex };
+    return .{ .context = context, .open = open, .data = data, .eof = eof, .reset = reset, .stop = stop, .closed = closed, .policy = .duplex, .writable = if (stream_binding(active, route).?.callbacks.writable != null) writable else null };
 }
 
 fn open(context: *anyopaque, info: child.Info) bool {
@@ -59,6 +59,13 @@ fn data(context: *anyopaque, key: child.Key, bytes: []const u8) bool {
     const endpoint = stream_binding(active, key.route) orelse return false;
     const callback = endpoint.callbacks.data orelse return false;
     return callback(endpoint.context, handle(active.owner, key), bytes);
+}
+
+fn writable(context: *anyopaque, key: child.Key) void {
+    const active = dispatcher(context);
+    const endpoint = stream_binding(active, key.route) orelse return;
+    const callback = endpoint.callbacks.writable orelse return;
+    callback(endpoint.context, handle(active.owner, key));
 }
 
 fn eof(context: *anyopaque, key: child.Key, final_size: u64) void {

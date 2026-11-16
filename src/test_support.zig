@@ -72,6 +72,7 @@ pub const webtransport = @import("quic/webtransport.zig");
 pub const webtransport_backend = @import("quic/webtransport/backend.zig");
 pub const webtransport_child_ledger = @import("quic/webtransport/child_ledger.zig");
 pub const webtransport_child_runtime = @import("quic/webtransport/child_runtime.zig");
+pub const webtransport_child_io = @import("quic/webtransport/child_io.zig");
 pub const webtransport_stream = @import("quic/webtransport/stream_api.zig");
 pub const webtransport_endpoints = @import("router/webtransport_endpoints.zig");
 pub const webtransport_binding = @import("quic/webtransport/binding.zig");

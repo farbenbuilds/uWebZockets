@@ -40,7 +40,7 @@ pub const ErrorCode = union(enum) {
 /// Native error fields must fit QUIC's 62-bit variable-length integer.
 pub const CodeError = error{InvalidErrorCode};
 
-/// Errors used by the implemented handle operations; no write API is implied.
+/// Identity, lifecycle and deferred-service failures for handle operations.
 pub const OperationError = error{
     Unsupported,
     WrongApp,
@@ -50,7 +50,12 @@ pub const OperationError = error{
     ShuttingDown,
     WriteClosed,
     ConflictingIntent,
+    WakeFailed,
+    NoWritableCallback,
 };
+
+/// A positive write result always transfers that prefix to native ownership.
+pub const WriteError = OperationError || error{ WouldBlock, WriteFailed, WriteTooLarge };
 
 /// The first closing cause is preserved through callback reentry.
 pub const CloseReason = enum(u8) {
@@ -91,6 +96,8 @@ pub const SessionClosedEvent = struct {
 pub const OpenCallback = *const fn (*anyopaque, Info) bool;
 /// Payload borrows transport storage only until the callback returns.
 pub const DataCallback = *const fn (*anyopaque, Handle, []const u8) bool;
+/// One requested write opportunity; explicitly rearm after each notification.
+pub const WritableCallback = *const fn (*anyopaque, Handle) void;
 pub const EofCallback = *const fn (*anyopaque, Handle, u64) void;
 pub const ResetCallback = *const fn (*anyopaque, Handle, ErrorCode, u64) void;
 pub const StopCallback = *const fn (*anyopaque, Handle, ErrorCode) void;
@@ -102,6 +109,7 @@ pub const SessionClosedCallback = *const fn (*anyopaque, SessionClosedEvent) voi
 pub const Callbacks = struct {
     open: OpenCallback,
     data: ?DataCallback = null,
+    writable: ?WritableCallback = null,
     eof: ?EofCallback = null,
     reset: ?ResetCallback = null,
     stop: ?StopCallback = null,

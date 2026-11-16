@@ -11,7 +11,12 @@ uses Semantic Versioning.
   handles, explicit cancellation/send finish, and session lifecycle callbacks.
   Streams and datagrams share sixteen endpoint paths; stream-only startup
   allocates no datagram payload buffers. Live support still requires the
-  unpublished native proposal; duplex writes/outgoing streams remain open.
+  unpublished native proposal; outgoing streams remain open.
+- Candidate WebTransport peer-BIDI writes, explicit one-shot writable events
+  and deferred UDP service requests. Writes transfer only the returned prefix,
+  preserve ownership through native/flush failures, and use actual native
+  publication as the readiness boundary. Local half-stop/reset, outgoing
+  creation, multi-session flow and published activation remain open.
 - `App.enable_http3` and `enable_http3_ephemeral` configure HTTPS and HTTP/3
   before listening on an application returned by `Server.builder`, preserving
   its configured capacities and installing both TLS contexts atomically.

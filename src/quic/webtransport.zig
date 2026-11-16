@@ -27,6 +27,8 @@ pub const wt_application_error_first: u64 = 0x52e4a40fa8db;
 /// Last HTTP/3 code in the mapped 32-bit application-error range.
 pub const wt_application_error_last: u64 = 0x52e5ac983162;
 
+/// HTTP/3 internal stream failure.
+pub const h3_internal_error: u64 = 0x102;
 /// HTTP/3 frame encoding error.
 pub const h3_frame_error: u64 = 0x106;
 /// HTTP/3 excessive-load error.

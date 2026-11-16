@@ -151,7 +151,7 @@ pub fn quic_engine(
             child_actions: child_io.Actions = .{},
             child_retry_counted: bool = false,
             child_consumer: ?wt_binding.ChildConsumer = null,
-            child_send_finished: bool = false,
+            transmit: child_runtime.TransmitState = .{},
         };
 
         engine: ?*c.lsquic_engine = null,
@@ -316,7 +316,9 @@ pub fn quic_engine(
             self.binding = binding;
         }
 
-        fn resolve_child(self: *Self, handle: stream_api.Handle) stream_api.OperationError!*StreamContext {
+        const ChildAccess = enum { accepted, interest };
+
+        fn resolve_child(self: *Self, handle: stream_api.Handle, access: ChildAccess) stream_api.OperationError!*StreamContext {
             if (comptime !backend.available) return error.Unsupported;
             const binding = self.binding orelse return error.StaleHandle;
             if (handle.owner != @intFromPtr(binding.context)) return error.WrongApp;
@@ -325,33 +327,110 @@ pub fn quic_engine(
             if (context.generation != handle.generation) return error.StaleHandle;
             const state = if (context.child) |*active| active else return error.StaleHandle;
             if (state.phase == .closed) return error.StaleHandle;
-            if (state.phase == .opening) return error.NotReady;
-            if (!state.consumer_owned) return error.StaleHandle;
+            if (state.phase == .opening and access == .accepted) return error.NotReady;
+            if (!state.consumer_owned and state.phase != .opening) return error.StaleHandle;
             if (self.children_shutdown or self.cooldown_pending or self.in_cooldown) return error.ShuttingDown;
             if (!child_live(context, state)) return error.SessionClosed;
             return context;
         }
 
+        fn reserve_child_wake(self: *Self) stream_api.OperationError!void {
+            if (self.callback_depth != 0) return;
+            const binding = self.binding orelse return error.StaleHandle;
+            const wake = binding.wake orelse return error.WakeFailed;
+            try wake(binding.context);
+        }
+
+        fn send_context(self: *Self, handle: stream_api.Handle) stream_api.OperationError!*StreamContext {
+            const context = try self.resolve_child(handle, .accepted);
+            const state = &context.child.?;
+            if (state.metadata.direction != .bidi or state.phase != .active) return error.WriteClosed;
+            if (!context.transmit.published) return error.NotReady;
+            if (!child_io.observe_receive(context.http.stream, state)) return error.WriteClosed;
+            if (state.ledger.stop_error != null) {
+                context.transmit.writable_requested = false;
+                sync_child_write(context);
+                return error.WriteClosed;
+            }
+            return context;
+        }
+
+        /// Positive reader progress transfers ownership even after native failure.
+        pub fn write_webtransport_stream(self: *Self, handle: stream_api.Handle, bytes: []const u8) stream_api.WriteError!usize {
+            const context = try self.send_context(handle);
+            if (context.transmit.finish_requested) return error.WriteClosed;
+            if (bytes.len == 0) return 0;
+            if (bytes.len > webtransport.max_quic_varint - context.transmit.accepted_bytes) return error.WriteTooLarge;
+            try self.reserve_child_wake();
+            const attempt = child_io.write(child_io.native_writer, context.http.stream, bytes);
+            if (attempt.result) |consumed| {
+                context.transmit.accepted_bytes += consumed;
+                if (attempt.failed) {
+                    self.cancel_child(context, .protocol_error, webtransport.h3_internal_error);
+                    return consumed;
+                }
+                arm_partial_write(context, consumed != bytes.len);
+                return consumed;
+            } else |err| {
+                if (attempt.failed) self.cancel_child(context, .protocol_error, webtransport.h3_internal_error);
+                if (err == error.WouldBlock) arm_partial_write(context, true);
+                if (err == error.WriteClosed) context.transmit.writable_requested = false;
+                sync_child_write(context);
+                return err;
+            }
+        }
+
+        fn arm_partial_write(context: *StreamContext, partial: bool) void {
+            const consumer = context.child_consumer orelse return;
+            if (partial and consumer.writable != null) context.transmit.writable_requested = true;
+            sync_child_write(context);
+        }
+
+        /// Interest recorded during admission activates only after publication.
+        pub fn want_webtransport_stream_writable(self: *Self, handle: stream_api.Handle, enabled: bool) stream_api.OperationError!void {
+            const context = try self.resolve_child(handle, .interest);
+            const state = &context.child.?;
+            if (!enabled) {
+                context.transmit.writable_requested = false;
+                sync_child_write(context);
+                return;
+            }
+            const consumer = context.child_consumer orelse return error.NoWritableCallback;
+            if (consumer.writable == null) return error.NoWritableCallback;
+            if (state.metadata.direction != .bidi or (state.phase != .active and state.phase != .opening) or context.transmit.finish_requested) return error.WriteClosed;
+            if (!child_io.observe_receive(context.http.stream, state) or state.ledger.stop_error != null) {
+                context.transmit.writable_requested = false;
+                sync_child_write(context);
+                return error.WriteClosed;
+            }
+            try self.reserve_child_wake();
+            context.transmit.writable_requested = true;
+            sync_child_write(context);
+        }
+
         /// Cancels both halves without running application callbacks inline.
         pub fn cancel_webtransport_stream(self: *Self, handle: stream_api.Handle, code: u32) stream_api.OperationError!void {
-            const context = try self.resolve_child(handle);
+            const context = try self.resolve_child(handle, .accepted);
             const state = &context.child.?;
             const native_code = webtransport.application_error_to_http3(code);
             if (state.cancel_reason != null) {
                 if (state.cancel_reason == .consumer_cancelled and state.cancel_code == native_code) return;
                 return error.ConflictingIntent;
             }
+            try self.reserve_child_wake();
+            context.transmit.writable_requested = false;
             self.cancel_child(context, .consumer_cancelled, native_code);
         }
 
-        /// Accepts an empty FIN promise; success does not imply peer delivery.
+        /// Native retains accepted bytes and FIN; success is not peer delivery.
         pub fn finish_webtransport_stream(self: *Self, handle: stream_api.Handle) stream_api.OperationError!void {
-            const context = try self.resolve_child(handle);
-            const state = &context.child.?;
-            if (state.metadata.direction == .uni or state.phase != .active or state.ledger.stop_error != null) return error.WriteClosed;
-            if (context.child_send_finished) return;
+            const context = try self.send_context(handle);
+            if (context.transmit.finish_requested) return;
+            try self.reserve_child_wake();
             if (c.lsquic_stream_shutdown(context.http.stream, 1) != 0) return error.WriteClosed;
-            context.child_send_finished = true;
+            context.transmit.finish_requested = true;
+            context.transmit.writable_requested = false;
+            sync_child_write(context);
         }
 
         /// Starts the engine and borrows its TLS context and router until `deinit`.
@@ -638,6 +717,7 @@ pub fn quic_engine(
         }
 
         fn sync_child_retry(self: *Self, context: *StreamContext) void {
+            sync_child_write(context);
             const pending_action = context.child_actions.stop or context.child_actions.reset;
             if (context.child_retry_counted == pending_action) return;
             context.child_retry_counted = pending_action;
@@ -647,6 +727,40 @@ pub fn quic_engine(
             }
             std.debug.assert(self.child_retry_count != 0);
             self.child_retry_count -= 1;
+        }
+
+        fn sync_child_write(context: *StreamContext) void {
+            const state = if (context.child) |*active| active else return;
+            if (state.metadata.direction != .bidi) return;
+            if ((state.phase != .active and state.phase != .opening) or state.ledger.stop_error != null) context.transmit.writable_requested = false;
+            const user_interest = context.transmit.writable_requested and context.transmit.published and
+                !context.transmit.finish_requested and state.consumer_owned and child_live(context, state);
+            _ = c.lsquic_stream_wantwrite(context.http.stream, @intFromBool(context.child_actions.reset or user_interest));
+        }
+
+        fn notify_child_writable(self: *Self, context: *StreamContext) void {
+            const state = if (context.child) |*active| active else return;
+            if (!context.transmit.writable_requested or !context.transmit.published or
+                context.transmit.finish_requested or state.phase != .active)
+            {
+                sync_child_write(context);
+                return;
+            }
+            if (!child_live(context, state)) {
+                self.handle_child_result(context, .not_live);
+                return;
+            }
+            if (!child_io.observe_receive(context.http.stream, state) or state.ledger.stop_error != null) {
+                context.transmit.writable_requested = false;
+                sync_child_write(context);
+                return;
+            }
+            const consumer = context.child_consumer orelse return;
+            const callback = consumer.writable orelse return;
+            context.transmit.writable_requested = false;
+            sync_child_write(context);
+            callback(consumer.context, state.key.?);
+            if (!child_live(context, state)) self.handle_child_result(context, .not_live);
         }
 
         fn release_child_pending(self: *Self, context: *StreamContext) void {
@@ -841,6 +955,7 @@ pub fn quic_engine(
             self.register_child(context);
             const state = if (context.child) |*active| active else return;
             if (state.phase == .waiting_parent) self.associate_child(context);
+            if (!context.transmit.published) return;
             if (state.phase != .active and state.phase != .closing) return;
             const consumer = context.child_consumer orelse return;
             const result = child_io.read(context.http.stream, state, &context.child_actions, consumer, .{ .context = context, .live = child_live });
@@ -1187,6 +1302,7 @@ pub fn quic_engine(
                 self.register_child(active);
                 if (active.child) |*state| child_io.retry(active.http.stream, state, &active.child_actions);
                 self.sync_child_retry(active);
+                self.notify_child_writable(active);
                 return;
             }
             if (active.pending_reset != null) {
@@ -1272,7 +1388,9 @@ pub fn quic_engine(
                 return;
             }
             const self: *Self = @ptrCast(@alignCast(active.http.owner));
+            active.transmit.published = true;
             self.read_child(active);
+            sync_child_write(active);
         }
 
         fn probe_read(_: ?*anyopaque, _: [*c]const u8, _: usize, _: c_int) callconv(.c) usize {

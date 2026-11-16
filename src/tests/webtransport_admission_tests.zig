@@ -27,6 +27,8 @@ test "WebTransport public stream operations report unavailable published backend
     const handle = support.webtransport_stream.Handle{ .owner = @intFromPtr(&app), .index = 0, .generation = 1 };
     try std.testing.expectError(error.Unsupported, app.webtransport_stream_cancel(handle, 7));
     try std.testing.expectError(error.Unsupported, app.webtransport_stream_finish(handle));
+    try std.testing.expectError(error.Unsupported, app.webtransport_stream_write(handle, "payload"));
+    try std.testing.expectError(error.Unsupported, app.webtransport_stream_want_writable(handle, true));
 }
 
 fn discard_datagram(_: *anyopaque, _: u64, _: []const u8) void {}

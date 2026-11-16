@@ -21,6 +21,58 @@ pub const Actions = struct {
     reset: bool = false,
 };
 
+/// Borrowed only during synchronous native writef callbacks.
+const Reader = struct { bytes: []const u8, consumed: usize = 0 };
+/// Synchronous native-copy boundary; a compile-time binding also permits fault tests.
+pub const WriteCallback = *const fn (?*c.lsquic_stream, [*c]c.struct_lsquic_reader) callconv(.c) isize;
+pub const FlushCallback = *const fn (?*c.lsquic_stream) callconv(.c) c_int;
+pub const WriteOperations = struct { write: WriteCallback, flush: FlushCallback };
+pub const native_writer = WriteOperations{ .write = c.lsquic_stream_writef, .flush = c.lsquic_stream_flush };
+
+fn reader_size(context: ?*anyopaque) callconv(.c) usize {
+    const reader: *Reader = @ptrCast(@alignCast(context orelse return 0));
+    return reader.bytes.len - reader.consumed;
+}
+
+fn reader_copy(context: ?*anyopaque, destination: ?*anyopaque, requested: usize) callconv(.c) usize {
+    const reader: *Reader = @ptrCast(@alignCast(context orelse return 0));
+    const count = @min(requested, reader.bytes.len - reader.consumed);
+    if (count == 0) return 0;
+    const output: [*]u8 = @ptrCast(destination orelse return 0);
+    @memcpy(output[0..count], reader.bytes[reader.consumed..][0..count]);
+    reader.consumed += count;
+    return count;
+}
+
+/// Reader progress is authoritative even if native flushing subsequently fails.
+pub fn write(comptime operations: WriteOperations, raw: *c.lsquic_stream, bytes: []const u8) child.WriteAttempt {
+    var reader = Reader{ .bytes = bytes };
+    var native = c.struct_lsquic_reader{ .lsqr_read = reader_copy, .lsqr_size = reader_size, .lsqr_ctx = &reader };
+    // Internal packet-generation failures may leave libc errno unchanged.
+    std.c._errno().* = 0;
+    const result = operations.write(raw, &native);
+    const write_error = if (result < 0) std.c.errno(result) else .SUCCESS;
+    if (result < 0 and reader.consumed != 0) return child.complete_write(reader.consumed, .failed);
+    if (result < 0) return child.complete_write(0, switch (write_error) {
+        .AGAIN => .blocked,
+        .BADF, .CONNRESET => .closed,
+        else => .failed,
+    });
+    if (reader.consumed != 0 and operations.flush(raw) != 0) return child.complete_write(reader.consumed, .failed);
+    return child.complete_write(reader.consumed, .progress);
+}
+
+/// Refreshes immutable receive facts without dispatching application callbacks.
+pub fn observe_receive(raw: *c.lsquic_stream, state: *child.State) bool {
+    var received: backend.ReceiveSnapshot = .{};
+    if (backend.read_receive(raw, &received) != .ok) return false;
+    _ = state.ledger.observe(received) catch |err| {
+        log.warn("child receive snapshot failed: {s}", .{@errorName(err)});
+        return false;
+    };
+    return true;
+}
+
 pub fn open(
     raw: *c.lsquic_stream,
     state: *child.State,
@@ -43,17 +95,9 @@ pub fn open(
 }
 
 fn snapshot(raw: *c.lsquic_stream, state: *child.State, actions: *Actions) bool {
-    var received: backend.ReceiveSnapshot = .{};
-    if (backend.read_receive(raw, &received) != .ok) {
-        cancel(raw, state, actions, .protocol_error, wt.h3_message_error);
-        return false;
-    }
-    _ = state.ledger.observe(received) catch |err| {
-        log.warn("child receive snapshot failed: {s}", .{@errorName(err)});
-        cancel(raw, state, actions, .protocol_error, wt.h3_message_error);
-        return false;
-    };
-    return true;
+    if (observe_receive(raw, state)) return true;
+    cancel(raw, state, actions, .protocol_error, wt.h3_message_error);
+    return false;
 }
 
 fn notifications(
@@ -187,7 +231,6 @@ pub fn retry(raw: *c.lsquic_stream, state: *child.State, actions: *Actions) void
         if (result == .invalid or result == .unsupported) _ = c.lsquic_stream_shutdown(raw, 1);
     }
     _ = c.lsquic_stream_wantread(raw, 0);
-    if (state.metadata.direction == .bidi) _ = c.lsquic_stream_wantwrite(raw, @intFromBool(actions.reset));
 }
 
 /// Native close is authoritative even when the parent or connection is gone.
