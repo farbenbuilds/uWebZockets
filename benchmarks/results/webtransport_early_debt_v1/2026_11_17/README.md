@@ -47,10 +47,11 @@ compile-only. Formatting, conventions, version, docs, diff and graph checks
 pass. Independent final source reviews are clear.
 
 Verify `manifest.sha256`, extract `raw_evidence_archive.tgz`, then verify its
-internal `files.sha256`. All 1500 payload hashes were independently checked.
+internal `files.sha256`. All 1501 payload hashes were independently checked.
 The final 263 fixture source/build inputs match the Root commit byte for byte.
 The combined 77-case Debug driver also passes after extraction at another
-path; its raw output is retained as `relocated_debug.log.gz`.
+path; its raw output is retained as `evidence/relocated_debug.log` inside the
+archive.
 
 The archive retains exact fixture/source snapshots, replay overrides, raw
 logs, source manifests, reviews and isolated regression inputs. The fixture
