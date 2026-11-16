@@ -251,11 +251,36 @@ decoder's 16 cases also pass in all three modes. The
 retains exact sources, candidate identities, original failures,
 commands and limits. Independent review has no remaining required findings.
 
-Native datagram delivery/ring-clear verification, pending-SETTINGS cancellation
-execution, early association buffering, typed children, multi-session flow
-accounting and the independent draft-16 client remain open. The published
+At that checkpoint, native datagram delivery/ring-clear verification,
+pending-SETTINGS cancellation execution, early association buffering, typed
+children, multi-session flow accounting and the independent draft-16 client
+remained open. The published
 dependency views are unchanged and do not activate WT. These checkpoints do
 not complete the runtime slice or v2.3.0; smoke/security runs remain deferred.
+
+Routing and deferred-admission evidence checkpoint, 2026-11-16: all 18 Zig
+tests (17 functional cases and one import-discovery anchor) pass in Debug,
+ReleaseSafe and ReleaseFast, 16/16 build steps per mode. The unchanged
+production source also passes all 991 centralized tests. The real native/UDP
+cohort proves header-slot reuse, two connection rings with session zero,
+callback payloads, overflow/recovery, ordinal continuity, Close/abort clearing
+and generation reuse. Native packet/decryption counters pair negative
+delivery checks with isolated actual datagram packet arrival.
+
+Original client SETTINGS are held and resumed through the existing native
+test observer. Positive admission resumes once; RESET is observed known but
+not yet visible before SETTINGS resumes, while STOP takes the synchronous
+pending-cancellation path. Fragmented invalid flow-control input is ignored in
+flow-off mode, DRAIN still permits datagrams, and Close clears the session and
+ring before client FIN. Datagram-triggered cooldown reaches native GOING_AWAY
+after the engine callback unwinds. Source, native effect and causal-order
+review findings are resolved. Exact fixtures, profiles, original limited-proof
+rows, commands and manifests are retained in the
+[routing checkpoint](../benchmarks/results/webtransport_app_routing_v1/2026_11_16/README.md).
+
+This evidence changes no production source, dependency pin or activation
+policy. Early associations, typed children, multi-session accounting,
+independent-client acceptance and fork publication/pins remain open.
 
 Develop the runtime against the real native proposal in an isolated Zig
 verification scaffold while production continues to reject unsupported CONNECT

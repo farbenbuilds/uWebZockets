@@ -71,6 +71,22 @@
       snapshots. All 971 centralized tests pass; actual TLS/HTTP body, abort
       cleanup and slot reuse run through the real engine and UDP send path.
       WebTransport session binding and positive engine child acceptance remain open.
+- [x] Section 8.2 single-session App admission checkpoint: explicit synchronous
+      CONNECT authorization and Origin policy, stable route identity, bounded
+      capsules, header flushing and credit-blocked/delayed-FIN reset recovery.
+      All 991 published-pin central tests and eight actual App/TLS cases in
+      Debug, ReleaseSafe and ReleaseFast pass. The candidate profile has session
+      flow control off; this does not complete WT activation or multi-session
+      accounting. Exact sources and evidence are retained in
+      `benchmarks/results/webtransport_app_admission_v1/2026_11_16/README.md`.
+- [x] Section 8.2 App routing and deferred-admission evidence: real native/UDP
+      datagrams, header reuse, callback payloads, per-connection rings,
+      overflow/recovery, Close/abort/reuse clearing, held-SETTINGS positive and
+      cancellation paths, fragmented flow-off capsules, DRAIN and native
+      cooldown effects. All 18 tests (17 functional plus an import anchor)
+      pass in Debug, ReleaseSafe and ReleaseFast against unchanged production
+      source. Exact proof scope and remaining gates are retained in
+      `benchmarks/results/webtransport_app_routing_v1/2026_11_16/README.md`.
 - [x] Release metadata synchronized to 2.3.0; no tag or publication.
 - [x] Independent slice reviews, findings resolved and changed work
       re-reviewed, including the final adapter and evidence package.
@@ -120,7 +136,15 @@
   This leaf does not yet connect sessions, application routing or datagrams.
   The following [engine ownership slice](../benchmarks/results/webtransport_zig_engine_v1/2026_11_16/README.md)
   connects bounded connection slots and stream contexts to actual engine
-  callbacks. Local and published listeners still leave WT negotiation off.
+  callbacks. The following [App admission checkpoint](../benchmarks/results/webtransport_app_admission_v1/2026_11_16/README.md)
+  binds App policy, capsules and one session per connection when compiled
+  against the complete local native proposal. That profile has session flow
+  control off; the published listener still leaves WT negotiation off.
+  The following [routing evidence](../benchmarks/results/webtransport_app_routing_v1/2026_11_16/README.md)
+  verifies wire datagrams, ring lifetimes, held-SETTINGS admission/cancellation,
+  fragmented capsules, DRAIN/Close and native cooldown without changing that
+  source or activation policy. Early associations and multi-session accounting
+  still await implementation.
   Published draft-16 SETTINGS, long-lived CONNECT, child association, live session
   integration, client acceptance and published fork/pin updates remain open.
 - Dependency provenance still encounters the user's pre-existing h1spec
