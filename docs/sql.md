@@ -141,6 +141,14 @@ base and the reviewed candidate. Its compact bundle requires external complete
 base history; restoration verifies the commit, parent, tree and source contents.
 Publication, production pins and SQL integration remain open.
 
+The [pure storage-readiness candidate](../benchmarks/results/sql_tls_readiness_v1/2026_11_17/README.md)
+distinguishes pending native TLS controls from eligibility for all six opt-ins.
+It handles real fragmented KeyUpdate and borrowed-candidate callback states
+without allocating, warming ERR state or entering once initialization. External
+BIO/socket queues and peer verification remain separate caller requirements.
+The complete candidate also passes the ordinary isolated SDK unit suite;
+production pins, SQL preparation and lifecycle allocation work remain open.
+
 ## Rows and transactions
 
 Query callbacks receive a bounded `Rows` iterator. `Row.get(T, index)` supports

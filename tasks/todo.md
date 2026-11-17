@@ -66,6 +66,13 @@
       `benchmarks/results/sql_tls_source_proposal_v1/2026_11_17/README.md`.
       Complete base history is external; publication, pins, SQL adoption and
       the strict PostgreSQL allocation gate remain open.
+- [x] Add a pure native client-storage readiness query in the isolated candidate.
+      Real partial-control and BIO retry states, a borrowed-candidate callback,
+      negotiated TLS 1.2 rejection, cold ERR threads and once/allocator controls
+      pass. The exact source proposal, SDK compatibility, replay and scope are
+      retained in `benchmarks/results/sql_tls_readiness_v1/2026_11_17/README.md`.
+      SQL preparation, maintained publication/pins and the complete PostgreSQL
+      allocation proof remain open.
 - [x] D-10: 1,012 enabled tests passed with ASan/UBSan/LSan; retained local
       p50/p99, admission upper-bound and process RSS evidence in
       `benchmarks/results/sql_local_v1/2026_11_11/README.md`.
