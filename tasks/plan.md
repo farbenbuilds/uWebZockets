@@ -1164,3 +1164,73 @@ including types, permissions, links and hashes; four refusal controls pass.
 Independent source/evidence review has no unresolved finding. Final delivered
 program replays and archive validation are recorded with the retained result;
 this component does not close PostgreSQL's production allocation gate.
+
+## Owned short TLS error data, 2026-11-17
+
+Phase B removes the remaining native peer-alert diagnostic allocations without
+limiting diagnostic text. Preserve each error's existing data pointer and add
+a 32-byte owned inline buffer; give the thread's popped-data holder independent
+inline storage too. Null remains absent, an owning-buffer pointer is inline,
+and every other non-null pointer owns a raw-malloc block. Payloads through
+31 bytes plus NUL fit; longer data retains complete heap spill.
+
+Centralize inline identity, release, empty-destination copy and popped ownership.
+Never shallow-copy a self-pointer. The public setter stages aliases before
+replacement and consumes valid input MALLOCED buffers with OPENSSL_free after
+the copy attempt. Output STRING|MALLOCED still means queue-owned, non-static
+storage, including an empty string. A popped pointer remains independent of SSL
+and snapshots until the thread's next queue modification. Data-only replacement
+preserves metadata and marks; snapshot copy retains baseline mark/OOM behavior.
+
+Keep generic printf/concatenation generation and raw-buffer adoption unchanged,
+including short buffers. Replace only the bounded peer-fatal formatter with a
+21-byte stack buffer, checked snprintf and the copy-taking setter. Preserve
+reason, text, flags, callback order, no response alert and existing read/write
+results. A fatal-level description zero is a labeled native-sealed invalid-input
+case; warning-level close-notify zero remains a separate public control.
+
+1. Preserve the exact 8709-entry, fourteen-path snapshot candidate. Before edits,
+   retain the twelve-row direct ownership/boundary RED and five-row/164-call
+   alert RED with the unchanged all-C counter and 63-byte self-test. Actual
+   first fatal0/99/255 reads count two mallocs and 83/84/85 requested bytes.
+2. Change crypto/err/err.cc and ssl/tls_record.cc only, plus narrowly necessary
+   comment corrections in crypto/err/internal.h and include/openssl/ssl.h.
+   Rebuild all native SSL/crypto translation units through Zig. No public
+   signature, reservation eligibility or production dependency pin changes.
+3. Verify absence/empty, lengths1/30/31/32, nonuniform long text and aliased
+   whole/suffix replacement, peek/pop variants, full FIFO/wrap/marks, mixed
+   captures and shrink cleanup. Exercise long-copy OOM, input allocator
+   provenance, armed-fault short operations and thread destruction. Clearing
+   old heap data or consuming MALLOCED input can legitimately free it.
+4. Run the alert witness across three actually negotiated suites and inherited
+   five-fault/protocol/healthy controls. Reserved native complete calls must be
+   zero. Generic formatting, long spill, unreserved snapshots and cold-thread
+   initialization remain honest allocating controls. Record new sizes/counts:
+   private record growth makes old generic array-byte equality invalid.
+5. Independently review ownership and maintainability, restore both source modes
+   including permissions, replay final delivered programs and retain one bound
+   archive. Run ordinary project gates, commit and push impl/implement-2.3.0.
+
+The new data representation does not exempt teardown, cancellation or reconnect
+from PostgreSQL's request-path allocation rule. Production integration, native
+publication and the full PostgreSQL gate remain open; dedicated smoke/security/
+sanitizer/fuzz/scan campaigns remain user-deferred.
+
+The [retained short-error-data result](../benchmarks/results/sql_tls_error_data_v1/2026_11_17/README.md)
+passes the matching six-step native build and all 38 SSL translation units.
+The unchanged twelve-row direct fixture becomes GREEN for short copies while
+long spill, generic formatters and required input frees remain positive controls.
+Twenty-one expanded ownership/OOM/destructor cases pass. Actual host sizes are
+56 bytes per entry, 944 per thread state and 848 per snapshot; SSL state stays
+656 bytes. Three inherited fixture files change only four proven size values;
+all 51 older inputs plus their driver remain unchanged.
+
+All 164 alert-witness calls count zero for each of three negotiated suites;
+unreserved controls remain RED with their actual new byte counts. Inherited
+163-call faults, 27-row/1320-call protocol checks and 12-row/255-call public
+controls also count zero. Independent ownership and strict maintainability
+review reports no unresolved finding. Root restores all 8709 files exactly from
+both source modes and verifies four refusal controls. Final staged programs
+match every expected status in 91 native and 22 wire replay commands, including
+eighteen wire program runs. Whole-query lifecycle, publication and production
+integration remain separate obligations.

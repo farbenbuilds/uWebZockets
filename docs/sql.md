@@ -124,6 +124,16 @@ with full diagnostic and protocol parity. Peer-alert text still allocates, so
 its complete fatal gate remains RED. The production lifecycle and PostgreSQL's
 full allocation proof remain open.
 
+The following [owned short-error-data candidate](../benchmarks/results/sql_tls_error_data_v1/2026_11_17/README.md)
+also removes the native peer-alert text allocations. Copied text through
+31 payload bytes plus NUL uses independently owned inline storage; longer text
+keeps full heap spill, and generic formatters remain allocating controls.
+Complete reserved alert calls count zero across three negotiated suites with
+unchanged diagnostics and protocol results. Two startup snapshots now total
+1696 requested bytes; the thread error state grows to 944 bytes and connection
+state stays 656 bytes. Production adoption and the whole PostgreSQL allocation
+proof remain separate work.
+
 ## Rows and transactions
 
 Query callbacks receive a bounded `Rows` iterator. `Row.get(T, index)` supports
