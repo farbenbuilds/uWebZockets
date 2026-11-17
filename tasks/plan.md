@@ -916,3 +916,46 @@ Context setters and unreserved connections retain their existing behavior.
 AEAD, ticket/session, outgoing-flight and error/reconnect allocations remain
 separate work. Production pins, PostgreSQL's strict allocation requirement and
 the user's campaign deferrals remain unchanged.
+
+## Recycled client KeyUpdate contexts, 2026-11-17
+
+Remove the remaining AEAD-object allocation from established client KeyUpdate.
+Add an explicit experimental startup reservation for one inactive spare; keep
+the bounded set at active RX, active TX and one spare. Allocation failure leaves
+the mode disabled and existing ownership intact. Repeated idle reservation
+allocates nothing; SSL_clear frees the spare and resets the mode.
+
+Prepare the inactive object with existing cipher/HKDF/AEAD primitives. Cleanup
+alone does not erase inline state: explicitly cleanse old key/IV storage and
+reset nonce/AAD/direction flags, including the AES nonce tracker. Preserve the
+existing read excess-data guard and write old-key plaintext sealing before any
+swap. Commit traffic secrets only after installation succeeds. Recycle and
+cleanse the replaced active object on success; recover and cleanse the candidate
+on failure without freeing its reserved allocation. No heap fallback is allowed.
+
+Callbacks can observe the borrowed spare during installation. The opt-in requires
+serialized, non-reentrant mutating SSL I/O; observation callbacks remain usable.
+An unavailable or inconsistent spare fails closed. Keep generic/unsupported
+paths unchanged and cleanse touched local key/IV/derived-secret copies on every
+success and error return.
+
+1. Wire verification records genuine baseline allocation RED before native
+   changes. Negotiate each of AES-128-GCM, AES-256-GCM and ChaCha20-Poly1305
+   through this pin's public TLS 1.3 cipher API, asserting the actual suite.
+2. Crypto owns six native files in a fresh source copy: public/internal headers,
+   SSL startup, AEAD preparation and TLS 1.3 traffic-key/install hooks. Rebuild
+   complete native archives and retain exact source/build provenance.
+3. Separate verification covers reused/fresh crypto equivalence, invalid and
+   populated-candidate failure paths, read/write hook failure ownership, nonce
+   reset, startup/final ownership and verified clear/re-handshake reuse. Actual
+   peer tests cover repeated/alternating updates, old-key response ordering,
+   backpressure/retries and observation callbacks. Keep fault injection distinct
+   from unchanged ordinary allocation accounting.
+4. Repeat inherited record, incoming-handshake-buffer, HKDF and public control
+   checks against the final archives. Independently review return-path ownership,
+   ordering, compatibility and final evidence; Root validates restoration/replay,
+   runs ordinary project checks, commits and pushes.
+
+Ticket/session, response-flight and error/reconnect storage remain separate work.
+Production pins and PostgreSQL's strict allocation requirement remain unchanged;
+dedicated smoke/security/sanitizer/fuzz/scan campaigns stay user-deferred.

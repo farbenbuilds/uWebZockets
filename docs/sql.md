@@ -86,6 +86,13 @@ without a requested response fall from three malloc calls to one; other TLS
 storage still allocates. This remains an isolated proposal without a production
 pin change or PostgreSQL allocation exception.
 
+The [recycled AEAD context candidate](../benchmarks/results/sql_tls_aead_reuse_v1/2026_11_17/README.md)
+adds one 608-byte startup allocation and eliminates that remaining no-response
+KeyUpdate allocation across all three negotiated TLS 1.3 suites. Its context
+reuse requires serialized, non-reentrant mutating SSL I/O. Requested responses
+and tickets still allocate; production integration and the full allocation gate
+remain open.
+
 ## Rows and transactions
 
 Query callbacks receive a bounded `Rows` iterator. `Row.get(T, index)` supports

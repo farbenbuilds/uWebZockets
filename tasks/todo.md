@@ -53,6 +53,12 @@
       startup memory, ceiling restrictions, residual control allocations and
       replay are retained in
       `benchmarks/results/sql_tls_hs_buffer_v1/2026_11_17/README.md`.
+- [x] Recycle a single startup-reserved AEAD context in the isolated native
+      client proposal. No-response KeyUpdate counts zero allocator operations
+      across all three negotiated TLS 1.3 suites; direct crypto/failure tests,
+      22 lifecycle cases and inherited regressions pass. Callback/ownership
+      restrictions, residual allocations and replay are retained in
+      `benchmarks/results/sql_tls_aead_reuse_v1/2026_11_17/README.md`.
 - [x] D-10: 1,012 enabled tests passed with ASan/UBSan/LSan; retained local
       p50/p99, admission upper-bound and process RSS evidence in
       `benchmarks/results/sql_local_v1/2026_11_11/README.md`.
