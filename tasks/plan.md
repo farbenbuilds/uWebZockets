@@ -1078,8 +1078,16 @@ Pre-edit RED records three verified pairs, six real initial tickets and 75
 complete client calls: each ticket-bearing read counts twelve mallocs/twelve
 frees/1600 requested bytes, while following writes count zero. Observe and
 strict data match exactly; strict exits one after valid traffic. The four-file
-candidate has passed its complete native rebuild; functional verification is
-still in progress.
+candidate has passed its complete native rebuild and functional verification.
+
+The [retained result](../benchmarks/results/sql_tls_ticket_discard_v1/2026_11_17/README.md)
+records 37 direct syntax vectors, six generic callback rows plus twelve policy
+rows, three exact OOM-order rows, twenty lifecycle and two watched-clear cases.
+All 51 inherited inputs remain unchanged and their final-library checks pass.
+Wire proof covers 27 rows/1320 calls, three real-session chains/228 calls and
+twelve controls/255 calls across the stated suites and phases. Both source
+restore modes reproduce all 8709 entries. Final delivery replays pass 107 helper
+and 24 wire commands. Enable/idle repeat allocate nothing and S3 stays 640 bytes.
 
 Fatal-error/reconnect allocation, maintained publication, production adoption
 and PostgreSQL's full request-path gate remain open. No PostgreSQL allocation

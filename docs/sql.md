@@ -102,6 +102,16 @@ Startup failure preserves prior owners, and `SSL_clear` releases the storage.
 Tickets, error/reconnect paths, native publication and production adoption remain
 open; this component result does not close PostgreSQL's total-allocation gate.
 
+The [validated ticket-discard candidate](../benchmarks/results/sql_tls_ticket_discard_v1/2026_11_17/README.md)
+adds an explicit policy for clients that do not use TLS session resumption.
+It preserves ticket validation and message observation while avoiding new
+ticket-session construction. The policy adds no startup heap operation or
+measured connection-state size. All nine healthy three-suite protocol rows and
+the twelve public controls count zero heap operations with the earlier storage
+reservations. Ordinary generic callbacks and real-session resumption remain
+available, and previously exported sessions remain usable. Production adoption,
+error/reconnect paths and the complete PostgreSQL allocation proof remain open.
+
 ## Rows and transactions
 
 Query callbacks receive a bounded `Rows` iterator. `Row.get(T, index)` supports
