@@ -41,6 +41,11 @@
       maintained, integrated native solution against the unchanged allocation
       requirement. Define error/reconnect attribution without treating startup
       and teardown measurements as a blanket request-path exception.
+- [x] Remove the bounded HKDF label heap buffer in an isolated native candidate:
+      1440 differential cases preserve results, errors and full-buffer hashes;
+      all 700 successful calls count zero allocator operations. Source, native
+      rebuild, controls and replay are retained in
+      `benchmarks/results/sql_tls_hkdf_fixed_v1/2026_11_17/README.md`.
 - [x] D-10: 1,012 enabled tests passed with ASan/UBSan/LSan; retained local
       p50/p99, admission upper-bound and process RSS evidence in
       `benchmarks/results/sql_local_v1/2026_11_11/README.md`.

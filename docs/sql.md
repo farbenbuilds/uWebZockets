@@ -70,6 +70,13 @@ measurements. Record retention alone therefore cannot establish allocation-free
 request processing. Native integration and broader error/reconnect behavior
 remain open; no PostgreSQL allocation exception is approved.
 
+A separate [fixed-storage HKDF candidate](../benchmarks/results/sql_tls_hkdf_fixed_v1/2026_11_17/README.md)
+removes the TLS 1.3 label-encoding heap buffer. All 1440 differential cases match
+the prior candidate's return values, error codes and complete output-buffer
+hashes; its 700 successful calls use no allocator operations, compared with one
+malloc/free pair previously. This changes one native source file in an isolated
+build. Other TLS allocations and production integration remain open.
+
 ## Rows and transactions
 
 Query callbacks receive a bounded `Rows` iterator. `Row.get(T, index)` supports

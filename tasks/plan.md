@@ -848,3 +848,32 @@ Acceptance requires exact unchanged candidate/archive hashes, the original
 terminal statuses and reconciled per-operation/aggregate allocator counters.
 This witnesses reachable client-control allocations; it neither supplies
 PostgreSQL per-query counts nor closes the production strict-allocation gate.
+
+## Fixed-storage TLS 1.3 HKDF labels, 2026-11-17
+
+Remove the measured label-serialization allocation in a separate native
+candidate. The TLS encoding bounds its label and context to 255 bytes each;
+the complete encoding therefore fits 514 stack bytes. Keep the existing CBB
+serialization and HKDF implementation, using fixed CBB storage and an explicit
+flush before borrowing its data. Preserve error, output, length-narrowing and
+service-indicator behavior. The original record-retention source stays intact.
+
+1. Verification first records the unchanged baseline's successful-call heap
+   allocation. A deterministic differential fixture covers supported digests,
+   binary/empty inputs, vector limits, output bounds and rejected-input output
+   sentinels. Compare error library/reason codes and independently serialized
+   valid labels without changing the original all-C counter or its self-test.
+2. Crypto owns the single-function change in a new scratch source copy and a
+   complete native archive rebuild. Retain the exact one-file source delta,
+   full source inventory, commands and baseline/candidate identities.
+3. Verification repeats the identical fixture and all twelve public TLS
+   control rows against the changed library. Record actual allocation counts
+   and verified payloads; retain replayable evidence with safe output paths.
+4. Independent crypto review checks bounds, flushing, compatibility and
+   service-indicator control flow. Root checks final evidence and ordinary
+   project gates, then commits and pushes the increment.
+
+This addresses one allocation site. Ticket/session, AEAD, response-flight and
+error storage remain separate work. SQL-ALLOC-002 stays open; no production
+pin, maintained fork or FIPS validation claim changes. Dedicated smoke and
+security campaigns remain user-deferred.
