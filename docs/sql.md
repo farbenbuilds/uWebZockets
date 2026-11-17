@@ -112,6 +112,14 @@ reservations. Ordinary generic callbacks and real-session resumption remain
 available, and previously exported sessions remain usable. Production adoption,
 error/reconnect paths and the complete PostgreSQL allocation proof remain open.
 
+Fatal-error handling is included in that open work: a failed query's TLS session
+is destroyed before its callback runs. Reconnects may create TLS state while
+other requests remain active on the same worker, and cancellation may start an
+auxiliary handshake before the main query completes. Their allocations cannot
+be excluded merely by labeling them connection maintenance. The next isolated
+candidate reserves reusable error snapshots; arbitrary diagnostic text and the
+production lifecycle still require separate verification.
+
 ## Rows and transactions
 
 Query callbacks receive a bounded `Rows` iterator. `Row.get(T, index)` supports

@@ -1093,3 +1093,55 @@ Fatal-error/reconnect allocation, maintained publication, production adoption
 and PostgreSQL's full request-path gate remain open. No PostgreSQL allocation
 exception is approved. Dedicated smoke/security/sanitizer/fuzz/scan campaigns
 remain user-deferred.
+
+## Reusable TLS fatal-error snapshots, 2026-11-17
+
+The ticket candidate's eighteen fatal protocol rows still allocate: decode
+paths count two mallocs and 40 requested bytes; duplicate/flags paths count
+four mallocs, two frees and 80 bytes. Source inspection identifies a persistent
+read-error snapshot and a separate temporary snapshot around alert output.
+Those counts alone do not prove call-site attribution or repeated-error behavior.
+
+Phase A preserves generic diagnostics and reserves only snapshot record storage.
+Keep the existing sixteen-byte `ERR_SAVE_STATE` layout and generic allocation
+path unchanged. Add an internal, opaque `ERR_RESERVED_STATE` with fifteen error
+records, matching the queue's existing maximum, and a used count. Its factory
+warms the calling thread's error queue without changing queued errors. Typed
+capture and restore operations reuse the fixed record capacity while retaining
+the existing arbitrary-length string copy and allocation-failure semantics.
+An idempotent repeat adds no thread-warming guarantee: a destination worker
+must initialize its own error queue before counted work after serial migration.
+
+The proposed `SSL_reserve_error_state` requires an idle, completed ordinary
+TLS 1.3 client and serialized, non-reentrant mutating I/O. Prepare independent
+read and alert snapshots before publishing either owner. Reject incompatible
+pending/error/shutdown states and make an eligible repeat idempotent. Successful
+SSL_clear releases the owners; preflight failure retaining the old S3 preserves
+them, while replacement-state allocation failure destroys the old S3 and its
+owners. Error-queue data remains independently owned and may outlive SSL_free.
+
+1. Preserve all 8709 entries of the twelve-file ticket candidate. Before native
+   edits, retain authentic first-failure and repeated-read/write RED for empty
+   and duplicate tickets, bad MAC, invalid record framing and a public peer fatal
+   alert. Preserve immediate SSL_get_error, full reason/file/line/data/flag
+   results, alert observation, cross-SSL restoration and popped-string lifetime.
+2. Change only crypto/err/{err.cc,internal.h}, ssl/{internal.h,ssl_lib.cc,s3_pkt.cc}
+   and include/openssl/ssl.h in a fresh candidate. Verify fifteen-entry capture,
+   wrap/mark/clear behavior, long diagnostic copying and string-allocation
+   failure, two-owner startup rollback, eligibility, sibling isolation and the
+   preserving/destructive clear boundaries.
+3. Prove metadata-only fatal calls and repeated I/O allocate nothing with the
+   earlier reservations. Peer-alert formatting and string copies remain an
+   explicit Phase B RED; Phase A does not claim all fatal errors are allocation
+   free. Rebuild matching SSL/crypto, verify inherited controls and obtain an
+   independent source/evidence review before retaining or activating a candidate.
+4. Validate source restoration and delivered replays, record actual startup and
+   S3 sizes, run ordinary project gates, then commit and push to
+   impl/implement-2.3.0. Dedicated deferred campaigns remain deferred.
+
+Production attribution also remains open. Connection.finish_close destroys the
+TLS session before Db.on_closed delivers the failed query's callback. Reconnect
+creation and handshake can run while other worker-local requests remain active;
+the auxiliary cancellation handshake can overlap its main query. These paths
+therefore have no blanket allocation exemption. Native publication, production
+adoption and the complete PostgreSQL allocation proof remain separate gates.
