@@ -959,3 +959,51 @@ success and error return.
 Ticket/session, response-flight and error/reconnect storage remain separate work.
 Production pins and PostgreSQL's strict allocation requirement remain unchanged;
 dedicated smoke/security/sanitizer/fuzz/scan campaigns stay user-deferred.
+
+## Bounded outgoing KeyUpdate storage, 2026-11-17
+
+Remove requested-response construction/flight allocations with a separate
+`SSL_reserve_key_update_output_buffers` experiment. Require a completed, idle,
+ordinary TLS 1.3 client and the existing serialized, non-reentrant I/O contract.
+Allocate two temporary BUF_MEM objects/data completely before committing either;
+failure preserves prior owners/configuration. Repeated idle calls allocate
+nothing, and SSL_clear destroys storage and disables the mode.
+
+The exact pin has five-byte KeyUpdate plaintext and 22-byte seal overhead,
+giving a 27-byte ciphertext bound for the three supported suites. There is no
+dynamic client padding path; server padding affects initial handshake data.
+Legal max_send_fragment values remain at least 512, so later changes still fit.
+Validate the seal bound at startup/use. Keep logical capacities 5/27 distinct
+from rounded BUF_MEM data allocations 8/40; measure total startup/state costs.
+
+1. Wire verification retains actual requested-update allocation RED before
+   native edits, using public three-suite negotiation, exact payload/response
+   checks and the unchanged all-C counter/self-test. The same complete-call
+   zero assertion must become GREEN for reads and following writes.
+2. Crypto owns six files in a new native copy: public/internal headers, SSL
+   startup, KeyUpdate construction and the two TLS buffer implementations.
+   Encode into fixed five-byte CBB storage and synchronously copy borrowed data
+   before its message callback. Preserve the owned generic entry and all other
+   profiles; no stack buffer becomes Array-owned storage.
+3. Retain plaintext storage after temporarily borrowing its owner for sealing;
+   cleanse/reset/restore it on success and failure, preserving consumed-plaintext
+   failure effects. Retain ciphertext storage after staging/direct flushing,
+   reset length and offset together and cleanse only transferred bytes. Guard
+   bounds/arithmetic before mutation/sealing, and reject partial-flight append.
+4. Verify empty-versus-absent handling at every check. Preserve old write-buffer
+   priority, old-key sealing before AEAD installation, pending-write retry
+   ownership, coalescing and uncork-on-staging. The single-flight bound follows
+   from pending-update coalescing until ciphertext moves to the bounded writer.
+5. Separate direct/fault/lifecycle and encrypted-peer owners verify exact bounds,
+   four startup failure points, real cleanup/free, repeated reservations, clear/
+   re-handshake, requested/local/coalesced/alternating updates, zero-length
+   flushes, backpressure, older partial app records and accepted/rejected retries.
+   Repeat inherited record/HS/HKDF/AEAD and public controls on final archives.
+6. Independent review checks every reset/offset, borrowed lifetime and failure
+   return. Root validates source restoration and complete delivery replays,
+   packages debug-stripped copies with preserved measured identities/ELF proof,
+   runs ordinary project gates, commits and pushes.
+
+Ticket/session and error/reconnect allocations, native maintenance and production
+adoption remain open. No PostgreSQL exception or strict-gate closure is implied;
+dedicated smoke/security/sanitizer/fuzz/scan campaigns remain user-deferred.
