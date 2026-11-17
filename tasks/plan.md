@@ -1016,3 +1016,72 @@ restore modes reproduce all 8709 entries, and the final delivery replays pass
 Ticket/session and error/reconnect allocations, native maintenance and production
 adoption remain open. No PostgreSQL exception or strict-gate closure is implied;
 dedicated smoke/security/sanitizer/fuzz/scan campaigns remain user-deferred.
+
+## Validated client ticket discard, 2026-11-17
+
+Remove unused TLS 1.3 ticket-session construction from PostgreSQL's future
+bounded client profile. Current SQL contexts create fresh verified sessions,
+install no new-session callback and never save or reuse a TLS session. Their
+native default cache mode is SERVER (2), which disables client caching. Cache
+OFF alone does not authorize changing ordinary BoringSSL behavior.
+
+The proposed independent per-SSL API is
+`SSL_discard_client_session_tickets`. It enables a one-way ordinary-receiver
+policy for the connection state: validate each complete NewSessionTicket,
+preserve message observation, then discard its resumption material without
+constructing a session. Successful SSL_clear resets it. A failed clear preserves
+the flag when it retains the old state; baseline replacement-state allocation
+failure destroys that state and its flag. This is not atomic clear rollback.
+Require a completed idle ordinary TLS 1.3 client. Initial enable also requires
+no CLIENT cache bit and a null new-session callback. The per-SSL policy remains
+authoritative if shared context settings later change. It skips ticket-session callbacks, time
+rebasing, PSK derivation and synthetic IDs; it does not revoke earlier exported
+sessions, change an already resumed handshake or alter established-session
+getter ownership. Existing generic callback/resumption behavior remains intact.
+Explicit external-record-layer ticket-session construction remains generic and
+may allocate; the opt-in governs tickets received through the ordinary reader.
+
+RFC 8446 section 4.6.1 permits earlier deletion under local policy. A reusable
+session pool cannot preserve callbacks that retain arbitrarily many sessions;
+an explicit discard policy removes work SQL does not use. This is a native
+proposal; production activation and the complete PostgreSQL allocation proof
+remain separate work.
+
+1. Preserve the current eleven-file candidate and all measurements. Crypto owns
+   only ssl.h, internal.h, ssl_lib.cc and tls13_client.cc in a fresh exact source
+   copy. Record all 8709 baseline entries and genuine cache-disabled ticket RED
+   before native edits. Expected cumulative change count is twelve; inventory
+   comparison is authoritative.
+2. Share pure borrowed validation stages for prefix, extensions vector/body
+   framing and extension semantics. Return named errors and preserve existing
+   reason/alert ordering at each effects boundary. Keep generic ordering:
+   session duplicate, time rebase, prefix, ticket copy, vector framing,
+   timeout/PSK, extension semantics and finalization. The discard branch calls
+   the same stages consecutively without session construction or retained spans.
+3. Verify valid initial and post-startup tickets across all three actually
+   negotiated suites, repeated/fragmented/coalesced delivery and exact payloads.
+   The unchanged all-C counter/self-test must show baseline/unreserved RED and
+   opt-in zero heap operations over complete client calls. Preserve malformed
+   rejection, recognized-duplicate scope and unknown-extension/flag behavior.
+4. Verify cache modes OFF/SERVER versus CLIENT/BOTH, callback-present rejection,
+   later shared-context changes and sibling isolation, ordinary callback
+   retention/ownership, message versus time observation, established-session
+   getters, idempotence and the documented preserving/destructive clear paths.
+   Invalid-wire tests establish protocol parity rather than a zero-allocation
+   fatal-path claim.
+5. Rebuild all native SSL/crypto translation units with Zig. Repeat inherited
+   buffer/HKDF/AEAD/output controls, obtain independent source/evidence review,
+   validate source restoration and final prebuilt replays, retain one evidence
+   archive, run ordinary project gates, commit and push verified progress.
+
+Pre-edit RED records three verified pairs, six real initial tickets and 75
+complete client calls: each ticket-bearing read counts twelve mallocs/twelve
+frees/1600 requested bytes, while following writes count zero. Observe and
+strict data match exactly; strict exits one after valid traffic. The four-file
+candidate has passed its complete native rebuild; functional verification is
+still in progress.
+
+Fatal-error/reconnect allocation, maintained publication, production adoption
+and PostgreSQL's full request-path gate remain open. No PostgreSQL allocation
+exception is approved. Dedicated smoke/security/sanitizer/fuzz/scan campaigns
+remain user-deferred.
