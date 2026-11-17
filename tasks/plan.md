@@ -1317,3 +1317,38 @@ Complete SSL construction, transcript, certificate/verification/crypto workspace
 and ERR/thread lifetimes remain subsequent ownership work. Publication/pins,
 production adoption, total TLS capacity and all other open roadmap requirements
 remain required. Deferred smoke/security/sanitizer/fuzz campaigns are unchanged.
+
+## Owned client SSL construction and identity setup, 2026-11-18
+
+The isolated native/SDK closes admitted client construction, SNI, DNS/IP
+verification setup and repeated clear through explicit borrowed ownership.
+Sixteen native paths change against the exact 8709-file owned-BIO parent;
+ordinary successful construction preserves its 20 mallocs/20 frees/5983 bytes.
+An inherited hostname-copy OOM defect now makes construction fail closed.
+
+Native sizing derives raw extents and a reusable fixed-slot bound. The standard
+image reports 46400 bytes, alignment 16, stride 2320 and 20 slots per physical
+connection. Separate stable normal/cancellation descriptors survive Session
+reset; checked 2N startup regions and metadata are released after both session
+arrays. Clear preserves destructive failure semantics and partial cleanup.
+This is a construction/setup budget, not a total TLS capacity proof.
+
+The 57-step native proof/build and fifteen verified TLS compatibility cases
+pass. Twenty-four of 26 construction rows count zero C heap calls and bytes;
+shared-context/copy and cold RNG/ERR controls remain explicitly allocating.
+Full live SDK/root suites pass 1205/1205 and 1182/1182, with both SDK release-mode
+builds passing 24/24. Two initial focused test assumptions were corrected using
+actual pool bounds and native member-initialization order; failed logs remain.
+
+The original lifecycle probe/counter and all callback/pool/preparation invariants
+remain unchanged. Each failure round falls from 262 mallocs/264 frees/346909
+bytes to 242/244/340926; cancellation falls from 524/528/693818 to
+484/488/681852. Calloc/realloc counts match. The fresh same-fixture reduction is
+180 mallocs, 180 frees and 53847 bytes in total; every strict interval stays RED.
+
+Exact sources, identities and replay evidence are retained in the
+[SSL construction result](../benchmarks/results/sql_tls_owned_ssl_construction_v1/2026_11_18/README.md).
+Transcript payload, certificate/verification/crypto workspaces and ERR/RNG/thread
+ownership, publication/pins, production adoption, total capacity, D-5 throughput
+and all other open release requirements remain required. User-deferred campaigns
+and every configured gate remain unchanged.

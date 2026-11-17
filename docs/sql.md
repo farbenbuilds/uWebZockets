@@ -185,6 +185,15 @@ The prepared SDK passes all 1197 ordinary live tests. This closes the pair's
 six-allocation construction path; complete SSL, certificate, crypto and thread
 ownership, production adoption and the strict PostgreSQL gate remain open.
 
+The isolated [SSL construction/setup integration](../benchmarks/results/sql_tls_owned_ssl_construction_v1/2026_11_18/README.md)
+adds native-sized reusable slots for each normal and cancellation connection.
+The unchanged six-scenario lifecycle probe removes another 180 mallocs, 180
+frees and 53847 requested bytes while preserving callback and pool behavior.
+All 1205 ordinary live SDK tests and fifteen verified TLS compatibility cases
+pass. Constructor, identity and clear ownership are covered; transcript payload,
+certificate/crypto/thread ownership, production adoption and the full strict
+PostgreSQL allocation gate remain open.
+
 ## Rows and transactions
 
 Query callbacks receive a bounded `Rows` iterator. `Row.get(T, index)` supports

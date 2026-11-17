@@ -101,6 +101,14 @@
       PostgreSQL allocation remains RED; inherited pre-apply deadline sensitivity
       and its parent reproduction are retained without changing the test:
       `benchmarks/results/sql_tls_owned_bio_pair_v1/2026_11_18/README.md`.
+- [x] Own admitted SSL construction, identity setup and clear reuse in the
+      isolated prepared SDK through native-sized reusable slots. The original
+      six lifecycle intervals remove 180 mallocs, 180 frees and 53847 requested
+      bytes while preserving callback/pool/preparation behavior. Native proof,
+      fifteen TLS compatibility cases, 1205 live SDK tests, 1182 live root tests
+      and both release-mode builds pass. Complete PostgreSQL allocation,
+      publication/pins, production adoption and total TLS capacity remain open:
+      `benchmarks/results/sql_tls_owned_ssl_construction_v1/2026_11_18/README.md`.
 - [x] D-10: 1,012 enabled tests passed with ASan/UBSan/LSan; retained local
       p50/p99, admission upper-bound and process RSS evidence in
       `benchmarks/results/sql_local_v1/2026_11_11/README.md`.
