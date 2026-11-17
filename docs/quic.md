@@ -126,8 +126,8 @@ positive flow. The default flow-off profile permits one simultaneous session;
 positive startup limits require the complete native receive observer.
 It retains a registered route identity after releasing request headers and
 parses fragmented capsules with bounded carry. This is an implementation
-checkpoint, without published fork pins or independent draft-16 client
-acceptance. Published activation remains open;
+checkpoint without published fork pins. Independent official-client acceptance
+now covers the candidate path; published activation remains open.
 the later checkpoints below retain receive, transmit and outgoing-stream work.
 See the
 [App admission evidence](../benchmarks/results/webtransport_app_admission_v1/2026_11_16/README.md).
@@ -374,6 +374,35 @@ The [positive-flow checkpoint](../benchmarks/results/webtransport_positive_flow_
 retains the native matrix, exact source snapshots and relocatable replay.
 The [multi-session checkpoint](../benchmarks/results/webtransport_multi_session_v1/2026_11_17/README.md)
 adds same-connection isolation, scoped teardown and authorization-refusal proof.
+
+### Candidate independent-client acceptance
+
+A standalone application using `src/root.zig`, the public App API and the real
+event loop interoperates with unchanged official webtransport-go
+`2a2b547d91a8a70e313e7ce61538b066554021b5` and quic-go
+`793f74d8e03368c5aded128af6f48d21dbb47f73`. It uses explicitly trusted fresh
+localhost PKI, TLS 1.3 and `h3`, with negotiated datagrams and reliable reset.
+The server omits the native C client, test-support module, SETTINGS observer,
+private receive-window changes and manual engine pumping.
+
+Nine cases pass with Debug, ReleaseSafe and ReleaseFast servers: legacy and
+positive datagram delivery, all four child directions, reset payload accounting,
+DATA and stream-credit recovery, session isolation, two connections both using
+SID zero, and the second route namespace. Exact public callbacks, ring entries,
+child identities and terminal counts reconcile with client observations.
+Holding client reads first exposes exactly 32 accepted bytes of a 4096-byte
+server payload; real credit grants then permit complete suffix-only delivery.
+
+The reset case records an actual `RESET_STREAM_AT`: wire final size 27 and
+reliable header size 3 match application code 4660 and final payload size 24.
+This proves the official client's association-header boundary; it does not
+claim an arbitrary reliable application prefix or optimistic early traffic.
+The separate transport/native evidence retains those scopes.
+
+These are candidate interoperability results. Maintained-fork publication,
+production pin/capability changes and the remaining release gates stay open.
+The [independent-client checkpoint](../benchmarks/results/webtransport_independent_client_v1/2026_11_17/README.md)
+retains exact inputs, final binaries, reports and a relocated replay.
 
 ## Verification
 

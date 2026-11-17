@@ -273,3 +273,12 @@
   teardown can await real peer FIN after logical session retirement.
 - [ ] Complete independent draft-16 acceptance, reviewed fork publication and
   the remaining full release requirements.
+- [x] Independent public-App acceptance: reuse the exact official client pin,
+  verify fresh CA/TLS/protocol negotiation, reconcile actual callback/ring and
+  child observations, prove bounded credit/isolation behavior and clean shutdown,
+  and retain three-profile reviewed/replayed evidence. All 27 final cases pass
+  with strict source/identity/payload reconciliation and clean native shutdown;
+  actual `RESET_STREAM_AT` wire metadata matches application final-size/code.
+  Publication, capability activation and deferred campaigns remain open.
+  Exact sources, all 27 final results and relocated replay are retained in
+  `benchmarks/results/webtransport_independent_client_v1/2026_11_17/README.md`.

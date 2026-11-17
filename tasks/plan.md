@@ -677,3 +677,45 @@ can retain its transport lease until real peer FIN. Existing tests previously
 used connection abort for that final teardown. Preserve this graceful policy,
 prove protocol-driven release after FIN, and separately require connection abort
 to drain all ownership without peer cooperation.
+
+## Independent public-App WebTransport acceptance, 2026-11-17
+
+Reuse the unchanged official webtransport-go oracle already pinned above, with
+quic-go v0.62.0 and renewed explicitly trusted localhost PKI. The earlier oracle
+proved independent transport controls but labeled native mode as admission and
+enqueue only. New product claims require exact reconciliation with server-side
+public callbacks and datagram-ring observations.
+
+1. Freeze original oracle/provenance, verify dependency source manifests and
+   module checksums, parameterize relocation and renew expired fixture PKI.
+2. Build a standalone application importing `src/root.zig`, using normal
+   `App.run`/shutdown and public routes, child operations and `next_datagram`.
+   Reuse candidate source-list overrides only; omit the C client, test-support
+   module, SETTINGS observer, manual engine pumping and private window changes.
+3. Extend the official client's public APIs for binary peer/local UNI/BIDI,
+   FIN/reset payload accounting, actual datagram delivery, finite DATA/stream
+   credit recovery, independent sessions and duplicate SID-zero namespaces.
+   Use bounded control/report barriers, exact payloads and finite deadlines.
+4. Reconcile both sides, retain original failed trials and raw results, run the
+   three candidate server optimization profiles, and independently review and
+   replay the resulting evidence before commit/push.
+
+The server/client workers own separate scratch directories and agree the
+bounded HTTP control/report contract before implementation. Session route
+contexts identify fixed source/ordinal labels. Same-connection HTTP health and
+reports use the official client's existing owned `ClientConn.RoundTrip`.
+Datagram callback success alone is insufficient: compare exact callback/ring
+sets without assuming network order. Outbound datagram echo is not claimed.
+
+For positive-credit tests, hold independent-client reads of server output,
+observe partial acceptance/`WouldBlock`, then read and require real credit-driven
+writable recovery and suffix-only completion. With stream credit one, reject
+the next create without queuing it and explicitly retry after actual closure.
+The official client marks association headers reliable but exposes no arbitrary
+application-prefix boundary; preserve the separate raw-reset oracle and native
+early/fragmented association evidence instead of overstating those guarantees.
+
+Candidate source and published-pin evidence stay separate. No production pin,
+capability flag or maintained fork changes in this increment. Independent
+acceptance precedes reviewed publication and capability activation; dedicated
+smoke/security/sanitizer/fuzz/scan campaigns remain user-deferred.
