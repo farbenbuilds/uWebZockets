@@ -116,9 +116,13 @@ Fatal-error handling is included in that open work: a failed query's TLS session
 is destroyed before its callback runs. Reconnects may create TLS state while
 other requests remain active on the same worker, and cancellation may start an
 auxiliary handshake before the main query completes. Their allocations cannot
-be excluded merely by labeling them connection maintenance. The next isolated
-candidate reserves reusable error snapshots; arbitrary diagnostic text and the
-production lifecycle still require separate verification.
+be excluded merely by labeling them connection maintenance. The isolated
+[reusable error-snapshot candidate](../benchmarks/results/sql_tls_error_snapshot_v1/2026_11_17/README.md)
+reserves two startup snapshots totaling 736 requested bytes; connection state
+grows by sixteen bytes. Its metadata-only fatal calls count zero heap operations
+with full diagnostic and protocol parity. Peer-alert text still allocates, so
+its complete fatal gate remains RED. The production lifecycle and PostgreSQL's
+full allocation proof remain open.
 
 ## Rows and transactions
 

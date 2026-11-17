@@ -1145,3 +1145,22 @@ creation and handshake can run while other worker-local requests remain active;
 the auxiliary cancellation handshake can overlap its main query. These paths
 therefore have no blanket allocation exemption. Native publication, production
 adoption and the complete PostgreSQL allocation proof remain separate gates.
+
+The [retained Phase A candidate](../benchmarks/results/sql_tls_error_snapshot_v1/2026_11_17/README.md)
+changes six native paths, fourteen cumulatively. Its matching Zig Debug build
+passes all six steps. Two 368-byte startup owners eliminate heap operations for
+all 29 metadata-only fatal/replay calls in the five-fault witness. The peer-data
+and complete fatal gates remain RED; the unreserved per-call counts are exact.
+Inherited protocol checks cover 27 rows/1320 calls across three negotiated
+suites, all reserved counts zero. Twelve public control rows/255 calls also
+count zero with their retained 0x1301 scope.
+
+Seven direct ownership/thread cases, three copy-OOM cases per library, public
+startup/guard/clear controls, a real nested other-SSL BIO callback and two cold
+thread-initialization failure rows pass. All 51 inherited inputs remain unchanged.
+The producer replay passes 86 recorded commands across 21 selected programs.
+Root independently restores all 8709 entries from both supported source modes,
+including types, permissions, links and hashes; four refusal controls pass.
+Independent source/evidence review has no unresolved finding. Final delivered
+program replays and archive validation are recorded with the retained result;
+this component does not close PostgreSQL's production allocation gate.
