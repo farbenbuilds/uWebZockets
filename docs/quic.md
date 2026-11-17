@@ -404,6 +404,13 @@ production pin/capability changes and the remaining release gates stay open.
 The [independent-client checkpoint](../benchmarks/results/webtransport_independent_client_v1/2026_11_17/README.md)
 retains exact inputs, final binaries, reports and a relocated replay.
 
+The following [compatible-fix checkpoint](../benchmarks/results/lsquic_compatible_fixes_v1/2026_11_17/README.md)
+repeats all 27 cases after backporting upstream QPACK terminal-state and
+validated-path preservation fixes. It also guards the candidate-only reliable
+reset header-completion path. Source reviews, 85 native cases and fifteen
+retained three-mode cohort runs pass. Exact source/history mappings and new
+server binaries are retained; production pinning and activation stay open.
+
 ## Verification
 
 The cross-implementation gate uses pinned curl/ngtcp2 and aioquic clients to

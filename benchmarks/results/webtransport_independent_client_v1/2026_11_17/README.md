@@ -53,8 +53,10 @@ pure wrong-route/stale-generation fixture regression.
 Verify `manifest.sha256`, extract `raw_evidence_archive.tgz`, then verify its
 top-level `files.sha256`. The archive retains the exact Root snapshot, fixture
 sources, final Linux executables, dependency metadata, commands, raw results and
-reviews. `sh replay.sh Debug` runs all nine cases with fresh private PKI and
-cleans it afterward. An independent relocated replay passes 9/9. Other profiles
+reviews. `UWZ_RUN_ID=replay_v1 sh replay.sh Debug` runs all nine cases with fresh
+private PKI and cleans it afterward. Set a new run ID for each replay; the
+archived wrapper's default already names retained evidence. An independent
+relocated replay passes 9/9. Other profiles
 are supported; binaries require the recorded compatible host/CPU/ABI. Rebuild
 instructions and exact external Native/XEV artifact references are inside.
 

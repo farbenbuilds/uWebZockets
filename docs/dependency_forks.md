@@ -254,6 +254,8 @@ the original experimental identities remain retained for evidence.
 | LSQ-018 | lsquic | `005ab244169f269689e511d6b77dd2187e318df1` | Opt-in WT uni closure replenishes peer count credit despite persistent critical streams; real App/TLS credit recovery passes three modes | Base provides equivalent deadlock-free uni credit replenishment |
 | LSQ-019 | lsquic | `c8cf3fbc201a5d6f6acb6ae45af476cfcd5d7840` | Quiescent receive high-water observations precede delivery/close, including NULL contexts and reset gaps; eight observer groups and 83 native cases pass | Base provides equivalent monotonic receive observation and rejected-association cleanup |
 | LSQ-020 | lsquic | `d1104a9fab040af659295a95fb448c971a7bc6de` | Receive snapshots distinguish published NULL-context children without changing layout or scheduling; eight observer groups pass three modes | Base exposes equivalent typed-publication state in receive snapshots |
+| LSQ-021 | lsquic | `8aca43c50bfa6995c3d007a8e75ad5145b5a2db8` | Adapt upstream `acd2bb73` QPACK terminal/blocking guards and guard the candidate-only reliable-reset header path; genuine prefix/context REDs turn GREEN, with exact ownership and a healthy sibling | Base provides equivalent terminal QPACK handling in ordinary and reliable-reset reads |
+| LSQ-022 | lsquic | `ed8f8f7642fbf4fc9399a0a6bb8f90b281e1f300` | Upstream `c638b570` address selection never replaces validated paths when no unvalidated slot exists; real-layout IPv4/IPv6 and connection-mode regressions preserve full path snapshots | Base provides equivalent validated-path preservation and regression coverage |
 
 The lsquic [review evidence and incremental bundle](../benchmarks/results/lsquic_uni_prerequisite_v1/2026_11_11/README.md)
 also retain the baseline failures, independent reviews, source identities and
@@ -271,6 +273,18 @@ thirteen commits to separate equivalents containing all required ledger
 fields. No published history is rewritten. The final converted source tree
 matches the independent-client candidate; this does not resolve newer upstream
 fixes, fork permissions, mirror equality or the remaining merge gates.
+
+The following [compatible-fix artifact](../benchmarks/results/lsquic_compatible_fixes_v1/2026_11_17/README.md)
+adds LSQ-021 and LSQ-022 without changing the original eighteen mappings.
+Their separate publication equivalents append to the prepared history at
+`3d775d801ccf7c9f04e0cc6d33952d81c66dae1f`, with the same source tree
+`26b4ecc1d026c2aa21a852c20a3f6d9e0ea7cbeb` as original `ed8f8f7`.
+All 85 native Debug cases, fifteen retained three-mode cohort runs and all
+27 public-client cases pass on that source; independent source and runtime
+reviews are clear. Small incremental bundles reconstruct both complete
+histories from the exact earlier artifact. The newer upstream fixes are thus
+covered in this local candidate; maintained-fork synchronization, review,
+publication and production activation still require their own evidence.
 
 An authorized maintainer must import each proposal into a fork scratch branch,
 review it with a PR assignee and existing repository label, verify branch

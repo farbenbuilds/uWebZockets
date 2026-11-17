@@ -285,10 +285,14 @@
   independent metadata review is clear. Exact limits and live provenance are
   retained in
   `benchmarks/results/dependency_publication_v2_3/2026_11_17/README.md`.
-- [ ] Adapt and verify the two required compatible lsquic fixes found during
+- [x] Adapt and verify the two required compatible lsquic fixes found during
   publication review: QPACK terminal-state handling (LSQ-021) and validated-path
   preservation (LSQ-022). Preserve the original candidate and retain regression,
   independent review and combined client/native evidence for the new source.
+  Original `ed8f8f7` and prepared `3d775d8` have identical source: 85 native
+  cases, fifteen retained mode/cohort runs and all 27 public-client cases pass.
+  Exact sources, incremental histories, raw logs and replay tools are retained
+  in `benchmarks/results/lsquic_compatible_fixes_v1/2026_11_17/README.md`.
 - [x] Independent public-App acceptance: reuse the exact official client pin,
   verify fresh CA/TLS/protocol negotiation, reconcile actual callback/ring and
   child observations, prove bounded credit/isolation behavior and clean shutdown,
