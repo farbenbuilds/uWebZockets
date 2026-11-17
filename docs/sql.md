@@ -147,7 +147,19 @@ It handles real fragmented KeyUpdate and borrowed-candidate callback states
 without allocating, warming ERR state or entering once initialization. External
 BIO/socket queues and peer verification remain separate caller requirements.
 The complete candidate also passes the ordinary isolated SDK unit suite;
-production pins, SQL preparation and lifecycle allocation work remain open.
+production pins, production SQL preparation and lifecycle allocation work remain open.
+
+The isolated [SQL preparation integration](../benchmarks/results/sql_tls_preparation_v1/2026_11_17/README.md)
+now waits for verified, drained TLS state before reserving storage and sending
+StartupMessage or CancelRequest. Its ordinary live PostgreSQL/SQLite suite
+passes all 1189 tests. The unchanged query counter measures zero C heap
+operations across 256 warmed verified-TLS queries; unchanged SQL measures two
+mallocs and two frees per query against the same native candidate.
+Separate worker-wide intervals include failure, reconnection and cancellation
+while another query and a queued waiter remain active. All six scenarios pass
+their functional checks but retain strict allocation RED. The source snapshot
+and replay evidence are archived; production adoption, consumer pressure/OOM
+coverage and the complete PostgreSQL allocation requirement remain open.
 
 ## Rows and transactions
 
