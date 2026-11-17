@@ -372,6 +372,8 @@ teardown; it does not promise autonomous closure of every CONNECT handshake.
 
 The [positive-flow checkpoint](../benchmarks/results/webtransport_positive_flow_v1/2026_11_17/README.md)
 retains the native matrix, exact source snapshots and relocatable replay.
+The [multi-session checkpoint](../benchmarks/results/webtransport_multi_session_v1/2026_11_17/README.md)
+adds same-connection isolation, scoped teardown and authorization-refusal proof.
 
 ## Verification
 
