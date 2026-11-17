@@ -1004,6 +1004,15 @@ from rounded BUF_MEM data allocations 8/40; measure total startup/state costs.
    packages debug-stripped copies with preserved measured identities/ELF proof,
    runs ordinary project gates, commits and pushes.
 
+The [retained result](../benchmarks/results/sql_tls_ku_output_v1/2026_11_17/README.md)
+now records zero heap operations across 24 requested updates/600 client calls
+and fifteen healthy protocol rows. The full 24-row protocol matrix preserves
+ordering, retry and raw error semantics. Four startup allocations total 128
+requested bytes; SSL3_STATE grows 632 to 640 bytes. All 23 lifecycle cases,
+inherited record/HS/HKDF/AEAD proofs and full native rebuild pass. Both source
+restore modes reproduce all 8709 entries, and the final delivery replays pass
+78 helper and 15 wire commands with original measured identities preserved.
+
 Ticket/session and error/reconnect allocations, native maintenance and production
 adoption remain open. No PostgreSQL exception or strict-gate closure is implied;
 dedicated smoke/security/sanitizer/fuzz/scan campaigns remain user-deferred.

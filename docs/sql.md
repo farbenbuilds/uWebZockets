@@ -93,6 +93,15 @@ reuse requires serialized, non-reentrant mutating SSL I/O. Requested responses
 and tickets still allocate; production integration and the full allocation gate
 remain open.
 
+The [bounded KeyUpdate output candidate](../benchmarks/results/sql_tls_ku_output_v1/2026_11_17/README.md)
+adds four startup allocations totaling 128 requested bytes for retained
+five-byte plaintext and 27-byte ciphertext storage. With the earlier
+reservations, 24 requested peer updates across all three negotiated suites
+count zero heap operations in all 600 complete client read/write intervals.
+Startup failure preserves prior owners, and `SSL_clear` releases the storage.
+Tickets, error/reconnect paths, native publication and production adoption remain
+open; this component result does not close PostgreSQL's total-allocation gate.
+
 ## Rows and transactions
 
 Query callbacks receive a bounded `Rows` iterator. `Row.get(T, index)` supports
