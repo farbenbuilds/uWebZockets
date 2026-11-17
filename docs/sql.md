@@ -77,6 +77,15 @@ hashes; its 700 successful calls use no allocator operations, compared with one
 malloc/free pair previously. This changes one native source file in an isolated
 build. Other TLS allocations and production integration remain open.
 
+The next [bounded post-handshake storage candidate](../benchmarks/results/sql_tls_hs_buffer_v1/2026_11_17/README.md)
+reserves incoming handshake storage for idle TLS 1.3 clients. Its default adds
+158424 requested C bytes at startup and clamps later message-ceiling increases
+until `SSL_clear`. Fragment/coalescing helper calls then allocate nothing, and
+real encrypted protocol outcomes match the unreserved library. KeyUpdate reads
+without a requested response fall from three malloc calls to one; other TLS
+storage still allocates. This remains an isolated proposal without a production
+pin change or PostgreSQL allocation exception.
+
 ## Rows and transactions
 
 Query callbacks receive a bounded `Rows` iterator. `Row.get(T, index)` supports

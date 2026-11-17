@@ -46,6 +46,13 @@
       all 700 successful calls count zero allocator operations. Source, native
       rebuild, controls and replay are retained in
       `benchmarks/results/sql_tls_hkdf_fixed_v1/2026_11_17/README.md`.
+- [x] Retain bounded incoming post-handshake storage in an explicit client-only
+      native proposal. Fragment/coalescing helpers count zero heap operations;
+      encrypted baseline/unreserved/reserved outcomes agree, and 21 new
+      lifecycle/fault cases plus inherited record/HKDF checks pass. Default
+      startup memory, ceiling restrictions, residual control allocations and
+      replay are retained in
+      `benchmarks/results/sql_tls_hs_buffer_v1/2026_11_17/README.md`.
 - [x] D-10: 1,012 enabled tests passed with ASan/UBSan/LSan; retained local
       p50/p99, admission upper-bound and process RSS evidence in
       `benchmarks/results/sql_local_v1/2026_11_11/README.md`.

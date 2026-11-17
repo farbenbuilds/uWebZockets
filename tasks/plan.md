@@ -877,3 +877,42 @@ This addresses one allocation site. Ticket/session, AEAD, response-flight and
 error storage remain separate work. SQL-ALLOC-002 stays open; no production
 pin, maintained fork or FIPS validation claim changes. Dedicated smoke and
 security campaigns remain user-deferred.
+
+## Bounded client post-handshake storage, 2026-11-17
+
+Continue from the reviewed HKDF candidate. Add an explicit native
+`SSL_reserve_client_post_handshake_buffer` opt-in without changing record-buffer
+reservation. Only completed, idle, ordinary TLS 1.3 clients are eligible.
+Allocate temporary descriptor/data storage and commit only after success;
+failure preserves prior ownership and configuration.
+
+Capture `M = max(16384, max_cert_list)` and reserve `M + 3 + 16384` logical
+bytes. Before an accepted record the current head is incomplete, occupying at
+most `M + 3` bytes; a whole record can add 16384 bytes before consumption.
+The default logical bound is 118787 bytes; BUF_MEM rounds data capacity to
+158384 bytes. Descriptor, allocator and state overhead are measured separately.
+While opted in, `SSL_set_max_cert_list` clamps increases to the captured ceiling;
+lowering and re-raising within it work, and the getter exposes the setting.
+Context setters and unreserved connections retain their existing behavior.
+
+1. Verification first records genuine unchanged-candidate allocation RED for
+   repeated fragmented/coalesced handshake input, with the original all-C
+   counter and self-test. Keep direct helper and encrypted peer proofs distinct.
+2. Crypto owns four native files in a new scratch copy: the public header,
+   internal state, SSL lifecycle/setter and handshake buffering. Preserve
+   parsing, callbacks and ordering; retain empty storage, cleanse vacated tails
+   and reject capacity overflow before mutation or allocation. SSL_clear frees
+   the reservation and removes its configuration restriction.
+3. Separate verification owners cover buffer/lifecycle/fault behavior and real
+   encrypted fragmentation/coalescing, then compare baseline and candidate
+   protocol outcomes and all twelve control rows. Include startup memory,
+   pending-state rejection, first/second allocation failure, actual cleansing
+   and free, setter/context independence and verified clear/re-handshake reuse.
+4. Rebuild complete native libraries, retain exact source inventories and
+   replayable proofs, and obtain independent crypto review of bounds, every
+   append/reset site and the explicit setter contract. Root integrates the
+   evidence, runs ordinary project checks, commits and pushes the checkpoint.
+
+AEAD, ticket/session, outgoing-flight and error/reconnect allocations remain
+separate work. Production pins, PostgreSQL's strict allocation requirement and
+the user's campaign deferrals remain unchanged.
