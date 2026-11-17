@@ -26,7 +26,7 @@ uses Semantic Versioning.
 - CONNECT-owned session records and a bounded worker-wide identity index replace
   connection-wide session scalars. Close invalidates identity before callbacks;
   index churn reclaims tombstones without allocating. The flow-off one-session
-  restriction remains pending multiple-session isolation verification.
+  restriction remains when session flow is not negotiated.
 - Pure WebTransport session budgets validate cumulative data and child-stream
   limits. Bounded credit output coalesces consumption/closure grants while
   retaining partial capsule writes.
@@ -39,6 +39,11 @@ uses Semantic Versioning.
   `ServerConfig.webtransport_flow_limits` and the matching builder method capture
   initial credit before listener startup. Flow requires bilateral intent and
   the complete native receive observer; published pins remain unchanged.
+- Candidate simultaneous WebTransport sessions retain independent routes,
+  handles and flow budgets on one connection. Typed session cleanup removes
+  only matching queued datagrams, preserving sibling FIFO entries and
+  connection-wide delivery ordinals. Flow-off peers retain one simultaneous
+  session; connection teardown still clears every session.
 - `App.enable_http3` and `enable_http3_ephemeral` configure HTTPS and HTTP/3
   before listening on an application returned by `Server.builder`, preserving
   its configured capacities and installing both TLS contexts atomically.

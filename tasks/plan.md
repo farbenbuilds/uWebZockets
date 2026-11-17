@@ -633,4 +633,47 @@ Receive reclamation queues bounded, fair CONNECT credit output, retaining partia
 capsules until full native acceptance. Startup config defaults to zero and
 requires the complete receive observer for positive advertisement. Bilateral
 intent enables flow; unilateral intent preserves legacy ignore behavior.
-Multiple sessions still require scoped cleanup and isolation verification.
+The multiplexing increment below adds scoped cleanup and verifies isolation.
+
+## WebTransport multiplexed-session isolation, 2026-11-17
+
+Use the existing CONNECT-owned record and worker index; no additional session
+manager or native API is required. Enable a simultaneous second session only
+when both endpoints negotiate positive flow. Preserve the connection-wide
+datagram FIFO, local delivery ordinal, drop counter and application metrics;
+session flow budgets, credit output, routes and lifecycle remain independent.
+
+1. Add stable in-place `DatagramRing.clear_session(id)` with caller storage,
+   FIFO preservation and unchanged drop accounting. Verify mixed sessions,
+   binary/empty payloads, capacity recovery, non-power-of-two rebasing and
+   power-of-two cursor rollover independently in all optimization modes.
+2. Give the existing required Binding cleanup callback a named `ClearScope`
+   union for a whole connection or exact session ID. Session retirement selects
+   one SID; connection destruction retains full cleanup. Wire App cleanup before
+   relaxing Root admission. The ring worker owns ring/tests; Root serializes
+   binding, App and engine edits.
+3. Compute bilateral flow negotiation before the existing second-session guard.
+   Preserve early-debt validation before application authorization, bounded
+   stream/index reservation, generation checks and rollback. No allocation is
+   added to admission, delivery or cleanup. No published dependency pin changes.
+4. Verify multiple distinct SIDs/routes on the same actual native connection,
+   interleaved peer/local children and datagrams, independent data/stream grants,
+   early-child debt and partial credit output, scoped Close/reset/EOF/error,
+   drain, callback cooldown, full connection destruction and generation reuse.
+   Legacy and unilateral offers must still reject the second CONNECT before
+   application admission. Retain the prior flow18, stream/debt77 and datagram33
+   regressions; these drivers share helpers and are not disjoint case counts.
+
+Existing drain policy stays explicit: children and datagrams continue, while
+new local child creation on that draining session returns `SessionClosed`.
+The worker stream capacity and ordinary QUIC stream limits bound CONNECT count;
+draft-16 introduces no MAX_SESSIONS setting. Final acceptance requires ordinary
+Root gates, native evidence and independent review before commit/push. Dedicated
+smoke/security/sanitizer/fuzz/scan campaigns remain user-deferred.
+
+The cooldown test has two ownership checkpoints: application session notices,
+index entries, children and queues retire first; a fully flushed native CONNECT
+can retain its transport lease until real peer FIN. Existing tests previously
+used connection abort for that final teardown. Preserve this graceful policy,
+prove protocol-driven release after FIN, and separately require connection abort
+to drain all ownership without peer cooperation.

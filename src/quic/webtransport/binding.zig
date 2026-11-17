@@ -17,8 +17,10 @@ pub const AdmissionResult = union(enum) {
 pub const AdmissionCallback = *const fn (*anyopaque, *Request, *Response) AdmissionResult;
 /// Delivers borrowed bytes using an established connection and route identity.
 pub const DeliveryCallback = *const fn (*anyopaque, runtime.ConnectionHandle, RouteId, u64, u64, []const u8) bool;
-/// Invalidates queued application datagrams before connection identity reuse.
-pub const ClearCallback = *const fn (*anyopaque, runtime.ConnectionHandle) void;
+/// Session retirement preserves sibling queues; connection teardown clears all.
+pub const ClearScope = union(enum) { connection, session: u64 };
+/// Invalidates queued application datagrams before their owning identity retires.
+pub const ClearCallback = *const fn (*anyopaque, runtime.ConnectionHandle, ClearScope) void;
 /// Supplies nonnegative monotonic microseconds at the transport boundary.
 pub const ClockCallback = *const fn (*anyopaque) u64;
 

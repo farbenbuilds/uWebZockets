@@ -1247,12 +1247,15 @@ pub fn configured_app_with_route_params(
             return self.dispatch_datagram(connection.index, session_id, ordinal, route.path, payload);
         }
 
-        fn clear_webtransport(context: *anyopaque, connection: wt_runtime.ConnectionHandle) void {
+        fn clear_webtransport(context: *anyopaque, connection: wt_runtime.ConnectionHandle, scope: wt_binding.ClearScope) void {
             const self: *Self = @ptrCast(@alignCast(context));
             const transport = if (self.quic_transport) |*active| active else return;
             if (transport.engine.connections.find(connection) == null) return;
             const ring = self.datagram_ring_for(connection.index) orelse return;
-            ring.clear();
+            switch (scope) {
+                .connection => ring.clear(),
+                .session => |id| ring.clear_session(id),
+            }
         }
 
         fn webtransport_time_us(context: *anyopaque) u64 {

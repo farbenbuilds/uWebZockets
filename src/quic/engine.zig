@@ -1442,7 +1442,7 @@ pub fn quic_engine(
             c.lsquic_conn_set_ctx(conn, null);
             if (self.early_debt_store) |*debt| debt.clear_connection(handle);
             if (self.pending_datagrams) |*storage| storage.store.clear_connection(handle);
-            if (self.binding) |binding| binding.clear(binding.context, handle);
+            if (self.binding) |binding| binding.clear(binding.context, handle, .connection);
             std.debug.assert(self.connections.close(handle));
             self.cancel_children(handle, null, .connection_closed);
             std.debug.assert(self.active_connections > 0);
@@ -1877,7 +1877,13 @@ pub fn quic_engine(
                 self.reset_connect(context, webtransport.h3_message_error);
                 return;
             }
-            if (slot.session_count != 0) {
+            const peer_limits = flow.Limits{
+                .data = peer.initial_max_data,
+                .streams_bidi = peer.initial_max_streams_bidi,
+                .streams_uni = peer.initial_max_streams_uni,
+            };
+            const flow_enabled = session_control.negotiated(binding.limits, peer_limits);
+            if (slot.session_count != 0 and !flow_enabled) {
                 self.reset_connect(context, webtransport.h3_request_rejected);
                 return;
             }
@@ -1886,12 +1892,6 @@ pub fn quic_engine(
                 self.reset_connect(context, webtransport.h3_request_rejected);
                 return;
             }
-            const peer_limits = flow.Limits{
-                .data = peer.initial_max_data,
-                .streams_bidi = peer.initial_max_streams_bidi,
-                .streams_uni = peer.initial_max_streams_uni,
-            };
-            const flow_enabled = session_control.negotiated(binding.limits, peer_limits);
             const retained = if (self.early_debt_store) |*debt|
                 debt.find(.{ .connection = slot.handle, .session_id = id }) orelse early_debt.Debt{}
             else
@@ -2084,7 +2084,7 @@ pub fn quic_engine(
             std.debug.assert(index.remove(.{ .connection = record.notice.connection, .session_id = record.notice.session_id }, session));
             std.debug.assert(slot.session_count != 0);
             slot.session_count -= 1;
-            if (self.binding) |binding| binding.clear(binding.context, slot.handle);
+            if (self.binding) |binding| binding.clear(binding.context, slot.handle, .{ .session = record.notice.session_id });
             self.notify_session_closed(if (record.notice_published) record.notice else null, self.retirement_reason(slot.native), context.session_close_code);
         }
 

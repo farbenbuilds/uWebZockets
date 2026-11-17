@@ -121,12 +121,13 @@ and established traffic continues. Connection teardown clears both stores
 before generation reuse. Cooldown disables new unknown buffering for those
 generations before clearing pending traffic and terminal records.
 
-This candidate retains one session per connection. Session flow is off by
-default; positive startup limits require the complete native receive observer.
+This candidate supports multiple sessions when both endpoints negotiate
+positive flow. The default flow-off profile permits one simultaneous session;
+positive startup limits require the complete native receive observer.
 It retains a registered route identity after releasing request headers and
 parses fragmented capsules with bounded carry. This is an implementation
 checkpoint, without published fork pins or independent draft-16 client
-acceptance. Multi-session activation remains open;
+acceptance. Published activation remains open;
 the later checkpoints below retain receive, transmit and outgoing-stream work.
 See the
 [App admission evidence](../benchmarks/results/webtransport_app_admission_v1/2026_11_16/README.md).
@@ -136,8 +137,10 @@ A startup-sized worker index maps the connection generation and full session
 ID to that CONNECT's global slot and stream generation. Child-parent checks
 resolve the slot directly; association and datagram routing use the index.
 Closing removes the index entry and record before callbacks. This keeps
-storage linear in global stream capacity. Multiple sessions still require
-independent cleanup and isolation verification.
+storage linear in global stream capacity. Session retirement removes only that
+SID's queued application datagrams, preserving sibling FIFO entries, payloads
+and local connection ordinals. Connection destruction clears the entire ring.
+Selective compaction invalidates previously borrowed ring payload views.
 
 ### Child receive callbacks
 
@@ -355,6 +358,17 @@ credit. At zero credit, requested writable interest is retained without
 repeated callbacks; a later MAX_DATA schedules native writable service.
 RESET, STOP and FIN progress independently. Existing children and credit output
 continue while a session drains, although new child creation is rejected.
+
+Each simultaneous CONNECT retains its own route, handles, budgets and credit
+output. Closing, resetting or rejecting one session does not retire its
+siblings. A drain capsule affects only its session; worker cooldown and
+connection destruction still retire all affected sessions. The global stream
+pool, startup-sized index and ordinary QUIC stream limits bound session count.
+Datagram queue capacity, delivery ordinals, drop counters and application
+metrics remain shared at their existing connection/application scope.
+Cooldown reports logical session shutdown before every native CONNECT has
+necessarily closed. Graceful transport release can await peer FIN or connection
+teardown; it does not promise autonomous closure of every CONNECT handshake.
 
 The [positive-flow checkpoint](../benchmarks/results/webtransport_positive_flow_v1/2026_11_17/README.md)
 retains the native matrix, exact source snapshots and relocatable replay.

@@ -24,7 +24,10 @@
       Zig allocation coverage.
 - [ ] D-10: strict total PostgreSQL TLS allocation gate. The retained audit
       fails with two BoringSSL C malloc calls per measured query;
-      proposed SQL-ALLOC-002 is pending explicit user approval.
+      proposed SQL-ALLOC-002 is pending explicit user approval. The isolated
+      fixed-buffer experiment counts zero calls for 256 warmed queries, but
+      native integration and other post-handshake allocation paths remain open:
+      `benchmarks/results/sql_tls_retention_v1/2026_11_17/README.md`.
 - [x] D-10: 1,012 enabled tests passed with ASan/UBSan/LSan; retained local
       p50/p99, admission upper-bound and process RSS evidence in
       `benchmarks/results/sql_local_v1/2026_11_11/README.md`.
@@ -252,8 +255,21 @@
   and atomic consumption/grant transitions; verify them independently of I/O.
 - [x] Retain early used/reclaimed receive debt through child destruction and
   NULL contexts, transfer CONNECT ownership, and verify debit before callbacks.
-- [ ] Integrate positive receive-limit enforcement, send/create budgets and
-  credit capsule output with the retained accounting.
-- [ ] Enable and verify multiple sessions, independent routes and scoped cleanup.
+- [x] Integrate positive receive-limit enforcement, send/create budgets and
+  credit capsule output with the retained accounting. Commit `cc5013e` passes
+  1124 ordinary unit tests and the native flow/debt/datagram matrices in all
+  three optimization modes; production dependency pins remain unchanged.
+  Exact scope, retained sources and relocated replay are in
+  `benchmarks/results/webtransport_positive_flow_v1/2026_11_17/README.md`.
+- [x] Enable and verify multiple sessions, independent routes and scoped cleanup.
+- [x] Multiplexing prerequisite: stable session-specific ring cleanup, typed
+  Binding cleanup scope and negotiated-only admission, without new allocation.
+- [x] Multiplexing evidence: actual same-connection route/child/datagram and
+  flow isolation, scoped retirement/drain, full teardown, legacy policy and
+  generation reuse. Native 11-case isolation and separate refusal case pass in
+  all three modes with retained flow18/debt77/datagram33 regressions. Root passes
+  1128 ordinary tests, release compilation, examples and downstream-consumer
+  checks; independent source/evidence review is clear. Graceful transport
+  teardown can await real peer FIN after logical session retirement.
 - [ ] Complete independent draft-16 acceptance, reviewed fork publication and
   the remaining full release requirements.
