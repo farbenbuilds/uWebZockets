@@ -23,11 +23,12 @@
 - [x] D-10: PostgreSQL service CI, SQLite integration, targeted fuzz and
       Zig allocation coverage.
 - [ ] D-10: strict total PostgreSQL TLS allocation gate. The retained audit
-      fails with two BoringSSL C malloc calls per measured query;
-      proposed SQL-ALLOC-002 is pending explicit user approval. The isolated
-      fixed-buffer experiment counts zero calls for 256 warmed queries, but
-      native integration and other post-handshake allocation paths remain open:
-      `benchmarks/results/sql_tls_retention_v1/2026_11_17/README.md`.
+      fails with two BoringSSL C malloc calls per production-pinned query.
+      The isolated prepared SDK counts zero operations for 256 warmed queries,
+      but all six worker-wide failure/reconnect/cancel scenarios retain strict
+      allocation RED. Complete native ownership, maintained publication/pins
+      and production integration remain required. No PostgreSQL allocation
+      exception is approved; SQLite's SQL-ALLOC-001 is separate.
 - [x] Verify native reservation failure ownership, real pending-state rejection,
       configured protocol exclusions and verified reuse after `SSL_clear`:
       sixteen final cases and both inherited buffer/record proofs pass on
@@ -73,6 +74,33 @@
       retained in `benchmarks/results/sql_tls_readiness_v1/2026_11_17/README.md`.
       SQL preparation, maintained publication/pins and the complete PostgreSQL
       allocation proof remain open.
+- [x] Integrate verified TLS preparation in the isolated SQL SDK. All 1189
+      ordinary live tests pass; 256 warmed queries count zero C heap operations.
+      Preserve failure/reconnect/cancellation with a concurrent query and queued
+      waiter under the original worker-wide counter. All six functional cases
+      pass and retain strict allocation RED. Source and replay evidence:
+      `benchmarks/results/sql_tls_preparation_v1/2026_11_17/README.md`.
+- [x] Retain full allocation stacks and pointer lifetimes without changing the
+      original lifecycle counter or intervals. Fresh paired control/trace
+      vectors agree; complete marker validation rejects malformed traces and
+      optimized Python. Observed live bytes are not a TLS capacity bound:
+      `benchmarks/results/sql_tls_lifecycle_inventory_v1/2026_11_18/README.md`.
+- [x] Implement the isolated explicit native memory/CBB ownership leaf. Generic
+      realloc/free preserve owner provenance and cleanse complete raw extents;
+      owned CBB includes DER sorting scratch without a heap fallback. Thirteen
+      counted cases are zero, the ordinary live SDK passes 1189 tests, and full
+      source restoration/rebuild passes. SSL/BIO/certificate/crypto/thread owner
+      propagation, capacity and production adoption remain open:
+      `benchmarks/results/sql_tls_domain_v1/2026_11_18/README.md`.
+- [x] Own complete BIO-pair construction in the prepared SQL SDK. Native sizing
+      drives reusable startup storage for both normal and cancellation
+      connections; storage survives until the last BIO reference. The unchanged
+      six-scenario worker-wide probe preserves functional/callback/pool behavior
+      and removes 54 mallocs, 54 frees and 592704 requested bytes. All 1197 live
+      SDK tests, 1182 live root tests and both release-mode builds pass. Whole
+      PostgreSQL allocation remains RED; inherited pre-apply deadline sensitivity
+      and its parent reproduction are retained without changing the test:
+      `benchmarks/results/sql_tls_owned_bio_pair_v1/2026_11_18/README.md`.
 - [x] D-10: 1,012 enabled tests passed with ASan/UBSan/LSan; retained local
       p50/p99, admission upper-bound and process RSS evidence in
       `benchmarks/results/sql_local_v1/2026_11_11/README.md`.

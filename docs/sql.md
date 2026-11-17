@@ -176,6 +176,15 @@ live tests. The five-file proposal and replayable proofs are archived; complete
 TLS ownership propagation, production adoption and the full PostgreSQL
 allocation requirement remain open.
 
+The [owned BIO-pair integration](../benchmarks/results/sql_tls_owned_bio_pair_v1/2026_11_18/README.md)
+gives each normal and cancellation connection reusable startup storage sized by
+the native library. Reuse waits for the final BIO reference. With the original
+probe, counter and worker-wide intervals unchanged, all six functional cases
+pass and remove 54 mallocs, 54 frees and 592704 requested bytes in total.
+The prepared SDK passes all 1197 ordinary live tests. This closes the pair's
+six-allocation construction path; complete SSL, certificate, crypto and thread
+ownership, production adoption and the strict PostgreSQL gate remain open.
+
 ## Rows and transactions
 
 Query callbacks receive a bounded `Rows` iterator. `Row.get(T, index)` supports

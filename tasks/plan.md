@@ -1234,3 +1234,86 @@ both source modes and verifies four refusal controls. Final staged programs
 match every expected status in 91 native and 22 wire replay commands, including
 eighteen wire program runs. Whole-query lifecycle, publication and production
 integration remain separate obligations.
+
+## PostgreSQL lifecycle ownership, 2026-11-18
+
+The [prepared SQL SDK](../benchmarks/results/sql_tls_preparation_v1/2026_11_17/README.md)
+waits for verified, drained TLS before reserving storage and sending startup or
+cancellation traffic. All 1189 ordinary live tests pass. The unchanged all-C
+counter measures zero operations across 256 warmed queries, while six complete
+worker-wide failure/reconnect/cancel intervals remain strictly RED. Other active
+queries and queued waiters retain their original behavior and deadlines.
+
+The [paired lifecycle inventory](../benchmarks/results/sql_tls_lifecycle_inventory_v1/2026_11_18/README.md)
+records raw stacks and pointer lifetimes without replacing allocator bodies or
+changing intervals. Fresh control/trace vectors match: each failure round counts
+268 mallocs, two callocs and 270 frees; each cancellation round counts twice that.
+The trace covers the installed worker, not every native thread or unexecuted
+path, and its application-inclusive live-byte peak is not a domain size bound.
+
+The [explicit native memory/CBB leaf](../benchmarks/results/sql_tls_domain_v1/2026_11_18/README.md)
+adds borrowed immutable domain descriptors, private block provenance and complete
+owned-CBB scratch handling. Thirteen measured owned/negative/fixed cases count
+zero C heap calls after explicit ERR initialization. The complete prepared SDK
+retains 1189 passing live tests and both release-mode builds. All 8709 source
+entries/modes and the exact five changed paths are retained with successful
+restoration, rebuilt proof and independent review. This prerequisite supplies no
+total TLS allocator policy or proven capacity.
+
+Next implement explicit ownership through actual SSL construction, BIO and
+handshake state using the recorded allocation sites. Keep destination ownership
+explicit, preserve ordinary native behavior, and verify OOM/cleanup/reuse through
+the same public interfaces before comparing the original lifecycle counter.
+Certificate parsing/verification, algorithm workspaces, shared trust caches,
+ERR/thread facilities and final-reference lifetimes require separate explicit
+ownership accounting. Do not hide them behind a current-owner switch, a finite
+spare-SSL stock, admission pauses, delayed callbacks or maintenance intervals.
+No PostgreSQL allocation exception, new publication destination or production
+pin adoption is approved. The full gate and the other roadmap requirements stay
+open; user-deferred campaigns retain their existing configuration and thresholds.
+
+## Complete owned BIO pairs, 2026-11-18
+
+The next allocation closure is implemented and verified in the isolated native
+and prepared SDK: two Bio objects, two pair states and two rings share an
+explicit domain. A pure checked native requirements query supplies bytes and
+alignment; no private header or object size is copied into Zig. Four native
+paths change against the complete memory/CBB parent, with no file/mode drift.
+All 8709 source entries and matching headers/library provenance are retained.
+
+Each of the N normal and N cancellation connection objects gets startup-owned
+storage and a stable descriptor outside Session. Cursor reuse waits for final
+raw release, including extra references and dormant preconstructed cancellation
+sessions. Shutdown releases both Session arrays before backing/context storage.
+The structural bound is 2N queried pair slabs plus metadata, independent of
+reconnect count; this is not a total TLS capacity proof.
+
+Native ReleaseSafe proof passes 38/38 steps. Nine new public-interface rows count
+zero C heap operations, including cold sizing, all six OOM sites, interleaved
+owners, recycling, I/O and refcounts; a whole-SSL control remains explicitly
+allocating. Full/partial hooks preserve query ERR state and reject the new owned
+factory before callbacks. The inherited memory/CBB matrix remains unchanged.
+
+The exact original SQL lifecycle source and counter preserve every interval.
+All six same-fixture functional cases and callback/pool/preparation invariants
+match. Each failure round falls from 268 mallocs/270 frees/412766 bytes to
+262/264/346910; each cancellation round falls from 536/540/825532 to
+524/528/693820. Calloc and realloc counts are unchanged. All six intervals remain
+nonzero and the original strict gate remains RED; the reduction is 54 mallocs,
+54 frees and 592704 requested bytes, without exempting reconnect or cancellation.
+
+The ordinary live SDK passes 1197/1197 tests and the production-pinned root
+passes 1182/1182. Both release-mode builds pass 24/24 steps. An initial full
+SDK run failed the unchanged plaintext deadline case before applying the named
+migration. Exact bounded replays reproduce that failure on the immutable parent
+(4/5 pass) while the candidate passes 5/5; the final unfiltered SDK run alone
+passes all 1197. Preserve the failed run and diagnosis: the exact delayed setup
+phase and cause remain unproven; no source, test, deadline or threshold changed
+to obtain a pass.
+
+Source, raw comparisons, identities and replay tools are retained in the
+[owned-pair result](../benchmarks/results/sql_tls_owned_bio_pair_v1/2026_11_18/README.md).
+Complete SSL construction, transcript, certificate/verification/crypto workspaces
+and ERR/thread lifetimes remain subsequent ownership work. Publication/pins,
+production adoption, total TLS capacity and all other open roadmap requirements
+remain required. Deferred smoke/security/sanitizer/fuzz campaigns are unchanged.
