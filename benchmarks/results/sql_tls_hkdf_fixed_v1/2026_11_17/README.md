@@ -2,8 +2,8 @@
 
 An isolated BoringSSL candidate replaces the heap-backed TLS 1.3 HKDF label
 encoder with a 514-byte stack buffer. The existing CBB serialization and HKDF
-implementation remain in use. The [single-file diff](candidate.patch) is retained
-for review. This removes one allocation site; production
+implementation remain in use. The single-file diff is retained inside the
+archive at `native/candidate.patch`. This removes one allocation site; production
 source, dependency pins and maintained forks are unchanged. The strict
 PostgreSQL request-path allocation gate remains open.
 
