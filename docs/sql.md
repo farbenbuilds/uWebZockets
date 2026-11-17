@@ -134,6 +134,13 @@ unchanged diagnostics and protocol results. Two startup snapshots now total
 state stays 656 bytes. Production adoption and the whole PostgreSQL allocation
 proof remain separate work.
 
+The [native source proposal](../benchmarks/results/sql_tls_source_proposal_v1/2026_11_17/README.md)
+retains these fifteen reviewed changes as one unpublished Git commit on the
+exact official BoringSSL base. All 8,709 source files were checked against that
+base and the reviewed candidate. Its compact bundle requires external complete
+base history; restoration verifies the commit, parent, tree and source contents.
+Publication, production pins and SQL integration remain open.
+
 ## Rows and transactions
 
 Query callbacks receive a bounded `Rows` iterator. `Row.get(T, index)` supports

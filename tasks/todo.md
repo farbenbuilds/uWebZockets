@@ -59,6 +59,13 @@
       22 lifecycle cases and inherited regressions pass. Callback/ownership
       restrictions, residual allocations and replay are retained in
       `benchmarks/results/sql_tls_aead_reuse_v1/2026_11_17/README.md`.
+- [x] Prepare an unpublished native TLS source proposal from the exact official
+      BoringSSL base and fifteen reviewed candidate paths. Full 8,709-file
+      content/type and official Git mode comparisons, compact prerequisite
+      bundle restoration and rejection controls are retained in
+      `benchmarks/results/sql_tls_source_proposal_v1/2026_11_17/README.md`.
+      Complete base history is external; publication, pins, SQL adoption and
+      the strict PostgreSQL allocation gate remain open.
 - [x] D-10: 1,012 enabled tests passed with ASan/UBSan/LSan; retained local
       p50/p99, admission upper-bound and process RSS evidence in
       `benchmarks/results/sql_local_v1/2026_11_11/README.md`.
