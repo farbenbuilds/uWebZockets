@@ -783,3 +783,68 @@ reviewer owns source comparison and changed-work review. Each fix has its own
 policy-compliant commit and regression evidence. Mirror synchronization and
 maintained-fork publication remain separate, and no dedicated campaign is
 resumed by these functional regressions.
+
+## PostgreSQL TLS reservation prerequisites, 2026-11-17
+
+Continue the isolated fixed-record-buffer experiment against exact BoringSSL
+`d3bf4795ad5b79d646cddf2fec687da5b9b502db`. Preserve its original four-file
+candidate, query probe, interposer and retained evidence. This slice does not
+change production source, dependency pins or the failed strict allocation gate.
+
+1. Rebuild the complete native SSL library in a new scratch directory. Add a
+   separate deterministic fault observer for the first and second reservation
+   mallocs after verified idle TLS 1.3 setup. The documented failure contract
+   permits a partial receive reservation and requires `SSL_free`; verify actual
+   cleansing and one real free for each successfully owned allocation. Keep
+   injection accounting distinct from ordinary allocation measurement.
+2. Produce pending plaintext, partial encrypted input and a BIO-backpressured
+   write through actual TLS operations. Read-only snapshots must show rejection
+   before reservation without changing bytes, cursors or ownership. Use valid
+   traffic controls; do not stage those states by mutating private SSL fields.
+3. Reject null, unfinished TLS, an isolated completed TLS 1.2 negative fixture,
+   and publicly configured DTLS/QUIC objects. Do not claim completed DTLS/QUIC
+   interoperability or relax production's TLS 1.3 policy.
+4. Reserve both peers, clear both SSL objects, verify old reservations are
+   cleansed/freed, then complete a fresh verified handshake with fresh BIOs.
+   Reserve again and exchange bounded records under short reads/backpressure.
+   Repeat the inherited capacity/alignment/compaction and maximum-record proofs.
+
+Root owns the contract, immutable provenance and final integration. The crypto
+implementer owns only new scratch native/test copies and a new build cache. An
+independent crypto reviewer checks failure ownership, retry-state preservation,
+cleansing and claims. A separate source explorer maps other post-handshake
+allocation paths without changing or testing them in this prerequisite slice.
+
+Acceptance requires explicit terminal statuses, unchanged original accounting
+and self-test, no outstanding tracked reservation ownership after cleanup, real
+pending-state rejection and successful verified reuse after `SSL_clear`.
+Tickets, KeyUpdate, pending-flight/error/reconnect processing, native maintenance
+and production adoption remain separate requirements. SQLite's SQL-ALLOC-001
+does not authorize PostgreSQL's proposed SQL-ALLOC-002. Dedicated campaigns
+remain user-deferred.
+
+## Quantitative TLS control-traffic witness, 2026-11-17
+
+The exact-pin source map finds allocations beyond the retained record buffers.
+Measure those paths in a separate public-API-only fixture without changing the
+native candidate, production policy or original all-C allocator interposer.
+
+Use four independently initialized verified TLS 1.3 pairs: ticket-free payload
+control, two initially queued tickets with client caching off, peer KeyUpdate
+without a response request, and requested KeyUpdate followed by client response
+and application data. Repeat the rows independently and retain variation.
+Initial queued tickets are not arbitrary later tickets or warmed PostgreSQL
+queries; the evidence must preserve that distinction.
+
+Verification owns a new scratch fixture, provenance, operation-level counts and
+raw results. Meter each client SSL read/write and immediate error mapping,
+including retries, with peer preparation/flush and payload validation outside
+the interval. Fixed allocation-free message observations must establish actual
+ticket/update delivery and the requested peer response. Crypto review checks
+these accounting boundaries independently.
+
+Acceptance requires exact unchanged candidate/archive hashes, the original
+63-byte allocator self-test, explicit CA/hostname validation, exact payloads,
+terminal statuses and reconciled per-operation/aggregate allocator counters.
+This witnesses reachable client-control allocations; it neither supplies
+PostgreSQL per-query counts nor closes the production strict-allocation gate.

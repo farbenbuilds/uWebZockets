@@ -60,8 +60,15 @@ pending explicit user approval and is separate from SQLite's approved exception.
 An isolated [record-buffer reservation experiment](../benchmarks/results/sql_tls_retention_v1/2026_11_17/README.md)
 counts zero allocator calls for 256 warmed verified-TLS cached queries using a
 temporary native API and 131070 reserved bytes per SQL connection. Production
-code and pins are unchanged. Native integration, failure cases and other
-post-handshake allocation paths remain unproven; the strict gate remains open.
+code and pins are unchanged. The following
+[lifecycle and control-traffic proof](../benchmarks/results/sql_tls_prerequisites_v1/2026_11_17/README.md)
+verifies sixteen reservation failure/eligibility/reuse cases and both inherited
+buffer proofs against unchanged native source. Its separate public-API TLS/BIO
+witness still measures allocations for initial tickets and peer KeyUpdate after
+record reservation. These are client-call counts, not PostgreSQL per-query
+measurements. Record retention alone therefore cannot establish allocation-free
+request processing. Native integration and broader error/reconnect behavior
+remain open; no PostgreSQL allocation exception is approved.
 
 ## Rows and transactions
 

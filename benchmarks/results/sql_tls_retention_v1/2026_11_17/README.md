@@ -31,10 +31,13 @@ cleansing before actual free, verified TLS maximum-size records through a
 read-only native lifecycle review found no confirmed defect in the documented
 opt-in path. It corrected the result-validation claim above.
 
-Reservation allocation failures, additional pending/protocol API preconditions,
-re-handshake after SSL_clear, other post-handshake allocation paths and native
-maintenance/integration still require proof. These measurements do not close
-the production strict-allocation gate or establish production interoperability.
+This checkpoint left reservation failures, pending/protocol preconditions,
+SSL_clear reuse and other post-handshake paths unproven. The following
+[prerequisite proof](../../sql_tls_prerequisites_v1/2026_11_17/README.md)
+covers the listed lifecycle cases on unchanged source and quantifies separate
+ticket/KeyUpdate allocations. Native maintenance/integration and the production
+strict-allocation gate remain open; neither checkpoint establishes production
+interoperability or a PostgreSQL allocation exception.
 Dedicated smoke/security/sanitizer/fuzz campaigns remain user-deferred.
 
 Verify `manifest.sha256`, extract `raw_evidence_archive.tgz`, then verify its

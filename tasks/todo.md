@@ -28,6 +28,19 @@
       fixed-buffer experiment counts zero calls for 256 warmed queries, but
       native integration and other post-handshake allocation paths remain open:
       `benchmarks/results/sql_tls_retention_v1/2026_11_17/README.md`.
+- [x] Verify native reservation failure ownership, real pending-state rejection,
+      configured protocol exclusions and verified reuse after `SSL_clear`:
+      sixteen final cases and both inherited buffer/record proofs pass on
+      unchanged candidate source. This is not zero-allocation lifecycle proof.
+- [x] Quantify other client TLS control allocations with unchanged accounting:
+      twelve public-API TLS/BIO rows and 255 operations reconcile. Valid ticket
+      and KeyUpdate processing still allocates after record reservation. Exact
+      scopes, source maps, review and offline replay are retained in
+      `benchmarks/results/sql_tls_prerequisites_v1/2026_11_17/README.md`.
+- [ ] Eliminate remaining request-path TLS control allocations and verify a
+      maintained, integrated native solution against the unchanged allocation
+      requirement. Define error/reconnect attribution without treating startup
+      and teardown measurements as a blanket request-path exception.
 - [x] D-10: 1,012 enabled tests passed with ASan/UBSan/LSan; retained local
       p50/p99, admission upper-bound and process RSS evidence in
       `benchmarks/results/sql_local_v1/2026_11_11/README.md`.
