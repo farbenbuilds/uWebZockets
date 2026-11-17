@@ -161,6 +161,21 @@ their functional checks but retain strict allocation RED. The source snapshot
 and replay evidence are archived; production adoption, consumer pressure/OOM
 coverage and the complete PostgreSQL allocation requirement remain open.
 
+The [lifecycle allocation inventory](../benchmarks/results/sql_tls_lifecycle_inventory_v1/2026_11_18/README.md)
+now records raw allocation call stacks and pointer lifetimes while preserving
+the original counter and worker-wide intervals. A fresh paired control/trace
+passes all six functional scenarios with identical allocation vectors and
+retains strict RED. The measured live bytes include startup application slabs
+and do not establish a TLS domain capacity bound.
+
+The isolated [native allocation-domain/CBB proposal](../benchmarks/results/sql_tls_domain_v1/2026_11_18/README.md)
+adds explicit owner provenance, same-owner realloc/free and complete owned-CBB
+scratch handling without a heap fallback. Thirteen measured native cases count
+zero C heap operations, and the complete prepared SDK passes all 1189 ordinary
+live tests. The five-file proposal and replayable proofs are archived; complete
+TLS ownership propagation, production adoption and the full PostgreSQL
+allocation requirement remain open.
+
 ## Rows and transactions
 
 Query callbacks receive a bounded `Rows` iterator. `Row.get(T, index)` supports
