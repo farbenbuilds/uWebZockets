@@ -273,6 +273,22 @@
   teardown can await real peer FIN after logical session retirement.
 - [ ] Complete independent draft-16 acceptance, reviewed fork publication and
   the remaining full release requirements.
+- [ ] Publish the reviewed native histories through maintained-fork integration
+  PRs, then update all four manifest views and verify normal-build activation.
+  Current authenticated access remains read-only. The live lsquic mirror is
+  behind upstream; branch-protection queries return 404, leaving protection
+  unverified.
+- [x] Retain a durable publication-preparation handoff with all eighteen
+  original/publication source identities, complete canonical metadata,
+  unchanged XEV-008 history and self-contained companion bundles. Fresh and
+  relocated offline imports, deterministic conversion and refusal checks pass;
+  independent metadata review is clear. Exact limits and live provenance are
+  retained in
+  `benchmarks/results/dependency_publication_v2_3/2026_11_17/README.md`.
+- [ ] Adapt and verify the two required compatible lsquic fixes found during
+  publication review: QPACK terminal-state handling (LSQ-021) and validated-path
+  preservation (LSQ-022). Preserve the original candidate and retain regression,
+  independent review and combined client/native evidence for the new source.
 - [x] Independent public-App acceptance: reuse the exact official client pin,
   verify fresh CA/TLS/protocol negotiation, reconcile actual callback/ring and
   child observations, prove bounded credit/isolation behavior and clean shutdown,

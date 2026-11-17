@@ -719,3 +719,67 @@ Candidate source and published-pin evidence stay separate. No production pin,
 capability flag or maintained fork changes in this increment. Independent
 acceptance precedes reviewed publication and capability activation; dedicated
 smoke/security/sanitizer/fuzz/scan campaigns remain user-deferred.
+
+## Maintained-fork publication preparation, 2026-11-17
+
+The independent-client checkpoint is pushed at `50a70a9`. Fresh authenticated
+checks still report no push access to either maintained fork. Prepare a durable
+maintainer handoff while preserving the tested source and production pins.
+
+1. Record current permissions, mirror/integration refs and the exact evidence
+   identities. The lsquic mirror has advanced neither with upstream nor with
+   the local proposals; distinguish these two pending ranges explicitly.
+2. Preserve the original eighteen-commit lsquic proposal history. Its first
+   five commits already contain the required ledger fields. Create a separate
+   deterministic publication branch for the following thirteen commits, with
+   complete ledger metadata, mapped parents and unchanged source trees/diffs.
+   Keep intermediate failing checkpoints labeled historical. Allocate the new
+   LSQ-008 through LSQ-020 rows in chronological order.
+3. Retain complete original/publication bundles, the unchanged XEV-008 history,
+   conversion input and script, all commit mappings and exact tree proofs.
+   Import and validate the bundles offline in fresh repositories, reproduce the
+   conversion twice, and verify negative base/tree/order cases fail safely.
+4. Independently review metadata and source identity, record the newly observed
+   upstream range without silently merging it, then commit/push the root
+   evidence and durable ledger/handoff references.
+
+Root owns the contract, live provenance, documentation and integration. Build
+and vendor owns the scratch conversion/package; QUIC reviews source identity
+and the new upstream range. No runtime module boundary changes in this slice.
+
+Acceptance requires exact source identity for all eighteen original/publication
+commit pairs, preserved published-base ancestry, complete commit metadata,
+identical deterministic replay outputs, valid self-contained bundles and no
+changes to dependency pins, capability flags or the user's vendor work.
+An authorized maintainer must still synchronize/review the mirror, confirm
+branch protection, open an assigned/labeled integration PR and merge it. Pin
+updates and normal-build activation require that published result and their
+own empty-cache, consumer and independent-client gates.
+
+## Compatible lsquic fixes found during publication review, 2026-11-17
+
+The current upstream range contains two required fixes absent from the frozen
+candidate. Preserve that candidate and its metadata conversion; append adapted
+fixes in a new scratch history instead of importing unrelated newer sources.
+
+1. LSQ-021 adapts upstream QPACK terminal-state handling. Stop buffered reads
+   after BLOCKED/ERROR, reject exhausted blocked prefixes, give terminal errors
+   precedence and guard filtering plus the candidate-only reliable-reset header
+   completion path. Preserve WT classification and reset-prefix ownership.
+   Retain failing-before/passing-after regressions for frame boundaries,
+   blocked/error precedence and terminal failure during reset completion.
+2. LSQ-022 adapts upstream validated-path preservation. Reuse only eligible
+   unvalidated slots; preserve every stored validated path when no victim is
+   available. Regressions assert full identity/metadata for occupied slots,
+   repeated alternatives and no-victim cases across address/connection modes.
+3. Independently review both adapted source/test diffs. Verify the complete
+   native assertion suite, retained WT/reset/receive cohorts and the public
+   independent-client matrix in all three optimization modes. Record exact
+   source identities and proof limits before adding publication equivalents.
+
+The implementation owner edits only the new native/proof scratch directories.
+Root owns the public-client rerun and retained artifact; the independent QUIC
+reviewer owns source comparison and changed-work review. Each fix has its own
+policy-compliant commit and regression evidence. Mirror synchronization and
+maintained-fork publication remain separate, and no dedicated campaign is
+resumed by these functional regressions.
