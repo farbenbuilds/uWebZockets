@@ -194,6 +194,20 @@ pass. Constructor, identity and clear ownership are covered; transcript payload,
 certificate/crypto/thread ownership, production adoption and the full strict
 PostgreSQL allocation gate remain open.
 
+The isolated [client wire-storage integration](../benchmarks/results/sql_tls_client_wire_storage_v1/2026_11_18/README.md)
+owns handshake input, transcript and ClientHello/flight byte storage through
+checked native size classes. Each normal and cancellation connection retains a
+stable startup-owned domain through clear, reconnect and final release. The
+standard native profile requires 771936 bytes per wire domain, separately from
+BIO and constructor storage; this is not a total TLS capacity bound.
+
+All 1214 live SDK tests and 1182 production-pinned root tests pass. The original
+six worker-wide lifecycle intervals remove 387 mallocs, 387 frees and 2756358
+requested bytes with callback, pool and preparation behavior unchanged. Their
+strict allocation result remains RED. Certificate/verification/crypto, session
+and ERR/RNG/thread ownership, publication/pins and production adoption remain
+required. The result retains both fatal-alert regressions and their fixes.
+
 ## Rows and transactions
 
 Query callbacks receive a bounded `Rows` iterator. `Row.get(T, index)` supports

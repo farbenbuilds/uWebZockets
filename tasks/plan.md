@@ -1352,3 +1352,51 @@ Transcript payload, certificate/verification/crypto workspaces and ERR/RNG/threa
 ownership, publication/pins, production adoption, total capacity, D-5 throughput
 and all other open release requirements remain required. User-deferred campaigns
 and every configured gate remain unchanged.
+
+## Owned client handshake wire storage, 2026-11-18
+
+The isolated native/SDK now owns handshake input, transcript, ClientHello/CBB,
+pending plaintext/flight and record byte storage. A pure native query defines
+twelve roles in exact reusable size classes; nine bind transactionally and
+three allocate on use. The standard profile reports 771936 bytes in seven
+classes. Each of N normal and N cancellation connections owns separate stable
+startup backing and metadata. BIO and constructor storage remain separate;
+the constructor budget becomes 46720 bytes after explicit wire metadata.
+These structural budgets do not establish total TLS capacity.
+
+The final native image retains 8710 files with sixteen approved changed paths
+against its complete 8709-file parent. Review and actual public-operation REDs
+found two fatal-alert defects: forwarding a partial ClientHello released its
+owned flight, and an alert attempt did not latch lifetime I/O admission. Both
+are fixed and independently reviewed without changing ordinary ownership or
+the reserved KeyUpdate guards. Size, failure, cleanup, reuse and first-I/O
+checks remain enforced.
+
+The combined native proof/build passes 67/67 steps, including separate handshake
+compilation. Thirty-six compatibility cases cover all three cipher suites,
+verified DNS/IPv4/IPv6 identities, rejection cases, HRR, fragmentation and BIO
+backpressure. Thirty-three retain normal preparation checks; three immutable
+ticket-capture contexts prove clear/resumption while explicitly reporting
+unsupported readiness. Nine framed cookie/fault cases remain separate from
+verified handshakes. Initial witness mistakes and both product REDs are retained.
+
+All 26 historical Debug executables and their original verifiers pass unchanged.
+ReleaseSafe folds two ERR startup mallocs into callocs: original fault/vector
+failures are retained, with a separately labeled calloc-aware observer and an
+exact 9-malloc/2-calloc verifier preserving the total eleven calls, requested
+bytes and all other assertions. No original source or threshold is weakened.
+
+Live SDK/root suites pass 1214/1214 and 1182/1182; both SDK release builds pass.
+The unchanged full worker lifecycle probe preserves every callback, pool,
+preparation and interval invariant. Each failure round changes from
+242 mallocs/2 callocs/244 frees/340927 bytes to 199/2/201/34665; cancellation
+changes from 484/4/488/681854 to 398/4/402/69330. Across all six rounds this
+removes 387 mallocs, 387 frees and 2756358 requested bytes. Realloc remains zero;
+every strict interval remains RED.
+
+Exact source, inventory, failures, reviews and replay tools are retained in the
+[wire-storage result](../benchmarks/results/sql_tls_client_wire_storage_v1/2026_11_18/README.md).
+Certificate/verification/crypto workspaces, semantic CertificateVerify inputs,
+sessions and ERR/RNG/thread ownership remain required, along with publication,
+pins, production adoption, total capacity, D-5 and other open release work.
+User-deferred campaigns and configured gates remain unchanged.

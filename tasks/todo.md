@@ -109,6 +109,19 @@
       and both release-mode builds pass. Complete PostgreSQL allocation,
       publication/pins, production adoption and total TLS capacity remain open:
       `benchmarks/results/sql_tls_owned_ssl_construction_v1/2026_11_18/README.md`.
+- [x] Own client handshake wire bytes in the isolated prepared SDK through
+      native-sized exact classes and reusable startup storage for both normal
+      and cancellation connections. Retain constructor/BIO ownership, clear,
+      fatal-alert cleanup and the SSL-lifetime first-I/O binding guard. The
+      unchanged six full lifecycle intervals remove 387 mallocs, 387 frees and
+      2756358 requested bytes; all 1214 live SDK and 1182 live root tests pass.
+      Native proof, 36 TLS compatibility cases, nine framed cases and both
+      release-mode builds pass. Historical Debug proofs remain unchanged;
+      optimized fault interception and startup allocation-kind differences
+      have separately labeled evidence. Full PostgreSQL allocation stays RED;
+      certificate/crypto/session/thread ownership, publication/pins, production
+      adoption and total capacity remain required:
+      `benchmarks/results/sql_tls_client_wire_storage_v1/2026_11_18/README.md`.
 - [x] D-10: 1,012 enabled tests passed with ASan/UBSan/LSan; retained local
       p50/p99, admission upper-bound and process RSS evidence in
       `benchmarks/results/sql_local_v1/2026_11_11/README.md`.
