@@ -440,19 +440,39 @@ pub const Connection = struct {
         }
     }
 
-    fn consume_frames(self: *Connection) runtime.RuntimeError!void {
-        var consumed: usize = 0;
-        while (try wire.decode(self.receive[consumed..self.receive_len], self.options.config.limits.max_message_bytes)) |frame| {
-            if (self.phase == .closing) break;
-            try self.process_frame(frame);
-            consumed += frame.consumed;
-            if (consumed == self.receive_len) break;
+    fn consume_plaintext(self: *Connection, bytes: []const u8) void {
+        if (self.phase != .querying or self.receive_len != 0 or bytes.len > self.receive.len) {
+            self.consume(bytes);
+            return;
         }
+        const consumed = self.parse_frames(bytes) catch |err| {
+            self.stop(err);
+            return;
+        };
+        const tail = bytes[consumed..];
+        @memcpy(self.receive[0..tail.len], tail);
+        self.receive_len = tail.len;
+        self.deliver_ready();
+    }
+
+    fn consume_frames(self: *Connection) runtime.RuntimeError!void {
+        const consumed = try self.parse_frames(self.receive[0..self.receive_len]);
         if (consumed > 0) {
             std.mem.copyForwards(u8, self.receive[0 .. self.receive_len - consumed], self.receive[consumed..self.receive_len]);
             self.receive_len -= consumed;
         }
         self.deliver_ready();
+    }
+
+    fn parse_frames(self: *Connection, bytes: []const u8) runtime.RuntimeError!usize {
+        var consumed: usize = 0;
+        while (try wire.decode(bytes[consumed..], self.options.config.limits.max_message_bytes)) |frame| {
+            if (self.phase == .closing) break;
+            try self.process_frame(frame);
+            consumed += frame.consumed;
+            if (consumed == bytes.len) break;
+        }
+        return consumed;
     }
 
     fn process_frame(self: *Connection, frame: wire.Frame) runtime.RuntimeError!void {
@@ -693,7 +713,7 @@ pub const Connection = struct {
             self.tls_active = true;
             self.phase = .handshaking;
             self.pump_write();
-        } else if (self.tls_active) self.consume_tls(bytes) else self.consume(bytes);
+        } else if (self.tls_active) self.consume_tls(bytes) else self.consume_plaintext(bytes);
         self.arm_read();
         return .disarm;
     }

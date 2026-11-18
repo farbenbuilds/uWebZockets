@@ -16,6 +16,12 @@
 > Part II is the merged design dossiers from `uWZ-Disadvantages.md`; Section 19
 > is the master release checklist.
 
+The v2.3.0 implementation is paused at the user's request on 2026-11-19.
+[The execution TODO](tasks/todo.md) records completed work and the current
+unmeasured plaintext SQL receive candidate. Its remaining verification and
+the seven open release requirements stay open. All Daybreak-dependent work
+remains [deferred for the user](tasks/next_version.md).
+
 ---
 
 ## 0. Vision and document map

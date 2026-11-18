@@ -41,6 +41,10 @@ resume only on the user's explicit request.
 
 ## Current delivery status, 2026-11-19
 
+Implementation is paused at the user's request. The execution TODO retains
+the unmeasured plaintext receive candidate and its unfinished verification;
+this checkpoint supplies no new throughput or release acceptance result.
+
 | ID | Evidence and remaining action |
 | --- | --- |
 | R1 | The retained HttpArena adapter matches the local helper. Official activation still needs the reviewed release commit/package hash and the external owner's build, validation and run. |

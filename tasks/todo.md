@@ -6,6 +6,11 @@ original acceptance criteria. Record implementation checkpoints beneath the
 existing entries; put optional additions in [next_version.md](next_version.md).
 See [v2_3_scope.md](v2_3_scope.md) for the fixed requirement index.
 
+Implementation is paused at the user's request on 2026-11-19. The current
+source checkpoint includes an unmeasured plaintext SQL receive candidate;
+its unfinished verification is recorded under D-5 below. The checklist remains
+63 complete and seven open. Resume implementation only when requested.
+
 - [x] Architect scope, interfaces, ownership, and acceptance criteria.
 - [x] D-0 / FS-0: worker service lifecycle, rollback, readiness, shutdown.
 - [x] D-0: conditional SQL export/build and unchanged C ABI surface; four
@@ -42,6 +47,33 @@ See [v2_3_scope.md](v2_3_scope.md) for the fixed requirement index.
       This net local policy effect preserves the SQL and request work; the
       default was restored and no SDK policy changed. The target remains unmet.
       See `benchmarks/results/sql_plan_policy_v1/2026_11_19/README.md`.
+      Paused source checkpoint: plaintext query reads that fit the receive slab
+      and have no pending partial data parse directly, then stage any incomplete
+      suffix before completion. Reads continuing a partial frame, startup/TLS
+      reads and oversized reads retain the existing staged path;
+      eager row validation, complete wire-byte bounds and owned result storage
+      remain intact. Source review has no unresolved findings. Eight parent
+      characterization tests and ten candidate receive tests pass. The isolated
+      Linux musl candidate application build passes, but its source snapshot
+      predates the final test-only changes. Ordinary units complete with 1,185
+      passes and seven explicit TLS/alternate-credential skips out of 1,192;
+      the live plaintext deadline/cancellation/recovery tests ran. The final
+      build/source closure remains unverified at pause.
+      The prepared benchmark checker passes 17 offline tests; no HTTP timing
+      ran and no performance gain or retention decision is established.
+      Remaining work: freeze the final source/build identity, run three
+      alternating control/candidate pairs under the default PostgreSQL policy
+      with the existing exact-body/scan/cutoff checks, and
+      require either throughput or application CPU per completed response to
+      improve in all three pairs. Its median favorable percentage change must
+      exceed `100 * (control_max - control_min) / control_median`. Throughput
+      or p99 worsening in two or more pairs rejects the candidate. Otherwise
+      retain it only after every correctness check passes. Local inputs are under
+      `.zig-cache/sql-response-path-20261119/`; no result archive is published.
+      The owned database was restored to the default policy, checked for zero
+      TCP clients, and removed together with its generated private inputs.
+      The proposed numeric-bound change was rejected before implementation:
+      the retained fixture uses integer prices and its plans contain no casts.
 - [x] D-6: pinned SQLite, memory/file/WAL/busy/FK tests; SQL-ALLOC-001
       explicitly approved by the user for upstream C allocations only.
 - [x] D-7: transactions, savepoints, deadlines, quarantine and shutdown tests.
