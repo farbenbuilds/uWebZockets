@@ -4,6 +4,21 @@ Source requirements: engineering roadmap Section 9 (D-0 through D-11),
 Section 17.3 (FS-0), Section 17.4 (FS-1), the v2.3.0 release checklist,
 and the Section 8.2 carryovers. The task list is `tasks/todo.md`.
 
+## Frozen release scope, 2026-11-18
+
+The user directed completion of the seven currently open requirements without
+opening new work. Preserve the existing 70-entry checklist denominator and the
+original acceptance criteria indexed in `tasks/v2_3_scope.md`. Implementation
+checkpoints belong beneath those existing requirements. New features, optional
+refactors and broader requirements belong in `tasks/next_version.md`.
+
+Necessary fixes, verification, publication and integration stay in v2.3.0.
+Do not mark an unfinished requirement complete or move it to the next version.
+The certificate ownership work is a dependency of the existing PostgreSQL TLS
+allocation gate; it is not a separate release goal. Keep the supported SQL
+configuration intact, and avoid broadening the native capability into a general
+allocator or new native configuration framework.
+
 ## Architecture
 
 SQL owns wire protocol, authentication, connection state, prepared statements,

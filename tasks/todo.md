@@ -1,5 +1,11 @@
 # v2.3.0 execution and evidence
 
+Release scope is frozen at the existing 70 checklist entries: 63 were complete
+and seven were open at commit `2538055`. Close those seven against their
+original acceptance criteria. Record implementation checkpoints beneath the
+existing entries; put optional additions in [next_version.md](next_version.md).
+See [v2_3_scope.md](v2_3_scope.md) for the fixed requirement index.
+
 - [x] Architect scope, interfaces, ownership, and acceptance criteria.
 - [x] D-0 / FS-0: worker service lifecycle, rollback, readiness, shutdown.
 - [x] D-0: conditional SQL export/build and unchanged C ABI surface; four
@@ -29,6 +35,13 @@
       allocation RED. Complete native ownership, maintained publication/pins
       and production integration remain required. No PostgreSQL allocation
       exception is approved; SQLite's SQL-ALLOC-001 is separate.
+
+      Current implementation checkpoint: the post-wire control and observer
+      match all six full intervals and 18 callbacks. Each failure round has
+      199 mallocs, two callocs, 201 frees and 34665 requested bytes; cancellation
+      doubles those values. The complete certificate path accounts for 179
+      mallocs and 20081 bytes. Its ownership and source-derived capacity proof
+      are work under this existing requirement; no completion is claimed.
 - [x] Verify native reservation failure ownership, real pending-state rejection,
       configured protocol exclusions and verified reuse after `SSL_clear`:
       sixteen final cases and both inherited buffer/record proofs pass on
