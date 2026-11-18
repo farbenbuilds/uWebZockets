@@ -18,6 +18,12 @@ See [v2_3_scope.md](v2_3_scope.md) for the fixed requirement index.
 - [x] D-5: runnable `/db`, `/queries`, `/updates` locally verified.
 - [ ] D-5: official external HttpArena adapter activation.
 - [ ] D-5: retained real async-db result above 300K RPS with full provenance.
+      The current local reconstruction measures `/async-db` at 48,963 median
+      RPS with 32 workers, 256 PostgreSQL connections and 1,024 HTTP connections.
+      All six warmup-plus-timed windows reconcile with database scans; both drained
+      cohorts return 50 exact typed responses each. The threshold remains unmet.
+      Raw measurements, workload and source identities are retained in
+      `benchmarks/results/sql_httparena_local_v1/2026_11_18/README.md`.
 - [x] D-6: pinned SQLite, memory/file/WAL/busy/FK tests; SQL-ALLOC-001
       explicitly approved by the user for upstream C allocations only.
 - [x] D-7: transactions, savepoints, deadlines, quarantine and shutdown tests.
@@ -273,9 +279,11 @@ See [v2_3_scope.md](v2_3_scope.md) for the fixed requirement index.
 
 ## Open acceptance evidence
 
-- The retained local SQL cohort reaches 112,674 median RPS at 12 workers;
-  the unchanged requirement above 300,000 RPS remains unmet. The shared host
-  is not official HttpArena or quiet-host evidence.
+- The current local `/async-db` reconstruction reaches 48,963 median RPS at
+  32 workers. The earlier 112,674 median RPS cohort uses the separate `/db`
+  World-table workload. The unchanged requirement above 300,000 RPS remains
+  unmet; these shared-host measurements do not establish official HttpArena
+  or quiet-host acceptance.
 - HttpArena snapshot `5646c1d2a4f4656073430ce55ed39a5c9c2e6749` defines
   `/async-db` as an `items` range scan and has removed `crud`. Its adapter
   still pins 1.8.0. The current-contract adapter proposal is implemented,
