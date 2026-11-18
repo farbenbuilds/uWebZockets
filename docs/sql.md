@@ -330,6 +330,15 @@ For isolated local plaintext use only, set `UWZ_SQL_ALLOW_PLAINTEXT=1`.
 - `zig build sql_postgres -Dsql=true` serves `/db`, `/queries?count=N`, and
   `/updates?count=N` using bound World-table parameters. Counts are bounded
   to 1–500; missing/invalid counts select one.
+  `/queries` sends individually bound point selects in chunks of at most 16,
+  preserving result order and duplicate IDs. Each chunk shares one Sync and
+  implicit transaction; the original ten-second deadline covers all chunks.
+  A submitted chunk may finish after the HTTP client disconnects. Once the
+  stale response token is observed, the example releases its slot and submits
+  no further chunk. HTTP/1 reads are suspended while an async response is
+  pending, so a peer reset can remain unobserved until response completion.
+  `/updates` uses a SELECT followed by an autocommit UPDATE
+  for each item.
 - `zig build sql_transactions -Dsql=true` serves `POST /transaction/:id`,
   demonstrating savepoint rollback and a transactional SQL outbox. The future
   `uz.jobs` module is not a dependency of this example.

@@ -7,6 +7,7 @@ pub const Request = public_api.Request;
 pub const AsyncResponse = public_api.AsyncResponse;
 pub const Server = public_api.Server;
 pub const ServerConfig = public_api.ServerConfig;
+pub const ConfiguredAppWithTimeout = public_api.ConfiguredAppWithTimeout;
 pub const modules = public_api.modules;
 pub const sql_protocol = @import("sql/protocol.zig");
 pub const sql_migrate = @import("sql/migrate.zig");

@@ -93,6 +93,13 @@ pub fn inject(
         });
         arena_module.addImport("uWebZockets", test_support);
         test_module.addImport("sql_httparena", arena_module);
+        const postgres_module = b.createModule(.{
+            .root_source_file = b.path("examples/sql_postgres.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        postgres_module.addImport("uWebZockets", test_support);
+        test_module.addImport("sql_postgres", postgres_module);
     }
     test_module.linkLibrary(library);
     dependencies.link(test_module);

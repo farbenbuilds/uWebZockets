@@ -29,6 +29,7 @@ const StartupProbe = struct {
     bound_before_start: bool = false,
     observed_pending: bool = false,
     observed_running: bool = false,
+    observed_apply: bool = false,
     observed_ready: bool = false,
     requested_stop: bool = false,
     timed_out: bool = false,
@@ -56,6 +57,7 @@ const StartupProbe = struct {
             return;
         }
         if (self.service.state == .running) self.observed_running = true;
+        if (self.service.runner.phase == .apply) self.observed_apply = true;
         if (self.stop_during_apply and self.service.runner.phase == .apply) {
             self.requested_stop = true;
             self.app.request_shutdown();
@@ -82,6 +84,21 @@ const StartupProbe = struct {
         self.deinitialized = true;
     }
 };
+
+/// Starts the apply-phase budget after authenticating the unchanged SQL pool.
+fn start_ready_sql(context: *anyopaque, worker: *const lifecycle.WorkerContext) lifecycle.ServiceError!void {
+    const owner: *sql.Sql = @ptrCast(@alignCast(context));
+    const hooks = owner.hooks();
+    try hooks.start(context, worker);
+    const loop: *support.loop.Loop = @ptrCast(@alignCast(worker.loop));
+    const scheduler: *support.timer.Scheduler = @ptrCast(@alignCast(worker.scheduler orelse return error.InvalidConfiguration));
+    const deadline = scheduler.current_time_ms() +| owner.db.config.connect_timeout_ms;
+    while (!owner.db.ready()) {
+        if (hooks.failed.?(context)) |failure| return failure;
+        if (scheduler.current_time_ms() >= deadline) return error.DeadlineExceeded;
+        loop.xev_loop.run(.once) catch return error.Unexpected;
+    }
+}
 
 /// Owns integration credentials across the App's borrowed Db configuration.
 const Credentials = struct {
@@ -297,13 +314,19 @@ test "sql migration service: applying SQL obeys the overall deadline and drains"
     var service = try sql.MigrationService.init(&owner.db, &.{slow}, .{ .timeout_ms = 500 });
     var app = try App.init(std.testing.io);
     defer app.deinit();
-    try app.provide(owner.hooks());
+    var sql_hooks = owner.hooks();
+    sql_hooks.start = start_ready_sql;
+    try app.provide(sql_hooks);
     transferred = true;
     try app.provide(service.hooks());
+    var probe: StartupProbe = .{ .app = &app, .service = &service };
+    try app.provide(probe.hooks());
     try app.listen("127.0.0.1", 0);
     try std.testing.expectError(error.DeadlineExceeded, app.run());
     try std.testing.expectEqual(error.QueryTimeout, service.failure.?.err);
     try std.testing.expectEqualStrings("migration_deadline", service.failure.?.name[0..service.failure.?.name_len]);
+    try std.testing.expect(probe.observed_apply);
+    try std.testing.expect(!probe.timed_out);
     try std.testing.expectEqual(sql.migrate_pg.Phase.idle, service.runner.phase);
     try std.testing.expect(service.poll.owner == null);
     try std.testing.expect(owner.db.drained());

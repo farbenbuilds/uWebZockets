@@ -5,6 +5,7 @@ pub const configuration = @import("sql_config.zig");
 const log = std.log.scoped(.sql_example);
 const capacity = 128;
 const max_count = 500;
+const query_chunk_capacity = uz.sql.runtime_types.max_batch_statements;
 const output_bytes = max_count * 48 + 2;
 const App = uz.ConfiguredAppWithTimeout(capacity, 1024, 64 * 1024, 120_000);
 
@@ -17,9 +18,12 @@ const Slot = struct {
     token: uz.AsyncResponse = undefined,
     request: uz.sql.Query = undefined,
     params: [2]uz.sql.Param = undefined,
+    chunk_params: [query_chunk_capacity]uz.sql.Param = undefined,
+    chunk_statements: [query_chunk_capacity]uz.sql.BoundStatement = undefined,
     output: [output_bytes]u8 = undefined,
     output_len: usize = 0,
     remaining: usize = 0,
+    chunk_count: usize = 0,
     operation: Operation = .single,
     phase: Phase = .select,
     active: bool = false,
@@ -67,10 +71,29 @@ pub const Context = struct {
     }
 
     fn start_select(slot: *Slot) uz.sql.RuntimeError!void {
+        if (slot.operation == .queries) return start_queries(slot);
         slot.phase = .select;
         slot.params[0] = .{ .value = .{ .int4 = slot.owner.random.random().intRangeAtMost(i32, 1, 10000) } };
         slot.request.statement = .{ .name = "world_select", .sql = "SELECT id, randomnumber FROM World WHERE id=$1", .param_oids = &.{23} };
         slot.request.params = slot.params[0..1];
+        try slot.owner.sql.db.query(&slot.request);
+    }
+
+    fn start_queries(slot: *Slot) uz.sql.RuntimeError!void {
+        slot.phase = .select;
+        slot.chunk_count = @min(slot.remaining, query_chunk_capacity);
+        for (0..slot.chunk_count) |index| {
+            slot.chunk_params[index] = .{ .value = .{ .int4 = slot.owner.random.random().intRangeAtMost(i32, 1, 10000) } };
+            slot.chunk_statements[index] = .{
+                .statement = .{ .name = "world_select", .sql = "SELECT id, randomnumber FROM World WHERE id=$1", .param_oids = &.{23} },
+                .params = slot.chunk_params[index..][0..1],
+            };
+        }
+        slot.request.params = &.{};
+        slot.request.batch = &.{};
+        if (slot.chunk_count == 1) {
+            slot.request.params = slot.chunk_params[0..1];
+        } else slot.request.batch = slot.chunk_statements[0..slot.chunk_count];
         try slot.owner.sql.db.query(&slot.request);
     }
 
@@ -87,6 +110,10 @@ pub const Context = struct {
                 return;
             },
         };
+        if (slot.operation == .queries) {
+            on_query_chunk(slot, result);
+            return;
+        }
         var rows = result.rows;
         const row = (rows.next() catch {
             fail(slot);
@@ -124,6 +151,22 @@ pub const Context = struct {
         release(slot);
     }
 
+    fn on_query_chunk(slot: *Slot, result: uz.sql.QueryResult) void {
+        slot.output_len = append_query_chunk(slot.output[0..], slot.output_len, slot.chunk_params[0..slot.chunk_count], result.results) catch {
+            fail(slot);
+            return;
+        };
+        slot.remaining -= slot.chunk_count;
+        if (slot.remaining != 0) {
+            start_queries(slot) catch fail(slot);
+            return;
+        }
+        slot.output[slot.output_len] = ']';
+        slot.output_len += 1;
+        complete(slot.token, "200 OK", slot.output[0..slot.output_len]);
+        release(slot);
+    }
+
     fn start_update(slot: *Slot, id: i32) uz.sql.RuntimeError!void {
         slot.phase = .update;
         slot.params[0] = .{ .value = .{ .int4 = slot.owner.random.random().intRangeAtMost(i32, 1, 10000) } };
@@ -152,6 +195,33 @@ pub const Context = struct {
         owner.free_count += 1;
     }
 };
+
+/// Appends exactly one typed row per bound ID, retaining space for array closure.
+pub fn append_query_chunk(output: []u8, output_len: usize, params: []const uz.sql.Param, results: []const uz.sql.ResultSet) QueryChunkError!usize {
+    if (params.len == 0 or params.len > query_chunk_capacity or results.len != params.len) return error.InvalidResult;
+    if (output_len >= output.len) return error.BufferTooSmall;
+    if (output_len == 0 or output[0] != '[') return error.InvalidResult;
+    var length = output_len;
+    for (params, results) |param, result| {
+        const expected_id = switch (param.value) {
+            .int4 => |id| id,
+            else => return error.TypeMismatch,
+        };
+        var rows = result.rows;
+        const row = (try rows.next()) orelse return error.InvalidResult;
+        if (row.fields.len != 2) return error.InvalidResult;
+        const id = try row.get(i32, 0);
+        const number = try row.get(i32, 1);
+        if (id != expected_id or try rows.next() != null) return error.InvalidResult;
+        const separator = if (length > 1) "," else "";
+        const text = std.fmt.bufPrint(output[length .. output.len - 1], "{s}{{\"id\":{d},\"randomNumber\":{d}}}", .{ separator, id, number }) catch return error.BufferTooSmall;
+        length += text.len;
+    }
+    return length;
+}
+
+/// Chunk validation includes row cardinality as well as wire and scalar failures.
+pub const QueryChunkError = uz.sql.SqlError || error{InvalidResult};
 
 fn parse_count(query: []const u8) usize {
     var pairs = std.mem.splitScalar(u8, query, '&');

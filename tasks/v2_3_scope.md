@@ -8,7 +8,7 @@ These identifiers index the existing open entries; they add no acceptance work.
 | ID | Existing open requirement |
 | --- | --- |
 | R1 | D-5: official external HttpArena adapter activation. |
-| R2 | D-5: retained real async-db result above 300K RPS with full provenance. |
+| R2 | D-5: `/db`, `/queries`, and `/updates` exceed 300K RPS; retain the separately required real async-db result and full provenance. |
 | R3 | D-10: strict total PostgreSQL TLS allocation gate, including complete native ownership, maintained publication/pins and production integration. |
 | R4 | Eliminate remaining request-path TLS control allocations and verify the maintained integrated native solution under unchanged accounting. |
 | R5 | Every required release gate passes; retain the listed open acceptance evidence and explicit user-deferred campaign status. |
@@ -41,14 +41,14 @@ resume only on the user's explicit request.
 
 ## Current delivery status, 2026-11-19
 
-Implementation is paused at the user's request. The execution TODO retains
-the unmeasured plaintext receive candidate and its unfinished verification;
-this checkpoint supplies no new throughput or release acceptance result.
+The user resumed the D-5 throughput work on 2026-11-19. Other implementation
+stays paused, and the Daybreak-dependent work stays deferred for the user.
+The earlier plaintext receive candidate has no isolated retention result.
 
 | ID | Evidence and remaining action |
 | --- | --- |
 | R1 | The retained HttpArena adapter matches the local helper. Official activation still needs the reviewed release commit/package hash and the external owner's build, validation and run. |
-| R2 | The latest local comparison reaches 51,741 median RPS with default `auto` and 60,779 with `force_generic_plan`. The required result above 300K RPS remains absent. The earlier 112,674 `/db` result is a separate workload. |
+| R2 | A retained World `/queries?count=20` change improves median RPS from 13,457 to 50,050 in three matched SCRAM pairs. The separate async-db policy comparison reaches 51,741 with default `auto` and 60,779 with `force_generic_plan`. Neither result meets its 300K requirement; all three World routes remain required. |
 | R3, R4 | The Daybreak-dependent allocation work is deferred for the user in the next-version TODO. The strict PostgreSQL allocation result remains RED; no PostgreSQL exception is approved. |
 | R5 | Local ordinary verification is retained. User-deferred campaigns, native platform and second-machine checks, quiet-host evidence and the listed release-owner decisions remain unresolved. |
 | R6 | Independent public-App candidate acceptance is retained. Published fork integration, normal-build activation and the remaining release evidence are still required. |
@@ -59,6 +59,14 @@ retains 975,981 successful query triples inside conservative active-load windows
 Its matched control and isolated instrumented build reach 49,276 and 49,262
 median RPS. SDK admission, assigned service and total query latency are now
 measured under HTTP load. Production sources are unchanged and R2 stays open.
+
+The [World query-chunk comparison](../benchmarks/results/sql_world_queries_chunk_v1/2026_11_19/README.md)
+retains at most 16 individually bound reads per submission through the existing
+SDK. Median HTTP p99 improves from 27.792 to 9.225 ms, all three throughput
+pairs improve, and exact responses and database counters reconcile. Ordinary
+verification passes 1,191 tests with seven explicit skips. Historical host
+screening used trust authentication and is not this matched SCRAM control.
+Counts, work and the all-three threshold are unchanged; R2 stays open.
 
 A subsequent [pool-dispatch comparison](../benchmarks/results/sql_pool_dispatch_v1/2026_11_19/README.md)
 measured 47,744 control and 48,072 candidate median RPS. Throughput and CPU

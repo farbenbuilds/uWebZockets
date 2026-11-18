@@ -13,6 +13,7 @@ comptime {
         _ = @import("sql_pg_migration_tests.zig");
         _ = @import("sql_migration_service_tests.zig");
         _ = @import("sql_httparena_tests.zig");
+        _ = @import("sql_postgres_tests.zig");
     }
     if (@import("module_options").sqlite) {
         _ = @import("sqlite_tests.zig");

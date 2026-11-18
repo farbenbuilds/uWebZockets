@@ -16,11 +16,11 @@
 > Part II is the merged design dossiers from `uWZ-Disadvantages.md`; Section 19
 > is the master release checklist.
 
-The v2.3.0 implementation is paused at the user's request on 2026-11-19.
-[The execution TODO](tasks/todo.md) records completed work and the current
-unmeasured plaintext SQL receive candidate. Its remaining verification and
-the seven open release requirements stay open. All Daybreak-dependent work
-remains [deferred for the user](tasks/next_version.md).
+The user resumed the existing D-5 throughput goal on 2026-11-19; other v2.3.0
+implementation stays paused. [The execution TODO](tasks/todo.md) records the
+retained `/queries` gain and the earlier unmeasured plaintext SQL receive
+candidate. The all-three 300K target and seven release requirements stay open.
+All Daybreak-dependent work remains [deferred for the user](tasks/next_version.md).
 
 ---
 
@@ -7115,6 +7115,11 @@ End of Part II.
       approved SQL-ALLOC-001 for upstream SQLite C allocations; bounded Zig
       storage and PostgreSQL's allocation contract remain mandatory.
 - [ ] `/db`, `/queries`, `/updates` (D-5) exceed 300K RPS.
+      Retained `/queries?count=20` batching improves matched local SCRAM
+      throughput from 13,457 to 50,050 RPS median and HTTP p99 from 27.792 to
+      9.225 ms, with exact reads and responses verified. All three routes
+      remain below the required acceptance result. See the
+      [comparison](benchmarks/results/sql_world_queries_chunk_v1/2026_11_19/README.md).
 - [ ] No request-path allocation; pool and row buffers are startup-owned.
 - [x] `docs/sql.md` and the examples compile.
 

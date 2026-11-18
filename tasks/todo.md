@@ -6,10 +6,10 @@ original acceptance criteria. Record implementation checkpoints beneath the
 existing entries; put optional additions in [next_version.md](next_version.md).
 See [v2_3_scope.md](v2_3_scope.md) for the fixed requirement index.
 
-Implementation is paused at the user's request on 2026-11-19. The current
-source checkpoint includes an unmeasured plaintext SQL receive candidate;
-its unfinished verification is recorded under D-5 below. The checklist remains
-63 complete and seven open. Resume implementation only when requested.
+The user resumed D-5 on 2026-11-19 specifically to finish the existing
+`/db`, `/queries`, and `/updates` throughput requirement. Other implementation
+stays paused, and all Daybreak-dependent work stays deferred for the user.
+The checklist remains 63 complete and seven open.
 
 - [x] Architect scope, interfaces, ownership, and acceptance criteria.
 - [x] D-0 / FS-0: worker service lifecycle, rollback, readiness, shutdown.
@@ -22,7 +22,21 @@ its unfinished verification is recorded under D-5 below. The checklist remains
 - [x] D-4: prepared cache and bounded borrowed row iteration/copy.
 - [x] D-5: runnable `/db`, `/queries`, `/updates` locally verified.
 - [ ] D-5: official external HttpArena adapter activation.
-- [ ] D-5: retained real async-db result above 300K RPS with full provenance.
+- [ ] D-5: `/db`, `/queries`, and `/updates` exceed 300K RPS, with the
+      separately required real async-db result and full provenance.
+      The resumed World workload uses count 20 for `/queries` and `/updates`.
+      A retained `/queries` change batches at most 16 parameterized point reads
+      through the existing SDK. Three matched SCRAM pairs improve median
+      throughput from 13,457 to 50,050 RPS and HTTP p99 from 27.792 to 9.225 ms.
+      All reads and 700 fixed responses reconcile. Counts, order, duplicates,
+      error handling, the original deadline and observed token cancellation
+      are verified. Ordinary units pass 1,191 tests with seven explicit skips;
+      the migration timeout test now establishes readiness before its unchanged
+      500 ms apply deadline. The earlier failed attempts remain in the evidence.
+      See `benchmarks/results/sql_world_queries_chunk_v1/2026_11_19/README.md`.
+      Historical bridge/host screens used separate fixtures; the host screen
+      used trust authentication and is not the matched SCRAM control. Neither
+      the all-three target nor the separate async-db target is complete.
       The initial retained reconstruction measures `/async-db` at 48,963 median
       RPS with 32 workers, 256 PostgreSQL connections and 1,024 HTTP connections.
       All six warmup-plus-timed windows reconcile with database scans; both drained
@@ -47,7 +61,7 @@ its unfinished verification is recorded under D-5 below. The checklist remains
       This net local policy effect preserves the SQL and request work; the
       default was restored and no SDK policy changed. The target remains unmet.
       See `benchmarks/results/sql_plan_policy_v1/2026_11_19/README.md`.
-      Paused source checkpoint: plaintext query reads that fit the receive slab
+      Earlier paused source checkpoint: plaintext query reads that fit the receive slab
       and have no pending partial data parse directly, then stage any incomplete
       suffix before completion. Reads continuing a partial frame, startup/TLS
       reads and oversized reads retain the existing staged path;
@@ -58,7 +72,7 @@ its unfinished verification is recorded under D-5 below. The checklist remains
       predates the final test-only changes. Ordinary units complete with 1,185
       passes and seven explicit TLS/alternate-credential skips out of 1,192;
       the live plaintext deadline/cancellation/recovery tests ran. The final
-      build/source closure remains unverified at pause.
+      build/source closure remained unverified at that pause.
       The prepared benchmark checker passes 17 offline tests; no HTTP timing
       ran and no performance gain or retention decision is established.
       Remaining work: freeze the final source/build identity, run three
