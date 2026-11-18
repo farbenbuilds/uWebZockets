@@ -12,8 +12,9 @@ original acceptance criteria indexed in `tasks/v2_3_scope.md`. Implementation
 checkpoints belong beneath those existing requirements. New features, optional
 refactors and broader requirements belong in `tasks/next_version.md`.
 
-Necessary fixes, verification, publication and integration stay in v2.3.0.
-Do not mark an unfinished requirement complete or move it to the next version.
+Necessary fixes, verification, publication and integration stay in v2.3.0
+except for the user's explicit Daybreak deferrals in `tasks/next_version.md`.
+Do not mark deferred or unfinished requirements complete.
 The certificate ownership work is a dependency of the existing PostgreSQL TLS
 allocation gate; it is not a separate release goal. Keep the supported SQL
 configuration intact, and avoid broadening the native capability into a general

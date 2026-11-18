@@ -54,6 +54,13 @@ See [v2_3_scope.md](v2_3_scope.md) for the fixed requirement index.
       The user deferred work blocked by the Daybreak safeguard to the next
       version; the name-cache allocation-failure campaign remains unverified
       and is recorded in `tasks/next_version.md`.
+      The owned ASN.1/X.509 decoder integration subsequently hit the same
+      safeguard and is also deferred there, including its dependent ownership,
+      capacity and SDK checks. Its private-entry compile RED and unrun proof
+      draft establish no passing decoder or full allocation result.
+      Reserved TLS error-snapshot ownership and its dependent probes are also
+      deferred for the user. All Daybreak-gated allocation work stays in the
+      next-version TODO and must not restart automatically.
 - [x] Verify native reservation failure ownership, real pending-state rejection,
       configured protocol exclusions and verified reuse after `SSL_clear`:
       sixteen final cases and both inherited buffer/record proofs pass on

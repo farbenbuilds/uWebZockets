@@ -35,3 +35,6 @@ deferrals remain unchanged.
 On 2026-11-18 the user additionally deferred tasks blocked by the Daybreak
 safeguard to the next version. Record the exact affected work and missing
 evidence in that file; this deferral supplies no passing allocation result.
+All affected allocation-ownership work and dependent probes are for the user
+to handle later. Do not retry them or open another dependent task as a substitute;
+resume only on the user's explicit request.
