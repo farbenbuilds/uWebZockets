@@ -31,3 +31,7 @@ Put genuinely new features, optional refactors and additional requirements in
 [next_version.md](next_version.md). Do not silently move unfinished v2.3.0 work
 there. SQLite's approved SQL-ALLOC-001 exception and the user's existing test
 deferrals remain unchanged.
+
+On 2026-11-18 the user additionally deferred tasks blocked by the Daybreak
+safeguard to the next version. Record the exact affected work and missing
+evidence in that file; this deferral supplies no passing allocation result.

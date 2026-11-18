@@ -42,6 +42,18 @@ See [v2_3_scope.md](v2_3_scope.md) for the fixed requirement index.
       doubles those values. The complete certificate path accounts for 179
       mallocs and 20081 bytes. Its ownership and source-derived capacity proof
       are work under this existing requirement; no completion is claimed.
+
+      The private allocation-operation prerequisite now preserves sticky OOM
+      status across error-queue changes and keeps destination ownership
+      explicit. The producer and fresh archive replay pass 71 ReleaseSafe
+      steps; five warmed owned cases count zero C allocation events and bytes.
+      Ordinary and cold controls retain their real allocations. Source,
+      inherited proofs and replay are retained in
+      `benchmarks/results/sql_tls_cert_operation_v1/2026_11_18/README.md`.
+      This adds no production binding or certificate capacity claim.
+      The user deferred work blocked by the Daybreak safeguard to the next
+      version; the name-cache allocation-failure campaign remains unverified
+      and is recorded in `tasks/next_version.md`.
 - [x] Verify native reservation failure ownership, real pending-state rejection,
       configured protocol exclusions and verified reuse after `SSL_clear`:
       sixteen final cases and both inherited buffer/record proofs pass on
