@@ -39,12 +39,12 @@ All affected allocation-ownership work and dependent probes are for the user
 to handle later. Do not retry them or open another dependent task as a substitute;
 resume only on the user's explicit request.
 
-## Current delivery status, 2026-11-18
+## Current delivery status, 2026-11-19
 
 | ID | Evidence and remaining action |
 | --- | --- |
 | R1 | The retained HttpArena adapter matches the local helper. Official activation still needs the reviewed release commit/package hash and the external owner's build, validation and run. |
-| R2 | The current local `/async-db` reconstruction reaches 48,963 median RPS with 32 workers. The required result above 300K RPS remains absent. The earlier 112,674 `/db` result is a separate workload. |
+| R2 | The latest local comparison reaches 51,741 median RPS with default `auto` and 60,779 with `force_generic_plan`. The required result above 300K RPS remains absent. The earlier 112,674 `/db` result is a separate workload. |
 | R3, R4 | The Daybreak-dependent allocation work is deferred for the user in the next-version TODO. The strict PostgreSQL allocation result remains RED; no PostgreSQL exception is approved. |
 | R5 | Local ordinary verification is retained. User-deferred campaigns, native platform and second-machine checks, quiet-host evidence and the listed release-owner decisions remain unresolved. |
 | R6 | Independent public-App candidate acceptance is retained. Published fork integration, normal-build activation and the remaining release evidence are still required. |
@@ -68,6 +68,14 @@ planner and executor hook times are 152.748 and 279.867 microseconds per call.
 These are elapsed diagnostic averages. Diagnostic throughput and CPU differed
 beyond observed normal-run variation, so they do not establish untracked
 planning costs. The normal control reached 48,079 median RPS; R2 remains open.
+
+The [single-cluster plan-policy comparison](../benchmarks/results/sql_plan_policy_v1/2026_11_19/README.md)
+kept the same application, bound SQL, dataset and request mix. The
+`force_generic_plan` policy improved throughput in all three pairs, from
+51,741 to 60,779 median RPS,
+with lower PostgreSQL CPU per response and HTTP p99. This is a net local
+server-policy result. The default was restored; no SDK policy changed and
+the result remains below 300K RPS.
 
 The [HttpArena handoff](../benchmarks/results/httparena_adapter_v1/2026_11_11/README.md),
 [SQL measurements](../benchmarks/results/sql_local_v1/2026_11_11/README.md),

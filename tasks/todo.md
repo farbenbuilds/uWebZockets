@@ -18,7 +18,7 @@ See [v2_3_scope.md](v2_3_scope.md) for the fixed requirement index.
 - [x] D-5: runnable `/db`, `/queries`, `/updates` locally verified.
 - [ ] D-5: official external HttpArena adapter activation.
 - [ ] D-5: retained real async-db result above 300K RPS with full provenance.
-      The current local reconstruction measures `/async-db` at 48,963 median
+      The initial retained reconstruction measures `/async-db` at 48,963 median
       RPS with 32 workers, 256 PostgreSQL connections and 1,024 HTTP connections.
       All six warmup-plus-timed windows reconcile with database scans; both drained
       cohorts return 50 exact typed responses each. The threshold remains unmet.
@@ -35,8 +35,13 @@ See [v2_3_scope.md](v2_3_scope.md) for the fixed requirement index.
       PostgreSQL planning diagnostics record one planner invocation per timed
       call in the tracked fixture. Its performance differed beyond normal-run
       variation, so the elapsed totals describe that diagnostic profile.
-      Normal control median throughput remains 48,079 RPS; see
+      That comparison's normal control measured 48,079 median RPS; see
       `benchmarks/results/sql_pg_planning_v1/2026_11_19/README.md`.
+      A subsequent same-cluster plan-policy comparison measured 51,741 median
+      RPS with the default `auto` and 60,779 with `force_generic_plan`.
+      This net local policy effect preserves the SQL and request work; the
+      default was restored and no SDK policy changed. The target remains unmet.
+      See `benchmarks/results/sql_plan_policy_v1/2026_11_19/README.md`.
 - [x] D-6: pinned SQLite, memory/file/WAL/busy/FK tests; SQL-ALLOC-001
       explicitly approved by the user for upstream C allocations only.
 - [x] D-7: transactions, savepoints, deadlines, quarantine and shutdown tests.
@@ -292,13 +297,13 @@ See [v2_3_scope.md](v2_3_scope.md) for the fixed requirement index.
 
 ## Open acceptance evidence
 
-- The current local `/async-db` reconstruction reaches 48,963 median RPS at
-  32 workers. The earlier 112,674 median RPS cohort uses the separate `/db`
-  World-table workload. The unchanged requirement above 300,000 RPS remains
-  unmet; these shared-host measurements do not establish official HttpArena
-  or quiet-host acceptance. Paired query-latency evidence now retains admission,
-  assigned SDK service and total SDK timing under HTTP load; its matched
-  control reaches 49,276 median RPS and leaves the threshold unmet.
+- The latest local `/async-db` comparison reaches 51,741 median RPS with
+  default `auto` and 60,779 with `force_generic_plan`, at 32 workers.
+  The earlier 112,674 median RPS cohort uses the separate `/db` World-table
+  workload. The unchanged requirement above 300,000 RPS remains unmet;
+  these shared-host measurements do not establish official HttpArena or
+  quiet-host acceptance. Earlier paired evidence retains admission, assigned
+  SDK service and total SDK timing for its default configuration.
 - HttpArena snapshot `5646c1d2a4f4656073430ce55ed39a5c9c2e6749` defines
   `/async-db` as an `items` range scan and has removed `crud`. Its adapter
   still pins 1.8.0. The current-contract adapter proposal is implemented,
