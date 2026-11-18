@@ -48,7 +48,7 @@ The earlier plaintext receive candidate has no isolated retention result.
 | ID | Evidence and remaining action |
 | --- | --- |
 | R1 | The retained HttpArena adapter matches the local helper. Official activation still needs the reviewed release commit/package hash and the external owner's build, validation and run. |
-| R2 | Retained World count-20 changes improve `/queries` from 13,457 to 50,050 median RPS and `/updates` from 4,256 to 12,719, each in three matched SCRAM pairs. The separate async-db policy comparison reaches 51,741 with default `auto` and 60,779 with `force_generic_plan`. These results remain below 300K; all three World routes remain required. |
+| R2 | The subsequent unchanged-code World capacity screen reaches best medians of 174,419/49,899/12,905 RPS for `/db`/`/queries?count=20`/`/updates?count=20` across four HTTP profiles. Retained batching gains are documented below. The separate async-db comparison reaches 51,741 with default `auto` and 60,779 with `force_generic_plan`. Both throughput requirements remain open. |
 | R3, R4 | The Daybreak-dependent allocation work is deferred for the user in the next-version TODO. The strict PostgreSQL allocation result remains RED; no PostgreSQL exception is approved. |
 | R5 | Local ordinary verification is retained. User-deferred campaigns, native platform and second-machine checks, quiet-host evidence and the listed release-owner decisions remain unresolved. |
 | R6 | Independent public-App candidate acceptance is retained. Published fork integration, normal-build activation and the remaining release evidence are still required. |
@@ -77,6 +77,18 @@ six timed arms have zero errors or rollbacks. Ordinary verification passes
 tests also pass. The example documents its changed transaction boundaries and
 possible committed writes after failure. Physical history and automatic
 maintenance differ across arms and are recorded. The 300K target remains unmet.
+
+The [World capacity screen](../benchmarks/results/sql_world_capacity_v1/2026_11_19/README.md)
+keeps the accepted executable, SQL work, 12 workers, 96 SQL sessions, SCRAM,
+default plan policy and durability settings fixed. Three repetitions per route
+compare 96/192/384 HTTP connections with four load-generator threads and
+192 connections with eight threads. All 39 cases pass validation and cleanup;
+all 36 timed samples remain below 300K. The best observed route medians use
+different profiles. At unchanged measured app/PG CPU cost, the target would
+consume approximately 35/149/528 CPU-seconds per wall second respectively,
+before load generation, on this 28-logical-CPU host. This projection neither
+establishes an absolute ceiling nor guarantees a larger configuration will
+pass. A larger quiet host has been requested; R2 stays open.
 
 A subsequent [pool-dispatch comparison](../benchmarks/results/sql_pool_dispatch_v1/2026_11_19/README.md)
 measured 47,744 control and 48,072 candidate median RPS. Throughput and CPU

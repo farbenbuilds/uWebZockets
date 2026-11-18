@@ -7124,6 +7124,12 @@ End of Part II.
       4,256 to 12,719 RPS median and HTTP p99 from 69.928 to 25.855 ms, with
       exact writes, persistence and transaction failures verified. See the
       [update comparison](benchmarks/results/sql_world_updates_chunk_v1/2026_11_19/README.md).
+      A separate unchanged-code [capacity screen](benchmarks/results/sql_world_capacity_v1/2026_11_19/README.md)
+      verifies 39 cases across four HTTP profiles. Best observed route medians
+      are 174,419 / 49,899 / 12,905 RPS respectively, with count 20 for queries
+      and updates. All 36 timed samples remain below 300K. At the observed
+      CPU cost, reaching 300K would require more usable CPU capacity.
+      A larger quiet benchmark host has been requested.
 - [ ] No request-path allocation; pool and row buffers are startup-owned.
 - [x] `docs/sql.md` and the examples compile.
 

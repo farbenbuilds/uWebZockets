@@ -47,6 +47,19 @@ The checklist remains 63 complete and seven open.
       12 controlled HTTP lifecycle cases pass. Physical history and automatic
       maintenance are retained, so this is a local result. See
       `benchmarks/results/sql_world_updates_chunk_v1/2026_11_19/README.md`.
+      The unchanged accepted executable also passes a 39-case capacity screen:
+      three fixed cases and three timed repetitions per route under four HTTP
+      connection/thread profiles. Best observed medians are 174,419 RPS for
+      `/db`, 49,899 for `/queries?count=20`, and 12,905 for `/updates?count=20`.
+      All 36 timed samples remain below 300K, with zero errors or rollbacks.
+      Exact SQL work, cutoff bounds, all fixed bodies and persistence pass;
+      all 39 applications exit zero and are removed. These tested settings do
+      not establish an absolute ceiling. At unchanged observed app/PG CPU
+      cost, 300K would require approximately 35/149/528 CPU-seconds per wall
+      second respectively, before load generation; this host exposes 28
+      logical CPUs. A larger quiet benchmark host has been requested, with
+      no reply yet. The target stays open. See
+      `benchmarks/results/sql_world_capacity_v1/2026_11_19/README.md`.
       Historical bridge/host screens used separate fixtures; the host screen
       used trust authentication and is not the matched SCRAM control. Neither
       the all-three target nor the separate async-db target is complete.
