@@ -28,6 +28,10 @@ See [v2_3_scope.md](v2_3_scope.md) for the fixed requirement index.
       load. Matched control and instrumented medians are 49,276 and 49,262 RPS;
       production sources and the throughput requirement are unchanged. See
       `benchmarks/results/sql_httparena_query_latency_v1/2026_11_18/README.md`.
+      A pool-dispatch optimization was measured in three matched pairs and
+      reverted because the results did not establish a repeatable benefit.
+      The rejected candidate and raw comparison are retained in
+      `benchmarks/results/sql_pool_dispatch_v1/2026_11_19/README.md`.
 - [x] D-6: pinned SQLite, memory/file/WAL/busy/FK tests; SQL-ALLOC-001
       explicitly approved by the user for upstream C allocations only.
 - [x] D-7: transactions, savepoints, deadlines, quarantine and shutdown tests.

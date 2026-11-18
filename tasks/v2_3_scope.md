@@ -56,6 +56,12 @@ Its matched control and isolated instrumented build reach 49,276 and 49,262
 median RPS. SDK admission, assigned service and total query latency are now
 measured under HTTP load. Production sources are unchanged and R2 stays open.
 
+A subsequent [pool-dispatch comparison](../benchmarks/results/sql_pool_dispatch_v1/2026_11_19/README.md)
+measured 47,744 control and 48,072 candidate median RPS. Throughput and CPU
+changes varied in direction, and p99 was worse in two pairs. The candidate was
+reverted because the measurements did not establish a repeatable benefit.
+This experiment leaves the required throughput result absent.
+
 The [HttpArena handoff](../benchmarks/results/httparena_adapter_v1/2026_11_11/README.md),
 [SQL measurements](../benchmarks/results/sql_local_v1/2026_11_11/README.md),
 [current async-db measurements](../benchmarks/results/sql_httparena_local_v1/2026_11_18/README.md),
