@@ -62,6 +62,13 @@ changes varied in direction, and p99 was worse in two pairs. The candidate was
 reverted because the measurements did not establish a repeatable benefit.
 This experiment leaves the required throughput result absent.
 
+The [PostgreSQL planning diagnostics](../benchmarks/results/sql_pg_planning_v1/2026_11_19/README.md)
+record one planner invocation per timed call under tracking. Their mean
+planner and executor hook times are 152.748 and 279.867 microseconds per call.
+These are elapsed diagnostic averages. Diagnostic throughput and CPU differed
+beyond observed normal-run variation, so they do not establish untracked
+planning costs. The normal control reached 48,079 median RPS; R2 remains open.
+
 The [HttpArena handoff](../benchmarks/results/httparena_adapter_v1/2026_11_11/README.md),
 [SQL measurements](../benchmarks/results/sql_local_v1/2026_11_11/README.md),
 [current async-db measurements](../benchmarks/results/sql_httparena_local_v1/2026_11_18/README.md),

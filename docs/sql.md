@@ -37,6 +37,10 @@ cannot be reused for different SQL or OIDs. Request fields, parameter slices,
 and callbacks remain caller-owned until completion. Credentials are borrowed
 for the module lifetime and must never be printed as part of a database URL.
 
+Cache hits avoid another protocol Parse message. PostgreSQL independently
+chooses custom or generic plans, so a cache hit can still invoke the planner.
+See [PostgreSQL PREPARE](https://www.postgresql.org/docs/18/sql-prepare.html).
+
 `Db.query(*Query)` submits asynchronous work on the worker loop.
 `Db.acquire`, `query_on`, `release`, and `discard` expose an exclusive,
 generation-checked lease for transactions and startup work. Use an absolute

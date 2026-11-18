@@ -32,6 +32,11 @@ See [v2_3_scope.md](v2_3_scope.md) for the fixed requirement index.
       reverted because the results did not establish a repeatable benefit.
       The rejected candidate and raw comparison are retained in
       `benchmarks/results/sql_pool_dispatch_v1/2026_11_19/README.md`.
+      PostgreSQL planning diagnostics record one planner invocation per timed
+      call in the tracked fixture. Its performance differed beyond normal-run
+      variation, so the elapsed totals describe that diagnostic profile.
+      Normal control median throughput remains 48,079 RPS; see
+      `benchmarks/results/sql_pg_planning_v1/2026_11_19/README.md`.
 - [x] D-6: pinned SQLite, memory/file/WAL/busy/FK tests; SQL-ALLOC-001
       explicitly approved by the user for upstream C allocations only.
 - [x] D-7: transactions, savepoints, deadlines, quarantine and shutdown tests.
