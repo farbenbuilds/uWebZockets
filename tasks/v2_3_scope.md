@@ -38,3 +38,24 @@ evidence in that file; this deferral supplies no passing allocation result.
 All affected allocation-ownership work and dependent probes are for the user
 to handle later. Do not retry them or open another dependent task as a substitute;
 resume only on the user's explicit request.
+
+## Current delivery status, 2026-11-18
+
+| ID | Evidence and remaining action |
+| --- | --- |
+| R1 | The retained HttpArena adapter matches the local helper. Official activation still needs the reviewed release commit/package hash and the external owner's build, validation and run. |
+| R2 | The retained local `/db` cohort reaches 112,674 median RPS. This is not an `async-db` acceptance result; the required real result above 300K RPS remains absent. |
+| R3, R4 | The Daybreak-dependent allocation work is deferred for the user in the next-version TODO. The strict PostgreSQL allocation result remains RED; no PostgreSQL exception is approved. |
+| R5 | Local ordinary verification is retained. User-deferred campaigns, native platform and second-machine checks, quiet-host evidence and the listed release-owner decisions remain unresolved. |
+| R6 | Independent public-App candidate acceptance is retained. Published fork integration, normal-build activation and the remaining release evidence are still required. |
+| R7 | Reviewed publication histories and compatible fixes are retained locally. Maintainer integration, all four manifest updates and normal-build verification remain pending. GitHub connection/API checks are stopped at the user's request. |
+
+The [HttpArena handoff](../benchmarks/results/httparena_adapter_v1/2026_11_11/README.md),
+[SQL measurements](../benchmarks/results/sql_local_v1/2026_11_11/README.md),
+[public-client acceptance](../benchmarks/results/webtransport_independent_client_v1/2026_11_17/README.md),
+[publication preparation](../benchmarks/results/dependency_publication_v2_3/2026_11_17/README.md)
+and subsequent
+[compatible fixes](../benchmarks/results/lsquic_compatible_fixes_v1/2026_11_17/README.md)
+retain their exact scopes and source identities. Historical preparation notes
+do not supersede later fixes or establish publication. No remaining requirement
+is marked complete by this status index.

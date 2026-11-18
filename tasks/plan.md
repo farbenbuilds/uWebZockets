@@ -20,6 +20,11 @@ allocation gate; it is not a separate release goal. Keep the supported SQL
 configuration intact, and avoid broadening the native capability into a general
 allocator or new native configuration framework.
 
+Delivery preference, 2026-11-18: stop GitHub connector and API checks; do not
+request a new GitHub connection. Use the existing Git remote only for the
+user-requested pushes to `impl/implement-2.3.0`. External release-owner actions
+remain open until their evidence exists.
+
 ## Architecture
 
 SQL owns wire protocol, authentication, connection state, prepared statements,
