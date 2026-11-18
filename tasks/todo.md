@@ -34,6 +34,19 @@ The checklist remains 63 complete and seven open.
       the migration timeout test now establishes readiness before its unchanged
       500 ms apply deadline. The earlier failed attempts remain in the evidence.
       See `benchmarks/results/sql_world_queries_chunk_v1/2026_11_19/README.md`.
+      A retained `/updates` change submits at most eight SELECT/UPDATE pairs
+      through the existing 16-operation batch. Stable row-lock ordering keeps
+      duplicate writes and original output order. Its implicit transaction per
+      chunk replaces per-item autocommit in this unreleased example; a failed
+      response can follow committed chunks or client-side validation failure.
+      Three matched SCRAM pairs improve count-20 median throughput from 4,256
+      to 12,719 RPS and HTTP p99 from 69.928 to 25.855 ms. All 600 fixed responses
+      match exact read/write counts and persisted values; all six timed arms
+      have zero errors or rollbacks. Ordinary units pass 1,198 tests with seven
+      explicit skips; live cancellation, actual opposing lock orders and all
+      12 controlled HTTP lifecycle cases pass. Physical history and automatic
+      maintenance are retained, so this is a local result. See
+      `benchmarks/results/sql_world_updates_chunk_v1/2026_11_19/README.md`.
       Historical bridge/host screens used separate fixtures; the host screen
       used trust authentication and is not the matched SCRAM control. Neither
       the all-three target nor the separate async-db target is complete.

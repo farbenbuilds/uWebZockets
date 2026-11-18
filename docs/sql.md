@@ -337,8 +337,20 @@ For isolated local plaintext use only, set `UWZ_SQL_ALLOW_PLAINTEXT=1`.
   stale response token is observed, the example releases its slot and submits
   no further chunk. HTTP/1 reads are suspended while an async response is
   pending, so a peer reset can remain unobserved until response completion.
-  `/updates` uses a SELECT followed by an autocommit UPDATE
-  for each item.
+  `/updates` assumes the seeded World IDs remain present. It sends up to eight
+  interleaved, individually bound SELECT/UPDATE pairs per chunk, acquiring
+  row locks in ID order with stable duplicate ordering. Actual returned rows
+  are serialized in original request order, including every duplicate write.
+  The original ten-second request deadline covers all update chunks.
+  This unreleased example previously committed each item's SELECT and UPDATE
+  separately; update chunks now each use one implicit transaction. A SQL error
+  rolls back the active chunk; earlier chunks remain committed. A zero-row or
+  client validation failure after a successful Sync can return 503 after the
+  active chunk commits. A late or lost reply can leave committed writes with
+  no response. The example never retries either case. The HTTP/1 suspended-read
+  behavior also applies to `/updates`: further chunks may be submitted until
+  a stale token is observed or the original deadline expires, and submitted
+  writes can commit after a peer reset.
 - `zig build sql_transactions -Dsql=true` serves `POST /transaction/:id`,
   demonstrating savepoint rollback and a transactional SQL outbox. The future
   `uz.jobs` module is not a dependency of this example.

@@ -18,7 +18,7 @@
 
 The user resumed the existing D-5 throughput goal on 2026-11-19; other v2.3.0
 implementation stays paused. [The execution TODO](tasks/todo.md) records the
-retained `/queries` gain and the earlier unmeasured plaintext SQL receive
+retained query/update gains and the earlier unmeasured plaintext SQL receive
 candidate. The all-three 300K target and seven release requirements stay open.
 All Daybreak-dependent work remains [deferred for the user](tasks/next_version.md).
 
@@ -7117,9 +7117,13 @@ End of Part II.
 - [ ] `/db`, `/queries`, `/updates` (D-5) exceed 300K RPS.
       Retained `/queries?count=20` batching improves matched local SCRAM
       throughput from 13,457 to 50,050 RPS median and HTTP p99 from 27.792 to
-      9.225 ms, with exact reads and responses verified. All three routes
-      remain below the required acceptance result. See the
+      9.225 ms, with exact reads and responses verified. The all-three
+      acceptance result remains unmet. See the
       [comparison](benchmarks/results/sql_world_queries_chunk_v1/2026_11_19/README.md).
+      Retained update batches of at most eight pairs improve `/updates?count=20` from
+      4,256 to 12,719 RPS median and HTTP p99 from 69.928 to 25.855 ms, with
+      exact writes, persistence and transaction failures verified. See the
+      [update comparison](benchmarks/results/sql_world_updates_chunk_v1/2026_11_19/README.md).
 - [ ] No request-path allocation; pool and row buffers are startup-owned.
 - [x] `docs/sql.md` and the examples compile.
 

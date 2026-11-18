@@ -6,26 +6,33 @@ const log = std.log.scoped(.sql_example);
 const capacity = 128;
 const max_count = 500;
 const query_chunk_capacity = uz.sql.runtime_types.max_batch_statements;
+const update_chunk_capacity = query_chunk_capacity / 2;
 const output_bytes = max_count * 48 + 2;
 const App = uz.ConfiguredAppWithTimeout(capacity, 1024, 64 * 1024, 120_000);
 
 const Operation = enum { single, queries, updates };
-const Phase = enum { select, update };
+
+/// UPDATE value and ID borrow slot-owned storage until the chunk reaches Sync.
+pub const UpdateParameters = [2]uz.sql.Param;
+
+/// Scalar copies survive reordering and response-slab reuse.
+const WorldValue = struct { id: i32, number: i32 };
 
 const Slot = struct {
     owner: *Context = undefined,
     index: usize = 0,
     token: uz.AsyncResponse = undefined,
     request: uz.sql.Query = undefined,
-    params: [2]uz.sql.Param = undefined,
+    params: [1]uz.sql.Param = undefined,
     chunk_params: [query_chunk_capacity]uz.sql.Param = undefined,
     chunk_statements: [query_chunk_capacity]uz.sql.BoundStatement = undefined,
+    update_params: [update_chunk_capacity]UpdateParameters = undefined,
+    update_order: [update_chunk_capacity]usize = undefined,
     output: [output_bytes]u8 = undefined,
     output_len: usize = 0,
     remaining: usize = 0,
     chunk_count: usize = 0,
     operation: Operation = .single,
-    phase: Phase = .select,
     active: bool = false,
 };
 
@@ -67,12 +74,14 @@ pub const Context = struct {
             .context = slot,
             .callback = on_query,
         };
-        start_select(slot) catch fail(slot);
+        (switch (slot.operation) {
+            .single => start_select(slot),
+            .queries => start_queries(slot),
+            .updates => start_updates(slot),
+        }) catch fail(slot);
     }
 
     fn start_select(slot: *Slot) uz.sql.RuntimeError!void {
-        if (slot.operation == .queries) return start_queries(slot);
-        slot.phase = .select;
         slot.params[0] = .{ .value = .{ .int4 = slot.owner.random.random().intRangeAtMost(i32, 1, 10000) } };
         slot.request.statement = .{ .name = "world_select", .sql = "SELECT id, randomnumber FROM World WHERE id=$1", .param_oids = &.{23} };
         slot.request.params = slot.params[0..1];
@@ -80,7 +89,6 @@ pub const Context = struct {
     }
 
     fn start_queries(slot: *Slot) uz.sql.RuntimeError!void {
-        slot.phase = .select;
         slot.chunk_count = @min(slot.remaining, query_chunk_capacity);
         for (0..slot.chunk_count) |index| {
             slot.chunk_params[index] = .{ .value = .{ .int4 = slot.owner.random.random().intRangeAtMost(i32, 1, 10000) } };
@@ -94,6 +102,23 @@ pub const Context = struct {
         if (slot.chunk_count == 1) {
             slot.request.params = slot.chunk_params[0..1];
         } else slot.request.batch = slot.chunk_statements[0..slot.chunk_count];
+        try slot.owner.sql.db.query(&slot.request);
+    }
+
+    fn start_updates(slot: *Slot) uz.sql.RuntimeError!void {
+        slot.chunk_count = @min(slot.remaining, update_chunk_capacity);
+        for (0..slot.chunk_count) |index| {
+            const id = slot.owner.random.random().intRangeAtMost(i32, 1, 10000);
+            const number = slot.owner.random.random().intRangeAtMost(i32, 1, 10000);
+            slot.chunk_params[index] = .{ .value = .{ .int4 = id } };
+            slot.update_params[index] = .{
+                .{ .value = .{ .int4 = number } },
+                .{ .value = .{ .int4 = id } },
+            };
+        }
+        slot.request.params = &.{};
+        // Slot bounds and generated parameter types are fixed by this example.
+        slot.request.batch = prepare_update_chunk(slot.chunk_params[0..slot.chunk_count], slot.update_params[0..slot.chunk_count], &slot.update_order, &slot.chunk_statements) catch return error.InvalidConfiguration;
         try slot.owner.sql.db.query(&slot.request);
     }
 
@@ -114,6 +139,10 @@ pub const Context = struct {
             on_query_chunk(slot, result);
             return;
         }
+        if (slot.operation == .updates) {
+            on_update_chunk(slot, result);
+            return;
+        }
         var rows = result.rows;
         const row = (rows.next() catch {
             fail(slot);
@@ -130,23 +159,11 @@ pub const Context = struct {
             fail(slot);
             return;
         };
-        if (slot.operation == .updates and slot.phase == .select) {
-            start_update(slot, id) catch fail(slot);
-            return;
-        }
         append_world(slot, id, number) catch {
             fail(slot);
             return;
         };
         slot.remaining -= 1;
-        if (slot.remaining != 0) {
-            start_select(slot) catch fail(slot);
-            return;
-        }
-        if (slot.operation != .single) {
-            slot.output[slot.output_len] = ']';
-            slot.output_len += 1;
-        }
         complete(slot.token, "200 OK", slot.output[0..slot.output_len]);
         release(slot);
     }
@@ -167,13 +184,20 @@ pub const Context = struct {
         release(slot);
     }
 
-    fn start_update(slot: *Slot, id: i32) uz.sql.RuntimeError!void {
-        slot.phase = .update;
-        slot.params[0] = .{ .value = .{ .int4 = slot.owner.random.random().intRangeAtMost(i32, 1, 10000) } };
-        slot.params[1] = .{ .value = .{ .int4 = id } };
-        slot.request.statement = .{ .name = "world_update", .sql = "UPDATE World SET randomnumber=$1 WHERE id=$2 RETURNING id,randomnumber", .param_oids = &.{ 23, 23 } };
-        slot.request.params = &slot.params;
-        try slot.owner.sql.db.query(&slot.request);
+    fn on_update_chunk(slot: *Slot, result: uz.sql.QueryResult) void {
+        slot.output_len = append_update_chunk(&slot.output, slot.output_len, slot.chunk_params[0..slot.chunk_count], slot.update_params[0..slot.chunk_count], slot.update_order[0..slot.chunk_count], result.results) catch {
+            fail(slot);
+            return;
+        };
+        slot.remaining -= slot.chunk_count;
+        if (slot.remaining != 0) {
+            start_updates(slot) catch fail(slot);
+            return;
+        }
+        slot.output[slot.output_len] = ']';
+        slot.output_len += 1;
+        complete(slot.token, "200 OK", slot.output[0..slot.output_len]);
+        release(slot);
     }
 
     fn append_world(slot: *Slot, id: i32, number: i32) !void {
@@ -195,6 +219,86 @@ pub const Context = struct {
         owner.free_count += 1;
     }
 };
+
+/// Builds at most eight SELECT/UPDATE pairs in stable row-lock order.
+pub fn prepare_update_chunk(params: []const uz.sql.Param, updates: []const UpdateParameters, order: []usize, statements: []uz.sql.BoundStatement) QueryChunkError![]const uz.sql.BoundStatement {
+    if (params.len == 0 or params.len > update_chunk_capacity or updates.len != params.len) return error.InvalidResult;
+    if (order.len < params.len or statements.len < params.len * 2) return error.BufferTooSmall;
+    for (params, updates, 0..) |param, update, index| {
+        const id = switch (param.value) {
+            .int4 => |value| value,
+            else => return error.TypeMismatch,
+        };
+        if (update[0].value != .int4 or update[1].value != .int4) return error.TypeMismatch;
+        if (update[1].value.int4 != id) return error.InvalidResult;
+        order[index] = index;
+    }
+    var index: usize = 1;
+    while (index < params.len) : (index += 1) {
+        const original = order[index];
+        var cursor = index;
+        while (cursor > 0 and params[order[cursor - 1]].value.int4 > params[original].value.int4) : (cursor -= 1) {
+            order[cursor] = order[cursor - 1];
+        }
+        order[cursor] = original;
+    }
+    for (order[0..params.len], 0..) |original, position| {
+        statements[position * 2] = .{
+            .statement = .{ .name = "world_select", .sql = "SELECT id, randomnumber FROM World WHERE id=$1", .param_oids = &.{23} },
+            .params = params[original..][0..1],
+        };
+        statements[position * 2 + 1] = .{
+            .statement = .{ .name = "world_update", .sql = "UPDATE World SET randomnumber=$1 WHERE id=$2 RETURNING id,randomnumber", .param_oids = &.{ 23, 23 } },
+            .params = &updates[original],
+        };
+    }
+    return statements[0 .. params.len * 2];
+}
+
+/// Copies actual UPDATE results into original request order before rendering.
+pub fn append_update_chunk(output: []u8, output_len: usize, params: []const uz.sql.Param, updates: []const UpdateParameters, order: []const usize, results: []const uz.sql.ResultSet) QueryChunkError!usize {
+    if (params.len == 0 or params.len > update_chunk_capacity) return error.InvalidResult;
+    if (updates.len != params.len or order.len != params.len or results.len != params.len * 2) return error.InvalidResult;
+    if (output_len >= output.len) return error.BufferTooSmall;
+    if (output_len == 0 or output[0] != '[') return error.InvalidResult;
+    var values: [update_chunk_capacity]WorldValue = undefined;
+    var seen: u16 = 0;
+    for (order, 0..) |original, index| {
+        if (original >= params.len) return error.InvalidResult;
+        const bit = @as(u16, 1) << @as(u4, @intCast(original));
+        if (seen & bit != 0) return error.InvalidResult;
+        seen |= bit;
+        const id = switch (params[original].value) {
+            .int4 => |value| value,
+            else => return error.TypeMismatch,
+        };
+        const number = switch (updates[original][0].value) {
+            .int4 => |value| value,
+            else => return error.TypeMismatch,
+        };
+        if (updates[original][1].value != .int4) return error.TypeMismatch;
+        if (updates[original][1].value.int4 != id) return error.InvalidResult;
+        _ = try read_world(results[index * 2].rows, id);
+        values[original] = try read_world(results[index * 2 + 1].rows, id);
+        if (values[original].number != number) return error.InvalidResult;
+    }
+    var length = output_len;
+    for (values[0..params.len]) |value| {
+        const separator = if (length > 1) "," else "";
+        const text = std.fmt.bufPrint(output[length .. output.len - 1], "{s}{{\"id\":{d},\"randomNumber\":{d}}}", .{ separator, value.id, value.number }) catch return error.BufferTooSmall;
+        length += text.len;
+    }
+    return length;
+}
+
+fn read_world(source: uz.sql.Rows, expected_id: i32) QueryChunkError!WorldValue {
+    var rows = source;
+    const row = (try rows.next()) orelse return error.InvalidResult;
+    if (row.fields.len != 2) return error.InvalidResult;
+    const value: WorldValue = .{ .id = try row.get(i32, 0), .number = try row.get(i32, 1) };
+    if (value.id != expected_id or try rows.next() != null) return error.InvalidResult;
+    return value;
+}
 
 /// Appends exactly one typed row per bound ID, retaining space for array closure.
 pub fn append_query_chunk(output: []u8, output_len: usize, params: []const uz.sql.Param, results: []const uz.sql.ResultSet) QueryChunkError!usize {
@@ -220,7 +324,7 @@ pub fn append_query_chunk(output: []u8, output_len: usize, params: []const uz.sq
     return length;
 }
 
-/// Chunk validation includes row cardinality as well as wire and scalar failures.
+/// Chunk bounds include row cardinality, wire and scalar validation.
 pub const QueryChunkError = uz.sql.SqlError || error{InvalidResult};
 
 fn parse_count(query: []const u8) usize {

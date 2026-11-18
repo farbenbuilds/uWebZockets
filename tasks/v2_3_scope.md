@@ -48,7 +48,7 @@ The earlier plaintext receive candidate has no isolated retention result.
 | ID | Evidence and remaining action |
 | --- | --- |
 | R1 | The retained HttpArena adapter matches the local helper. Official activation still needs the reviewed release commit/package hash and the external owner's build, validation and run. |
-| R2 | A retained World `/queries?count=20` change improves median RPS from 13,457 to 50,050 in three matched SCRAM pairs. The separate async-db policy comparison reaches 51,741 with default `auto` and 60,779 with `force_generic_plan`. Neither result meets its 300K requirement; all three World routes remain required. |
+| R2 | Retained World count-20 changes improve `/queries` from 13,457 to 50,050 median RPS and `/updates` from 4,256 to 12,719, each in three matched SCRAM pairs. The separate async-db policy comparison reaches 51,741 with default `auto` and 60,779 with `force_generic_plan`. These results remain below 300K; all three World routes remain required. |
 | R3, R4 | The Daybreak-dependent allocation work is deferred for the user in the next-version TODO. The strict PostgreSQL allocation result remains RED; no PostgreSQL exception is approved. |
 | R5 | Local ordinary verification is retained. User-deferred campaigns, native platform and second-machine checks, quiet-host evidence and the listed release-owner decisions remain unresolved. |
 | R6 | Independent public-App candidate acceptance is retained. Published fork integration, normal-build activation and the remaining release evidence are still required. |
@@ -67,6 +67,16 @@ pairs improve, and exact responses and database counters reconcile. Ordinary
 verification passes 1,191 tests with seven explicit skips. Historical host
 screening used trust authentication and is not this matched SCRAM control.
 Counts, work and the all-three threshold are unchanged; R2 stays open.
+
+The [World update-chunk comparison](../benchmarks/results/sql_world_updates_chunk_v1/2026_11_19/README.md)
+retains at most eight real SELECT/UPDATE pairs per implicit transaction, stable lock
+ordering and every duplicate write. HTTP p99 improves from 69.928 to 25.855 ms.
+All 600 fixed responses reconcile with writes and persisted values, and all
+six timed arms have zero errors or rollbacks. Ordinary verification passes
+1,198 tests with seven explicit skips; the controlled HTTP and real lock-order
+tests also pass. The example documents its changed transaction boundaries and
+possible committed writes after failure. Physical history and automatic
+maintenance differ across arms and are recorded. The 300K target remains unmet.
 
 A subsequent [pool-dispatch comparison](../benchmarks/results/sql_pool_dispatch_v1/2026_11_19/README.md)
 measured 47,744 control and 48,072 candidate median RPS. Throughput and CPU
