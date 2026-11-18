@@ -24,6 +24,10 @@ See [v2_3_scope.md](v2_3_scope.md) for the fixed requirement index.
       cohorts return 50 exact typed responses each. The threshold remains unmet.
       Raw measurements, workload and source identities are retained in
       `benchmarks/results/sql_httparena_local_v1/2026_11_18/README.md`.
+      An isolated timing build retains 975,981 complete query triples under HTTP
+      load. Matched control and instrumented medians are 49,276 and 49,262 RPS;
+      production sources and the throughput requirement are unchanged. See
+      `benchmarks/results/sql_httparena_query_latency_v1/2026_11_18/README.md`.
 - [x] D-6: pinned SQLite, memory/file/WAL/busy/FK tests; SQL-ALLOC-001
       explicitly approved by the user for upstream C allocations only.
 - [x] D-7: transactions, savepoints, deadlines, quarantine and shutdown tests.
@@ -283,7 +287,9 @@ See [v2_3_scope.md](v2_3_scope.md) for the fixed requirement index.
   32 workers. The earlier 112,674 median RPS cohort uses the separate `/db`
   World-table workload. The unchanged requirement above 300,000 RPS remains
   unmet; these shared-host measurements do not establish official HttpArena
-  or quiet-host acceptance.
+  or quiet-host acceptance. Paired query-latency evidence now retains admission,
+  assigned SDK service and total SDK timing under HTTP load; its matched
+  control reaches 49,276 median RPS and leaves the threshold unmet.
 - HttpArena snapshot `5646c1d2a4f4656073430ce55ed39a5c9c2e6749` defines
   `/async-db` as an `items` range scan and has removed `crud`. Its adapter
   still pins 1.8.0. The current-contract adapter proposal is implemented,

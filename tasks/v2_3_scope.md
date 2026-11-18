@@ -50,6 +50,12 @@ resume only on the user's explicit request.
 | R6 | Independent public-App candidate acceptance is retained. Published fork integration, normal-build activation and the remaining release evidence are still required. |
 | R7 | Reviewed publication histories and compatible fixes are retained locally. Maintainer integration, all four manifest updates and normal-build verification remain pending. GitHub connection/API checks are stopped at the user's request. |
 
+The [paired query-latency evidence](../benchmarks/results/sql_httparena_query_latency_v1/2026_11_18/README.md)
+retains 975,981 successful query triples inside conservative active-load windows.
+Its matched control and isolated instrumented build reach 49,276 and 49,262
+median RPS. SDK admission, assigned service and total query latency are now
+measured under HTTP load. Production sources are unchanged and R2 stays open.
+
 The [HttpArena handoff](../benchmarks/results/httparena_adapter_v1/2026_11_11/README.md),
 [SQL measurements](../benchmarks/results/sql_local_v1/2026_11_11/README.md),
 [current async-db measurements](../benchmarks/results/sql_httparena_local_v1/2026_11_18/README.md),
