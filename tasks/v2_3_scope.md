@@ -76,6 +76,9 @@ Zig allocator. Fixed buffer and pool geometry is preserved. The World response
 target and outer Context ownership are explicitly scoped; no end-to-end socket
 HTTP, native/C/TLS, alternate-allocator, kernel/server or process-wide allocation
 pass is claimed. The master checkbox and R3/R4 stay open.
+The verified startup ownership, exercised plaintext allocation paths and
+retained test evidence are checked off as nested completion checkpoints in
+the master and execution TODOs. They do not add to the frozen 70-entry scope.
 
 The [paired query-latency evidence](../benchmarks/results/sql_httparena_query_latency_v1/2026_11_18/README.md)
 retains 975,981 successful query triples inside conservative active-load windows.

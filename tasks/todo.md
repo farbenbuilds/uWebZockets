@@ -185,6 +185,14 @@ R4 or the master no-request-allocation item, or resume Daybreak-deferred work.
       Reserved TLS error-snapshot ownership and its dependent probes are also
       deferred for the user. All Daybreak-gated allocation work stays in the
       next-version TODO and must not restart automatically.
+
+  - [x] Verify the tested `Db` startup ownership: three allocations, unchanged
+    pool/main/auxiliary/row buffer geometry and three matching frees.
+  - [x] Verify zero calls through the supplied Zig allocator in the exercised
+    plaintext runtime and World handler paths through stop/drain, including
+    counts 20 and 500.
+  - [x] Retain four passing focused groups and the ordinary result of
+    1,202 passed with seven explicit skips in the ownership evidence packet.
 - [x] Verify native reservation failure ownership, real pending-state rejection,
       configured protocol exclusions and verified reuse after `SSL_clear`:
       sixteen final cases and both inherited buffer/record proofs pass on

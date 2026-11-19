@@ -7148,6 +7148,16 @@ End of Part II.
       the HTTP socket stack, kernel or PostgreSQL server allocations. The
       strict TLS gate remains unresolved and Daybreak-dependent work stays
       deferred. See the [ownership proof](benchmarks/results/sql_zig_allocation_ownership_v1/2026_11_19/README.md).
+
+  - [x] Verify startup-owned pool, row and auxiliary buffers: three startup
+    allocations and three matching frees per tested `Db`, with fixed geometry.
+  - [x] Verify zero calls through the supplied Zig allocator in the exercised
+    plaintext query, row-copy, queue, cancellation/reconnect, recovery and
+    World handler paths, including counts 20 and 500 and shutdown drain.
+  - [x] Retain the verification evidence: four focused groups passed;
+    ordinary units passed 1,202 tests with seven explicit skips.
+  - [ ] Complete the native/C/TLS allocation proof; the recorded
+    Daybreak-dependent work remains deferred for the user.
 - [x] `docs/sql.md` and the examples compile.
 
 ### v2.4.0 checklist (Comptime SSR Engine)
