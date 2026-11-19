@@ -54,15 +54,28 @@ The user closed the D-5 World throughput task by owner acceptance on
 2026-11-19. Other implementation stays paused, and the Daybreak-dependent
 work stays deferred for the user.
 The earlier plaintext receive candidate has no isolated retention result.
+The user separately authorized permitted allocation verification. Its
+current-source supplied-Zig-allocator proof passes, with no production or
+native source change and no resumption of Daybreak-dependent work.
 
 | ID | Evidence and remaining action |
 | --- | --- |
 | R1 | The retained HttpArena adapter matches the local helper. Official activation still needs the reviewed release commit/package hash and the external owner's build, validation and run. |
 | R2 | World throughput is owner-accepted at best observed medians of 174,419/49,899/12,905 RPS for `/db`/`/queries?count=20`/`/updates?count=20`; its original measured target remains unmet. The separate async-db comparison reaches 51,741 with default `auto` and 60,779 with `force_generic_plan`. R2 remains open for that separate async-db requirement. |
-| R3, R4 | The Daybreak-dependent allocation work is deferred for the user in the next-version TODO. The strict PostgreSQL allocation result remains RED; no PostgreSQL exception is approved. |
+| R3, R4 | Current-source plaintext tests verify startup-owned buffers and zero calls through the supplied Zig allocator in the exercised paths. The complete native/C/TLS allocation requirement remains unresolved/RED; Daybreak-dependent work stays deferred for the user. No PostgreSQL exception is approved. |
 | R5 | Local ordinary verification is retained. User-deferred campaigns, native platform and second-machine checks, quiet-host evidence and the listed release-owner decisions remain unresolved. |
 | R6 | Independent public-App candidate acceptance is retained. Published fork integration, normal-build activation and the remaining release evidence are still required. |
 | R7 | Reviewed publication histories and compatible fixes are retained locally. Maintainer integration, all four manifest updates and normal-build verification remain pending. GitHub connection/API checks are stopped at the user's request. |
+
+The [permitted allocation ownership proof](../benchmarks/results/sql_zig_allocation_ownership_v1/2026_11_19/README.md)
+retains four focused groups and 1,202 ordinary passes with seven explicit
+skips. Each tested `Db` has three startup allocations and three matching frees after
+drain; the armed plaintext query/row/queue/cancel/reconnect/recovery and World
+handler cases make zero allocation, resize, remap or free calls to the supplied
+Zig allocator. Fixed buffer and pool geometry is preserved. The World response
+target and outer Context ownership are explicitly scoped; no end-to-end socket
+HTTP, native/C/TLS, alternate-allocator, kernel/server or process-wide allocation
+pass is claimed. The master checkbox and R3/R4 stay open.
 
 The [paired query-latency evidence](../benchmarks/results/sql_httparena_query_latency_v1/2026_11_18/README.md)
 retains 975,981 successful query triples inside conservative active-load windows.

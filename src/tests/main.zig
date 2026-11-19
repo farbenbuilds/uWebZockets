@@ -7,6 +7,7 @@ comptime {
     _ = @import("sql_wire_tests.zig");
     if (@import("module_options").sql) {
         _ = @import("sql_runtime_tests.zig");
+        _ = @import("sql_allocation_ownership_tests.zig");
         if (@import("builtin").os.tag == .linux or @import("builtin").os.tag == .macos) {
             _ = @import("sql_receive_tests.zig");
         }

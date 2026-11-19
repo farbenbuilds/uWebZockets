@@ -21,6 +21,9 @@ This closes that checklist item by owner acceptance; the original 300K RPS
 target was not measured as passing. Other v2.3.0 implementation stays paused.
 [The execution TODO](tasks/todo.md) retains the measurements and seven open
 release requirements, including the separate async-db throughput criterion.
+The user subsequently authorized permitted allocation verification; the
+supplied Zig allocator and startup-buffer checks pass, while the complete
+native/TLS allocation requirement remains open.
 All Daybreak-dependent work remains [deferred for the user](tasks/next_version.md).
 
 ---
@@ -7135,6 +7138,16 @@ End of Part II.
       CPU cost, reaching 300K would require more usable CPU capacity.
       No larger-host passing result was obtained before owner acceptance.
 - [ ] No request-path allocation; pool and row buffers are startup-owned.
+      Current-source plaintext ownership tests verify three startup allocations
+      and three matching deinitialization frees per `Db`. The exercised query,
+      row-copy, queue/cancel/deadline/reconnect, batch-error recovery and actual
+      World handlers make zero calls to the supplied Zig allocator while
+      armed, including shutdown drain; buffer and pool geometry stays fixed.
+      Four focused groups pass; ordinary units pass 1,202 tests with seven
+      explicit skips. This does not measure alternate allocators, native C/TLS,
+      the HTTP socket stack, kernel or PostgreSQL server allocations. The
+      strict TLS gate remains unresolved and Daybreak-dependent work stays
+      deferred. See the [ownership proof](benchmarks/results/sql_zig_allocation_ownership_v1/2026_11_19/README.md).
 - [x] `docs/sql.md` and the examples compile.
 
 ### v2.4.0 checklist (Comptime SSR Engine)

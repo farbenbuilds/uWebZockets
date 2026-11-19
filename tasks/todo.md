@@ -14,6 +14,9 @@ target remains unachieved. Other implementation stays paused, and all
 Daybreak-dependent work stays deferred for the user. The checklist remains
 63 complete and seven open because R2 still includes the separate async-db
 throughput requirement.
+The user subsequently authorized verification of permitted allocation paths.
+That current-source supplied-Zig-allocator slice passes; it does not close R3,
+R4 or the master no-request-allocation item, or resume Daybreak-deferred work.
 
 - [x] Architect scope, interfaces, ownership, and acceptance criteria.
 - [x] D-0 / FS-0: worker service lifecycle, rollback, readiness, shutdown.
@@ -139,6 +142,23 @@ throughput requirement.
       allocation RED. Complete native ownership, maintained publication/pins
       and production integration remain required. No PostgreSQL allocation
       exception is approved; SQLite's SQL-ALLOC-001 is separate.
+
+      Permitted current-source verification: a counter on the allocator
+      supplied to `Db` observes exactly three startup allocations and three
+      matching deinitialization frees. Positive controls detect denied
+      alloc/resize/remap calls even when their errors are swallowed. Armed
+      plaintext query, Row.keep/scratch-reuse, bounded queue, cancellation,
+      reconnect, batch-error recovery and real World handler windows record
+      zero attempts or frees through stop/drain, with unchanged main/auxiliary
+      buffers and fixed pool/metadata geometry. World counts 20 and 500 use
+      actual typed PostgreSQL results and caller-owned response storage; their
+      outer Context allocation is separately tracked by the test allocator.
+      All four focused groups pass without skips; ordinary units pass 1,202
+      tests with seven explicit skips. No production/native source changed.
+      C/native TLS, alternate allocators, socket HTTP, kernel/server memory
+      and whole-process allocation are outside this proof. The historical C
+      audit is not relabeled as a fresh current-source C measurement. See
+      `benchmarks/results/sql_zig_allocation_ownership_v1/2026_11_19/README.md`.
 
       Current implementation checkpoint: the post-wire control and observer
       match all six full intervals and 18 callbacks. Each failure round has

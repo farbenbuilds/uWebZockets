@@ -19,6 +19,18 @@ no Zig memory. Exhaustion, statement/parameter/field/column/row/response bounds,
 deadlines, and stale worker leases return stable typed errors. No shared pool,
 cross-worker queue, mutex, ORM, schema reflection, or query builder is provided.
 
+The [current-source ownership tests](../benchmarks/results/sql_zig_allocation_ownership_v1/2026_11_19/README.md)
+observe three startup allocations per `Db`, stable main/auxiliary buffer and
+pool geometry, and three matching frees at deinitialization. They count calls
+to the allocator supplied to `Db` and deny allocation, resize and remap after
+arming. The exercised plaintext
+query, row-copy, queue, cancellation/reconnect, error-recovery and World handler
+paths make zero allocation, resize, remap or free calls through shutdown drain.
+The World cases use real PostgreSQL results and a caller-owned response target;
+the outer Context object is separately owned by the test allocator. This is
+not a process-wide or native/C/TLS allocation measurement. The strict TLS
+allocation result below remains unresolved.
+
 ## PostgreSQL protocol and TLS
 
 The client implements PostgreSQL protocol 3.0 using Zig codecs, including MD5
