@@ -16,10 +16,11 @@
 > Part II is the merged design dossiers from `uWZ-Disadvantages.md`; Section 19
 > is the master release checklist.
 
-The user resumed the existing D-5 throughput goal on 2026-11-19; other v2.3.0
-implementation stays paused. [The execution TODO](tasks/todo.md) records the
-retained query/update gains and the earlier unmeasured plaintext SQL receive
-candidate. The all-three 300K target and seven release requirements stay open.
+The user accepted the D-5 World endpoint throughput work as done on 2026-11-19.
+This closes that checklist item by owner acceptance; the original 300K RPS
+target was not measured as passing. Other v2.3.0 implementation stays paused.
+[The execution TODO](tasks/todo.md) retains the measurements and seven open
+release requirements, including the separate async-db throughput criterion.
 All Daybreak-dependent work remains [deferred for the user](tasks/next_version.md).
 
 ---
@@ -7114,11 +7115,14 @@ End of Part II.
 - [x] SQLite (D-6) is optional and links only when enabled. The release owner
       approved SQL-ALLOC-001 for upstream SQLite C allocations; bounded Zig
       storage and PostgreSQL's allocation contract remain mandatory.
-- [ ] `/db`, `/queries`, `/updates` (D-5) exceed 300K RPS.
+- [x] `/db`, `/queries`, `/updates` (D-5) throughput work is owner-accepted.
+      Explicit owner-directed closure on 2026-11-19 waives the original
+      above-300K RPS acceptance target for this item. The measured target
+      remains unachieved; the retained results below are unchanged.
       Retained `/queries?count=20` batching improves matched local SCRAM
       throughput from 13,457 to 50,050 RPS median and HTTP p99 from 27.792 to
-      9.225 ms, with exact reads and responses verified. The all-three
-      acceptance result remains unmet. See the
+      9.225 ms, with exact reads and responses verified. The measured
+      all-three 300K target remains unmet. See the
       [comparison](benchmarks/results/sql_world_queries_chunk_v1/2026_11_19/README.md).
       Retained update batches of at most eight pairs improve `/updates?count=20` from
       4,256 to 12,719 RPS median and HTTP p99 from 69.928 to 25.855 ms, with
@@ -7129,7 +7133,7 @@ End of Part II.
       are 174,419 / 49,899 / 12,905 RPS respectively, with count 20 for queries
       and updates. All 36 timed samples remain below 300K. At the observed
       CPU cost, reaching 300K would require more usable CPU capacity.
-      A larger quiet benchmark host has been requested.
+      No larger-host passing result was obtained before owner acceptance.
 - [ ] No request-path allocation; pool and row buffers are startup-owned.
 - [x] `docs/sql.md` and the examples compile.
 

@@ -1,15 +1,19 @@
 # v2.3.0 execution and evidence
 
 Release scope is frozen at the existing 70 checklist entries: 63 were complete
-and seven were open at commit `2538055`. Close those seven against their
-original acceptance criteria. Record implementation checkpoints beneath the
-existing entries; put optional additions in [next_version.md](next_version.md).
+and seven were open at commit `2538055`. Preserve their original criteria
+except for the explicit World endpoint acceptance recorded below. Record
+checkpoints beneath the existing entries; put optional additions in
+[next_version.md](next_version.md).
 See [v2_3_scope.md](v2_3_scope.md) for the fixed requirement index.
 
-The user resumed D-5 on 2026-11-19 specifically to finish the existing
-`/db`, `/queries`, and `/updates` throughput requirement. Other implementation
-stays paused, and all Daybreak-dependent work stays deferred for the user.
-The checklist remains 63 complete and seven open.
+The user accepted the D-5 `/db`, `/queries`, and `/updates` work as done on
+2026-11-19 after reviewing the measured results. This owner acceptance closes
+the World endpoint item in the master roadmap while its original 300K RPS
+target remains unachieved. Other implementation stays paused, and all
+Daybreak-dependent work stays deferred for the user. The checklist remains
+63 complete and seven open because R2 still includes the separate async-db
+throughput requirement.
 
 - [x] Architect scope, interfaces, ownership, and acceptance criteria.
 - [x] D-0 / FS-0: worker service lifecycle, rollback, readiness, shutdown.
@@ -22,8 +26,11 @@ The checklist remains 63 complete and seven open.
 - [x] D-4: prepared cache and bounded borrowed row iteration/copy.
 - [x] D-5: runnable `/db`, `/queries`, `/updates` locally verified.
 - [ ] D-5: official external HttpArena adapter activation.
-- [ ] D-5: `/db`, `/queries`, and `/updates` exceed 300K RPS, with the
-      separately required real async-db result and full provenance.
+- [ ] D-5: retained real async-db result above 300K RPS with full provenance.
+      The World `/db`, `/queries`, and `/updates` task is closed by explicit
+      owner acceptance on 2026-11-19. Its original above-300K target is waived
+      for that task; no measured pass is claimed. This entry remains open for
+      the separate async-db criterion.
       The resumed World workload uses count 20 for `/queries` and `/updates`.
       A retained `/queries` change batches at most 16 parameterized point reads
       through the existing SDK. Three matched SCRAM pairs improve median
@@ -57,12 +64,13 @@ The checklist remains 63 complete and seven open.
       not establish an absolute ceiling. At unchanged observed app/PG CPU
       cost, 300K would require approximately 35/149/528 CPU-seconds per wall
       second respectively, before load generation; this host exposes 28
-      logical CPUs. A larger quiet benchmark host has been requested, with
-      no reply yet. The target stays open. See
+      logical CPUs. No larger-host passing result was obtained before the
+      owner accepted the World task. See
       `benchmarks/results/sql_world_capacity_v1/2026_11_19/README.md`.
       Historical bridge/host screens used separate fixtures; the host screen
-      used trust authentication and is not the matched SCRAM control. Neither
-      the all-three target nor the separate async-db target is complete.
+      used trust authentication and is not the matched SCRAM control. The
+      measured all-three target remains unmet despite owner-accepted closure;
+      the separate async-db requirement stays open.
       The initial retained reconstruction measures `/async-db` at 48,963 median
       RPS with 32 workers, 256 PostgreSQL connections and 1,024 HTTP connections.
       All six warmup-plus-timed windows reconcile with database scans; both drained
