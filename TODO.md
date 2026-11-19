@@ -7137,7 +7137,8 @@ End of Part II.
       and updates. All 36 timed samples remain below 300K. At the observed
       CPU cost, reaching 300K would require more usable CPU capacity.
       No larger-host passing result was obtained before owner acceptance.
-- [ ] No request-path allocation; pool and row buffers are startup-owned.
+- [x] Pool and row buffers are startup-owned; the exercised plaintext paths
+      make zero calls through the supplied Zig allocator.
       Current-source plaintext ownership tests verify three startup allocations
       and three matching deinitialization frees per `Db`. The exercised query,
       row-copy, queue/cancel/deadline/reconnect, batch-error recovery and actual
@@ -7146,18 +7147,12 @@ End of Part II.
       Four focused groups pass; ordinary units pass 1,202 tests with seven
       explicit skips. This does not measure alternate allocators, native C/TLS,
       the HTTP socket stack, kernel or PostgreSQL server allocations. The
-      strict TLS gate remains unresolved and Daybreak-dependent work stays
-      deferred. See the [ownership proof](benchmarks/results/sql_zig_allocation_ownership_v1/2026_11_19/README.md).
-
-  - [x] Verify startup-owned pool, row and auxiliary buffers: three startup
-    allocations and three matching frees per tested `Db`, with fixed geometry.
-  - [x] Verify zero calls through the supplied Zig allocator in the exercised
-    plaintext query, row-copy, queue, cancellation/reconnect, recovery and
-    World handler paths, including counts 20 and 500 and shutdown drain.
-  - [x] Retain the verification evidence: four focused groups passed;
-    ordinary units passed 1,202 tests with seven explicit skips.
-  - [ ] Complete the native/C/TLS allocation proof; the recorded
-    Daybreak-dependent work remains deferred for the user.
+      scope of the result is retained in the
+      [ownership proof](benchmarks/results/sql_zig_allocation_ownership_v1/2026_11_19/README.md).
+- [ ] Complete the total request-path allocation proof, including native C/TLS.
+      The strict TLS gate remains unresolved. Recorded Daybreak-dependent
+      work remains [deferred for the user](tasks/next_version.md); no
+      PostgreSQL allocation exception or complete allocation pass is claimed.
 - [x] `docs/sql.md` and the examples compile.
 
 ### v2.4.0 checklist (Comptime SSR Engine)

@@ -16,7 +16,9 @@ Daybreak-dependent work stays deferred for the user. The checklist remains
 throughput requirement.
 The user subsequently authorized verification of permitted allocation paths.
 That current-source supplied-Zig-allocator slice passes; it does not close R3,
-R4 or the master no-request-allocation item, or resume Daybreak-deferred work.
+R4 or the total request-path allocation requirement, or resume Daybreak-deferred
+work. The master roadmap now checks off the verified buffer/Zig work separately
+from its unchecked remaining native C/TLS allocation proof.
 
 - [x] Architect scope, interfaces, ownership, and acceptance criteria.
 - [x] D-0 / FS-0: worker service lifecycle, rollback, readiness, shutdown.
