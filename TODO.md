@@ -256,7 +256,7 @@ timeline
 | **v2.2.0** | **Streaming & Static Assets** | Multipart streaming, chunked transfers, `sendfile`, 100 KiB TLS echo | HttpArena `8gbit` and `static-*` active |
 | **v2.3.0** | **SQL Module** | `uz.sql`: pure-Zig PostgreSQL wire client, optional SQLite backend, per-worker pools, typed rows, migrations | PostgreSQL and SQLite integration tests pass; `async-db`/`crud` active; no request-path allocation |
 | **v2.4.0** | **Comptime SSR Engine** | Comptime HTML parser, SIMD entity escaping, `/fortunes` renderer | HttpArena `fortunes` active |
-| **v2.5.0** | **Proto and gRPC** | `uz.proto` shared wire codec, protobuf framing, 5-byte length prefix, HTTP/2 trailers (`grpc-status`) | `unary-grpc` and `unary-grpc-tls` active; proto vectors pass |
+| **v2.5.0** | **Isolated Proto and gRPC** | Optional `uz.proto` wire codec, gRPC framing, 5-byte length prefix, HTTP/2 trailers (`grpc-status`) | `unary-grpc` and `unary-grpc-tls` active; proto vectors pass; core links without proto |
 | **v2.5.5** | **Follow-up Closure** | XEV-006 timer carry, XEV-007 queued cancellation, scheduler fail-stop, macOS runtime, H2/TLS matrix, lsquic sync | Open C-items fixed or re-declared; macOS/Windows evidence; patch release |
 | **v2.6.0** | **Real-Time Push (SSE)** | `text/event-stream`, HTTP/1.1 chunking, HTTP/2 DATA framing, `Last-Event-ID` | Sub-millisecond event broadcast, zero leaks |
 | **v2.7.0** | **Sessions, JWT, and Security** | `uz.sessions` sealed-cookie sessions, `uz.jwt` HS/RS/ES/EdDSA and JWKS, cookies, rate limiter, CORS | Session tamper/replay and JWT algorithm-confusion suites pass; HttpArena `production-stack` auth ready |
@@ -1789,15 +1789,54 @@ dynamic allocations.
 
 ---
 
-## 11. Version 2.5.0: `uz.proto` and Native gRPC over HTTP/2
+## 11. Version 2.5.0: Isolated `uz.proto` and Native gRPC over HTTP/2
 
 **Objective:** high-throughput Protobuf/gRPC service communication without C++
-library dependencies.
+library dependencies and without coupling protobuf to the server core.
 
 **Patch note:** the 2.1.6 follow-up closure is scheduled as 2.5.5 in section
 11.1. It is a carry-over track, not a prerequisite for the proto/gRPC work. `uz.proto` is a shared, bounded wire codec used by gRPC,
 OTLP tracing, and application messages. It is not a `.proto` generator and it
 does not require protoc.
+
+**Isolation decision (2026-11-19):** `uz.proto` is an optional standalone
+module. The server core, HTTP transports, WebSocket path, and `src/root.zig`
+must not import it. gRPC is a separate protocol profile layered on HTTP/2 and
+`uz.proto`; protobuf round-trips alone do not establish gRPC compatibility.
+The codec may land independently, for example to carry OTLP tracing, but the
+v2.5.0 gRPC gate stays blocked until HTTP/2 trailers, gRPC status mapping, and
+`grpcurl` interop pass. The module is justified by external interop, not by
+internal RPC: do not replace JSON-RPC or add a schema layer to a WebSocket API
+that has no gRPC or OTLP peer. JSON-RPC remains the default application RPC
+surface. WebSocket payloads stay opaque bytes, and the library does not own
+application schemas.
+
+### Isolation contract
+
+1. **Dependency direction.** `uz.grpc` imports `uz.proto` and HTTP/2 downward.
+   Nothing in the core, transports, WebSocket, QUIC, router, JSON-RPC, or C ABI
+   imports either module. Do not keep a second protobuf decoder under
+   `src/grpc/`.
+2. **Explicit schema.** Message contracts are declared beside Zig struct
+   fields. There is no `.proto` parser or compiler, no `protoc` invocation, no
+   runtime schema registry, no descriptor pool, no reflection service, no
+   dynamic message, and no proto3 JSON in the first release.
+3. **No allocation.** Decode borrows the input slice; encode writes into
+   caller-owned storage. The codec takes no allocator and keeps no hidden
+   global state.
+4. **Bounded input.** Every field length, field count, map entry, oneof branch,
+   recursion depth, and total message size has a configured limit with a
+   stable error on exhaustion or malformed input.
+5. **Opt-in linking.** A build that does not enable the module must compile,
+   link, and ship without `uz.proto` or `uz.grpc` symbols. The modules follow
+   the FS-0 feature-gate mechanism; they do not add a build option scheme of
+   their own.
+6. **No new build tool.** No CMake, Ninja, Python, Perl, Go, or system protobuf
+   is required to build the codec, its vectors, or its examples.
+7. **Compatibility evidence.** The codec is accepted on canonical protobuf
+   vectors and round-trips for every supported type. The gRPC profile is
+   accepted only on live `grpcurl` unary and streaming exchanges over h2c and
+   h2, with trailers and status mapping asserted.
 
 ### Task R-0: `uz.proto` shared wire codec (`src/proto/`)
 
@@ -1819,6 +1858,17 @@ does not require protoc.
 - Provide a conformance suite against the canonical protobuf test vectors and
   round-trip tests for every supported type.
 - Document the mapping rules and the unsupported features in `docs/proto.md`.
+
+### Task R-0a: Isolation evidence
+
+- Add a build check that fails when a core, transport, WebSocket, QUIC, router,
+  JSON-RPC, or C ABI source imports `src/proto/` or `src/grpc/`.
+- Compile a package consumer with the modules disabled and prove the artifact
+  contains no `uz.proto` or `uz.grpc` symbols.
+- Compile a consumer that enables only `uz.proto` and prove it does not link
+  `uz.grpc`.
+- Record the dependency edges in `docs/proto.md` and keep the module inventory
+  in section 17.2 current.
 
 ### Task R-1: Protobuf wire decoder (`src/proto/decode.zig`)
 
@@ -4038,7 +4088,7 @@ rate-limit metadata, rendered fragments, and idempotency data. The existing
 **Depends on:** FS-0, `uz.crypto_subtle`/BoringSSL, optional `uz.client` for
 JWKS.
 
-### 17.10 FS-7: Protobuf and gRPC (`uz.proto`, `uz.grpc`)
+### 17.10 FS-7: Isolated Protobuf and gRPC (`uz.proto`, `uz.grpc`)
 
 **Release:** v2.5.0.
 
@@ -4051,6 +4101,13 @@ JWKS.
 - [ ] Canonical protobuf vectors and round-trip tests.
 - [ ] gRPC 5-byte framing, HTTP/2 trailers, cancellation, and status mapping.
 - [ ] OTLP tracing uses `uz.proto` for its payload.
+- [ ] No core import of `uz.proto` or `uz.grpc`; disabled builds, and consumers
+      enabling only the codec, link without the unused module.
+- [ ] gRPC is claimed only after HTTP/2 trailers and `grpcurl` interop pass;
+      proto round-trips alone are not gRPC evidence.
+- [ ] Non-goals enforced: no `.proto` compiler or descriptor parser, no
+      reflection or dynamic messages, no `Any`/`Struct`/`Value`, no proto3
+      JSON, and no schema ownership on the WebSocket payload path.
 - [ ] Docs: `docs/proto.md`, `docs/grpc.md`.
 
 **Depends on:** FS-0, HTTP/2 server, metrics/trace optional.
@@ -4176,7 +4233,11 @@ change that lands the module.
 
 - No ORM, no query builder, no automatic schema reflection in the first SQL
   release.
-- No protobuf compiler or `.proto` file parser.
+- No protobuf compiler, `.proto` parser, descriptor pool, runtime schema
+  registry, reflection service, dynamic messages, `Any`/`Struct`/`Value`, or
+  proto3 JSON in the first proto release.
+- No protobuf dependency in the server core and no schema ownership on the
+  WebSocket payload path; applications choose their own encoding.
 - No full AWS SDK; `uz.s3` is an S3 subset with explicit limits.
 - No distributed cache, no Redis client in the first cache release.
 - No job broker; jobs use the SQL database you already have.
