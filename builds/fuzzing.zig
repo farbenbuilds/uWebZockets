@@ -1,5 +1,6 @@
 const std = @import("std");
 const sanitizers = @import("sanitizers.zig");
+const sql = @import("sql.zig");
 const vendor = @import("vendor/root.zig");
 
 pub fn inject(
@@ -10,6 +11,7 @@ pub fn inject(
     sanitizer: sanitizers.Config,
     zslay: *std.Build.Module,
     xev: *std.Build.Module,
+    sql_config: sql.Config,
 ) void {
     const test_support = b.createModule(.{
         .root_source_file = b.path("src/test_support.zig"),
@@ -19,6 +21,7 @@ pub fn inject(
     test_support.addImport("c", dependencies.c_module);
     test_support.addImport("xev", xev);
     test_support.addImport("zslay", zslay);
+    sql_config.attach(test_support);
 
     const legacy_module = b.createModule(.{
         .root_source_file = b.path("src/tests/fuzz_main.zig"),
@@ -31,6 +34,18 @@ pub fn inject(
     legacy_module.addImport("zslay", zslay);
     const legacy_tests = b.addTest(.{ .root_module = legacy_module });
     const run_legacy = sanitizers.add_run_artifact(b, legacy_tests, sanitizer.run);
+    const sql_tests = b.addTest(.{
+        .root_module = legacy_module,
+        .filters = &.{"fuzz: PostgreSQL frames and migration checksums preserve bounds"},
+    });
+    const run_sql = sanitizers.add_run_artifact(b, sql_tests, sanitizer.run);
+    b.step("sql-fuzz", "Fuzz PostgreSQL framing, values, and migration checksums").dependOn(&run_sql.step);
+    const udp_tests = b.addTest(.{
+        .root_module = legacy_module,
+        .filters = &.{"fuzz: UDP ancillary decoding preserves datagram bounds"},
+    });
+    const run_udp = sanitizers.add_run_artifact(b, udp_tests, sanitizer.run);
+    b.step("udp-fuzz", "Fuzz ancillary metadata and bounded GRO datagrams").dependOn(&run_udp.step);
 
     const fuzz_support = b.createModule(.{
         .root_source_file = b.path("src/fuzz_support.zig"),
@@ -46,6 +61,7 @@ pub fn inject(
         .{ .name = "query_parse", .source = "fuzz/query_parse.zig", .smoke = "fuzz/smoke_query.zig" },
         .{ .name = "cookie_parse", .source = "fuzz/cookie_parse.zig", .smoke = "fuzz/smoke_cookie.zig" },
         .{ .name = "multipart_streaming", .source = "fuzz/multipart_streaming.zig", .smoke = "fuzz/smoke_multipart.zig" },
+        .{ .name = "sql_parse", .source = "fuzz/sql_parse.zig", .smoke = "fuzz/smoke_sql.zig" },
     };
 
     const object_step = b.step("oss-fuzz-objects", "Build libFuzzer ABI objects with sanitizer coverage");

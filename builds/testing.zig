@@ -1,5 +1,6 @@
 const std = @import("std");
 const sanitizers = @import("sanitizers.zig");
+const sql = @import("sql.zig");
 const vendor = @import("vendor/root.zig");
 
 /// Handles for the `test` and `test-compile` steps.
@@ -19,6 +20,7 @@ pub fn inject(
     sanitizer: sanitizers.Config,
     zslay: *std.Build.Module,
     xev: *std.Build.Module,
+    sql_config: sql.Config,
 ) Steps {
     add_compliance_server(
         b,
@@ -59,6 +61,7 @@ pub fn inject(
     test_support.addImport("c", dependencies.c_module);
     test_support.addImport("xev", xev);
     test_support.addImport("zslay", zslay);
+    sql_config.attach(test_support);
 
     const test_module = b.createModule(.{
         .root_source_file = b.path("src/tests/main.zig"),
@@ -75,18 +78,54 @@ pub fn inject(
     test_options.addOption(bool, "sanitize", sanitizer.sanitize);
     test_options.addOption(bool, "memory_sanitize", sanitizer.memory_sanitize);
     test_module.addOptions("test_options", test_options);
+    sql_config.attach(test_module);
     test_module.addImport("c", dependencies.c_module);
     test_module.addImport("xev", xev);
     test_module.addImport("zslay", zslay);
     test_module.addImport("http2", http2_module);
     test_module.addImport("http2_hpack", http2_hpack_module);
     test_module.addImport("test_support", test_support);
+    if (sql_config.enabled) {
+        const arena_module = b.createModule(.{
+            .root_source_file = b.path("examples/sql_httparena.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        arena_module.addImport("uWebZockets", test_support);
+        test_module.addImport("sql_httparena", arena_module);
+        const postgres_module = b.createModule(.{
+            .root_source_file = b.path("examples/sql_postgres.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        postgres_module.addImport("uWebZockets", test_support);
+        test_module.addImport("sql_postgres", postgres_module);
+    }
     test_module.linkLibrary(library);
     dependencies.link(test_module);
     sanitizer.attach(test_module);
 
-    const centralized_tests = b.addTest(.{ .root_module = test_module });
+    const test_filter = b.option([]const u8, "test-filter", "Select centralized tests by name");
+    const test_filters: []const []const u8 = if (test_filter) |filter|
+        b.allocator.dupe([]const u8, &.{filter}) catch @panic("out of memory")
+    else
+        &.{};
+    const centralized_tests = b.addTest(.{
+        .root_module = test_module,
+        .filters = test_filters,
+    });
     const run_tests = sanitizers.add_run_artifact(b, centralized_tests, sanitizer.run);
+    const unit_test_step = b.step("test-unit", "Run centralized Zig tests");
+    unit_test_step.dependOn(&run_tests.step);
+    unit_test_step.dependOn(&archive_check.step);
+    if (sql_config.sqlite_enabled) {
+        const sqlite_fuzz_tests = b.addTest(.{
+            .root_module = test_module,
+            .filters = &.{"fuzz: SQLite bound value decoding preserves bytes, integers and NULL"},
+        });
+        const run_sqlite_fuzz = sanitizers.add_run_artifact(b, sqlite_fuzz_tests, sanitizer.run);
+        b.step("sqlite-fuzz", "Fuzz optional SQLite bound-value decoding").dependOn(&run_sqlite_fuzz.step);
+    }
 
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_tests.step);

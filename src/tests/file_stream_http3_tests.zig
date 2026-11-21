@@ -118,6 +118,10 @@ const Wire = struct {
         return 0;
     }
 
+    fn flush(_: ?*c.lsquic_stream) callconv(.c) c_int {
+        return 0;
+    }
+
     fn shutdown(raw: ?*c.lsquic_stream, how: c_int) callconv(.c) c_int {
         const wire = from(raw);
         if (how != 1 and how != 2) return 0;
@@ -137,6 +141,7 @@ const Wire = struct {
         .wantwrite = wantwrite,
         .write = write,
         .send_headers = send_headers,
+        .flush = flush,
         .shutdown = shutdown,
         .close = close,
     };

@@ -27,6 +27,15 @@ thread each, and reused without locking.
 [Client](docs/client.md) | [Deployment](docs/deployment.md) |
 [Operations](docs/operations.md) | [Roadmap](docs/roadmap.md)
 
+Optional worker-local database access is available through [SQL](docs/sql.md)
+with `-Dsql=true`; [module hooks](docs/modules.md) define startup and shutdown.
+The optional SQLite backend additionally requires `-Dsqlite=true` and uses
+the documented SQL-ALLOC-001 exception for upstream C allocations. The v2.3.0
+candidate still has an open strict allocation gate for PostgreSQL TLS:
+[the measured BoringSSL record path](benchmarks/results/sql_tls_allocation_v1/2026_11_11/README.md)
+allocates C heap memory after startup. SQL-ALLOC-002 is proposed, pending user
+approval; SQLite's exception does not cover it.
+
 ## Quick start
 
 With Nix installed, the shortest path to a running server is:
@@ -171,7 +180,10 @@ A worker group can also terminate TLS itself. Call `enable_https` with PEM
 files, or `enable_https_ephemeral` for development, after `configure` and
 before `listen`; every worker then owns its own TLS context and loads or
 generates its credentials once at startup. TLS clusters are TCP-only:
-HTTP/3/QUIC clustering is not supported.
+HTTP/3/QUIC clustering is not supported. Candidate WebTransport stream and
+datagram registration share sixteen endpoint paths; stream-only registration
+requires no datagram buffers. See [child receive callbacks](docs/quic.md#child-receive-callbacks)
+for the public handles and the unpublished-backend requirement.
 
 ```zig
 const std = @import("std");
@@ -325,7 +337,7 @@ normal shutdown path; clusters use `Cluster.catch_shutdown_signals()`.
 ## Terminal development log
 
 `with_dev_log(true)` prints the `µWEBZOCKETS` wordmark and a Vite-style ready
-summary before the first accepting listener: `µWebZockets v2.2.0  ready in
+summary before the first accepting listener: `µWebZockets v2.3.0  ready in
 0.6 ms` followed by the `→ Local:` line; the elapsed time scales
 through nanoseconds, microseconds, milliseconds, and seconds. The wordmark
 collapses to a one-line `µWebZockets` mark when the terminal is narrower than
@@ -453,6 +465,15 @@ timeouts, capacities, and failure kinds, is in
 Every step appends `-Doptimize=ReleaseSafe` for production builds. Sources live
 in [`examples/`](examples/), with walkthroughs in
 [`examples/readme_examples_test.md`](examples/readme_examples_test.md).
+
+## Development checks
+
+`zig build test` runs the complete default test target, including the C API
+smoke test. `zig build test-unit` runs the centralized Zig tests and archive
+symbol check. To select centralized tests by name, use
+`zig build test-unit -Dtest-filter='WebTransport native backend'`.
+`zig build test-compile` compiles the test and consumer targets without
+executing them.
 
 ## Documentation
 

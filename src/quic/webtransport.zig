@@ -27,6 +27,8 @@ pub const wt_application_error_first: u64 = 0x52e4a40fa8db;
 /// Last HTTP/3 code in the mapped 32-bit application-error range.
 pub const wt_application_error_last: u64 = 0x52e5ac983162;
 
+/// HTTP/3 internal stream failure.
+pub const h3_internal_error: u64 = 0x102;
 /// HTTP/3 frame encoding error.
 pub const h3_frame_error: u64 = 0x106;
 /// HTTP/3 excessive-load error.
@@ -48,6 +50,8 @@ pub const decode_varint = varint.decode_varint;
 pub const encode_varint = varint.encode_varint;
 
 // Session identity, lifecycle slab, and draft session flow-control limits.
+/// Initial cumulative session body-byte and child-stream credits.
+pub const FlowLimits = @import("webtransport/session_flow.zig").Limits;
 pub const max_stream_count = session.max_stream_count;
 pub const valid_session_id = session.valid_session_id;
 pub const SessionState = session.SessionState;

@@ -105,6 +105,16 @@ test "observability: small registry renders exact text" {
         \\uwz_xdp_kernel_bypass_fallbacks_total 0
         \\# TYPE uwz_kernel_bypass_active gauge
         \\uwz_kernel_bypass_active 0
+        \\# TYPE uwz_sql_active gauge
+        \\uwz_sql_active 0
+        \\# TYPE uwz_sql_idle gauge
+        \\uwz_sql_idle 0
+        \\# TYPE uwz_sql_waiting gauge
+        \\uwz_sql_waiting 0
+        \\# TYPE uwz_sql_failed gauge
+        \\uwz_sql_failed 0
+        \\# TYPE uwz_sql_reconnects_total counter
+        \\uwz_sql_reconnects_total 0
         \\
     ;
     try std.testing.expectEqualStrings(expected, output);
@@ -253,7 +263,7 @@ test "observability: histogram cumulative totals saturate" {
 
 test "observability: buckets beyond the u64 boundary roll into +Inf" {
     const registry = Registry{};
-    var buffer: [4096]u8 = undefined;
+    var buffer: [8192]u8 = undefined;
     var buckets = [_]u64{0} ** 70;
     buckets[0] = 1;
     buckets[64] = 2;

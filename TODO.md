@@ -16,6 +16,16 @@
 > Part II is the merged design dossiers from `uWZ-Disadvantages.md`; Section 19
 > is the master release checklist.
 
+The user accepted the D-5 World endpoint throughput work as done on 2026-11-19.
+This closes that checklist item by owner acceptance; the original 300K RPS
+target was not measured as passing. Other v2.3.0 implementation stays paused.
+[The execution TODO](tasks/todo.md) retains the measurements and seven open
+release requirements, including the separate async-db throughput criterion.
+The user subsequently authorized permitted allocation verification; the
+supplied Zig allocator and startup-buffer checks pass, while the complete
+native/TLS allocation requirement remains open.
+All Daybreak-dependent work remains [deferred for the user](tasks/next_version.md).
+
 ---
 
 ## 0. Vision and document map
@@ -1600,6 +1610,23 @@ with dated restoration criteria in this section and
   resolve pins from a second machine, and run the native Windows release job.
 - **kTLS integration and splice.** Keep the standalone helper and the
   measured-benefit condition recorded in the deliberate boundaries.
+
+The 2026-11-11 implementation extracts the cluster runtime, connection parking,
+HTTP/2 storage, response async lifecycle, and QUIC header-set ownership seams.
+Linux GRO now passes both backend regressions and the expanded HTTP/3 gate,
+including 1,024 sustained streams and wildcard source-address preservation.
+The separate XEV-008 poll-cancellation fix still requires maintained-fork
+integration. The current HttpArena adapter proposal is implemented and locally
+verified; its release pin, official run, and throughput acceptance remain open.
+See [the execution ledger](tasks/todo.md) and
+[protocol evidence](benchmarks/results/protocol_v2_3/2026_11_11/README.md).
+Complete active fork histories and their qpack/hpack companions are also
+[retained and replayed offline](benchmarks/results/dependency_archives_v2_3/2026_11_11/README.md).
+Second-machine resolution and native platform evidence remain open.
+A reviewed [local lsquic prerequisite](benchmarks/results/lsquic_uni_prerequisite_v1/2026_11_11/README.md)
+now implements outgoing uni streams and their required lifetime behavior.
+Reliable reset, session activation, compatible-client acceptance and published
+fork/pin integration remain required before WebTransport can be enabled.
 
 ### 8.3 Release verification
 
@@ -7142,17 +7169,52 @@ End of Part II.
 
 ### v2.3.0 checklist (`uz.sql`)
 
-- [ ] Module foundation (FS-0) starts/stops the SQL service per worker and
+- [x] Module foundation (FS-0) starts/stops the SQL service per worker and
       feature-gates it.
-- [ ] PostgreSQL wire parser (D-1) connects and authenticates, including
+- [x] PostgreSQL wire parser (D-1) connects and authenticates, including
       SCRAM-SHA-256 and TLS.
-- [ ] Per-core pool (D-2, D-3) runs with no locks or cross-thread sharing.
-- [ ] Typed rows (D-4, D-9) and transactions (D-7) are bounded and tested.
-- [ ] Migrations (D-8) are idempotent and checksum-protected.
-- [ ] SQLite (D-6) is optional and links only when enabled.
-- [ ] `/db`, `/queries`, `/updates` (D-5) exceed 300K RPS.
-- [ ] No request-path allocation; pool and row buffers are startup-owned.
-- [ ] `docs/sql.md` and the examples compile.
+- [x] Per-core pool (D-2, D-3) runs with no locks or cross-thread sharing.
+- [x] Typed rows (D-4, D-9) and transactions (D-7) are bounded and tested.
+- [x] Migrations (D-8) are idempotent and checksum-protected.
+- [x] SQLite (D-6) is optional and links only when enabled. The release owner
+      approved SQL-ALLOC-001 for upstream SQLite C allocations; bounded Zig
+      storage and PostgreSQL's allocation contract remain mandatory.
+- [x] `/db`, `/queries`, `/updates` (D-5) throughput work is owner-accepted.
+      Explicit owner-directed closure on 2026-11-19 waives the original
+      above-300K RPS acceptance target for this item. The measured target
+      remains unachieved; the retained results below are unchanged.
+      Retained `/queries?count=20` batching improves matched local SCRAM
+      throughput from 13,457 to 50,050 RPS median and HTTP p99 from 27.792 to
+      9.225 ms, with exact reads and responses verified. The measured
+      all-three 300K target remains unmet. See the
+      [comparison](benchmarks/results/sql_world_queries_chunk_v1/2026_11_19/README.md).
+      Retained update batches of at most eight pairs improve `/updates?count=20` from
+      4,256 to 12,719 RPS median and HTTP p99 from 69.928 to 25.855 ms, with
+      exact writes, persistence and transaction failures verified. See the
+      [update comparison](benchmarks/results/sql_world_updates_chunk_v1/2026_11_19/README.md).
+      A separate unchanged-code [capacity screen](benchmarks/results/sql_world_capacity_v1/2026_11_19/README.md)
+      verifies 39 cases across four HTTP profiles. Best observed route medians
+      are 174,419 / 49,899 / 12,905 RPS respectively, with count 20 for queries
+      and updates. All 36 timed samples remain below 300K. At the observed
+      CPU cost, reaching 300K would require more usable CPU capacity.
+      No larger-host passing result was obtained before owner acceptance.
+- [x] Pool and row buffers are startup-owned; the exercised plaintext paths
+      make zero calls through the supplied Zig allocator.
+      Current-source plaintext ownership tests verify three startup allocations
+      and three matching deinitialization frees per `Db`. The exercised query,
+      row-copy, queue/cancel/deadline/reconnect, batch-error recovery and actual
+      World handlers make zero calls to the supplied Zig allocator while
+      armed, including shutdown drain; buffer and pool geometry stays fixed.
+      Four focused groups pass; ordinary units pass 1,202 tests with seven
+      explicit skips. This does not measure alternate allocators, native C/TLS,
+      the HTTP socket stack, kernel or PostgreSQL server allocations. The
+      scope of the result is retained in the
+      [ownership proof](benchmarks/results/sql_zig_allocation_ownership_v1/2026_11_19/README.md).
+- [ ] Complete the total request-path allocation proof, including native C/TLS.
+      The strict TLS gate remains unresolved. Recorded Daybreak-dependent
+      work remains [deferred for the user](tasks/next_version.md); no
+      PostgreSQL allocation exception or complete allocation pass is claimed.
+- [x] `docs/sql.md` and the examples compile.
 
 ### v2.4.0 checklist (Comptime SSR Engine)
 

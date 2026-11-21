@@ -1,6 +1,6 @@
 .{
     .name = .uWebZockets,
-    .version = "2.2.0",
+    .version = "2.3.0",
     .fingerprint = 0xbbf152173cd23d48,
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
@@ -75,9 +75,12 @@
         "SECURITY.md",
         "THIRD_PARTY_NOTICES.md",
         "licenses",
+        "vendor/sqlite",
         "examples",
         "tests",
         "fuzz",
+        "benchmarks/sql_query_probe.zig",
+        "benchmarks/sql_cluster_server.zig",
         "scripts/check_static_archive.sh",
         "flake.nix",
         "flake.lock",

@@ -108,6 +108,15 @@ defer server.deinit();
 `init_http3` additionally creates the QUIC context and loads the same
 certificate and key into both contexts.
 
+A builder-configured application uses `enable_http3(cert_path, key_path)`
+before its first listener. `enable_http3_ephemeral()` supplies development
+credentials. Both methods preserve the configured capacities and create
+separate TCP and QUIC contexts. Credential construction failure leaves the
+application unchanged so the caller can retry. They return
+`error.TlsAlreadyEnabled` if TLS is already
+configured, `error.AlreadyListening` after listening starts, and
+`error.ApplicationUnavailable` while running or after shutdown.
+
 - The certificate argument is a PEM chain, leaf first.
 - The key argument is a PEM private key. BoringSSL rejects a key that does not
   match the certificate while loading it, so a mismatched pair fails fast with

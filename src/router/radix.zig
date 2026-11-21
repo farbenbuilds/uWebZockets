@@ -207,6 +207,9 @@ pub const RouteMatch = struct {
     has_http: bool,
 };
 
+/// Admission requires the exact method rather than an HTTP fallback.
+const HandlerSelection = enum { fallback, explicit };
+
 /// Default maximum number of radix nodes per router.
 pub const default_max_nodes = 256;
 /// Default maximum number of parameterized route patterns.
@@ -1136,10 +1139,10 @@ pub const Router = struct {
 
     /// Matches a path without materializing parameter captures.
     pub fn match(self: *const Router, path: []const u8, method: ?HttpMethod) ?RouteMatch {
-        if (self.find_static_node(path)) |node| return self.node_match(node, path, method);
-        if (self.find_node(path)) |node| return self.node_match(node, path, method);
+        if (self.find_static_node(path)) |node| return self.node_match(node, path, method, .fallback);
+        if (self.find_node(path)) |node| return self.node_match(node, path, method, .fallback);
         const pattern_index = self.find_pattern(path) orelse return null;
-        return self.pattern_match(pattern_index, path, method);
+        return self.pattern_match(pattern_index, path, method, .fallback);
     }
 
     /// Matches a request and stores borrowed route captures in its fixed array.
@@ -1148,12 +1151,27 @@ pub const Router = struct {
         request: *Request,
         method: ?HttpMethod,
     ) ?RouteMatch {
+        return self.match_selected_request(request, method, .fallback);
+    }
+
+    /// Captures a route using only its explicitly registered method handler.
+    pub fn match_explicit_request(self: *const Router, request: *Request, method: HttpMethod) ?RouteMatch {
+        if (method == .any) return null;
+        return self.match_selected_request(request, method, .explicit);
+    }
+
+    fn match_selected_request(
+        self: *const Router,
+        request: *Request,
+        method: ?HttpMethod,
+        selection: HandlerSelection,
+    ) ?RouteMatch {
         request.clear_params();
         if (self.find_static_node(request.path)) |node| {
-            return self.node_match(node, request.path, method);
+            return self.node_match(node, request.path, method, selection);
         }
         if (self.find_node(request.path)) |node| {
-            return self.node_match(node, request.path, method);
+            return self.node_match(node, request.path, method, selection);
         }
 
         const pattern_index = self.find_pattern(request.path) orelse return null;
@@ -1162,7 +1180,7 @@ pub const Router = struct {
             request.path,
             request,
         ) catch return null;
-        return self.pattern_match(pattern_index, request.path, method);
+        return self.pattern_match(pattern_index, request.path, method, selection);
     }
 
     fn find_node(self: *const Router, path: []const u8) ?u16 {
@@ -1205,8 +1223,9 @@ pub const Router = struct {
         node: u16,
         path: []const u8,
         method: ?HttpMethod,
+        selection: HandlerSelection,
     ) RouteMatch {
-        const handler = select_handler(&self.http_handlers[node], method);
+        const handler = select_handler(&self.http_handlers[node], method, selection);
         return .{
             .path = path,
             .handler = handler,
@@ -1222,9 +1241,10 @@ pub const Router = struct {
         pattern_index: u8,
         path: []const u8,
         method: ?HttpMethod,
+        selection: HandlerSelection,
     ) RouteMatch {
         const route = self.pattern_routes[pattern_index];
-        const handler = select_handler(&route.handlers, method);
+        const handler = select_handler(&route.handlers, method, selection);
         return .{
             .path = path,
             .handler = handler,
@@ -1332,7 +1352,12 @@ pub fn format_allowed_methods(mask: u16, buffer: []u8) ![]const u8 {
 fn select_handler(
     handlers: *const [method_count]?RouteHandler,
     method: ?HttpMethod,
+    selection: HandlerSelection,
 ) ?RouteHandler {
+    if (selection == .explicit) {
+        const selected = method orelse return null;
+        return handlers[@intFromEnum(selected)];
+    }
     var handler: ?RouteHandler = null;
     if (method) |known_method| {
         handler = handlers[@intFromEnum(known_method)];

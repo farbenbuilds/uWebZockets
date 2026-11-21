@@ -11,6 +11,7 @@ it is not a proof that all memory or security defects are absent.
 | --- | --- | --- | --- |
 | `lint.yml` | pushes and pull requests to `main`, manual | `Linting` | Zig formatting and repository conventions |
 | `test.yml` | pushes and pull requests to `main`, manual | `Testing` | Parallel Debug, sanitizer, fuzz, ReleaseSafe, and ReleaseFast verification |
+| `sql.yml` | pushes and pull requests to `main`, manual | `Testing` | PostgreSQL TLS/SCRAM, SQLite, migrations, filtered consumers, and feature exclusion in ReleaseSafe and ASan/UBSan modes |
 | `windows.yml` | manual, reusable from tagged publishing | `Testing` | Native `x86_64-windows-gnu` ReleaseSafe compilation, static-library build, and runtime test suite |
 | `oss_fuzz.yml` | pushes and pull requests to `main`, manual, reusable | `Testing` | OSS-Fuzz-compatible ASan/libFuzzer build and execution |
 | `autobahn_compliance.yml` | pushes and pull requests to `main`, manual | `autobahn Compliance` | RFC 6455 server compliance |
@@ -81,6 +82,34 @@ entries in `build.zig.zon`, fetches that copy with `zig fetch`, and compiles the
 same downstream fixture from the fetched package. The path dependency above
 exercises the module; the clean-package check also proves the manifest carries
 every file the build reads.
+
+The optional SQL workflow runs `scripts/test_sql.sh` with `-Dsql=true` and
+`-Dsqlite=true`. The harness creates its own digest-pinned PostgreSQL container,
+random credentials, trusted/untrusted test CAs, and Unicode password roles,
+then removes those resources. Its ReleaseSafe and ASan/UBSan jobs require live
+database tests; missing-service skips in the ordinary suite are not integration
+evidence. SQLite C allocation exception SQL-ALLOC-001 is documented in
+[ADR 0013](docs/adr/0013-worker-local-sql.md); Zig allocation checks and SQLite
+result/VM bounds remain strict. The separate
+[TLS C-allocation audit](benchmarks/results/sql_tls_allocation_v1/2026_11_11/README.md)
+records a failed strict total-allocation gate and a pending policy decision;
+passing the ordinary suite does not satisfy that gate.
+
+`scripts/check_sql_feature_gates.sh` builds downstream consumers and inspects
+symbols for disabled SQL, PostgreSQL-only, SQLite-enabled, and enabled-but-unused
+module configurations. `scripts/check_package_paths.sh -Dsql=true -Dsqlite=true`
+also verifies the filtered optional-backend package. Dedicated `sql-fuzz` and
+`sqlite-fuzz` targets select the new boundary fuzz tests explicitly:
+
+```sh
+zig build sql-fuzz --fuzz=100K -Doptimize=ReleaseSafe
+zig build sqlite-fuzz -Dsql=true -Dsqlite=true --fuzz=100K -Doptimize=ReleaseSafe
+```
+
+The SQL workflow runs both selectors explicitly. The general fuzz workflow
+also runs `zig build udp-fuzz --fuzz=100K -Doptimize=ReleaseSafe`, so ancillary
+metadata receives its own coverage run rather than only seed execution in
+the combined test binary.
 
 Debug tests cover parser limits, malformed framing, partial reads and writes,
 pool ownership, router method behavior, handshake validation, close codes,

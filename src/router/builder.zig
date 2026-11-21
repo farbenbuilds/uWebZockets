@@ -293,6 +293,14 @@ pub fn configured_builder(comptime config: ServerConfig) type {
             return .{ .io = self.io };
         }
 
+        /// Sets startup session credit; all zero retains flow-off behavior.
+        pub fn with_webtransport_flow_limits(
+            self: Self,
+            comptime limits: config_module.WebTransportFlowLimits,
+        ) configured_builder(config.with(.{ .webtransport_flow_limits = limits })) {
+            return .{ .io = self.io };
+        }
+
         /// Overrides the AF_XDP UMEM geometry.
         pub fn with_xdp_umem(
             self: Self,

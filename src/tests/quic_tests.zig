@@ -531,6 +531,10 @@ const FakeStreamIo = struct {
         return 0;
     }
 
+    fn flush(_: ?*c.lsquic_stream) callconv(.c) c_int {
+        return 0;
+    }
+
     fn close(raw: ?*c.lsquic_stream) callconv(.c) c_int {
         from(raw).closes += 1;
         return 0;
@@ -542,6 +546,7 @@ const FakeStreamIo = struct {
         .wantwrite = wantwrite,
         .write = write,
         .send_headers = send_headers,
+        .flush = flush,
         .shutdown = shutdown,
         .close = close,
     };

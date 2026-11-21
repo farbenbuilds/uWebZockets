@@ -13,6 +13,8 @@
 | ls-hpack | fda48e02491d865cce00612be8cc10c2622b8e55 | MIT |
 | libdeflate | 1.26 | MIT |
 | zlib | 1.3.2 | zlib License |
+| Unicode SASLprep data (optional SQL authentication) | Unicode 3.2, RFC 3454/RFC 4013 tables | Unicode License V3 |
+| SQLite (optional) | 3.54.1 (amalgamation SHA3-256 92281c86e2957f9b9305890f9ac04204caa7b677cc868dc326d942689df28e30) | Public domain |
 | h1spec | 999ba9e8f318b1c0ebbff1278b98bc5833f1af18 (farbenbuilds fork, base f0a5650a20c575fbea0f7179a3a9cfa50f20ba6e) | Unverified; maintainer confirmation required |
 
 The pinned h1spec compliance source contains no license notice. Its previous
@@ -25,9 +27,15 @@ open item.
 The zslay, libxev, and zlib license texts are in the licenses directory, and
 the C and C++ license texts are in `licenses/vendor`. Sources are selected by
 immutable Zig package hashes or pinned release tags; the repository retains
-only the `vendor/h1spec` compliance submodule. Releases publish the tagged
+the `vendor/h1spec` compliance submodule and optional SQLite amalgamation. Releases publish the tagged
 source only, with these license texts in-tree, so no binary archive copies
 licenses separately.
+
+The optional SQLite backend retains its unmodified, pre-generated source and
+header, including their public-domain notices, under `vendor/sqlite/`.
+[SQLite provenance](vendor/sqlite/provenance.md) records the immutable archive
+and verified checksums. It is compiled with Zig's C toolchain only when both
+`-Dsql=true` and `-Dsqlite=true` are enabled.
 
 The maintained downstream forks are
 <https://github.com/farbenbuilds/libxev>,
@@ -52,3 +60,18 @@ views, remote reachability, and the fork mirrors. See
 [ADR 0005](docs/adr/0005-libxev-fork.md),
 [ADR 0006](docs/adr/0006-dependency-forks.md), and
 [docs/dependency_forks.md](docs/dependency_forks.md).
+
+SQL SCRAM authentication includes pinned Unicode 3.2 normalization and
+SASLprep tables in `src/sql/unicode_3_2.zig`. The original generation used
+Python 3.14.4's `unicodedata.ucd_3_2_0` and `stringprep`; the Unicode database
+version is asserted separately from the host Unicode version. The data is
+covered by [Unicode License V3](licenses/unicode_data.txt), retrieved from
+<https://www.unicode.org/license.txt> on 2026-11-11. Its source specification is
+[Unicode 3.2](https://www.unicode.org/Public/3.2-Update/UnicodeData-3.2.0.txt),
+[composition exclusions](https://www.unicode.org/Public/3.2-Update/CompositionExclusions-3.2.0.txt),
+[RFC 3454](https://www.rfc-editor.org/rfc/rfc3454), and
+[RFC 4013](https://www.rfc-editor.org/rfc/rfc4013).
+`misc/generate_sql_unicode.py` is a deterministic maintenance tool. Generated
+inputs are checked in; Python is never invoked by the Zig build or required
+by library consumers. The table lookup, normalization, and authentication
+paths allocate no storage dynamically.

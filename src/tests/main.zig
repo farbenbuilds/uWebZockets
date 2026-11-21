@@ -1,4 +1,26 @@
 comptime {
+    _ = @import("sql_migrate_tests.zig");
+    _ = @import("sql_metrics_tests.zig");
+    _ = @import("sql_fuzz_tests.zig");
+    _ = @import("module_service_tests.zig");
+    _ = @import("sql_service_failure_tests.zig");
+    _ = @import("sql_wire_tests.zig");
+    if (@import("module_options").sql) {
+        _ = @import("sql_runtime_tests.zig");
+        _ = @import("sql_allocation_ownership_tests.zig");
+        if (@import("builtin").os.tag == .linux or @import("builtin").os.tag == .macos) {
+            _ = @import("sql_receive_tests.zig");
+        }
+        _ = @import("sql_pg_migration_tests.zig");
+        _ = @import("sql_migration_service_tests.zig");
+        _ = @import("sql_httparena_tests.zig");
+        _ = @import("sql_postgres_tests.zig");
+    }
+    if (@import("module_options").sqlite) {
+        _ = @import("sqlite_tests.zig");
+        _ = @import("sqlite_fuzz_tests.zig");
+        _ = @import("sql_migration_backend_tests.zig");
+    }
     _ = @import("multipart_streaming_tests.zig");
     _ = @import("bleeding_edge_tests.zig");
     _ = @import("c_api_tests.zig");
@@ -8,6 +30,7 @@ comptime {
     _ = @import("datagram_ring_tests.zig");
     _ = @import("dev_log_tests.zig");
     _ = @import("core_tests.zig");
+    _ = @import("connection_parking_tests.zig");
     _ = @import("fuzz_main.zig");
     _ = @import("multipart_large_tests.zig");
     _ = @import("file_stream_tests.zig");
@@ -22,6 +45,7 @@ comptime {
     _ = @import("framework_tests.zig");
     _ = @import("helpers_tests.zig");
     _ = @import("http_tests.zig");
+    _ = @import("http_ownership_tests.zig");
     _ = @import("http_body_decoder_tests.zig");
     _ = @import("http2_tests.zig");
     _ = @import("http2_hpack_tests.zig");
@@ -31,7 +55,24 @@ comptime {
     _ = @import("negotiate_tests.zig");
     _ = @import("observability_tests.zig");
     _ = @import("quic_tests.zig");
+    _ = @import("quic_connection_tests.zig");
+    _ = @import("quic_stream_lifecycle_tests.zig");
     _ = @import("quic_phase3_tests.zig");
+
+    _ = @import("webtransport_runtime_tests.zig");
+    _ = @import("webtransport_session_index_tests.zig");
+    _ = @import("webtransport_session_flow_tests.zig");
+    _ = @import("webtransport_early_debt_tests.zig");
+    _ = @import("webtransport_session_control_tests.zig");
+    _ = @import("webtransport_child_ledger_tests.zig");
+    _ = @import("webtransport_child_runtime_tests.zig");
+    _ = @import("webtransport_child_tx_tests.zig");
+    _ = @import("udp_wake_tests.zig");
+    _ = @import("webtransport_admission_tests.zig");
+    _ = @import("webtransport_endpoints_tests.zig");
+    _ = @import("webtransport_capsule_stream_tests.zig");
+    _ = @import("webtransport_pending_datagram_tests.zig");
+    _ = @import("webtransport_pending_runtime_tests.zig");
     _ = @import("query_tests.zig");
     _ = @import("rpc_tests.zig");
     _ = @import("router_tests.zig");
@@ -41,6 +82,9 @@ comptime {
     _ = @import("tls_tests.zig");
     _ = @import("tls_echo_tests.zig");
     _ = @import("udp_tests.zig");
+    _ = @import("udp_receive_tests.zig");
+    _ = @import("udp_gro_tests.zig");
+    _ = @import("udp_receive_fuzz_tests.zig");
     _ = @import("watch_tests.zig");
     _ = @import("ws_tests.zig");
     _ = @import("web_standards_tests.zig");

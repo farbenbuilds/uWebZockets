@@ -4,6 +4,25 @@ This page is the honest map of what µWebZockets does, what it deliberately does
 not do, and why. It exists so a developer can decide whether a missing feature
 is a defect, a scoped decision, or pending work.
 
+## 2.3.0 implementation in progress
+
+The optional [SQL module](sql.md) now has PostgreSQL protocol/authentication,
+verified TLS, bounded worker pools, typed rows, pipelined bound statements,
+transactions, and checksum migrations. [Worker modules](modules.md) supply
+startup rollback, readiness, asynchronous failures, and reverse shutdown.
+Runnable SQL examples exercise the database benchmark routes and a transaction
+outbox. SQLite is separately gated; release-owner-approved SQL-ALLOC-001 permits
+its upstream C allocations while retaining prepared execution and result/VM bounds.
+
+These source and correctness changes do not close the required database
+throughput above 300K RPS, quiet-host evidence, official external adapter runs,
+or the earlier deliberate boundaries. The strict PostgreSQL TLS allocation
+audit also fails on upstream BoringSSL record-buffer allocations; the SQLite
+exception does not cover TLS. The current HttpArena adapter proposal has
+independent review and retained correctness evidence, while its real release
+pin and complete upstream run remain pending. The full evidence ledger is
+`tasks/todo.md`; final release acceptance is still in progress.
+
 ## Closed in 1.7.0
 
 | Boundary | Resolution |

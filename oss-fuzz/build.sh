@@ -28,7 +28,7 @@ zig build oss-fuzz-objects \
 # Derive the target list from the objects the build installed. This keeps the
 # OSS-Fuzz link step in sync with builds/fuzzing.zig without a second manifest.
 objects=("$install_dir"/oss-fuzz/*.o)
-test "${#objects[@]}" -eq 6
+test "${#objects[@]}" -eq 7
 for object in "${objects[@]}"; do
     target="$(basename "$object" .o)"
     test -f "oss-fuzz/options/${target}.options"

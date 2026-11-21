@@ -15,6 +15,7 @@ fn hello(_: *uz.Request, res: *uz.Response) void {
 fn cluster_surface(init: std.process.Init, allocator: std.mem.Allocator) !void {
     try request_body_surface(allocator);
     try streaming_route_surface(init);
+    try webtransport_stream_surface(init, allocator);
     const options: uz.ClusterOptions = .{};
     var group = try uz.Server.builder(init.io)
         .with_max_clients(8)
@@ -63,6 +64,33 @@ fn cluster_surface(init: std.process.Init, allocator: std.mem.Allocator) !void {
     try group.listen("127.0.0.1", 0);
     try group.catch_shutdown_signals();
     try group.deinit_checked();
+}
+
+fn webtransport_stream_surface(init: std.process.Init, allocator: std.mem.Allocator) !void {
+    const limits: uz.webtransport.FlowLimits = .{ .data = 8192, .streams_bidi = 8, .streams_uni = 4 };
+    const configuration = (uz.ServerConfig{}).with(.{ .webtransport_flow_limits = limits });
+    try configuration.validate();
+    var app = try uz.Server.builder(init.io)
+        .with_max_clients(2)
+        .with_webtransport_flow_limits(limits)
+        .build(allocator);
+    defer app.deinit();
+    _ = try app.webtransport_streams("/session", .{ .open = accept_webtransport_child, .writable = webtransport_writable });
+    const Handle = uz.webtransport_stream.Handle;
+    const finish: *const fn (*@TypeOf(app), Handle) uz.webtransport_stream.OperationError!void = &@TypeOf(app).webtransport_stream_finish;
+    const cancel: *const fn (*@TypeOf(app), Handle, u32) uz.webtransport_stream.OperationError!void = &@TypeOf(app).webtransport_stream_cancel;
+    const write: *const fn (*@TypeOf(app), Handle, []const u8) uz.webtransport_stream.WriteError!usize = &@TypeOf(app).webtransport_stream_write;
+    const want: *const fn (*@TypeOf(app), Handle, bool) uz.webtransport_stream.OperationError!void = &@TypeOf(app).webtransport_stream_want_writable;
+    _ = finish;
+    _ = cancel;
+    _ = write;
+    _ = want;
+}
+
+fn webtransport_writable(_: *anyopaque, _: uz.webtransport_stream.Handle) void {}
+
+fn accept_webtransport_child(_: *anyopaque, _: uz.webtransport_stream.Info) bool {
+    return true;
 }
 
 const LegacyFormError = error{
@@ -281,6 +309,11 @@ fn streaming_route_surface(init: std.process.Init) !void {
 }
 
 pub fn main(init: std.process.Init) !void {
+    if (comptime @import("consumer_options").exercise_sql and @hasDecl(uz.sql, "Sql")) {
+        if (init.environ_map.get("UWZ_PACKAGE_CONSUMER_SQL") != null) {
+            try sql_surface(init.gpa);
+        }
+    }
     if (init.environ_map.get("UWZ_PACKAGE_CONSUMER_CLUSTER") != null) {
         try cluster_surface(init, std.heap.page_allocator);
     }
@@ -291,4 +324,32 @@ pub fn main(init: std.process.Init) !void {
     _ = try app.get("/", hello);
     try app.listen("0.0.0.0", 3000);
     try app.run();
+}
+
+fn sql_surface(allocator: std.mem.Allocator) !void {
+    var module = try uz.sql.Sql.init(allocator, .{
+        .user = "consumer",
+        .database = "consumer",
+        .allow_plaintext = true,
+    });
+    defer module.db.deinit();
+    const hooks: uz.modules.ServiceHooks = module.hooks();
+    _ = hooks;
+    const query_fn: *const fn (*uz.sql.Db, *uz.sql.Query) uz.sql.RuntimeError!void = &uz.sql.Db.query;
+    const begin_fn: *const fn (*uz.sql.Tx, *uz.sql.Query) uz.sql.RuntimeError!void = &uz.sql.Tx.begin;
+    _ = query_fn;
+    _ = begin_fn;
+    const migration = uz.sql.migrate.embedded(1, "consumer", "CREATE TABLE consumer(id INTEGER);");
+    _ = migration;
+    if (comptime @hasDecl(uz.sql.sqlite, "Db")) {
+        var statements: [1]uz.sql.sqlite.Prepared = undefined;
+        var lookaside: [8192]u8 align(8) = undefined;
+        var db = try uz.sql.sqlite.Db.init(.{}, &statements, &lookaside);
+        defer db.deinit();
+        try db.prepare(0, "SELECT ?1");
+        db.seal();
+        var rows = try db.query(0, &.{.{ .value = .{ .int8 = 42 } }});
+        defer rows.deinit();
+        _ = try rows.next();
+    }
 }
