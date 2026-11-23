@@ -4,7 +4,7 @@
     "formula": "candidate_median_rps >= baseline_median_rps * minimum_baseline_ratio",
     "minimum_baseline_ratio": 0.9,
     "passed": true,
-    "threshold_rps": 203144.526
+    "threshold_rps": 99503.109
   },
   "methodology": {
     "build_optimize": "ReleaseFast",
@@ -32,36 +32,36 @@
     "git_ref": "refs/heads/main",
     "repository": "farbenbuilds/uWebZockets",
     "run_attempt": 1,
-    "run_id": 45018058526,
-    "workflow_run_url": "https://github.com/farbenbuilds/uWebZockets/actions/runs/45018058526"
+    "run_id": 45179718261,
+    "workflow_run_url": "https://github.com/farbenbuilds/uWebZockets/actions/runs/45179718261"
   },
-  "record_id": "45018058526-1-2e0f50108592",
-  "recorded_at": "2026-11-22T11:45:54Z",
+  "record_id": "45179718261-1-2e0f50108592",
+  "recorded_at": "2026-11-23T13:13:10Z",
   "results": {
     "baseline": {
-      "median_rps": 225716.14,
+      "median_rps": 110559.01,
       "samples_rps": [
-        222613.86,
-        226452.24,
-        225716.14
+        110559.01,
+        113078.18,
+        109486.66
       ]
     },
     "candidate": {
-      "median_rps": 223001.8,
+      "median_rps": 105932.61,
       "samples_rps": [
-        223001.8,
-        224675.83,
-        222549.32
+        105932.61,
+        113815.65,
+        104962.51
       ]
     },
-    "candidate_to_baseline_ratio": 0.9879745418293967
+    "candidate_to_baseline_ratio": 0.9581544733441445
   },
   "runner": {
     "architecture": "X64",
-    "cpu_model": "Intel(R) Xeon(R) 6975P-C",
-    "image": "ubuntu24/20261116.133.1",
-    "kernel": "Linux 7.0.0-1014-aws #14~24.04.1-Ubuntu SMP PREEMPT Fri Sep 18 21:24:59 UTC 2026 x86_64 GNU/Linux",
-    "name": "GitHub Actions 1000006721",
+    "cpu_model": "AMD EPYC 9V45 96-Core Processor",
+    "image": "ubuntu24/20261116.376.1",
+    "kernel": "Linux 7.0.0-1017-azure #17~24.04.1-Ubuntu SMP PREEMPT Thu Sep 24 18:46:57 UTC 2026 x86_64 GNU/Linux",
+    "name": "GitHub Actions 1000006728",
     "os": "Linux"
   },
   "schema_version": 1,
