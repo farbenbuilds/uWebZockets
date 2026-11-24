@@ -4,7 +4,7 @@
     "formula": "candidate_median_rps >= baseline_median_rps * minimum_baseline_ratio",
     "minimum_baseline_ratio": 0.9,
     "passed": true,
-    "threshold_rps": 99503.109
+    "threshold_rps": 206781.56100000002
   },
   "methodology": {
     "build_optimize": "ReleaseFast",
@@ -32,36 +32,36 @@
     "git_ref": "refs/heads/main",
     "repository": "farbenbuilds/uWebZockets",
     "run_attempt": 1,
-    "run_id": 45179718261,
-    "workflow_run_url": "https://github.com/farbenbuilds/uWebZockets/actions/runs/45179718261"
+    "run_id": 45407854717,
+    "workflow_run_url": "https://github.com/farbenbuilds/uWebZockets/actions/runs/45407854717"
   },
-  "record_id": "45179718261-1-2e0f50108592",
-  "recorded_at": "2026-11-23T13:13:10Z",
+  "record_id": "45407854717-1-2e0f50108592",
+  "recorded_at": "2026-11-24T14:03:25Z",
   "results": {
     "baseline": {
-      "median_rps": 110559.01,
+      "median_rps": 229757.29,
       "samples_rps": [
-        110559.01,
-        113078.18,
-        109486.66
+        228629.1,
+        229757.29,
+        233131.95
       ]
     },
     "candidate": {
-      "median_rps": 105932.61,
+      "median_rps": 231419.68,
       "samples_rps": [
-        105932.61,
-        113815.65,
-        104962.51
+        230294.78,
+        232906.1,
+        231419.68
       ]
     },
-    "candidate_to_baseline_ratio": 0.9581544733441445
+    "candidate_to_baseline_ratio": 1.0072354178620404
   },
   "runner": {
     "architecture": "X64",
-    "cpu_model": "AMD EPYC 9V45 96-Core Processor",
-    "image": "ubuntu24/20261116.376.1",
-    "kernel": "Linux 7.0.0-1017-azure #17~24.04.1-Ubuntu SMP PREEMPT Thu Sep 24 18:46:57 UTC 2026 x86_64 GNU/Linux",
-    "name": "GitHub Actions 1000006728",
+    "cpu_model": "Intel(R) Xeon(R) 6975P-C",
+    "image": "ubuntu24/20261116.133.1",
+    "kernel": "Linux 7.0.0-1014-aws #14~24.04.1-Ubuntu SMP PREEMPT Fri Sep 18 21:24:59 UTC 2026 x86_64 GNU/Linux",
+    "name": "GitHub Actions 1000006793",
     "os": "Linux"
   },
   "schema_version": 1,
