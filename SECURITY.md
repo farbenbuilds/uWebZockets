@@ -51,6 +51,19 @@ different trust rules. `verify = false` is a development-only mode. The client
 does not present a certificate, follow redirects, store cookies, use proxies,
 or retry; callers own those policies.
 
+Optional SQL (`-Dsql=true`) adds PostgreSQL peer-message and authentication
+boundaries. It verifies TLS chains and peer names, binds parameter data,
+checks server SCRAM proofs, bounds message/row/pool storage, and discards unknown
+transaction state. Credentials and parameter values are excluded from module
+diagnostics. Plaintext is an explicit development opt-in. Startup migrations
+validate SHA-256 history under a backend lock. The optional SQLite engine has
+an explicit upstream C-allocation exception; see [SQL](https://github.com/farbenbuilds/uWebZockets/wiki/sql) and
+[ADR 0013](docs/adr/0013-worker-local-sql.md). These modules do not expand the C ABI.
+PostgreSQL TLS currently fails the strict total-allocation release gate because
+upstream BoringSSL allocates record buffers during queries. The measured
+[audit](benchmarks/results/sql_tls_allocation_v1/2026_11_11/README.md) does not
+approve an exception or establish every post-handshake allocation boundary.
+
 Mutual TLS (`init_https_mtls`) verifies client chains against the caller's CA
 bundle and fails the handshake closed in `required` mode. Authentication and
 rate-limiting middleware compare credentials in constant time, fail closed on
@@ -65,7 +78,7 @@ dispatch returns 501, while headers alone do not admit a session. They do not
 establish WebTransport, server push, or
 application-datagram support. ADR 0001 accepts implementation through the
 maintained lsquic fork, but this statement remains true until that work and its
-compliance gate land. The [deliberate boundaries](docs/roadmap.md#deliberate-boundaries) record
+compliance gate land. The [deliberate boundaries](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap#deliberate-boundaries) record
 restoration owners and the dated reassessment. RFC 10008 is the
 separate HTTP `QUERY` method supported
 by the router. Live transports reject QUERY requests without a syntactically

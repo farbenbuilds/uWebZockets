@@ -11,6 +11,9 @@ const std = @import("std");
 /// Upper bound on datagram routes per application.
 pub const max_routes = 16;
 
+/// Stable registry slot; routes cannot change while a listener is active.
+pub const RouteId = enum(u8) { _ };
+
 /// Receives one datagram delivered to a registered session path.
 ///
 /// `payload` borrows transport storage and is only valid for the duration of
@@ -58,9 +61,21 @@ pub const Router = struct {
 
     /// Finds the handler registered for a session path.
     pub fn find(self: *const Router, path: []const u8) ?Route {
-        for (self.routes[0..self.route_count]) |route| {
-            if (std.mem.eql(u8, route.path, path)) return route;
+        return self.get(self.find_id(path) orelse return null);
+    }
+
+    /// Resolves a registered path without retaining request-owned path storage.
+    pub fn find_id(self: *const Router, path: []const u8) ?RouteId {
+        for (self.routes[0..self.route_count], 0..) |route, index| {
+            if (std.mem.eql(u8, route.path, path)) return @enumFromInt(index);
         }
         return null;
+    }
+
+    /// Rejects identities outside this application's registered route count.
+    pub fn get(self: *const Router, id: RouteId) ?Route {
+        const index = @intFromEnum(id);
+        if (index >= self.route_count) return null;
+        return self.routes[index];
     }
 };

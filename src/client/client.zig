@@ -1,6 +1,6 @@
 //! Bounded HTTP/1.1 client built on libxev.
 //!
-//! The public surface is documented in docs/client.md. One `client(N)` value
+//! The public surface is documented in https://github.com/farbenbuilds/uWebZockets/wiki/client. One `client(N)` value
 //! owns a fixed slab of `N` in-flight request slots and one event loop. The
 //! plaintext request path allocates nothing; a TLS fetch allocates its
 //! BoringSSL session once per connection, like the server's `init_tls`. A

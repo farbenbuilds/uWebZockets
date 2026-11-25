@@ -121,7 +121,7 @@ with `error.BackendChanged` instead of mixing epoll and io_uring loops.
   (implementation task documents, removed in this release).
 - `src/router/app.zig`, `src/router/builder.zig`, `src/crypto/tls.zig`,
   `src/core/loop.zig`, `src/core/tcp.zig`.
-- `docs/tls.md`, `docs/architecture.md`, `docs/memory_model.md`,
-  `docs/deployment.md`.
+- [tls](https://github.com/farbenbuilds/uWebZockets/wiki/tls), [architecture](https://github.com/farbenbuilds/uWebZockets/wiki/architecture), [memory_model](https://github.com/farbenbuilds/uWebZockets/wiki/memory_model),
+  [deployment](https://github.com/farbenbuilds/uWebZockets/wiki/deployment).
 - External: HttpArena PR `MDA2AV/HttpArena#1536` (removed `baseline-h2` rows,
   TLS CPU scaling discussion).

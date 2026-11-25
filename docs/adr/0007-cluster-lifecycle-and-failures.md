@@ -154,8 +154,8 @@ claims release once: a later call waits for the winning owner to publish
 
 ## References
 
-- `docs/api.md` cluster section.
-- `docs/architecture.md` shared-nothing workers.
+- [api](https://github.com/farbenbuilds/uWebZockets/wiki/api) cluster section.
+- [architecture](https://github.com/farbenbuilds/uWebZockets/wiki/architecture) shared-nothing workers.
 - ADR 0002 and ADR 0003.
 - `src/router/worker_group.zig`, `src/router/cluster.zig`, and
   `src/router/app.zig` (`Cluster`).

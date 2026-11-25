@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import ssl
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
@@ -182,6 +183,52 @@ def malformed_headers(name: str, authority: bytes):
     raise ValueError(f"unknown malformed case: {name}")
 
 
+async def sustained_requests(
+    protocol: ProbeProtocol,
+    headers: list[tuple[bytes, bytes]],
+    count: int,
+    concurrency: int,
+    timeout: float,
+    expected: dict,
+):
+    state = {"next_index": 0}
+    latencies = [None] * count
+    errors = []
+
+    async def worker():
+        while not errors:
+            index = state["next_index"]
+            state["next_index"] += 1
+            if index >= count:
+                return
+            started = time.perf_counter_ns()
+            try:
+                outcome = await protocol.request(headers, timeout)
+                elapsed = time.perf_counter_ns() - started
+                assert_response(f"request {index}", outcome, expected)
+                latencies[index] = elapsed
+            except Exception as error:
+                errors.append({
+                    "request_index": index,
+                    "latency_ns": time.perf_counter_ns() - started,
+                    "error_type": type(error).__name__,
+                    "error": str(error),
+                })
+                return
+
+    started = time.perf_counter_ns()
+    await asyncio.gather(*(worker() for _ in range(concurrency)))
+    duration = time.perf_counter_ns() - started
+    completed = sum(value is not None for value in latencies)
+    return {
+        "duration_ns": duration,
+        "completed": completed,
+        "incomplete": count - completed,
+        "errors": errors,
+        "latencies": latencies,
+    }
+
+
 async def run(args):
     expectations = json.loads(args.expectations.read_text(encoding="utf-8"))
     expected_version = expectations["clients"]["aioquic"]["version"]
@@ -210,6 +257,22 @@ async def run(args):
         wait_connected=True,
     ) as connected:
         protocol = cast(ProbeProtocol, connected)
+        sustained = expectations["sustained_requests"]
+        workload = await sustained_requests(
+            protocol,
+            request_headers(authority),
+            int(sustained["requests"]),
+            int(sustained["concurrency"]),
+            float(sustained["timeout_seconds"]),
+            expected_response,
+        )
+        results["sustained"] = {
+            key: value for key, value in workload.items() if key != "latencies"
+        }
+        if workload["errors"] or workload["incomplete"]:
+            raise RuntimeError(
+                f"sustained valid requests failed: {results['sustained']}"
+            )
         results["positive"] = await protocol.request(
             request_headers(authority), args.timeout
         )

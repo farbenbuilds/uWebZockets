@@ -11,6 +11,7 @@ it is not a proof that all memory or security defects are absent.
 | --- | --- | --- | --- |
 | `lint.yml` | pushes and pull requests to `main`, manual | `Linting` | Zig formatting and repository conventions |
 | `test.yml` | pushes and pull requests to `main`, manual | `Testing` | Parallel Debug, sanitizer, fuzz, ReleaseSafe, and ReleaseFast verification |
+| `sql.yml` | pushes and pull requests to `main`, manual | `Testing` | PostgreSQL TLS/SCRAM, SQLite, migrations, filtered consumers, and feature exclusion in ReleaseSafe and ASan/UBSan modes |
 | `windows.yml` | manual, reusable from tagged publishing | `Testing` | Native `x86_64-windows-gnu` ReleaseSafe compilation, static-library build, and runtime test suite |
 | `oss_fuzz.yml` | pushes and pull requests to `main`, manual, reusable | `Testing` | OSS-Fuzz-compatible ASan/libFuzzer build and execution |
 | `autobahn_compliance.yml` | pushes and pull requests to `main`, manual | `autobahn Compliance` | RFC 6455 server compliance |
@@ -52,8 +53,10 @@ h1spec submodule gitlink, and rejects branches, tags, short SHAs, local
 patches, and stale overlays. The release metadata check keeps the Zig package,
 Nix package, C ABI, tests, changelog, and versioned documentation synchronized.
 The documentation link check resolves every relative Markdown target in the
-top-level documents and `docs/**/*.md` against the checkout, ignoring external
-URLs, anchor-only targets, and fenced code blocks.
+top-level documents and the `docs/`, `benchmarks/`, `examples/`, and `oss-fuzz/`
+trees against the checkout, ignoring external URLs, anchor-only targets, and
+fenced code blocks. Narrative guides live in the GitHub wiki; decision records
+and the dependency-fork policy remain repository files.
 
 ## Unit and build verification
 
@@ -81,6 +84,36 @@ entries in `build.zig.zon`, fetches that copy with `zig fetch`, and compiles the
 same downstream fixture from the fetched package. The path dependency above
 exercises the module; the clean-package check also proves the manifest carries
 every file the build reads.
+
+The optional SQL workflow runs `scripts/test_sql.sh` with `-Dsql=true` and
+`-Dsqlite=true`. The harness creates its own digest-pinned PostgreSQL container,
+random credentials, trusted/untrusted test CAs, and Unicode password roles,
+then removes those resources. Its ReleaseSafe and ASan/UBSan jobs require live
+database tests; missing-service skips in the ordinary suite are not integration
+evidence. The runnable SQL examples compile only in the non-sanitized leg because
+their command does not enable sanitizers; the job budget is 45 minutes. SQLite C
+allocation exception SQL-ALLOC-001 is documented in
+[ADR 0013](docs/adr/0013-worker-local-sql.md); Zig allocation checks and SQLite
+result/VM bounds remain strict. The separate
+[TLS C-allocation audit](benchmarks/results/sql_tls_allocation_v1/2026_11_11/README.md)
+records a failed strict total-allocation gate and a pending policy decision;
+passing the ordinary suite does not satisfy that gate.
+
+`scripts/check_sql_feature_gates.sh` builds downstream consumers and inspects
+symbols for disabled SQL, PostgreSQL-only, SQLite-enabled, and enabled-but-unused
+module configurations. `scripts/check_package_paths.sh -Dsql=true -Dsqlite=true`
+also verifies the filtered optional-backend package. Dedicated `sql-fuzz` and
+`sqlite-fuzz` targets select the new boundary fuzz tests explicitly:
+
+```sh
+zig build sql-fuzz --fuzz=100K -Doptimize=ReleaseSafe
+zig build sqlite-fuzz -Dsql=true -Dsqlite=true --fuzz=100K -Doptimize=ReleaseSafe
+```
+
+The SQL workflow runs both selectors explicitly. The general fuzz workflow
+also runs `zig build udp-fuzz --fuzz=100K -Doptimize=ReleaseSafe`, so ancillary
+metadata receives its own coverage run rather than only seed execution in
+the combined test binary.
 
 Debug tests cover parser limits, malformed framing, partial reads and writes,
 pool ownership, router method behavior, handshake validation, close codes,
@@ -125,8 +158,8 @@ does not claim full-suite MSan coverage of the TLS or cluster paths.
 Changing this contract requires a new milestone and an ADR that supplies a
 toolchain emitting Zig MSan instrumentation, a supported instrumented BoringSSL
 build, and a full-suite run. The decision is repeated in
-[docs/deployment.md](docs/deployment.md#6-platforms) and linked from
-[docs/roadmap.md](docs/roadmap.md).
+[deployment](https://github.com/farbenbuilds/uWebZockets/wiki/deployment#6-platforms) and linked from
+[roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap).
 
 The fuzz job runs Zig's native fuzzer for 100,000 iterations over bounded
 HTTP, multipart streaming, HTTP/3 metadata, WebSocket extension, and zslay receive-state targets.
@@ -216,7 +249,7 @@ queued its read or write reaches `CancelIoEx` and its target callback clears
 `read_active`/`is_writing`. The decision and rollback path are in
 [ADR 0004](docs/adr/0004-windows-iocp-accept-and-queued-close.md); the blocker
 history is in
-[docs/roadmap.md](docs/roadmap.md#windows-runtime-blocker-details). The cluster
+[roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap#windows-runtime-blocker-details). The cluster
 TLS tests read the bound port through `ws2_32.getsockname` and bound one client
 read with `SO_RCVTIMEO`, so they execute on the native job rather than skip.
 

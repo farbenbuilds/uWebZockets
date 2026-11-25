@@ -50,7 +50,7 @@ EOF
 
 (
     cd "$consumer_dir"
-    zig build check -Doptimize=ReleaseSafe
+    zig build check -Doptimize=ReleaseSafe "$@"
 )
 
 printf '%s\n' "package .paths covers a clean downstream build"

@@ -14,6 +14,15 @@ You prioritize performance, zero-allocation data paths, and data-oriented design
 - **Asynchronous IO**: Maximize throughput using event-driven, non-blocking IO architecture.
 - **Data-Oriented Design**: Optimize for CPU caches. Group similar data together; use Struct of Arrays where applicable.
 
+## Documentation Locations
+
+Narrative guides, protocol descriptions, deployment instructions, and
+operational runbooks live in the GitHub wiki at
+`https://github.com/farbenbuilds/uWebZockets/wiki`. Architecture decision
+records and normative policy stay in `docs/` so offline checkouts and
+repository gates retain the contract. Link to wiki pages by absolute URL; link
+to ADRs and `docs/dependency_forks.md` by repository path.
+
 ## Code Hygiene (Anti-Slop)
 
 `CODING_CONVENTION.md` section 7 is the canonical contract. Agents must apply

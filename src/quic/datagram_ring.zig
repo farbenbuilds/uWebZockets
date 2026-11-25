@@ -26,7 +26,8 @@ pub const Datagram = struct {
 /// Borrowed datagram returned by `peek` and `pop`.
 ///
 /// `payload` points into the ring's caller-owned payload slab and stays valid
-/// until its slot is reused or the ring is cleared.
+/// until its slot is reused, `clear_session` compacts the queue, or the ring
+/// is cleared.
 pub const DatagramView = struct {
     session_id: u64,
     sequence_number: u64,
@@ -135,6 +136,32 @@ pub const DatagramRing = struct {
         self.tail = 0;
     }
 
+    /// Removes a session's queued datagrams, preserving survivor FIFO order.
+    ///
+    /// Compaction invalidates borrowed payload views. `head` and the lifetime
+    /// `dropped` counter stay unchanged; removed slots become reusable.
+    pub fn clear_session(self: *@This(), session_id: u64) void {
+        var read_cursor = self.head;
+        var retained: u32 = 0;
+        while (read_cursor != self.tail) : (read_cursor +%= 1) {
+            const slot = self.slot_index(read_cursor);
+            if (self.session_ids[slot] == session_id) continue;
+
+            const write_cursor = self.head +% retained;
+            if (write_cursor != read_cursor) {
+                // Distinct cursors within the live window select disjoint slots.
+                const value = self.view_at(slot);
+                self.write_slot(write_cursor, .{
+                    .session_id = value.session_id,
+                    .sequence_number = value.sequence_number,
+                    .payload = value.payload,
+                });
+            }
+            retained += 1;
+        }
+        self.tail = self.head +% retained;
+    }
+
     /// Copies `value` into the next free slot or reports `error.Full`.
     ///
     /// `value.payload` must not overlap `payload_storage`; `@memcpy` rejects
@@ -172,7 +199,8 @@ pub const DatagramRing = struct {
 
     /// Removes and returns the oldest queued datagram.
     ///
-    /// The returned payload remains valid until its slot is reused.
+    /// The returned payload remains valid until its slot is reused, the queue
+    /// is compacted by `clear_session`, or the ring is cleared.
     pub fn pop(self: *@This()) ?DatagramView {
         const view = self.peek() orelse return null;
         self.advance_head();

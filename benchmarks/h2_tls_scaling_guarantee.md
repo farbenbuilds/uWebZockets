@@ -183,12 +183,13 @@ schema-version-2 sampler TSV.
 ## Committed artifact policy
 
 The runner writes one file per sample for local analysis. Do not commit those
-files individually. Each recorded run is committed as one compressed archive
-plus `README.md` and `manifest.sha256`, so a results directory stays at three
-files. `scripts/check_benchmark_results.sh` runs as part of the convention gate
-and rejects any unarchived `.txt`, `.log`, `.tsv`, or `.bin` file under
-`benchmarks/results/`. The archive is append-only: extract it, inspect it, and
-do not edit the generated output.
+files or a compressed evidence archive. Each recorded run commits `README.md`
+and `manifest.sha256` only; the README records the omitted archive's SHA-256
+and states that clean-clone replay is unavailable. Raw evidence stays outside
+the repository. `scripts/check_benchmark_results.sh` runs as part of the
+convention gate, rejects archives and unarchived `.txt`, `.log`, `.tsv`, or
+`.bin` files under `benchmarks/results/`, requires a README beside every
+manifest, and verifies the manifest.
 
 ## Current status
 

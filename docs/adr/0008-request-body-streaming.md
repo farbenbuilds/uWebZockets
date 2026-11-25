@@ -31,7 +31,7 @@ uploads pass; the HTTP/3 compliance client measured RSS growth under 1 MiB
 against a 64 MiB bound. All four transports send `100 Continue` after
 streaming admission, and H2 streaming routes use per-stream overflow capture
 storage beyond the inline 16 slots. See the
-[deliberate boundaries](../roadmap.md#deliberate-boundaries).
+[deliberate boundaries](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap#deliberate-boundaries).
 
 ## Compatibility revision, 2026-10-26
 

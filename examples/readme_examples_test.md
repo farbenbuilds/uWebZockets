@@ -1,4 +1,4 @@
-# µWebZockets 2.2.0 Examples
+# µWebZockets 2.3.0 Examples
 
 Build the supported examples with Zig 0.16.0:
 
@@ -107,7 +107,7 @@ The expected result is `HTTP/1.1 200 OK` and the body `hello from ephemeral
 TLS`. The server speaks TLS 1.3, negotiates HTTP/2 when the client offers
 `h2`, and embeds `localhost`, `127.0.0.1`, and `::1` in the certificate.
 Generation runs once at startup and nothing touches the disk.
-[docs/tls.md](../docs/tls.md) covers custom names, production PEM files, and
+[tls](https://github.com/farbenbuilds/uWebZockets/wiki/tls) covers custom names, production PEM files, and
 the C ABI equivalents.
 
 ## WebSocket pub/sub server
@@ -175,7 +175,7 @@ curl -i http://127.0.0.1:3000/
 ```
 
 The server prints the `µWEBZOCKETS` wordmark and a Vite-style ready summary
-(`µWebZockets v2.2.0  ready in 0.6 ms`, then the `→ Local:` line, with the
+(`µWebZockets v2.3.0  ready in 0.6 ms`, then the `→ Local:` line, with the
 elapsed time scaled from nanoseconds up) before the first accepting listener;
 a one-line `µWebZockets` mark fits narrow terminals. Each request then logs
 Vite-style as `HH:MM:SS | [METHOD] /path : STATUS` with a dim clock, cyan
@@ -225,7 +225,7 @@ curl -i http://127.0.0.1:3000/
 
 The kernel load-balances accepted connections across the listeners, and every
 connection stays inside the accepting worker's slab. See
-[docs/architecture.md](../docs/architecture.md) for the affinity and tuning
+[architecture](https://github.com/farbenbuilds/uWebZockets/wiki/architecture) for the affinity and tuning
 details.
 
 ### TLS-enabled cluster
@@ -269,7 +269,7 @@ Use `enable_https("certs/fullchain.pem", "certs/privkey.pem")` in production;
 `enable_https_ephemeral` is development-only and generates a different
 certificate per worker. HTTP/3/QUIC clustering is not supported, and
 `enable_https` does not configure client certificates. See
-[docs/tls.md](../docs/tls.md#tls-enabled-clusters) for ownership, lifecycle,
+[tls](https://github.com/farbenbuilds/uWebZockets/wiki/tls#tls-enabled-clusters) for ownership, lifecycle,
 and error names.
 
 ## Compliance targets

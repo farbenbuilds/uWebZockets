@@ -34,8 +34,10 @@ certs/
 # generated knowledge graph (graphify)
 graphify-out/
 
-# benchmark results: commit one archive plus README and manifest
+# benchmark results: commit README.md and manifest.sha256 only
 benchmarks/results/**/*.txt
 benchmarks/results/**/*.log
 benchmarks/results/**/*.tsv
 benchmarks/results/**/*.bin
+benchmarks/results/**/*.tgz
+benchmarks/results/**/*.tar.gz

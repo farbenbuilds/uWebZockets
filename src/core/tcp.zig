@@ -6,6 +6,7 @@ const Loop = @import("loop.zig").Loop;
 const core_loop = @import("loop.zig");
 const core_timer = @import("timer.zig");
 const timer_wheel = @import("timer_wheel.zig");
+const parking = @import("connection_parking.zig");
 const http_parser = @import("../http/parser.zig");
 const HttpParser = http_parser.HttpParser;
 const http_status = @import("../http/status.zig");
@@ -83,24 +84,7 @@ const Http2AsyncContext = struct {
 };
 
 /// Resumes an application handler after a parked delay expires.
-pub const SleepResume = *const fn (ctx: *anyopaque) void;
-
-const DelayedCompletion = struct {
-    token: http_response.AsyncResponse,
-    status: []const u8,
-    headers: []const u8,
-    body: []const u8,
-};
-
-/// One connection-owned parking slot. Slot 0 serves HTTP/1; the remaining
-/// slots map one-to-one to HTTP/2 streams.
-const SleepSlot = struct {
-    connection: *TcpConnection = undefined,
-    resume_fn: ?SleepResume = null,
-    resume_ctx: *anyopaque = undefined,
-    completion: ?DelayedCompletion = null,
-    node: timer_wheel.TimerNode = .{},
-};
+pub const SleepResume = parking.ResumeFn;
 
 /// HTTP/1 parking slot plus one per HTTP/2 stream.
 pub const sleep_slot_capacity = max_http2_streams + 1;
@@ -170,7 +154,7 @@ pub const TcpConnection = struct {
     idle_timer: timer_wheel.TimerNode = .{},
     idle_timeout_ms: u64 = 0,
     header_timeout_ms: u64 = 0,
-    sleep_slots: [sleep_slot_capacity]SleepSlot = [_]SleepSlot{.{}} ** sleep_slot_capacity,
+    sleep_slots: [sleep_slot_capacity]parking.Slot = [_]parking.Slot{.{}} ** sleep_slot_capacity,
     /// Parked delayed responses. While non-zero, the connection idle deadline
     /// is suppressed so a long delay cannot be reaped mid-flight.
     parked_sleeps: u16 = 0,
@@ -308,11 +292,7 @@ pub const TcpConnection = struct {
             _ = scheduler.cancel(&self.idle_timer);
             for (&self.sleep_slots) |*slot| {
                 _ = scheduler.cancel(&slot.node);
-                if (slot.resume_fn != null and self.parked_sleeps != 0) {
-                    self.parked_sleeps -= 1;
-                }
-                slot.resume_fn = null;
-                slot.completion = null;
+                _ = parking.take(slot, &self.parked_sleeps);
             }
         }
         self.timer_scheduler = null;
@@ -320,81 +300,20 @@ pub const TcpConnection = struct {
 
     fn cancel_sleep_slot(self: *TcpConnection, slot_index: usize) void {
         const slot = &self.sleep_slots[slot_index];
-        if (slot.resume_fn == null) return;
+        if (parking.take(slot, &self.parked_sleeps) == null) return;
         if (self.timer_scheduler) |scheduler| _ = scheduler.cancel(&slot.node);
-        if (self.parked_sleeps != 0) self.parked_sleeps -= 1;
-        slot.resume_fn = null;
-        slot.completion = null;
     }
 
-    /// Parks `resume` on the connection-owned HTTP/1 slot for `delay_ms`.
-    fn park_http1(self: *TcpConnection, delay_ms: u64, ctx: *anyopaque, resume_fn: SleepResume) void {
-        const scheduler = self.timer_scheduler orelse {
-            // No timer engine: fail the parked request instead of hanging.
-            close_connection(self);
-            return;
-        };
-        const slot = &self.sleep_slots[0];
-        if (slot.resume_fn == null) self.parked_sleeps +|= 1;
-        _ = scheduler.cancel(&self.idle_timer);
-        slot.connection = self;
-        slot.resume_fn = resume_fn;
-        slot.resume_ctx = ctx;
-        slot.completion = null;
-        scheduler.schedule_after(&slot.node, delay_ms, on_sleep_expired_slot, slot);
-    }
-
-    fn park_complete_http1(
+    fn park_slot(
         self: *TcpConnection,
+        slot_index: usize,
         delay_ms: u64,
-        token: http_response.AsyncResponse,
-        status: []const u8,
-        headers: []const u8,
-        body: []const u8,
-    ) void {
-        const scheduler = self.timer_scheduler orelse {
-            close_connection(self);
-            return;
-        };
-        const slot = &self.sleep_slots[0];
-        if (slot.resume_fn == null) self.parked_sleeps +|= 1;
-        _ = scheduler.cancel(&self.idle_timer);
-        slot.connection = self;
-        slot.resume_fn = on_delayed_completion;
-        slot.resume_ctx = slot;
-        slot.completion = .{
-            .token = token,
-            .status = status,
-            .headers = headers,
-            .body = body,
-        };
-        scheduler.schedule_after(&slot.node, delay_ms, on_sleep_expired_slot, slot);
-    }
-
-    fn park_complete_http2(
-        self: *TcpConnection,
-        stream_id: u32,
-        delay_ms: u64,
-        token: http_response.AsyncResponse,
-        status: []const u8,
-        headers: []const u8,
-        body: []const u8,
+        action: parking.Action,
     ) !void {
         const scheduler = self.timer_scheduler orelse return error.TimerUnavailable;
-        const index = self.h2.connection.streams.find(stream_id) orelse
-            return error.StreamClosed;
-        const slot = &self.sleep_slots[index + 1];
-        if (slot.resume_fn == null) self.parked_sleeps +|= 1;
+        const slot = &self.sleep_slots[slot_index];
+        parking.park(slot, &self.parked_sleeps, self, action);
         _ = scheduler.cancel(&self.idle_timer);
-        slot.connection = self;
-        slot.resume_fn = on_delayed_completion;
-        slot.resume_ctx = slot;
-        slot.completion = .{
-            .token = token,
-            .status = status,
-            .headers = headers,
-            .body = body,
-        };
         scheduler.schedule_after(&slot.node, delay_ms, on_sleep_expired_slot, slot);
     }
 
@@ -402,20 +321,11 @@ pub const TcpConnection = struct {
         self: *TcpConnection,
         stream_id: u32,
         delay_ms: u64,
-        ctx: *anyopaque,
-        resume_fn: SleepResume,
+        action: parking.Action,
     ) !void {
-        const scheduler = self.timer_scheduler orelse return error.TimerUnavailable;
         const index = self.h2.connection.streams.find(stream_id) orelse
             return error.StreamClosed;
-        const slot = &self.sleep_slots[index + 1];
-        if (slot.resume_fn == null) self.parked_sleeps +|= 1;
-        _ = scheduler.cancel(&self.idle_timer);
-        slot.connection = self;
-        slot.resume_fn = resume_fn;
-        slot.resume_ctx = ctx;
-        slot.completion = null;
-        scheduler.schedule_after(&slot.node, delay_ms, on_sleep_expired_slot, slot);
+        try self.park_slot(index + 1, delay_ms, action);
     }
 
     /// Allocates BoringSSL state and attaches bounded paired memory BIOs.
@@ -1374,14 +1284,12 @@ pub const TcpConnection = struct {
     ) void {
         const async_context: *Http2AsyncContext = @ptrCast(@alignCast(context));
         const self = async_context.connection;
-        self.park_complete_http2(
-            async_context.stream_id,
-            delay_ms,
-            token,
-            status,
-            headers,
-            body,
-        ) catch {
+        self.park_http2(async_context.stream_id, delay_ms, .{ .complete = .{
+            .token = token,
+            .status = status,
+            .headers = headers,
+            .body = body,
+        } }) catch {
             const callbacks = self.http2_callbacks();
             self.h2.reset_stream(async_context.stream_id, .internal_error, callbacks) catch
                 close_connection(self);
@@ -1396,7 +1304,10 @@ pub const TcpConnection = struct {
     ) void {
         const async_context: *Http2AsyncContext = @ptrCast(@alignCast(context));
         const self = async_context.connection;
-        self.park_http2(async_context.stream_id, delay_ms, resume_ctx, resume_fn) catch {
+        self.park_http2(async_context.stream_id, delay_ms, .{ .handler = .{
+            .context = resume_ctx,
+            .callback = resume_fn,
+        } }) catch {
             const callbacks = self.http2_callbacks();
             self.h2.reset_stream(async_context.stream_id, .internal_error, callbacks) catch
                 close_connection(self);
@@ -2190,7 +2101,12 @@ pub const TcpConnection = struct {
         body: []const u8,
     ) void {
         const self: *TcpConnection = @ptrCast(@alignCast(context));
-        self.park_complete_http1(delay_ms, token, status, headers, body);
+        self.park_slot(0, delay_ms, .{ .complete = .{
+            .token = token,
+            .status = status,
+            .headers = headers,
+            .body = body,
+        } }) catch close_connection(self);
     }
 
     fn sleep_http1_response(
@@ -2200,7 +2116,10 @@ pub const TcpConnection = struct {
         resume_fn: SleepResume,
     ) void {
         const self: *TcpConnection = @ptrCast(@alignCast(context));
-        self.park_http1(delay_ms, resume_ctx, resume_fn);
+        self.park_slot(0, delay_ms, .{ .handler = .{
+            .context = resume_ctx,
+            .callback = resume_fn,
+        } }) catch close_connection(self);
     }
 
     fn complete_async_response(
@@ -3027,28 +2946,24 @@ fn on_idle_timeout(ctx: *anyopaque) void {
 }
 
 fn on_sleep_expired_slot(ctx: *anyopaque) void {
-    const slot: *SleepSlot = @ptrCast(@alignCast(ctx));
-    const resume_fn = slot.resume_fn orelse return;
-    slot.resume_fn = null;
-    if (slot.connection.parked_sleeps != 0) slot.connection.parked_sleeps -= 1;
-    if (slot.connection.closing) return;
+    const slot: *parking.Slot = @ptrCast(@alignCast(ctx));
+    if (slot.pending == null) return;
+    const conn: *TcpConnection = @ptrCast(@alignCast(slot.connection));
+    const expiry = parking.take(slot, &conn.parked_sleeps) orelse return;
+    if (conn.closing) return;
     // Re-arm before invoking application code: a resume may complete the
     // response and synchronously return the slot to the pool on Windows.
-    slot.connection.touch_activity();
-    resume_fn(slot.resume_ctx);
-}
-
-fn on_delayed_completion(ctx: *anyopaque) void {
-    const slot: *SleepSlot = @ptrCast(@alignCast(ctx));
-    const completion = slot.completion orelse return;
-    slot.completion = null;
-    completion.token.complete_with_headers(
-        completion.status,
-        completion.headers,
-        completion.body,
-    ) catch |err| {
-        log.debug("delayed completion failed: {}", .{err});
-    };
+    conn.touch_activity();
+    switch (expiry.action) {
+        .handler => |handler| handler.callback(handler.context),
+        .complete => |completion| completion.token.complete_with_headers(
+            completion.status,
+            completion.headers,
+            completion.body,
+        ) catch |err| {
+            log.debug("delayed completion failed: {}", .{err});
+        },
+    }
 }
 
 /// Returns a fully closed connection to its owning fixed-capacity pool.

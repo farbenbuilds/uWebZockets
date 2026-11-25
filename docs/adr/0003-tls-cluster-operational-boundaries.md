@@ -64,7 +64,7 @@ rollback behavior.
 ### Backend selection and shutdown no-ops
 
 Backend selection stays process-sticky and `xev` stays internal; see
-[architecture.md](../architecture.md#event-loop-and-completions).
+[architecture.md](https://github.com/farbenbuilds/uWebZockets/wiki/architecture#event-loop-and-completions).
 `Cluster.request_shutdown` after `deinit` remains a documented no-op with an
 explicit guard at the call site.
 
@@ -94,6 +94,6 @@ explicit guard at the call site.
 ## References
 
 - `docs/adr/0002-tls-cluster-lifecycle.md`.
-- `docs/tls.md`, `docs/deployment.md`, `docs/roadmap.md`.
+- [tls](https://github.com/farbenbuilds/uWebZockets/wiki/tls), [deployment](https://github.com/farbenbuilds/uWebZockets/wiki/deployment), [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap).
 - `scripts/probe_tls_resumption.sh`.
 - `benchmarks/h2_tls_scaling_guarantee.md` and the 1.9.0 results directory.

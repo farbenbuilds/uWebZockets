@@ -160,6 +160,9 @@ malformed and capacity-exhaustion cases.
 - Explain the protocol, ownership, or performance invariant being changed.
 - Include regression tests for bugs and malformed-input tests for parsers.
 - Document API, limit, configuration, or compatibility changes.
+- Put narrative guides, protocol descriptions, and operational instructions in
+  the GitHub wiki. Keep architecture decision records and normative policy in
+  `docs/` so agents and offline checkouts retain the contract.
 - Separate measured performance results from estimates.
 - Note breaking changes explicitly in the pull request and changelog.
 - Assign the pull request to its owner and apply at least one existing

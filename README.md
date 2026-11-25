@@ -21,11 +21,20 @@ thread each, and reused without locking.
   official support is claimed only after that job is green for the release
   commit.
 
-[Getting started](docs/getting_started.md) | [API guide](docs/api.md) |
-[TLS](docs/tls.md) | [Architecture](docs/architecture.md) |
-[Memory model](docs/memory_model.md) | [Protocols](docs/protocols.md) |
-[Client](docs/client.md) | [Deployment](docs/deployment.md) |
-[Operations](docs/operations.md) | [Roadmap](docs/roadmap.md)
+[Getting started](https://github.com/farbenbuilds/uWebZockets/wiki/getting_started) | [API guide](https://github.com/farbenbuilds/uWebZockets/wiki/api) |
+[TLS](https://github.com/farbenbuilds/uWebZockets/wiki/tls) | [Architecture](https://github.com/farbenbuilds/uWebZockets/wiki/architecture) |
+[Memory model](https://github.com/farbenbuilds/uWebZockets/wiki/memory_model) | [Protocols](https://github.com/farbenbuilds/uWebZockets/wiki/protocols) |
+[Client](https://github.com/farbenbuilds/uWebZockets/wiki/client) | [Deployment](https://github.com/farbenbuilds/uWebZockets/wiki/deployment) |
+[Operations](https://github.com/farbenbuilds/uWebZockets/wiki/operations) | [Roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap)
+
+Optional worker-local database access is available through [SQL](https://github.com/farbenbuilds/uWebZockets/wiki/sql)
+with `-Dsql=true`; [module hooks](https://github.com/farbenbuilds/uWebZockets/wiki/modules) define startup and shutdown.
+The optional SQLite backend additionally requires `-Dsqlite=true` and uses
+the documented SQL-ALLOC-001 exception for upstream C allocations. The v2.3.0
+candidate still has an open strict allocation gate for PostgreSQL TLS:
+[the measured BoringSSL record path](benchmarks/results/sql_tls_allocation_v1/2026_11_11/README.md)
+allocates C heap memory after startup. SQL-ALLOC-002 is proposed, pending user
+approval; SQLite's exception does not cover it.
 
 ## Quick start
 
@@ -104,7 +113,7 @@ Pin a tag or full commit rather than a moving branch so dependency resolution
 stays reproducible, and use the minimum Zig release the package declares
 (0.16.0). The `tests/package_consumer` fixture compiles this exact snippet in
 CI, and `scripts/check_package_paths.sh` repeats it from a clean `zig fetch` of
-the package. [Operations](docs/operations.md#use-as-a-zig-dependency) covers
+the package. [Operations](https://github.com/farbenbuilds/uWebZockets/wiki/operations#use-as-a-zig-dependency) covers
 path dependencies, archive linking, and the C ABI contract.
 
 ## Shared-nothing by default
@@ -165,13 +174,16 @@ Workers share the port through `SO_REUSEPORT` (Linux/macOS) or `SO_REUSEADDR`
 distinct physical cores where the platform
 allows it, and set `TCP_DEFER_ACCEPT` and `TCP_QUICKACK` to keep the loop
 asleep through handshakes and to avoid delayed-ACK stalls. Details and the
-platform matrix are in [docs/architecture.md](docs/architecture.md).
+platform matrix are in [architecture](https://github.com/farbenbuilds/uWebZockets/wiki/architecture).
 
 A worker group can also terminate TLS itself. Call `enable_https` with PEM
 files, or `enable_https_ephemeral` for development, after `configure` and
 before `listen`; every worker then owns its own TLS context and loads or
 generates its credentials once at startup. TLS clusters are TCP-only:
-HTTP/3/QUIC clustering is not supported.
+HTTP/3/QUIC clustering is not supported. Candidate WebTransport stream and
+datagram registration share sixteen endpoint paths; stream-only registration
+requires no datagram buffers. See [child receive callbacks](https://github.com/farbenbuilds/uWebZockets/wiki/quic#child-receive-callbacks)
+for the public handles and the unpublished-backend requirement.
 
 ```zig
 const std = @import("std");
@@ -204,7 +216,7 @@ pub fn main(init: std.process.Init) !void {
 `zig build tls_cluster -Doptimize=ReleaseSafe` starts the equivalent example
 with the platform CPU count by default (override with
 `UWEBZOCKETS_WORKERS`) and per-worker ephemeral certificates on
-`https://127.0.0.1:8443/`. [docs/tls.md](docs/tls.md#tls-enabled-clusters)
+`https://127.0.0.1:8443/`. [tls](https://github.com/farbenbuilds/uWebZockets/wiki/tls#tls-enabled-clusters)
 covers ownership, lifecycle, and error names.
 
 ## Configure capacities, not bytes
@@ -250,7 +262,7 @@ rejection instead of a dropped connection:
 ```
 
 The full capacity table, slab layout, and backpressure model are in
-[docs/memory_model.md](docs/memory_model.md).
+[memory_model](https://github.com/farbenbuilds/uWebZockets/wiki/memory_model).
 
 ## Request helpers
 
@@ -319,13 +331,13 @@ _ = try app.use(&limiter, uz.middleware.RateLimit.handler);
 `try app.catch_shutdown_signals();` installs a process-wide SIGINT/SIGTERM
 watcher (Windows console control on Windows) that drains the server through the
 normal shutdown path; clusters use `Cluster.catch_shutdown_signals()`.
-[docs/http.md](docs/http.md#middleware) and
-[docs/api.md](docs/api.md#graceful-shutdown-signals) cover both.
+[http](https://github.com/farbenbuilds/uWebZockets/wiki/http#middleware) and
+[api](https://github.com/farbenbuilds/uWebZockets/wiki/api#graceful-shutdown-signals) cover both.
 
 ## Terminal development log
 
 `with_dev_log(true)` prints the `µWEBZOCKETS` wordmark and a Vite-style ready
-summary before the first accepting listener: `µWebZockets v2.2.0  ready in
+summary before the first accepting listener: `µWebZockets v2.3.0  ready in
 0.6 ms` followed by the `→ Local:` line; the elapsed time scales
 through nanoseconds, microseconds, milliseconds, and seconds. The wordmark
 collapses to a one-line `µWebZockets` mark when the terminal is narrower than
@@ -392,7 +404,7 @@ UDP 8443 with the same in-memory credentials.
 Keep `init_https`/`init_http3` for real certificates. `tls.CertificateNames`
 customizes the names embedded in generated certificates, and the C ABI exposes
 `uwz_app_create_tls_ephemeral` and `uwz_app_create_http3_ephemeral` for the
-same workflow. [docs/tls.md](docs/tls.md) covers the certificate lifecycle and
+same workflow. [tls](https://github.com/farbenbuilds/uWebZockets/wiki/tls) covers the certificate lifecycle and
 the production handoff.
 
 ### Client certificates (mTLS)
@@ -411,7 +423,7 @@ var server = try uz.App(128).init_https_mtls(
 ```
 
 `tls.ClientAuth` selects `none`, `optional`, or `required` verification.
-[docs/tls.md](docs/tls.md#client-certificates-mtls) covers modes, bundle
+[tls](https://github.com/farbenbuilds/uWebZockets/wiki/tls#client-certificates-mtls) covers modes, bundle
 format, and error names.
 
 ## Outbound HTTP client
@@ -434,7 +446,7 @@ Responses support `Content-Length`, chunked transfer coding with trailers, and
 close-delimited bodies; trust fails closed (`verify = true` requires a CA path,
 because BoringSSL ships no default trust store). The full contract, including
 timeouts, capacities, and failure kinds, is in
-[docs/client.md](docs/client.md).
+[client](https://github.com/farbenbuilds/uWebZockets/wiki/client).
 
 ## Examples
 
@@ -454,28 +466,41 @@ Every step appends `-Doptimize=ReleaseSafe` for production builds. Sources live
 in [`examples/`](examples/), with walkthroughs in
 [`examples/readme_examples_test.md`](examples/readme_examples_test.md).
 
+## Development checks
+
+`zig build test` runs the complete default test target, including the C API
+smoke test. `zig build test-unit` runs the centralized Zig tests and archive
+symbol check. To select centralized tests by name, use
+`zig build test-unit -Dtest-filter='WebTransport native backend'`.
+`zig build test-compile` compiles the test and consumer targets without
+executing them.
+
 ## Documentation
 
 | Document | Contents |
 | --- | --- |
-| [Getting started](docs/getting_started.md) | Install, first server, first route, first WebSocket, examples |
-| [API guide](docs/api.md) | Application types, lifecycle, routing, middleware, ownership rules |
-| [HTTP](docs/http.md) | HTTP/1.1 parsing, routing, middleware, helpers, static files |
-| [HTTP/2](docs/http2.md) | Frames, HPACK, flow control, RFC 8441 tunnels |
-| [HTTP/3 and QUIC](docs/quic.md) | QPACK, WebTransport status, RFC 10008 `QUERY` |
-| [WebSocket](docs/websocket.md) | RFC 6455, RFC 7692 compression, pub/sub, heartbeats |
-| [JSON-RPC](docs/json_rpc.md) | Typed procedures, batches, capacities |
-| [TLS](docs/tls.md) | Ephemeral and production credentials, worker-group TLS, ALPN, 0-RTT, mTLS |
-| [Client](docs/client.md) | Outbound HTTP/1.1 client over TCP and TLS |
-| [Deployment](docs/deployment.md) | Credentials, capacity sizing, hardening, shutdown, platforms |
-| [Roadmap](docs/roadmap.md) | What 1.7.0 closed and which boundaries are deliberate |
-| [Troubleshooting](docs/troubleshooting.md) | Rejections, TLS and client failures, cluster and signal issues |
-| [Architecture](docs/architecture.md) | Shared-nothing workers, affinity, TCP tuning, transports, shutdown |
-| [Memory model](docs/memory_model.md) | Startup slab, SoA layouts, capacity limits, backpressure, rejections |
-| [Operations](docs/operations.md) | Build, sanitizers, fuzzing, C ABI, dependency use, platform tiers |
+| [Getting started](https://github.com/farbenbuilds/uWebZockets/wiki/getting_started) | Install, first server, first route, first WebSocket, examples |
+| [API guide](https://github.com/farbenbuilds/uWebZockets/wiki/api) | Application types, lifecycle, routing, middleware, ownership rules |
+| [HTTP](https://github.com/farbenbuilds/uWebZockets/wiki/http) | HTTP/1.1 parsing, routing, middleware, helpers, static files |
+| [HTTP/2](https://github.com/farbenbuilds/uWebZockets/wiki/http2) | Frames, HPACK, flow control, RFC 8441 tunnels |
+| [HTTP/3 and QUIC](https://github.com/farbenbuilds/uWebZockets/wiki/quic) | QPACK, WebTransport status, RFC 10008 `QUERY` |
+| [WebSocket](https://github.com/farbenbuilds/uWebZockets/wiki/websocket) | RFC 6455, RFC 7692 compression, pub/sub, heartbeats |
+| [JSON-RPC](https://github.com/farbenbuilds/uWebZockets/wiki/json_rpc) | Typed procedures, batches, capacities |
+| [TLS](https://github.com/farbenbuilds/uWebZockets/wiki/tls) | Ephemeral and production credentials, worker-group TLS, ALPN, 0-RTT, mTLS |
+| [Client](https://github.com/farbenbuilds/uWebZockets/wiki/client) | Outbound HTTP/1.1 client over TCP and TLS |
+| [Deployment](https://github.com/farbenbuilds/uWebZockets/wiki/deployment) | Credentials, capacity sizing, hardening, shutdown, platforms |
+| [Roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap) | What 1.7.0 closed and which boundaries are deliberate |
+| [Troubleshooting](https://github.com/farbenbuilds/uWebZockets/wiki/troubleshooting) | Rejections, TLS and client failures, cluster and signal issues |
+| [Architecture](https://github.com/farbenbuilds/uWebZockets/wiki/architecture) | Shared-nothing workers, affinity, TCP tuning, transports, shutdown |
+| [Memory model](https://github.com/farbenbuilds/uWebZockets/wiki/memory_model) | Startup slab, SoA layouts, capacity limits, backpressure, rejections |
+| [Operations](https://github.com/farbenbuilds/uWebZockets/wiki/operations) | Build, sanitizers, fuzzing, C ABI, dependency use, platform tiers |
 | [Codebase](CODEBASE.md) | File-by-file map of the implementation |
 | [CI pipeline](CI_CD_PIPELINE.md) | Workflow gates and verification matrix |
 | [Dependency fork policy](docs/dependency_forks.md) | Maintained forks, upstream mirrors, patch ledger, provenance |
+
+Narrative guides live in the [wiki](https://github.com/farbenbuilds/uWebZockets/wiki).
+Decision records stay in [docs/adr](docs/adr); the dependency-fork policy stays
+in the repository so offline checkouts and gates retain the contract.
 
 ## Platform support
 
@@ -504,7 +529,7 @@ with the main branch on the same runner; it is a regression guard, not a
 universal performance claim. Releases are source tags: there are no
 per-platform binary archives, and consumers use `zig fetch` so the package
 manager builds the pinned dependencies. The current source tree may include
-unreleased changes, and [docs/roadmap.md](docs/roadmap.md) records what each
+unreleased changes, and [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap) records what each
 release closes and which boundaries are deliberate or blocked upstream.
 
 [![Test](https://github.com/farbenbuilds/uWebZockets/actions/workflows/test.yml/badge.svg)](https://github.com/farbenbuilds/uWebZockets/actions/workflows/test.yml)

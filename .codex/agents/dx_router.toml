@@ -116,7 +116,8 @@ new work, migrations, and decisions.
   documented migration path, a `CHANGELOG.md` entry, and the package-consumer
   update.
 - Apply `documentation-and-adrs` when a public decision is non-obvious; record
-  it in `docs/`, `CODEBASE.md`, or the changelog instead of a code comment.
+  it in an ADR, the wiki, `CODEBASE.md`, or the changelog instead of a code
+  comment.
 - Run `zig build test --summary all` for every change, then
   `zig build hello_world -Doptimize=ReleaseSafe`,
   `zig build rpc_server -Doptimize=ReleaseSafe`,

@@ -1,5 +1,10 @@
 //! Supported µWebZockets public API.
 
+/// Optional bounded per-worker SQL module, enabled with `-Dsql=true`.
+pub const sql = if (@import("module_options").sql) @import("sql/root.zig") else struct {};
+/// Explicit lifecycle hooks for worker-owned optional modules.
+pub const modules = @import("modules/service.zig");
+
 /// Returns the default bounded application type for `max_connections` peers.
 pub const App = @import("router/app.zig").app;
 /// Returns an application type with explicit WebSocket and write capacities.
@@ -191,6 +196,8 @@ pub const http2_server = @import("http2/server.zig");
 pub const http3_extensions = @import("quic/http3_extensions.zig");
 /// Bounded WebTransport-over-HTTP/3 draft protocol state.
 pub const webtransport = @import("quic/webtransport.zig");
+/// App-affine WebTransport child handles and borrowed receive callbacks.
+pub const webtransport_stream = @import("quic/webtransport/stream_api.zig");
 /// Fixed-capacity SoA queue for pending WebTransport datagrams.
 pub const datagram_ring = @import("quic/datagram_ring.zig");
 /// Fixed-capacity WebTransport datagram route table.

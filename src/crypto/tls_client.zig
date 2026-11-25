@@ -89,6 +89,9 @@ pub const SessionError = error{
     HostnameVerificationFailed,
 };
 
+/// The HTTP client advertises HTTP/1.1; PostgreSQL negotiates no ALPN.
+pub const SessionProtocol = enum { http1, postgres };
+
 /// One non-blocking client TLS session with a paired memory BIO.
 pub const Session = struct {
     ssl: ?*c.SSL = null,
@@ -103,6 +106,17 @@ pub const Session = struct {
         ctx: *c.SSL_CTX,
         server_name: []const u8,
         verify: bool,
+    ) SessionError!void {
+        return self.init_for_protocol(ctx, server_name, verify, .http1);
+    }
+
+    /// Sets the verified peer identity and the application protocol explicitly.
+    pub fn init_for_protocol(
+        self: *Session,
+        ctx: *c.SSL_CTX,
+        server_name: []const u8,
+        verify: bool,
+        protocol: SessionProtocol,
     ) SessionError!void {
         if (server_name.len == 0) return error.ServerNameEmpty;
         if (server_name.len > max_server_name_bytes) return error.ServerNameTooLong;
@@ -132,10 +146,11 @@ pub const Session = struct {
         if (c.SSL_set_tlsext_host_name(ssl, name_z.ptr) != 1) {
             return error.SniConfigurationFailed;
         }
-        // HTTP/1.1 is the only application protocol this client speaks.
-        const alpn = "\x08http/1.1";
-        if (c.SSL_set_alpn_protos(ssl, alpn, alpn.len) != 0) {
-            return error.AlpnConfigurationFailed;
+        if (protocol == .http1) {
+            const alpn = "\x08http/1.1";
+            if (c.SSL_set_alpn_protos(ssl, alpn, alpn.len) != 0) {
+                return error.AlpnConfigurationFailed;
+            }
         }
         if (verify and !configure_name_verification(ssl, name_z.ptr)) {
             return error.HostnameVerificationFailed;

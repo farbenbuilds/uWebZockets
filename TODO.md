@@ -16,6 +16,16 @@
 > Part II is the merged design dossiers from `uWZ-Disadvantages.md`; Section 19
 > is the master release checklist.
 
+The user accepted the D-5 World endpoint throughput work as done on 2026-11-19.
+This closes that checklist item by owner acceptance; the original 300K RPS
+target was not measured as passing. Other v2.3.0 implementation stays paused.
+[The execution TODO](tasks/todo.md) retains the measurements and seven open
+release requirements, including the separate async-db throughput criterion.
+The user subsequently authorized permitted allocation verification; the
+supplied Zig allocator and startup-buffer checks pass, while the complete
+native/TLS allocation requirement remains open.
+All Daybreak-dependent work remains [deferred for the user](tasks/next_version.md).
+
 ---
 
 ## 0. Vision and document map
@@ -101,8 +111,8 @@ section 11, R-6.1 requires.
      restoration criterion.
    No limit closes by deleting a test, skipping a gate, lowering a threshold,
    or writing a claim without artifacts.
-4. Update `CHANGELOG.md`, `docs/`, and the relevant ADR in the same change that
-   closes or re-declares a limit.
+4. Update `CHANGELOG.md`, the relevant wiki guide, and the relevant ADR in the
+   same change that closes or re-declares a limit.
 
 ### 1.2 Agent workflow
 
@@ -256,7 +266,7 @@ timeline
 | **v2.2.0** | **Streaming & Static Assets** | Multipart streaming, chunked transfers, `sendfile`, 100 KiB TLS echo | HttpArena `8gbit` and `static-*` active |
 | **v2.3.0** | **SQL Module** | `uz.sql`: pure-Zig PostgreSQL wire client, optional SQLite backend, per-worker pools, typed rows, migrations | PostgreSQL and SQLite integration tests pass; `async-db`/`crud` active; no request-path allocation |
 | **v2.4.0** | **Comptime SSR Engine** | Comptime HTML parser, SIMD entity escaping, `/fortunes` renderer | HttpArena `fortunes` active |
-| **v2.5.0** | **Isolated Proto and gRPC** | Optional `uz.proto` wire codec, gRPC framing, 5-byte length prefix, HTTP/2 trailers (`grpc-status`) | `unary-grpc` and `unary-grpc-tls` active; proto vectors pass; core links without proto |
+| **v2.5.0** | **Proto and gRPC** | `uz.proto` shared wire codec, protobuf framing, 5-byte length prefix, HTTP/2 trailers (`grpc-status`) | `unary-grpc` and `unary-grpc-tls` active; proto vectors pass |
 | **v2.5.5** | **Follow-up Closure** | XEV-006 timer carry, XEV-007 queued cancellation, scheduler fail-stop, macOS runtime, H2/TLS matrix, lsquic sync | Open C-items fixed or re-declared; macOS/Windows evidence; patch release |
 | **v2.6.0** | **Real-Time Push (SSE)** | `text/event-stream`, HTTP/1.1 chunking, HTTP/2 DATA framing, `Last-Event-ID` | Sub-millisecond event broadcast, zero leaks |
 | **v2.7.0** | **Sessions, JWT, and Security** | `uz.sessions` sealed-cookie sessions, `uz.jwt` HS/RS/ES/EdDSA and JWKS, cookies, rate limiter, CORS | Session tamper/replay and JWT algorithm-confusion suites pass; HttpArena `production-stack` auth ready |
@@ -293,7 +303,7 @@ do not compete with new surface area.
 ## 3. Ground rules and coding conventions
 
 All code changes across all milestones must strictly comply with
-`CODING_CONVENTION.md` and `docs/roadmap.md`:
+`CODING_CONVENTION.md` and [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap):
 
 - **Shared-nothing, thread-per-core:** retain per-core event loop isolation.
   Each worker owns its slab exclusively. No cross-thread locking or mutex
@@ -335,9 +345,9 @@ requires. Tooling and evidence may land without code changes.
 | L3a | Threaded tests skipped under ASan/MSan | Closed in 1.8.9: all 17 threaded tests run under ASan with `use_sigaltstack=0` | Closed |
 | L3b | Windows runtime coverage | Test plumbing ported; two runtime blockers remain; workflow compile-only | M4 |
 | L4 | MemorySanitizer scope ambiguous for TLS/cluster paths | Dependency-boundary smoke is the current contract; decision not written as permanent | M5 |
-| L5 | `Cluster.request_shutdown` after `deinit` is a silent no-op | Documented in `docs/api.md` and `docs/troubleshooting.md`; no API guard | M6-1 |
-| L6 | TLS credential rotation requires a rolling restart | Documented in ADR 0002 and `docs/deployment.md`; hot reload has no ADR | M6-2 |
-| L7 | Backend selection is process-sticky; `xev` stays internal | Documented in `docs/architecture.md`; `error.BackendChanged` is deliberate | M6-3 |
+| L5 | `Cluster.request_shutdown` after `deinit` is a silent no-op | Documented in [api](https://github.com/farbenbuilds/uWebZockets/wiki/api) and [troubleshooting](https://github.com/farbenbuilds/uWebZockets/wiki/troubleshooting); no API guard | M6-1 |
+| L6 | TLS credential rotation requires a rolling restart | Documented in ADR 0002 and [deployment](https://github.com/farbenbuilds/uWebZockets/wiki/deployment); hot reload has no ADR | M6-2 |
+| L7 | Backend selection is process-sticky; `xev` stays internal | Documented in [architecture](https://github.com/farbenbuilds/uWebZockets/wiki/architecture); `error.BackendChanged` is deliberate | M6-3 |
 | L8 | Shared-port TLS test flaked under ephemeral-port pressure | 1.8.9 retries eight fresh reservations; no flake observed since | M6-4 |
 | L9 | Per-worker session tickets block cross-worker resumption | Not measured | M1 probe, then M6-5 |
 | L10 | H2 window/flow-control tuning was proposed, not measured | No change made; must be evidence-gated | M3 (conditional) |
@@ -349,7 +359,7 @@ requires. Tooling and evidence may land without code changes.
 **Sources for this inventory:** the `Limits` section of `CHANGELOG.md` for
 1.8.9, the `Current status` section of
 `benchmarks/h2_tls_scaling_guarantee.md`, the `Windows runtime blocker
-details` and deliberate-boundary table in `docs/roadmap.md`, the scope
+details` and deliberate-boundary table in [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap), the scope
 boundaries in `docs/adr/0002-tls-cluster-lifecycle.md`, and the v1.8.5/v1.8.9
 declared-limits handoff. Update this table in the same pull request that closes
 or re-declares a row; never leave a closed row without a linked test, artifact,
@@ -461,7 +471,7 @@ nonzero RPS at 1,024 connections on this host; every optimization decision is
 traceable to a probe row.
 
 **Deliverables:** results directory (or results branch) with raw h2load output,
-profiles, logs, and a summary; contract status updated; `docs/` links added.
+profiles, logs, and a summary; contract status updated; wiki links added.
 
 **Owners:** `verification` (contract and runs), `transport_io` (profiles),
 `http_protocol` (HTTP/2 frame interpretation).
@@ -547,7 +557,7 @@ error regression, or a recorded "measured, not needed" decision.
 
 **Objective:** make `windows.yml` run tests natively and pass, with no
 weakened assertions. The two blockers are already documented in
-`docs/roadmap.md`.
+[roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap).
 
 #### M4-1 Blocker A: libxev IOCP accept lifecycle (upstream)
 
@@ -604,7 +614,7 @@ target is marked `.dead` and only the cancel callback fires.
 - **External:** the cluster TLS tests must execute, not skip. The native
       Windows runtime job exists, but its last recorded run (40094814541,
       2026-10-24) was red; native support is not claimed.
-- **External:** update `CI_CD_PIPELINE.md` and `docs/roadmap.md` to remove the
+- **External:** update `CI_CD_PIPELINE.md` and [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap) to remove the
       compile-only declaration only after the runtime job is green for a
       release commit.
 
@@ -628,8 +638,8 @@ Option A (preferred unless there is a concrete need):
 - Record why: Zig 0.16 emits no MSan instrumentation for Zig code, and full
   BoringSSL instrumentation would require rebuilding and maintaining a second
   TLS toolchain.
-- Write the decision into `docs/deployment.md` and `CI_CD_PIPELINE.md`, and
-  reference it from `docs/roadmap.md`.
+- Write the decision into [deployment](https://github.com/farbenbuilds/uWebZockets/wiki/deployment) and `CI_CD_PIPELINE.md`, and
+  reference it from [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap).
 
 Option B:
 
@@ -675,14 +685,14 @@ requires a rolling restart.
 
 - [x] Decide whether hot reload is needed. If yes, write an ADR covering the
       per-worker atomic context swap, in-flight connection safety, and rollback.
-- [x] If no, keep the rolling-restart guidance in `docs/deployment.md` and
+- [x] If no, keep the rolling-restart guidance in [deployment](https://github.com/farbenbuilds/uWebZockets/wiki/deployment) and
       mark the boundary as a decision, not an omission.
 - [x] Acceptance: the boundary is either implemented and tested or dated and
       documented.
 
 #### M6-3 Backend stickiness and `error.BackendChanged`
 
-Current state: documented in `docs/architecture.md`; `xev` stays internal.
+Current state: documented in [architecture](https://github.com/farbenbuilds/uWebZockets/wiki/architecture); `xev` stays internal.
 
 - [x] Keep `xev` internal. If any public API needs backend introspection, write
       an ADR first.
@@ -819,7 +829,7 @@ git push origin v1.9.0
 | Cluster TLS tests | `src/tests/tls_tests.zig` |
 | Test and build plumbing | `builds/testing.zig`, `builds/sanitizers.zig`, `src/tests/main.zig` |
 | Windows listener and helpers | `src/core/tcp.zig` |
-| Docs | `docs/tls.md`, `docs/api.md`, `docs/architecture.md`, `docs/memory_model.md`, `docs/deployment.md`, `docs/troubleshooting.md`, `docs/roadmap.md`, `docs/adr/` |
+| Docs | [tls](https://github.com/farbenbuilds/uWebZockets/wiki/tls), [api](https://github.com/farbenbuilds/uWebZockets/wiki/api), [architecture](https://github.com/farbenbuilds/uWebZockets/wiki/architecture), [memory_model](https://github.com/farbenbuilds/uWebZockets/wiki/memory_model), [deployment](https://github.com/farbenbuilds/uWebZockets/wiki/deployment), [troubleshooting](https://github.com/farbenbuilds/uWebZockets/wiki/troubleshooting), [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap), `docs/adr/` |
 | Benchmarks and CI | `benchmarks/`, `.github/workflows/test.yml`, `.github/workflows/windows.yml`, `.github/workflows/benchmark.yml` |
 | HttpArena (external) | `frameworks/uwebzockets/build.zig.zon`, `frameworks/uwebzockets/src/main.zig`, `frameworks/uwebzockets/meta.json` |
 
@@ -1063,7 +1073,7 @@ exists.
 | C ABI | `include/uWebZockets.h`, `src/c_api/app.zig` | Append `UWZ_HTTP_TRACE = 9` after `UWZ_HTTP_QUERY = 8`; never renumber existing values. Map 9 in `register_http_route` and `http_method`. Do not add a CONNECT code. |
 | TLS 0-RTT | `src/core/tcp.zig` | Add `.trace` to the safe-method allowlist in `early_data_forbids` (`GET`, `HEAD`, `OPTIONS`, `TRACE`); update the 0-RTT policy text. Do not change the QUERY policy in this task. QUIC already lists TRACE in `method_is_replay_safe`. |
 | OpenAPI | `src/router/radix.zig` | `lower_method` returns `trace`; the generator needs no change. Add a test that a TRACE route appears as `"trace"`. |
-| Docs and metadata | `docs/api.md`, `docs/client.md`, `docs/tls.md`, `docs/deployment.md`, `docs/protocols.md`, `CHANGELOG.md` | Add TRACE to the registration and client tables, the safe-method lists, and the release entry. State that TRACE is opt-in and that reflection must redact credentials. |
+| Docs and metadata | [api](https://github.com/farbenbuilds/uWebZockets/wiki/api), [client](https://github.com/farbenbuilds/uWebZockets/wiki/client), [tls](https://github.com/farbenbuilds/uWebZockets/wiki/tls), [deployment](https://github.com/farbenbuilds/uWebZockets/wiki/deployment), [protocols](https://github.com/farbenbuilds/uWebZockets/wiki/protocols), `CHANGELOG.md` | Add TRACE to the registration and client tables, the safe-method lists, and the release entry. State that TRACE is opt-in and that reflection must redact credentials. |
 
 **Test matrix**
 
@@ -1093,7 +1103,7 @@ exists.
    in one reviewable commit.
 3. Add the tests above before changing docs; the 405/`Allow` and `any` tests
    are the regression net for unknown-method fallback.
-4. Update `docs/` and `CHANGELOG.md` in the same change.
+4. Update the wiki guide and `CHANGELOG.md` in the same change.
 5. Run the gates in section 1.3 plus the sanitizer and package-consumer gates.
 6. Verify the C smoke and C++ header checks, then run `graphify update .`.
 
@@ -1383,7 +1393,7 @@ Autobahn target, and the HTTP/2 server tests.
    deterministic; no wall-clock or host-performance assertions.
 4. Preserve the invariants above. Do not weaken a limit, delete a test, widen
    an error set, or add a hidden allocation to make a test pass.
-5. Update `CODEBASE.md`, `docs/memory_model.md`, the relevant protocol doc, and
+5. Update `CODEBASE.md`, [memory_model](https://github.com/farbenbuilds/uWebZockets/wiki/memory_model), the relevant protocol doc, and
    `CHANGELOG.md` when storage, public types, or observable behavior change.
 6. Run the gates listed for the milestone, then the full release matrix for any
    change that touches the request path or slab layout.
@@ -1496,8 +1506,8 @@ work to the request path.
 - [x] Reject lifecycle misuse with `ClusterRunning`, `ClusterStopped`, and
       `ClusterDeinitialized` instead of touching drained workers.
 - [x] Add `deinit_checked()` for supervisors; keep `deinit()`'s panic contract.
-- [x] Record the decision in ADR 0007 and update `docs/api.md`,
-      `docs/architecture.md`, `CODEBASE.md`, `README.md`, and `CHANGELOG.md`.
+- [x] Record the decision in ADR 0007 and update [api](https://github.com/farbenbuilds/uWebZockets/wiki/api),
+      [architecture](https://github.com/farbenbuilds/uWebZockets/wiki/architecture), `CODEBASE.md`, `README.md`, and `CHANGELOG.md`.
 - [x] Add worker-group and cluster lifecycle/publish-report tests.
 - [x] Run the full release matrix on CI: Debug tests, ReleaseSafe sanitizers,
       cross-target test compile, package consumer, C/C++ ABI checks, and the
@@ -1557,7 +1567,7 @@ buffered request behavior, and the v2.1.6 release are unchanged. The release ent
   pass with multi-record TLS framing and bounded queue occupancy.
 - **C5 optional API decisions.** Shared TCP credentials, opt-in TRACE without
   automatic reflection, and the current C single-endpoint surface are retained.
-  Reopening criteria are recorded in the [deliberate boundaries](docs/roadmap.md#deliberate-boundaries).
+  Reopening criteria are recorded in the [deliberate boundaries](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap#deliberate-boundaries).
 - **C6 timer boundaries.** The wheel range, overflow behavior, parking-slot
   ownership, and second-sleep misuse are documented. The overflow scan now
   examines every entry so a large advance cannot skip an earlier deadline.
@@ -1578,7 +1588,7 @@ buffered request behavior, and the v2.1.6 release are unchanged. The release ent
 
 These items are deliberately outside the 2.2.0 release. They remain tracked
 with dated restoration criteria in this section and
-[docs/roadmap.md](docs/roadmap.md#deliberate-boundaries).
+[roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap#deliberate-boundaries).
 
 - **Ownership debt (untangle pass).** `src/core/tcp.zig`,
   `src/router/app.zig`, `src/http2/server.zig`, `src/http/response.zig`, and
@@ -1600,6 +1610,23 @@ with dated restoration criteria in this section and
   resolve pins from a second machine, and run the native Windows release job.
 - **kTLS integration and splice.** Keep the standalone helper and the
   measured-benefit condition recorded in the deliberate boundaries.
+
+The 2026-11-11 implementation extracts the cluster runtime, connection parking,
+HTTP/2 storage, response async lifecycle, and QUIC header-set ownership seams.
+Linux GRO now passes both backend regressions and the expanded HTTP/3 gate,
+including 1,024 sustained streams and wildcard source-address preservation.
+The separate XEV-008 poll-cancellation fix still requires maintained-fork
+integration. The current HttpArena adapter proposal is implemented and locally
+verified; its release pin, official run, and throughput acceptance remain open.
+See [the execution ledger](tasks/todo.md) and
+[protocol evidence](benchmarks/results/protocol_v2_3/2026_11_11/README.md).
+Complete active fork histories and their qpack/hpack companions are also
+[retained and replayed offline](benchmarks/results/dependency_archives_v2_3/2026_11_11/README.md).
+Second-machine resolution and native platform evidence remain open.
+A reviewed [local lsquic prerequisite](benchmarks/results/lsquic_uni_prerequisite_v1/2026_11_11/README.md)
+now implements outgoing uni streams and their required lifetime behavior.
+Reliable reset, session activation, compatible-client acceptance and published
+fork/pin integration remain required before WebTransport can be enabled.
 
 ### 8.3 Release verification
 
@@ -1745,7 +1772,7 @@ returns a typed error; it never grows storage.
 
 ### Task D-11: Documentation
 
-- `docs/sql.md`: supported versions, TLS policy, pooling, transactions,
+- [sql](https://github.com/farbenbuilds/uWebZockets/wiki/sql): supported versions, TLS policy, pooling, transactions,
   migrations, SQLite limits, parameter binding, row lifetimes, and security.
 - Runnable examples: PostgreSQL CRUD, SQLite local app, transaction + jobs.
 - Explicitly state what is not supported: no ORM, no automatic schema
@@ -1789,54 +1816,15 @@ dynamic allocations.
 
 ---
 
-## 11. Version 2.5.0: Isolated `uz.proto` and Native gRPC over HTTP/2
+## 11. Version 2.5.0: `uz.proto` and Native gRPC over HTTP/2
 
 **Objective:** high-throughput Protobuf/gRPC service communication without C++
-library dependencies and without coupling protobuf to the server core.
+library dependencies.
 
 **Patch note:** the 2.1.6 follow-up closure is scheduled as 2.5.5 in section
 11.1. It is a carry-over track, not a prerequisite for the proto/gRPC work. `uz.proto` is a shared, bounded wire codec used by gRPC,
 OTLP tracing, and application messages. It is not a `.proto` generator and it
 does not require protoc.
-
-**Isolation decision (2026-11-19):** `uz.proto` is an optional standalone
-module. The server core, HTTP transports, WebSocket path, and `src/root.zig`
-must not import it. gRPC is a separate protocol profile layered on HTTP/2 and
-`uz.proto`; protobuf round-trips alone do not establish gRPC compatibility.
-The codec may land independently, for example to carry OTLP tracing, but the
-v2.5.0 gRPC gate stays blocked until HTTP/2 trailers, gRPC status mapping, and
-`grpcurl` interop pass. The module is justified by external interop, not by
-internal RPC: do not replace JSON-RPC or add a schema layer to a WebSocket API
-that has no gRPC or OTLP peer. JSON-RPC remains the default application RPC
-surface. WebSocket payloads stay opaque bytes, and the library does not own
-application schemas.
-
-### Isolation contract
-
-1. **Dependency direction.** `uz.grpc` imports `uz.proto` and HTTP/2 downward.
-   Nothing in the core, transports, WebSocket, QUIC, router, JSON-RPC, or C ABI
-   imports either module. Do not keep a second protobuf decoder under
-   `src/grpc/`.
-2. **Explicit schema.** Message contracts are declared beside Zig struct
-   fields. There is no `.proto` parser or compiler, no `protoc` invocation, no
-   runtime schema registry, no descriptor pool, no reflection service, no
-   dynamic message, and no proto3 JSON in the first release.
-3. **No allocation.** Decode borrows the input slice; encode writes into
-   caller-owned storage. The codec takes no allocator and keeps no hidden
-   global state.
-4. **Bounded input.** Every field length, field count, map entry, oneof branch,
-   recursion depth, and total message size has a configured limit with a
-   stable error on exhaustion or malformed input.
-5. **Opt-in linking.** A build that does not enable the module must compile,
-   link, and ship without `uz.proto` or `uz.grpc` symbols. The modules follow
-   the FS-0 feature-gate mechanism; they do not add a build option scheme of
-   their own.
-6. **No new build tool.** No CMake, Ninja, Python, Perl, Go, or system protobuf
-   is required to build the codec, its vectors, or its examples.
-7. **Compatibility evidence.** The codec is accepted on canonical protobuf
-   vectors and round-trips for every supported type. The gRPC profile is
-   accepted only on live `grpcurl` unary and streaming exchanges over h2c and
-   h2, with trailers and status mapping asserted.
 
 ### Task R-0: `uz.proto` shared wire codec (`src/proto/`)
 
@@ -1858,17 +1846,6 @@ application schemas.
 - Provide a conformance suite against the canonical protobuf test vectors and
   round-trip tests for every supported type.
 - Document the mapping rules and the unsupported features in `docs/proto.md`.
-
-### Task R-0a: Isolation evidence
-
-- Add a build check that fails when a core, transport, WebSocket, QUIC, router,
-  JSON-RPC, or C ABI source imports `src/proto/` or `src/grpc/`.
-- Compile a package consumer with the modules disabled and prove the artifact
-  contains no `uz.proto` or `uz.grpc` symbols.
-- Compile a consumer that enables only `uz.proto` and prove it does not link
-  `uz.grpc`.
-- Record the dependency edges in `docs/proto.md` and keep the module inventory
-  in section 17.2 current.
 
 ### Task R-1: Protobuf wire decoder (`src/proto/decode.zig`)
 
@@ -2001,11 +1978,11 @@ Acceptance:
       `CODING_CONVENTION.md`, `.opencode/agents/*.md`, `.codex/agents/*.toml`,
       `.agents/skills/*/SKILL.md`, `skills-lock.json`, `SKILL.md`,
       `README.md`, `CODEBASE.md`, `CONTRIBUTE.md`, `SECURITY.md`,
-      `CI_CD_PIPELINE.md`, and every active `docs/*` toolchain reference.
+      `CI_CD_PIPELINE.md`, and every active documentation and wiki reference.
       Historical changelog entries and release notes keep their original
       version.
 - [ ] Update the `Zig 0.16.0 is the only supported toolchain` boundary in
-      `docs/roadmap.md` and add a changelog migration note for consumers who
+      [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap) and add a changelog migration note for consumers who
       pin the package.
 
 **Acceptance:**
@@ -2174,7 +2151,7 @@ the effective tick shorter near a boundary and leaves `TimerContext` exposed.
   `src/backend/io_uring.zig`, `src/backend/iocp.zig`,
   `src/backend/wasi_poll.zig`;
 - uWebZockets: `src/core/timer.zig`, `src/tests/core_tests.zig`,
-  `docs/dependency_forks.md`, `docs/libxev_kqueue_findings.md`,
+  `docs/dependency_forks.md`, [libxev_kqueue_findings](https://github.com/farbenbuilds/uWebZockets/wiki/libxev_kqueue_findings),
   `THIRD_PARTY_NOTICES.md`, `AGENTS.md`, `CONTRIBUTE.md`, `CODEBASE.md`,
   `build.zig.zon*`, `CHANGELOG.md`.
 
@@ -2280,8 +2257,8 @@ equivalent semantics.
 - [ ] Add a test that injects or simulates a timer failure and proves
       shutdown observes it.
 - [ ] Keep `Canceled` and intentional stop paths clean.
-- [ ] Document the fail-stop contract in `docs/callback_lifecycle.md` and
-      `docs/architecture.md`.
+- [ ] Document the fail-stop contract in [callback_lifecycle](https://github.com/farbenbuilds/uWebZockets/wiki/callback_lifecycle) and
+      [architecture](https://github.com/farbenbuilds/uWebZockets/wiki/architecture).
 
 ##### M3-2 macOS reset/EINVAL log noise
 
@@ -2326,8 +2303,8 @@ claim.
       macOS job.
 - [ ] Run the full suite on macOS at the 2.5.5 release commit; record the
       exact count and skips.
-- [ ] Update `docs/operations.md`, `docs/deployment.md`, `README.md`, and
-      `docs/roadmap.md` only after the job is green.
+- [ ] Update [operations](https://github.com/farbenbuilds/uWebZockets/wiki/operations), [deployment](https://github.com/farbenbuilds/uWebZockets/wiki/deployment), `README.md`, and
+      [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap) only after the job is green.
 - [ ] Keep the two known failures in the release notes until closed.
 
 **Acceptance:** full uWebZockets macOS suite green in CI; no unexplained
@@ -2517,11 +2494,11 @@ zig build -Dtarget=x86_64-windows-gnu -Doptimize=ReleaseSafe --summary all
 | Area | Primary files | Owner |
 | :--- | :--- | :--- |
 | Scheduler/timer | `src/core/timer.zig`, `src/core/timer_wheel.zig`, `src/tests/core_tests.zig` | `transport_io` |
-| kqueue/libxev | fork `src/backend/kqueue.zig`, `docs/libxev_kqueue_findings.md`, `docs/dependency_forks.md` | `transport_io`, `build_vendor` |
+| kqueue/libxev | fork `src/backend/kqueue.zig`, [libxev_kqueue_findings](https://github.com/farbenbuilds/uWebZockets/wiki/libxev_kqueue_findings), `docs/dependency_forks.md` | `transport_io`, `build_vendor` |
 | Socket options | `src/core/tcp.zig`, `src/tests/core_tests.zig` | `transport_io` |
-| Shutdown/health | `src/router/app.zig`, `docs/callback_lifecycle.md` | `transport_io`, `reviewer` |
+| Shutdown/health | `src/router/app.zig`, [callback_lifecycle](https://github.com/farbenbuilds/uWebZockets/wiki/callback_lifecycle) | `transport_io`, `reviewer` |
 | Benchmarks | `scripts/benchmark_h2_tls.sh`, `scripts/benchmark_http.sh`, `benchmarks/` | `verification` |
-| macOS/Windows CI | `.github/workflows/`, `docs/operations.md`, `docs/deployment.md` | `build_vendor`, `verification` |
+| macOS/Windows CI | `.github/workflows/`, [operations](https://github.com/farbenbuilds/uWebZockets/wiki/operations), [deployment](https://github.com/farbenbuilds/uWebZockets/wiki/deployment) | `build_vendor`, `verification` |
 | lsquic | `build.zig.zon*`, `docs/dependency_forks.md`, `THIRD_PARTY_NOTICES.md` | `build_vendor`, `quic_h3` |
 | Release | `CHANGELOG.md`, `src/version.zig`, `include/uWebZockets.h`, `flake.nix`, `scripts/` | maintainer, `integrator` |
 
@@ -2825,7 +2802,7 @@ an earlier release gate passed; v3.0.0 audits the inherited state first. The
 module track in section 17 is not exempt: every shipped module joins the
 register through SB-55 through SB-64 before it is called production-ready.
 
-**Binding sources:** `SECURITY.md` defines the boundary. `docs/roadmap.md`
+**Binding sources:** `SECURITY.md` defines the boundary. [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap)
 records current status. `docs/adr/` records accepted decisions. `AGENTS.md`,
 `CODING_CONVENTION.md`, `CONTRIBUTE.md`, and `CI_CD_PIPELINE.md` remain
 binding over this plan.
@@ -2854,7 +2831,7 @@ No boundary may be marked Closed because a sentence was removed from
    capability, preconditions, failure mode, maximum work, error behavior, and
    the test that proves closure.
 3. Add the implementation and the regression test in the same change. Update
-   `SECURITY.md`, `docs/roadmap.md`, the boundary register, the relevant ADR,
+   `SECURITY.md`, [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap), the boundary register, the relevant ADR,
    and `CHANGELOG.md` before requesting review.
 4. Run the gates in section 16.3 and archive raw results under the release
    evidence directory.
@@ -3656,7 +3633,7 @@ this release except fixes required by audit findings.
 - No Defer remains without a dated restoration trigger and owner.
 - Every Closed row links to a test or CI job and the evidence manifest.
 - Every Accept row links to an ADR and review date.
-- Update `SECURITY.md`, `docs/roadmap.md`, `THIRD_PARTY_NOTICES.md`, and the
+- Update `SECURITY.md`, [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap), `THIRD_PARTY_NOTICES.md`, and the
   boundary register together.
 
 #### Task V3.9-5: Prepare and publish the security release
@@ -3723,7 +3700,7 @@ The v3 program is done when all of the following are true:
   without the change.
 - Every Accept boundary has an ADR with rationale, owner, and review date.
 - No Defer boundary remains without a dated restoration trigger and owner.
-- The boundary register, `SECURITY.md`, `docs/roadmap.md`, `CHANGELOG.md`, and
+- The boundary register, `SECURITY.md`, [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap), `CHANGELOG.md`, and
   the release notes agree.
 - The external audit and disclosure drill are closed or have accepted,
   documented findings.
@@ -3804,7 +3781,7 @@ one already owns the behavior.
 
 **Naming decision:** `uz.cache` is already the HTTP ETag/conditional-GET helper.
 Do not silently change it. Export the new cache as `uz.memory_cache` and state
-the distinction in `docs/api.md`. A future major release may rename the HTTP
+the distinction in [api](https://github.com/farbenbuilds/uWebZockets/wiki/api). A future major release may rename the HTTP
 helper to `uz.http_cache` and give `uz.cache` to the store; that is a separate
 breaking-change ADR, not part of this program.
 
@@ -3851,7 +3828,7 @@ spawn an unowned thread.
       A program that disables a module must not link its code or C dependency.
 - [ ] Add a module test harness that starts a real loop, a fake worker context,
       and a bounded service with start/stop/ready/drain assertions.
-- [ ] Document the lifecycle in `docs/modules.md` and the ADR for the module
+- [ ] Document the lifecycle in [modules](https://github.com/farbenbuilds/uWebZockets/wiki/modules) and the ADR for the module
       foundation.
 
 **Acceptance:**
@@ -3882,7 +3859,7 @@ integration contract only.
 - [ ] Trace child spans with statement name, not parameter values.
 - [ ] Integration tests: SQLite in CI; PostgreSQL service container with a
       written skip reason when unavailable.
-- [ ] Update `docs/sql.md`, `README.md`, and `docs/roadmap.md`.
+- [ ] Update [sql](https://github.com/farbenbuilds/uWebZockets/wiki/sql), `README.md`, and [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap).
 
 **Depends on:** FS-0, client TLS, timing wheel, metrics, trace (optional).
 
@@ -4088,7 +4065,7 @@ rate-limit metadata, rendered fragments, and idempotency data. The existing
 **Depends on:** FS-0, `uz.crypto_subtle`/BoringSSL, optional `uz.client` for
 JWKS.
 
-### 17.10 FS-7: Isolated Protobuf and gRPC (`uz.proto`, `uz.grpc`)
+### 17.10 FS-7: Protobuf and gRPC (`uz.proto`, `uz.grpc`)
 
 **Release:** v2.5.0.
 
@@ -4101,13 +4078,6 @@ JWKS.
 - [ ] Canonical protobuf vectors and round-trip tests.
 - [ ] gRPC 5-byte framing, HTTP/2 trailers, cancellation, and status mapping.
 - [ ] OTLP tracing uses `uz.proto` for its payload.
-- [ ] No core import of `uz.proto` or `uz.grpc`; disabled builds, and consumers
-      enabling only the codec, link without the unused module.
-- [ ] gRPC is claimed only after HTTP/2 trailers and `grpcurl` interop pass;
-      proto round-trips alone are not gRPC evidence.
-- [ ] Non-goals enforced: no `.proto` compiler or descriptor parser, no
-      reflection or dynamic messages, no `Any`/`Struct`/`Value`, no proto3
-      JSON, and no schema ownership on the WebSocket payload path.
 - [ ] Docs: `docs/proto.md`, `docs/grpc.md`.
 
 **Depends on:** FS-0, HTTP/2 server, metrics/trace optional.
@@ -4152,7 +4122,7 @@ JWKS.
 **Release:** v2.13.0 provisional, or the first release after all enabled
 modules are green.
 
-- [ ] Add `docs/modules.md` with the module matrix, feature flags, lifecycle,
+- [ ] Add [modules](https://github.com/farbenbuilds/uWebZockets/wiki/modules) with the module matrix, feature flags, lifecycle,
       ownership, and C ABI boundary.
 - [ ] Add runnable recipes:
       - SQLite CRUD.
@@ -4163,9 +4133,9 @@ modules are green.
       - Metrics + tracing dashboard.
 - [ ] Update `README.md` from "server framework" to "server framework with
       optional application modules" without overclaiming.
-- [ ] Update `docs/roadmap.md` and remove or narrow any deliberate boundary
+- [ ] Update [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap) and remove or narrow any deliberate boundary
       that the modules close.
-- [ ] Update `docs/memory_model.md` with module startup costs and per-worker
+- [ ] Update [memory_model](https://github.com/farbenbuilds/uWebZockets/wiki/memory_model) with module startup costs and per-worker
       storage.
 - [ ] Add the module boundaries to the v3 security register:
       SQL injection/TLS, S3 SigV4/SSRF, sessions AEAD/replay, JWT alg
@@ -4211,7 +4181,7 @@ Every module must pass:
 - Optional service integration (PostgreSQL, S3/MinIO, OTLP receiver) with a
   written skip reason when the service is unavailable.
 
-Add these gates to `CI_CD_PIPELINE.md` and `docs/operations.md` in the same
+Add these gates to `CI_CD_PIPELINE.md` and [operations](https://github.com/farbenbuilds/uWebZockets/wiki/operations) in the same
 change that lands the module.
 
 ### 17.16 Module risks and non-goals
@@ -4233,11 +4203,7 @@ change that lands the module.
 
 - No ORM, no query builder, no automatic schema reflection in the first SQL
   release.
-- No protobuf compiler, `.proto` parser, descriptor pool, runtime schema
-  registry, reflection service, dynamic messages, `Any`/`Struct`/`Value`, or
-  proto3 JSON in the first proto release.
-- No protobuf dependency in the server core and no schema ownership on the
-  WebSocket payload path; applications choose their own encoding.
+- No protobuf compiler or `.proto` file parser.
 - No full AWS SDK; `uz.s3` is an S3 subset with explicit limits.
 - No distributed cache, no Redis client in the first cache release.
 - No job broker; jobs use the SQL database you already have.
@@ -4261,7 +4227,7 @@ change that lands the module.
       exportable.
 - [ ] Every module has a feature gate, docs, a runnable recipe, and a test
       matrix entry.
-- [ ] `README.md`, `docs/roadmap.md`, `docs/api.md`, `docs/memory_model.md`,
+- [ ] `README.md`, [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap), [api](https://github.com/farbenbuilds/uWebZockets/wiki/api), [memory_model](https://github.com/farbenbuilds/uWebZockets/wiki/memory_model),
       `CI_CD_PIPELINE.md`, and `CHANGELOG.md` describe the shipped surface.
 - [ ] No module weakens the zero-allocation, shared-nothing, or C ABI
       contracts.
@@ -4662,7 +4628,7 @@ Any proposal that trades one of these away needs an ADR with measured evidence.
 | Reserved per connection (before router subtraction) | about 651 KiB, lazily touched | derived from the slab total; not RSS |
 | HTTP/2 streams per connection | 8 | `src/core/tcp.zig`, `src/http2/server.zig` |
 | Test count | about 1,300 `test` declarations | `src/tests/` |
-| Windows runtime claim | compile plus CI job; official support gated on a green release run | `README.md`, `docs/roadmap.md` |
+| Windows runtime claim | compile plus CI job; official support gated on a green release run | `README.md`, [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap) |
 | H1 throughput evidence | relative regression contract, not an absolute capacity claim | `benchmarks/http_throughput_guarantee.md` |
 | H2/TLS scaling evidence | 276,534.80 req/s at 1,024 connections/1 stream; 669,300.80 at 8 streams, 4 workers | `benchmarks/results/h2_tls_scaling_v1/2026_10_19/README.md` |
 | Application modules | None shipped; SQL/S3/jobs/cache/sessions/JWT/proto/tracing planned | `TODO.md` Section 17 |
@@ -4956,7 +4922,7 @@ Why this shape:
   percent; p99 does not regress by more than the benchmark noise threshold.
 - The adapter is the only place that knows about kqueue/epoll/io_uring/IOCP
   differences.
-- The ADR and `docs/architecture.md` describe the seam.
+- The ADR and [architecture](https://github.com/farbenbuilds/uWebZockets/wiki/architecture) describe the seam.
 
 ### P5.6 Risks and mitigations
 
@@ -4977,7 +4943,7 @@ Why this shape:
 - `src/client/connection.zig`
 - `src/observability/file_watch.zig`
 - `src/tests/xev_tests.zig`, `src/tests/router_tests.zig`
-- `docs/architecture.md`
+- [architecture](https://github.com/farbenbuilds/uWebZockets/wiki/architecture)
 - `docs/dependency_forks.md`
 - nilo's Bulkhead design:
   <https://github.com/nevindra/nilo/blob/v0.8.0/docs/design/engine.md> and
@@ -5005,7 +4971,7 @@ Evidence:
   connections. That is about 651 KiB reserved per configured connection before
   subtracting the router region. See `src/tests/config_tests.zig` around the
   "default slab carries the router region at the end" test.
-- `docs/memory_model.md` says the embedded eight-stream HTTP/2 session
+- [memory_model](https://github.com/farbenbuilds/uWebZockets/wiki/memory_model) says the embedded eight-stream HTTP/2 session
   dominates the per-connection footprint.
 - `TcpConnection` embeds `Http2Session` by value, and every connection carves
   `h2_session_stride` storage. A WebSocket-only or HTTP/1.1-only deployment
@@ -5042,7 +5008,7 @@ HTTP/1.1 cost by making HTTP/2 storage optional.
 Definition of done:
 
 - A new benchmark harness records the numbers in a committed JSON/README.
-- `docs/memory_model.md` states the measured floor for HTTP/1.1 and WebSocket.
+- [memory_model](https://github.com/farbenbuilds/uWebZockets/wiki/memory_model) states the measured floor for HTTP/1.1 and WebSocket.
 - A WebSocket-only preset or build does not reserve the full eight-stream
   HTTP/2 session per connection.
 - HTTP/2 remains available in the default build.
@@ -5144,7 +5110,7 @@ buffers, not connection state or H2 storage, are the dominant cost.
 ### P6.4 Implementation steps
 
 - [ ] Build the idle-memory harness and record the baseline.
-- [ ] Publish the baseline in `docs/memory_model.md` and the benchmark record.
+- [ ] Publish the baseline in [memory_model](https://github.com/farbenbuilds/uWebZockets/wiki/memory_model) and the benchmark record.
 - [ ] Add `ServerConfig.http2` runtime toggle.
 - [ ] Add `Presets.websocket_only` or equivalent.
 - [ ] Make `h2_session_bytes()` and `layout_offsets` honor the toggle.
@@ -5155,13 +5121,13 @@ buffers, not connection state or H2 storage, are the dominant cost.
 - [ ] Re-measure at 1,000 and 10,000 connections.
 - [ ] Add a `-Dhttp2=false` compile-time option if binary size justifies it.
 - [ ] Add configurable HTTP/2 stream counts if the preset still needs HTTP/2.
-- [ ] Update `docs/memory_model.md`, `docs/deployment.md`, `README.md`, and
+- [ ] Update [memory_model](https://github.com/farbenbuilds/uWebZockets/wiki/memory_model), [deployment](https://github.com/farbenbuilds/uWebZockets/wiki/deployment), `README.md`, and
       `Presets` docs.
 - [ ] Add the idle-memory number to the release checklist.
 
 ### P6.5 Acceptance criteria
 
-- `docs/memory_model.md` contains a measured bytes-per-idle-connection table
+- [memory_model](https://github.com/farbenbuilds/uWebZockets/wiki/memory_model) contains a measured bytes-per-idle-connection table
   for HTTP/1.1 and WebSocket at 1k and 10k, with raw evidence links.
 - A WebSocket-only preset does not reserve the full H2 session storage.
 - The default build still serves HTTP/2 and passes all H2 tests.
@@ -5201,7 +5167,7 @@ Do not treat these as gates until the baseline is measured. They are direction.
   `Presets`)
 - `src/http2/server.zig` (`Capacities`, `Storage`, `storage_bytes`)
 - `src/core/tcp.zig` (`TcpConnection`, `h2`, `reset_protocol`)
-- `docs/memory_model.md`
+- [memory_model](https://github.com/farbenbuilds/uWebZockets/wiki/memory_model)
 - `src/tests/config_tests.zig` (default slab total, H2 storage tests)
 - nilo memory design:
   <https://github.com/nevindra/nilo/blob/v0.8.0/docs/design/memory.md>
@@ -5286,7 +5252,7 @@ Implementation notes:
 - [ ] Add tests/examples for the minimal configuration.
 - [ ] Measure build time and stripped binary size for full vs minimal.
 - [ ] Add a CI matrix job.
-- [ ] Document the matrix in `docs/operations.md` and `README.md`.
+- [ ] Document the matrix in [operations](https://github.com/farbenbuilds/uWebZockets/wiki/operations) and `README.md`.
 - [ ] Add a `docs/adr/0009-build-feature-matrix.md`.
 - [ ] Decide later whether a separate lite package is worth the release
       overhead.
@@ -5318,7 +5284,7 @@ Implementation notes:
 - `build.zig.zon`
 - `scripts/check_package_paths.sh`
 - `scripts/check_static_archive.sh`
-- `docs/operations.md`
+- [operations](https://github.com/farbenbuilds/uWebZockets/wiki/operations)
 - Dusty README and build options:
   <https://github.com/lalinsky/dusty>
   <https://lalinsky.github.io/dusty/build-options/>
@@ -5355,7 +5321,7 @@ the source. The docs site is built by Zig, not by a new Python/Node toolchain.
 Definition of done:
 
 - `zig build docs` produces a browsable site and API reference.
-- `docs/getting_started.md` has a "no Nix" path that CI tests.
+- [getting_started](https://github.com/farbenbuilds/uWebZockets/wiki/getting_started) has a "no Nix" path that CI tests.
 - Every public type and function has a doc comment that survives generation.
 - Five recipes are runnable and covered by compile tests.
 - `scripts/check_docs.sh` checks links, snippets, and generated output.
@@ -5464,7 +5430,7 @@ This is WS-10, not a blocker for the docs milestone.
 
 - `README.md`
 - `docs/` (all pages)
-- `docs/getting_started.md`
+- [getting_started](https://github.com/farbenbuilds/uWebZockets/wiki/getting_started)
 - `scripts/check_docs.sh`
 - Dusty docs: <https://lalinsky.github.io/dusty/>
 - nilo guide: <https://nevindra.github.io/nilo/latest/>
@@ -5642,7 +5608,7 @@ Definition of done:
 ### P10.6 References
 
 - `.github/workflows/windows.yml`
-- `docs/roadmap.md` (Windows runtime blocker details)
+- [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap) (Windows runtime blocker details)
 - `docs/adr/0004-windows-iocp-accept-and-queued-close.md`
 - `src/core/tcp.zig` (Windows branches)
 - `src/core/signal.zig` (Windows console control)
@@ -5693,7 +5659,7 @@ Definition of done:
 - [ ] Update `flake.nix`, `flake.lock`, and the CI toolchain.
 - [ ] Fix Zig 0.17 language/std changes across the project.
 - [ ] Add a CI matrix for 0.16 and 0.17 during the transition.
-- [ ] Update README, `CONTRIBUTING`, `docs/operations.md`, and the changelog.
+- [ ] Update README, `CONTRIBUTING`, [operations](https://github.com/farbenbuilds/uWebZockets/wiki/operations), and the changelog.
 - [ ] Publish an ADR for the toolchain transition and the fork branch.
 
 ### P11.4 Acceptance criteria
@@ -5738,7 +5704,7 @@ Definition of done:
 
 The client is deliberately small: HTTP/1.1 only, one request per connection,
 no DNS resolution, no redirects, no cookies, no proxy, no connection pooling,
-no mTLS, and no HTTP/2/HTTP/3 or WebSocket client. `docs/roadmap.md` lists the
+no mTLS, and no HTTP/2/HTTP/3 or WebSocket client. [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap) lists the
 WebSocket client first.
 
 Dusty has a full HTTP/1.1 client with pooling, HTTPS, Unix sockets, and a
@@ -5776,7 +5742,7 @@ Definition of done:
 - [ ] Add handshake, subprotocol negotiation, ping/pong, close, and
       fragmented messages.
 - [ ] Add tests against the in-process server and a live loopback server.
-- [ ] Document `docs/client.md`.
+- [ ] Document [client](https://github.com/farbenbuilds/uWebZockets/wiki/client).
 
 #### Phase C2: Keep-alive and pooling
 
@@ -5809,7 +5775,7 @@ Definition of done:
 
 - C1 and C2 are complete before calling the client "framework-grade."
 - All new paths are bounded and documented.
-- `docs/client.md` and `README.md` reflect the actual limits.
+- [client](https://github.com/farbenbuilds/uWebZockets/wiki/client) and `README.md` reflect the actual limits.
 - Tests cover timeouts, resets, partial reads, and close ordering.
 
 ### P12.5 Risks and mitigations
@@ -5823,8 +5789,8 @@ Definition of done:
 
 ### P12.6 References
 
-- `docs/client.md`
-- `docs/roadmap.md` (near-term direction)
+- [client](https://github.com/farbenbuilds/uWebZockets/wiki/client)
+- [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap) (near-term direction)
 - `src/client/connection.zig`
 - `src/client/client.zig`
 - `src/client/http1.zig`
@@ -5932,8 +5898,8 @@ Recommendation: Option A, with `HandlerContext` and an explicit
 - [ ] Add route registration for streaming bodies.
 - [ ] Add HTTP/2 streaming body support if the protocol layer allows it.
 - [ ] Add tests and a recipe.
-- [ ] Update `docs/api.md`, `docs/http.md`, `docs/http2.md`, and
-      `docs/roadmap.md`.
+- [ ] Update [api](https://github.com/farbenbuilds/uWebZockets/wiki/api), [http](https://github.com/farbenbuilds/uWebZockets/wiki/http), [http2](https://github.com/farbenbuilds/uWebZockets/wiki/http2), and
+      [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap).
 
 ### P13.5 Acceptance criteria
 
@@ -5956,12 +5922,12 @@ Recommendation: Option A, with `HandlerContext` and an explicit
 
 ### P13.7 References
 
-- `docs/roadmap.md` (incremental request bodies, near-term direction)
-- `docs/api.md` (handler registrations)
+- [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap) (incremental request bodies, near-term direction)
+- [api](https://github.com/farbenbuilds/uWebZockets/wiki/api) (handler registrations)
 - `src/router/app.zig` (`route_async`, `AsyncResponse`)
 - `src/http/response.zig` (`AsyncResponseState`, stream producers)
 - `src/c_api/types.zig` (`std.Io.Threaded` usage)
-- `docs/memory_model.md` (backpressure)
+- [memory_model](https://github.com/farbenbuilds/uWebZockets/wiki/memory_model) (backpressure)
 - Dusty deployment/Io model:
   <https://lalinsky.github.io/dusty/server/deployment/>
 - nilo deadlines and blocking:
@@ -6027,7 +5993,7 @@ Definition of done for a spike:
 ### P14.5 References
 
 - `CODING_CONVENTION.md` sections 7 and 8
-- `docs/api.md`
+- [api](https://github.com/farbenbuilds/uWebZockets/wiki/api)
 - Dusty handlers: <https://lalinsky.github.io/dusty/server/handlers/>
 - nilo handlers: <https://nevindra.github.io/nilo/latest/handlers/>
 
@@ -6152,7 +6118,7 @@ Acceptance:
 - Failed startup rolls back.
 - Disabled modules are absent from `nm`/link map.
 - No steady-state request allocation.
-- ADR and `docs/modules.md` exist.
+- ADR and [modules](https://github.com/farbenbuilds/uWebZockets/wiki/modules) exist.
 
 ### P15.6 FS-1: SQL (`uz.sql`)
 
@@ -6180,7 +6146,7 @@ Acceptance:
 - Transaction rollback, cancellation, pool exhaustion, oversized row/field.
 - Fuzz the wire decoder and migration parser.
 - No request-path allocation; p50/p99 query and pool wait recorded.
-- `docs/sql.md` and examples compile.
+- [sql](https://github.com/farbenbuilds/uWebZockets/wiki/sql) and examples compile.
 
 ### P15.7 FS-2: S3 (`uz.s3`)
 
@@ -6345,14 +6311,14 @@ Design summary:
 
 ### P15.15 FS-10: Integration, recipes, and release surface
 
-- `docs/modules.md` with the module matrix, feature flags, lifecycle,
+- [modules](https://github.com/farbenbuilds/uWebZockets/wiki/modules) with the module matrix, feature flags, lifecycle,
   ownership, and C ABI boundary.
 - Recipes: SQLite CRUD; PostgreSQL CRUD + transaction + jobs; S3
   upload/download + presigned URL; sessions + JWT login; cache-backed
   JWKS/session/idempotency; metrics + tracing dashboard.
 - Update `README.md` from "server framework" to "server framework with optional
   application modules" without overclaiming.
-- Update `docs/roadmap.md`, `docs/api.md`, `docs/memory_model.md`,
+- Update [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap), [api](https://github.com/farbenbuilds/uWebZockets/wiki/api), [memory_model](https://github.com/farbenbuilds/uWebZockets/wiki/memory_model),
   `CI_CD_PIPELINE.md`, and `CHANGELOG.md`.
 - Add module boundaries to the v3 security register (SB-55 through SB-63 in
   `TODO.md`).
@@ -6700,14 +6666,14 @@ The program is complete when all of the following are true:
 - `TODO.md` (execution tracker; Section 17 for modules)
 - `CODING_CONVENTION.md`
 - `docs/dependency_forks.md`
-- `docs/architecture.md`
-- `docs/memory_model.md`
-- `docs/api.md`
-- `docs/client.md`
-- `docs/roadmap.md`
-- `docs/operations.md`
-- `docs/deployment.md`
-- `docs/libxev_kqueue_findings.md`
+- [architecture](https://github.com/farbenbuilds/uWebZockets/wiki/architecture)
+- [memory_model](https://github.com/farbenbuilds/uWebZockets/wiki/memory_model)
+- [api](https://github.com/farbenbuilds/uWebZockets/wiki/api)
+- [client](https://github.com/farbenbuilds/uWebZockets/wiki/client)
+- [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap)
+- [operations](https://github.com/farbenbuilds/uWebZockets/wiki/operations)
+- [deployment](https://github.com/farbenbuilds/uWebZockets/wiki/deployment)
+- [libxev_kqueue_findings](https://github.com/farbenbuilds/uWebZockets/wiki/libxev_kqueue_findings)
 - `docs/adr/0004-windows-iocp-accept-and-queued-close.md`
 - `docs/adr/0005-libxev-fork.md`
 - `docs/adr/0006-dependency-forks.md`
@@ -7109,7 +7075,7 @@ End of Part II.
 - [x] `Cluster.configure` uses the named `ConfigureCallback`.
 - [x] `deinit_checked()` provides a typed release path; `deinit()` keeps its
       panic contract.
-- [x] ADR 0007, `docs/api.md`, `docs/architecture.md`, `CODEBASE.md`, and
+- [x] ADR 0007, [api](https://github.com/farbenbuilds/uWebZockets/wiki/api), [architecture](https://github.com/farbenbuilds/uWebZockets/wiki/architecture), `CODEBASE.md`, and
       `README.md` describe the surface.
 - [x] Unit tests cover worker-group start/join/failure and cluster
       lifecycle/publish-report behavior.
@@ -7124,9 +7090,9 @@ End of Part II.
 - [x] `sendfile(2)` and kTLS (S-3, S-4) pass `static-h2`, `static-h3`,
       `static-tls`. Plaintext sendfile and framed static delivery pass; kTLS
       remains the v3.5.0 SB-31 boundary and the external `static-*` profiles are
-      re-declared in the [deliberate boundaries](docs/roadmap.md#deliberate-boundaries).
+      re-declared in the [deliberate boundaries](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap#deliberate-boundaries).
 - [x] 100 KiB TLS echo (S-5) passes HttpArena `8gbit`. The TLS echo proof
-      passes; the external `8gbit` run is re-declared in the [deliberate boundaries](docs/roadmap.md#deliberate-boundaries).
+      passes; the external `8gbit` run is re-declared in the [deliberate boundaries](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap#deliberate-boundaries).
 - [x] lsquic fork migration (2.2-C9): pin `85bd081c` and remove the overlay and
       patch are done; the HTTP/3 cross-implementation gate passes in CI.
 - [x] h1spec fork migration (2.2-C10): pin `999ba9e8` and remove the CI patch
@@ -7138,21 +7104,56 @@ End of Part II.
       wire behavior.
 - [x] Fork archives and second-machine resolution cover libxev, lsquic, and
       h1spec (2.2-C13). Final archives and second-machine resolution are
-      re-declared as release-owner actions in the [deliberate boundaries](docs/roadmap.md#deliberate-boundaries).
+      re-declared as release-owner actions in the [deliberate boundaries](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap#deliberate-boundaries).
 
 ### v2.3.0 checklist (`uz.sql`)
 
-- [ ] Module foundation (FS-0) starts/stops the SQL service per worker and
+- [x] Module foundation (FS-0) starts/stops the SQL service per worker and
       feature-gates it.
-- [ ] PostgreSQL wire parser (D-1) connects and authenticates, including
+- [x] PostgreSQL wire parser (D-1) connects and authenticates, including
       SCRAM-SHA-256 and TLS.
-- [ ] Per-core pool (D-2, D-3) runs with no locks or cross-thread sharing.
-- [ ] Typed rows (D-4, D-9) and transactions (D-7) are bounded and tested.
-- [ ] Migrations (D-8) are idempotent and checksum-protected.
-- [ ] SQLite (D-6) is optional and links only when enabled.
-- [ ] `/db`, `/queries`, `/updates` (D-5) exceed 300K RPS.
-- [ ] No request-path allocation; pool and row buffers are startup-owned.
-- [ ] `docs/sql.md` and the examples compile.
+- [x] Per-core pool (D-2, D-3) runs with no locks or cross-thread sharing.
+- [x] Typed rows (D-4, D-9) and transactions (D-7) are bounded and tested.
+- [x] Migrations (D-8) are idempotent and checksum-protected.
+- [x] SQLite (D-6) is optional and links only when enabled. The release owner
+      approved SQL-ALLOC-001 for upstream SQLite C allocations; bounded Zig
+      storage and PostgreSQL's allocation contract remain mandatory.
+- [x] `/db`, `/queries`, `/updates` (D-5) throughput work is owner-accepted.
+      Explicit owner-directed closure on 2026-11-19 waives the original
+      above-300K RPS acceptance target for this item. The measured target
+      remains unachieved; the retained results below are unchanged.
+      Retained `/queries?count=20` batching improves matched local SCRAM
+      throughput from 13,457 to 50,050 RPS median and HTTP p99 from 27.792 to
+      9.225 ms, with exact reads and responses verified. The measured
+      all-three 300K target remains unmet. See the
+      [comparison](benchmarks/results/sql_world_queries_chunk_v1/2026_11_19/README.md).
+      Retained update batches of at most eight pairs improve `/updates?count=20` from
+      4,256 to 12,719 RPS median and HTTP p99 from 69.928 to 25.855 ms, with
+      exact writes, persistence and transaction failures verified. See the
+      [update comparison](benchmarks/results/sql_world_updates_chunk_v1/2026_11_19/README.md).
+      A separate unchanged-code [capacity screen](benchmarks/results/sql_world_capacity_v1/2026_11_19/README.md)
+      verifies 39 cases across four HTTP profiles. Best observed route medians
+      are 174,419 / 49,899 / 12,905 RPS respectively, with count 20 for queries
+      and updates. All 36 timed samples remain below 300K. At the observed
+      CPU cost, reaching 300K would require more usable CPU capacity.
+      No larger-host passing result was obtained before owner acceptance.
+- [x] Pool and row buffers are startup-owned; the exercised plaintext paths
+      make zero calls through the supplied Zig allocator.
+      Current-source plaintext ownership tests verify three startup allocations
+      and three matching deinitialization frees per `Db`. The exercised query,
+      row-copy, queue/cancel/deadline/reconnect, batch-error recovery and actual
+      World handlers make zero calls to the supplied Zig allocator while
+      armed, including shutdown drain; buffer and pool geometry stays fixed.
+      Four focused groups pass; ordinary units pass 1,202 tests with seven
+      explicit skips. This does not measure alternate allocators, native C/TLS,
+      the HTTP socket stack, kernel or PostgreSQL server allocations. The
+      scope of the result is retained in the
+      [ownership proof](benchmarks/results/sql_zig_allocation_ownership_v1/2026_11_19/README.md).
+- [ ] Complete the total request-path allocation proof, including native C/TLS.
+      The strict TLS gate remains unresolved. Recorded Daybreak-dependent
+      work remains [deferred for the user](tasks/next_version.md); no
+      PostgreSQL allocation exception or complete allocation pass is claimed.
+- [x] [sql](https://github.com/farbenbuilds/uWebZockets/wiki/sql) and the examples compile.
 
 ### v2.4.0 checklist (Comptime SSR Engine)
 
@@ -7258,11 +7259,11 @@ End of Part II.
 
 ### v2.13.0 provisional checklist (Module Integration)
 
-- [ ] `docs/modules.md` lists every module, feature flag, and lifecycle hook.
+- [ ] [modules](https://github.com/farbenbuilds/uWebZockets/wiki/modules) lists every module, feature flag, and lifecycle hook.
 - [ ] Every module has a runnable recipe and a CI compile test.
 - [ ] Disabled modules are absent from the binary.
 - [ ] Module boundaries are added to the v3 security register.
-- [ ] `README.md`, `docs/roadmap.md`, `docs/api.md`, `docs/memory_model.md`,
+- [ ] `README.md`, [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap), [api](https://github.com/farbenbuilds/uWebZockets/wiki/api), [memory_model](https://github.com/farbenbuilds/uWebZockets/wiki/memory_model),
       `CI_CD_PIPELINE.md`, and `CHANGELOG.md` are synchronized.
 - [ ] No module weakens zero-allocation, shared-nothing, or the C ABI.
 

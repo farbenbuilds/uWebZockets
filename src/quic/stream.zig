@@ -1,6 +1,5 @@
 const std = @import("std");
 const c = @import("c");
-const http_parser = @import("../http/parser.zig");
 const Request = @import("../http/request.zig").Request;
 const http_response = @import("../http/response.zig");
 const Response = http_response.Response;
@@ -16,24 +15,11 @@ const dev_log_module = @import("../observability/dev_log.zig");
 /// Reports that HTTP/3 stream support is compiled in.
 pub const available = true;
 
-/// Per-stream HTTP/3 storage and field capacities.
-///
-/// `decoded_header_count` caps the regular request fields accepted from one
-/// field section; pseudo-fields are validated into named slots and do not
-/// consume it. `header_extra_capacity` reserves the request-field pointer slots
-/// the engine lends beyond the inline `Request` arrays.
-pub const Capacities = struct {
-    request_header_size: usize = http_parser.max_header_size,
-    request_body_size: usize = http_parser.default_max_body_size,
-    response_header_size: usize = 4096,
-    response_header_count: usize = 64,
-    decoded_header_count: usize = 64,
-    header_extra_capacity: usize = 0,
-};
+/// Per-stream caller-owned storage and field capacities.
+pub const Capacities = @import("stream_capacities.zig").Capacities;
 
-/// Default per-stream capacity record; the production stream is specialized
-/// with these values.
-pub const default_capacities: Capacities = .{};
+/// Default capacity record used by the production stream.
+pub const default_capacities: Capacities = @import("stream_capacities.zig").default_capacities;
 
 /// Per-stream decoded request-header storage capacity of the default record.
 pub const header_capacity = default_capacities.request_header_size;
@@ -42,254 +28,8 @@ pub const request_body_capacity = default_capacities.request_body_size;
 /// Per-stream encoded response-header storage capacity of the default record.
 pub const response_header_capacity = default_capacities.response_header_size;
 
-/// Returns a header set to the owner that lent it storage.
-const HeaderReleaseFn = *const fn (*anyopaque, *HeaderSet) void;
-
-/// Bounded lsquic header decoder state for one HTTP/3 request.
-pub const HeaderSet = struct {
-    owner: *anyopaque = undefined,
-    release_fn: ?HeaderReleaseFn = null,
-    storage: []u8 = &.{},
-    /// Per-stream capacities the engine specialized the owning stream with.
-    capacities: Capacities = default_capacities,
-    decoded: c.struct_uz_lsxpack_header = std.mem.zeroes(c.struct_uz_lsxpack_header),
-    request: Request = .{},
-    method: ?[]const u8 = null,
-    scheme: ?[]const u8 = null,
-    authority: ?[]const u8 = null,
-    path: ?[]const u8 = null,
-    protocol: ?[]const u8 = null,
-    content_length: ?usize = null,
-    write_offset: usize = 0,
-    /// Regular fields accepted from this field section so far.
-    decoded_field_count: usize = 0,
-    regular_headers_seen: bool = false,
-    host_seen: bool = false,
-    is_trailer: bool = false,
-    finished: bool = false,
-    claimed: bool = false,
-
-    /// Reinitializes the header set with borrowed owner, decode storage, and
-    /// engine-provided request-field capacity slices.
-    ///
-    /// `header_extra_names` and `header_extra_values` are equal-length
-    /// caller-owned capacity slices; pass empty slices when the inline
-    /// `Request` arrays must cover every accepted field.
-    pub fn reset(
-        self: *HeaderSet,
-        owner: *anyopaque,
-        release_fn: HeaderReleaseFn,
-        storage: []u8,
-        header_extra_names: [][]const u8,
-        header_extra_values: [][]const u8,
-        capacities: Capacities,
-    ) void {
-        self.* = .{
-            .owner = owner,
-            .release_fn = release_fn,
-            .storage = storage,
-            .capacities = capacities,
-        };
-        self.request.extra_header_names = header_extra_names;
-        self.request.extra_header_values = header_extra_values;
-        self.request.extra_header_count = 0;
-    }
-
-    /// Reinitializes the header set for a trailing field section.
-    pub fn reset_trailer(
-        self: *HeaderSet,
-        owner: *anyopaque,
-        release_fn: HeaderReleaseFn,
-        storage: []u8,
-        header_extra_names: [][]const u8,
-        header_extra_values: [][]const u8,
-        capacities: Capacities,
-    ) void {
-        self.reset(
-            owner,
-            release_fn,
-            storage,
-            header_extra_names,
-            header_extra_values,
-            capacities,
-        );
-        self.is_trailer = true;
-    }
-
-    /// Prepares inline storage for one lsquic-decoded field.
-    pub fn prepare_decode(
-        self: *HeaderSet,
-        existing: ?*c.lsxpack_header,
-        required: usize,
-    ) ?*c.lsxpack_header {
-        if (self.finished or required > self.storage.len -| self.write_offset) return null;
-        if (existing) |header| {
-            if (@intFromPtr(header) != @intFromPtr(&self.decoded)) return null;
-            self.decoded.val_len = @intCast(self.storage.len - self.write_offset);
-            return @ptrCast(&self.decoded);
-        }
-
-        self.decoded = std.mem.zeroes(c.struct_uz_lsxpack_header);
-        self.decoded.buf = @ptrCast(self.storage.ptr);
-        self.decoded.name_offset = @intCast(self.write_offset);
-        self.decoded.val_len = @intCast(self.storage.len - self.write_offset);
-        return @ptrCast(&self.decoded);
-    }
-
-    /// Validates and records a decoded field, or finalizes on null.
-    pub fn process_header(self: *HeaderSet, decoded: ?*c.lsxpack_header) bool {
-        const raw_header = decoded orelse return self.finish();
-        if (@intFromPtr(raw_header) != @intFromPtr(&self.decoded)) return false;
-        const header: *c.struct_uz_lsxpack_header = @ptrCast(@alignCast(raw_header));
-        if (header.buf == null) return false;
-        if (@intFromPtr(header.buf) != @intFromPtr(self.storage.ptr)) return false;
-        if (header.name_offset < 0 or header.val_offset < 0) return false;
-
-        const name_offset: usize = @intCast(header.name_offset);
-        const value_offset: usize = @intCast(header.val_offset);
-        const name_length: usize = @intCast(header.name_len);
-        const value_length: usize = @intCast(header.val_len);
-        const name_end = std.math.add(usize, name_offset, name_length) catch return false;
-        const value_end = std.math.add(usize, value_offset, value_length) catch return false;
-        const next_offset = @max(name_end, value_end);
-        if (name_offset < self.write_offset or value_offset < self.write_offset) return false;
-        if (next_offset > self.storage.len or name_length == 0) return false;
-
-        const name = self.storage[name_offset..name_end];
-        const value = self.storage[value_offset..value_end];
-        if (!validation.valid_header_value(value)) return false;
-
-        const accepted = if (name[0] == ':')
-            self.process_pseudo_header(name, value)
-        else
-            self.process_regular_header(name, value);
-        if (!accepted) return false;
-
-        self.write_offset = next_offset;
-        return true;
-    }
-
-    /// Returns this header set to its owner at most once.
-    pub fn release(self: *HeaderSet) void {
-        const callback = self.release_fn orelse return;
-        self.release_fn = null;
-        callback(self.owner, self);
-    }
-
-    fn process_pseudo_header(self: *HeaderSet, name: []const u8, value: []const u8) bool {
-        if (self.is_trailer or self.regular_headers_seen) return false;
-
-        if (std.mem.eql(u8, name, ":method")) {
-            if (self.method != null or !validation.valid_method(value)) return false;
-            self.method = value;
-            return true;
-        }
-        if (std.mem.eql(u8, name, ":scheme")) {
-            if (self.scheme != null or !std.mem.eql(u8, value, "https")) return false;
-            self.scheme = value;
-            return true;
-        }
-        if (std.mem.eql(u8, name, ":authority")) {
-            if (self.authority != null or !validation.valid_authority(value)) return false;
-            self.authority = value;
-            return true;
-        }
-        if (std.mem.eql(u8, name, ":path")) {
-            if (self.path != null or !validation.valid_target(value)) return false;
-            self.path = value;
-            return true;
-        }
-        if (std.mem.eql(u8, name, ":protocol")) {
-            if (self.protocol != null or !validation.valid_method(value)) return false;
-            self.protocol = value;
-            return true;
-        }
-        return false;
-    }
-
-    fn process_regular_header(self: *HeaderSet, name: []const u8, value: []const u8) bool {
-        if (!validation.valid_http3_name(name)) return false;
-        if (validation.connection_specific_header(name)) return false;
-        if (self.is_trailer and forbidden_trailer_field(name)) return false;
-        if (std.mem.eql(u8, name, "te") and !std.ascii.eqlIgnoreCase(value, "trailers")) {
-            return false;
-        }
-
-        if (std.mem.eql(u8, name, "content-length")) {
-            if (self.content_length != null) return false;
-            self.content_length = validation.parse_decimal(value) orelse return false;
-        }
-        if (std.mem.eql(u8, name, "host")) {
-            if (self.host_seen or !validation.valid_authority(value)) return false;
-            self.host_seen = true;
-            if (self.authority) |authority| {
-                if (!std.ascii.eqlIgnoreCase(authority, value)) return false;
-            }
-        }
-
-        if (self.decoded_field_count >= self.capacities.decoded_header_count) return false;
-        // Both inline and engine-provided slots are exhausted past capacity;
-        // either way the field section fails closed on this stream.
-        self.request.add_header(name, value) catch return false;
-        self.decoded_field_count += 1;
-        self.regular_headers_seen = true;
-        return true;
-    }
-
-    fn finish(self: *HeaderSet) bool {
-        if (self.finished) return false;
-        if (self.is_trailer) {
-            self.finished = true;
-            return true;
-        }
-        const method = self.method orelse return false;
-        const is_connect = std.mem.eql(u8, method, "CONNECT");
-        // RFC 9220 defines :protocol only for extended CONNECT requests.
-        if (self.protocol != null and !is_connect) return false;
-        const target = if (is_connect) blk: {
-            if (self.protocol != null) {
-                _ = self.scheme orelse return false;
-                const path = self.path orelse return false;
-                // Extended CONNECT keeps the authority-form target and so
-                // requires :authority (RFC 8441 section 4).
-                _ = self.authority orelse return false;
-                break :blk path;
-            }
-            if (self.scheme != null or self.path != null) return false;
-            break :blk self.authority orelse return false;
-        } else blk: {
-            _ = self.scheme orelse return false;
-            const path = self.path orelse return false;
-            if (std.mem.eql(u8, path, "*") and !std.mem.eql(u8, method, "OPTIONS")) {
-                return false;
-            }
-            break :blk path;
-        };
-
-        if (!self.host_seen) {
-            const authority = self.authority orelse return false;
-            self.request.add_header("host", authority) catch return false;
-        }
-
-        self.request.method = method;
-        self.request.target = target;
-        if (is_connect and self.protocol == null) {
-            self.request.path = "";
-            self.request.query = "";
-            self.finished = true;
-            return true;
-        }
-        if (std.mem.indexOfScalar(u8, target, '?')) |query_start| {
-            self.request.path = target[0..query_start];
-            self.request.query = target[query_start + 1 ..];
-        } else {
-            self.request.path = target;
-            self.request.query = "";
-        }
-        self.finished = true;
-        return true;
-    }
-};
+/// Bounded decoded request and trailer fields with one-shot owner release.
+pub const HeaderSet = @import("header_set.zig").HeaderSet;
 
 const ResponsePhase = enum(u8) {
     idle,
@@ -306,6 +46,9 @@ const RequestPhase = enum(u8) {
     complete,
 };
 
+/// Flushes queued native bytes without ending the write side.
+pub const FlushFn = *const fn (?*c.lsquic_stream) callconv(.c) c_int;
+
 /// lsquic stream entry points the response state machine calls.
 ///
 /// Production binds `lsquic_stream_io`; tests substitute a fake so producer
@@ -320,6 +63,7 @@ pub const StreamIo = struct {
         [*c]const c.lsquic_http_headers_t,
         c_int,
     ) callconv(.c) c_int,
+    flush: FlushFn,
     shutdown: *const fn (?*c.lsquic_stream, c_int) callconv(.c) c_int,
     close: *const fn (?*c.lsquic_stream) callconv(.c) c_int,
 };
@@ -331,6 +75,7 @@ pub const lsquic_stream_io: StreamIo = .{
     .wantwrite = c.lsquic_stream_wantwrite,
     .write = c.lsquic_stream_write,
     .send_headers = c.lsquic_stream_send_headers,
+    .flush = c.lsquic_stream_flush,
     .shutdown = c.lsquic_stream_shutdown,
     .close = c.lsquic_stream_close,
 };
@@ -838,6 +583,14 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
                 self.fail_streaming_body(.invalid_body);
                 return;
             };
+            if (io.shutdown(self.stream, 0) != 0) {
+                _ = self.body_state.finish_terminal();
+                self.streaming_active = false;
+                self.streaming_route = null;
+                self.close_now();
+                route.sink.cancel(terminal.end.context, .peer_closed);
+                return;
+            }
             var response = Response{ .target = .{ .http3 = self.target() } };
             self.streaming_pending_headers.apply(&response);
             route.sink.end(terminal.end.context, &self.streaming_request, &response) catch {
@@ -947,6 +700,11 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
                     self.queue_error("400 Bad Request", "Content-Length mismatch");
                     return;
                 }
+            }
+            // EOF alone does not mark lsquic's user-read half closed.
+            if (io.shutdown(self.stream, 0) != 0) {
+                self.close_now();
+                return;
             }
             header_set.request.body = self.body_storage[0..self.body_length];
 
@@ -1104,6 +862,70 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
                 .begin_stream_fn = begin_stream_response,
                 .stream_file_fn = begin_file_response,
             };
+        }
+
+        /// Success is still buffered: CONNECT must keep both transport halves open.
+        pub fn connect_response_ready(self: *const Self) bool {
+            if (self.release_fn == null or self.response_phase != .ready or self.headers_sent) return false;
+            if (self.response_status_code < 200 or self.response_status_code >= 300) return false;
+            if (self.response_body_length != 0) return false;
+            for (0..self.response_header_count) |index| {
+                const start = self.response_name_offsets[index];
+                const name = self.response_header_storage[start..][0..self.response_name_lengths[index]];
+                if (std.mem.eql(u8, name, "content-length")) return false;
+            }
+            return true;
+        }
+
+        /// Commits only the prepared response head, without ordinary HTTP FIN.
+        pub fn send_connect_head(self: *Self) bool {
+            if (!self.connect_response_ready()) return false;
+            if (!self.send_headers()) return false;
+            self.headers_sent = true;
+            self.response_phase = .streaming;
+            // Native header completion must retain a callback to flush without FIN.
+            return true;
+        }
+
+        /// Called after native header completion, including a credit-blocked head.
+        pub fn flush_connect_head(self: *Self) bool {
+            if (!self.headers_sent or self.response_phase != .streaming) return false;
+            if (io.flush(self.stream) != 0) return false;
+            _ = io.wantwrite(self.stream, 0);
+            return true;
+        }
+
+        /// Replaces an unsent admission result with a complete refusal.
+        pub fn refuse_connect(self: *Self, status: []const u8, body: []const u8) void {
+            if (self.headers_sent) {
+                self.close_now();
+                return;
+            }
+            self.clear_stream_producer();
+            self.response_phase = .idle;
+            self.response_body_length = 0;
+            self.response_body_offset = 0;
+            self.queue_error(status, body);
+        }
+
+        /// Preserves an application's prepared non-success refusal.
+        pub fn finish_connect_refusal(self: *Self) void {
+            self.dispatched = true;
+            _ = io.wantread(self.stream, 0);
+            if (io.shutdown(self.stream, 0) != 0) self.close_now();
+        }
+
+        /// Cancels unsent success and owns no application response after return.
+        pub fn abort_connect(self: *Self) void {
+            self.clear_stream_producer();
+            self.release_connect_request();
+            self.close_now();
+        }
+
+        /// The admitted route identity must be copied before request storage ends.
+        pub fn release_connect_request(self: *Self) void {
+            if (self.header_set) |headers| headers.release();
+            self.header_set = null;
         }
 
         fn end_response(context: *anyopaque, status: []const u8, headers: []const u8, body: []const u8) !void {
@@ -1358,14 +1180,6 @@ pub fn stream_with(comptime io: StreamIo, comptime capacities: Capacities) type 
 
 /// Production HTTP/3 stream state bound to the lsquic stream API.
 pub const QuicStream = stream_with(lsquic_stream_io, default_capacities);
-
-fn forbidden_trailer_field(name: []const u8) bool {
-    return std.mem.eql(u8, name, "content-length") or
-        std.mem.eql(u8, name, "host") or
-        std.mem.eql(u8, name, "te") or
-        std.mem.eql(u8, name, "trailer") or
-        std.mem.eql(u8, name, "transfer-encoding");
-}
 
 fn set_xpack_header(
     header: *c.struct_uz_lsxpack_header,

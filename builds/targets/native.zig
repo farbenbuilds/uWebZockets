@@ -2,6 +2,8 @@ const std = @import("std");
 const examples = @import("../examples.zig");
 const fuzzing = @import("../fuzzing.zig");
 const sanitizers = @import("../sanitizers.zig");
+const sql = @import("../sql.zig");
+const sql_bench = @import("../sql_bench.zig");
 const testing = @import("../testing.zig");
 const vendor = @import("../vendor/root.zig");
 
@@ -16,6 +18,7 @@ pub fn inject(
     target_is_native: bool,
 ) Steps {
     const sanitizer = sanitizers.configure(b, target, target_is_native);
+    const sql_config = sql.configure(b, target, optimize, sanitizer);
     const zslay_dependency = b.dependency("zslay", .{ .target = target, .optimize = optimize });
     const xev_dependency = b.dependency("libxev", .{ .target = target, .optimize = optimize });
     const zslay = zslay_dependency.module("zslay");
@@ -42,6 +45,7 @@ pub fn inject(
     module.link_libcpp = true;
     module.addImport("zslay", zslay);
     module.addImport("xev", xev);
+    sql_config.attach(module);
 
     const archive_module = b.createModule(.{
         .root_source_file = b.path("src/root.zig"),
@@ -54,6 +58,8 @@ pub fn inject(
     });
     archive_module.addImport("zslay", zslay);
     archive_module.addImport("xev", xev);
+    archive_module.addImport("module_options", sql_config.options_module);
+    if (sql_config.sqlite_c) |sqlite_c| archive_module.addImport("sqlite_c", sqlite_c);
 
     const library = b.addLibrary(.{
         .linkage = .static,
@@ -82,13 +88,19 @@ pub fn inject(
     b.getInstallStep().dependOn(&install_library.step);
     const library_step = b.step("lib", "Build and install only the static library");
     library_step.dependOn(&install_library.step);
+    if (sql_config.sqlite_library) |sqlite_library| {
+        const install_sqlite = b.addInstallArtifact(sqlite_library, .{});
+        library_step.dependOn(&install_sqlite.step);
+        b.getInstallStep().dependOn(&install_sqlite.step);
+    }
 
     const install_header = b.addInstallHeaderFile(b.path("include/uWebZockets.h"), "uWebZockets.h");
     b.getInstallStep().dependOn(&install_header.step);
     library_step.dependOn(&install_header.step);
     install_vendor_libraries(b, dependencies, library_step);
 
-    examples.inject(b, target, optimize, module, sanitizer);
+    examples.inject(b, target, optimize, module, sanitizer, sql_config);
+    sql_bench.inject(b, target, optimize, module, xev, sanitizer, sql_config.enabled);
     const test_steps = testing.inject(
         b,
         target,
@@ -100,8 +112,9 @@ pub fn inject(
         sanitizer,
         zslay,
         xev,
+        sql_config,
     );
-    fuzzing.inject(b, target, optimize, dependencies, sanitizer, zslay, xev);
+    fuzzing.inject(b, target, optimize, dependencies, sanitizer, zslay, xev, sql_config);
     return .{ .test_step = test_steps.test_step, .test_compile = test_steps.test_compile };
 }
 

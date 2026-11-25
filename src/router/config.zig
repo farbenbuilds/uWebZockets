@@ -14,6 +14,7 @@ const ws_deflate = @import("../ws/deflate.zig");
 const rejection = @import("../http/rejection.zig");
 const xdp_transport = @import("../xdp/transport.zig");
 const datagram_ring = @import("../quic/datagram_ring.zig");
+const webtransport = @import("../quic/webtransport.zig");
 const metrics_module = @import("../observability/metrics.zig");
 const file_watch = @import("../observability/file_watch.zig");
 const radix = @import("radix.zig");
@@ -38,6 +39,9 @@ const Http2Session = core_tcp.Http2Session;
 /// standard stack when the kernel or process privileges refuse AF_XDP.
 pub const TransportMode = xdp_transport.Mode;
 
+/// Initial cumulative WebTransport credits; all zero retains flow-off behavior.
+pub const WebTransportFlowLimits = webtransport.FlowLimits;
+
 /// Failures raised while validating a configuration or planning its slab.
 pub const Error = error{
     InvalidConnectionCapacity,
@@ -52,6 +56,7 @@ pub const Error = error{
     InvalidIdleTimeout,
     InvalidHeaderReadTimeout,
     InvalidDatagramCapacity,
+    InvalidWebTransportFlowLimits,
     InvalidTransportConfiguration,
     InvalidMetricsPath,
     InvalidWatchConfiguration,
@@ -166,6 +171,11 @@ pub const ServerConfig = struct {
     max_datagram_size: usize = 0,
     /// Pending datagram slots reserved per connection; zero disables datagrams.
     datagram_slots: usize = 0,
+    /// Initial session credit advertised when supported by the native backend.
+    ///
+    /// Data is bounded by 2^62-1; child counts by 2^60, inclusive. All zero
+    /// retains flow-off behavior. Captured before the UDP listener starts.
+    webtransport_flow_limits: WebTransportFlowLimits = .{},
     /// AF_XDP UMEM chunk size in bytes; must be a power of two.
     xdp_frame_size: usize = 2048,
     /// AF_XDP UMEM frame count; must be a power of two.
@@ -245,6 +255,8 @@ pub const ServerConfig = struct {
         max_datagram_size: ?usize = null,
         /// Replaces `datagram_slots` when non-null.
         datagram_slots: ?usize = null,
+        /// Replaces `webtransport_flow_limits` when non-null.
+        webtransport_flow_limits: ?WebTransportFlowLimits = null,
         /// Replaces `xdp_frame_size` when non-null.
         xdp_frame_size: ?usize = null,
         /// Replaces `xdp_frame_count` when non-null.
@@ -289,6 +301,7 @@ pub const ServerConfig = struct {
         if (overrides.transport) |value| result.transport = value;
         if (overrides.max_datagram_size) |value| result.max_datagram_size = value;
         if (overrides.datagram_slots) |value| result.datagram_slots = value;
+        if (overrides.webtransport_flow_limits) |value| result.webtransport_flow_limits = value;
         if (overrides.xdp_frame_size) |value| result.xdp_frame_size = value;
         if (overrides.xdp_frame_count) |value| result.xdp_frame_count = value;
         if (overrides.observability) |value| result.observability = value;
@@ -327,6 +340,7 @@ pub const ServerConfig = struct {
             return error.InvalidHeaderReadTimeout;
         }
         try self.validate_datagrams();
+        try self.validate_webtransport_flow_limits();
         try self.validate_transport();
         try self.validate_watch();
     }
@@ -344,6 +358,16 @@ pub const ServerConfig = struct {
         // The ring stores lengths as u32 and addresses slots with u32 cursors.
         if (self.max_datagram_size > std.math.maxInt(u32)) return error.InvalidDatagramCapacity;
         if (self.datagram_slots > std.math.maxInt(u32)) return error.InvalidDatagramCapacity;
+    }
+
+    fn validate_webtransport_flow_limits(self: ServerConfig) Error!void {
+        const limits = self.webtransport_flow_limits;
+        if (limits.data > webtransport.max_quic_varint or
+            limits.streams_bidi > webtransport.max_stream_count or
+            limits.streams_uni > webtransport.max_stream_count)
+        {
+            return error.InvalidWebTransportFlowLimits;
+        }
     }
 
     fn validate_transport(self: ServerConfig) Error!void {

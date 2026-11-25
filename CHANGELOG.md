@@ -5,8 +5,65 @@ uses Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Public WebTransport child receive registration and App-affine generation
+  handles, explicit cancellation/send finish, and session lifecycle callbacks.
+  Streams and datagrams share sixteen endpoint paths; stream-only startup
+  allocates no datagram payload buffers. Live support still requires the
+  unpublished native proposal.
+- Candidate WebTransport peer-BIDI writes, explicit one-shot writable events
+  and deferred UDP service requests. Writes transfer only the returned prefix,
+  preserve ownership through native/flush failures, and use actual native
+  publication as the readiness boundary. Multi-session flow
+  and published activation remain open.
+- Candidate WebTransport STOP and RESET controls preserve independent halves
+  and their first error codes. STOP suppresses receive callbacks while retaining
+  final-size accounting; RESET preserves receiving and disables sending.
+- Candidate local WebTransport UNI/BIDI creation reserves bounded Root storage
+  before native construction and defers admission through the existing open
+  callback. Blocked attempts queue no delayed creation request.
+- CONNECT-owned session records and a bounded worker-wide identity index replace
+  connection-wide session scalars. Close invalidates identity before callbacks;
+  index churn reclaims tombstones without allocating. The flow-off one-session
+  restriction remains when session flow is not negotiated.
+- Pure WebTransport session budgets validate cumulative data and child-stream
+  limits. Bounded credit output coalesces consumption/closure grants while
+  retaining partial capsule writes.
+- Candidate receive accounting retains early child usage and reclaimed credit
+  across child destruction, transfers it into CONNECT ownership, and charges
+  native high-water deltas before child admission. NULL-context children retain
+  classification and final-size accounting.
+- Candidate positive session flow enforces early usage before CONNECT admission,
+  native child creation and accepted body-write budgets, and bounded MAX_* output.
+  `ServerConfig.webtransport_flow_limits` and the matching builder method capture
+  initial credit before listener startup. Flow requires bilateral intent and
+  the complete native receive observer; published pins remain unchanged.
+- Candidate simultaneous WebTransport sessions retain independent routes,
+  handles and flow budgets on one connection. Typed session cleanup removes
+  only matching queued datagrams, preserving sibling FIFO entries and
+  connection-wide delivery ordinals. Flow-off peers retain one simultaneous
+  session; connection teardown still clears every session.
+- `App.enable_http3` and `enable_http3_ephemeral` configure HTTPS and HTTP/3
+  before listening on an application returned by `Server.builder`, preserving
+  its configured capacities and installing both TLS contexts atomically.
+- Private capability-gated WebTransport CONNECT admission, connection-scoped
+  session ownership, registered datagram route identities and bounded
+  incremental capsule parsing. The published dependency pin keeps live
+  WebTransport disabled; candidate verification is retained separately.
+- Bounded early WebTransport datagram buffering with startup-owned storage,
+  generation-scoped FIFO replay after admission, monotonic expiry, exact
+  session cleanup and per-connection terminal-ID exhaustion policy. Ordinary
+  established-datagram dispatch adds no clock read or allocation.
+
 ### Fixed
 
+- Candidate NULL-context classifier error handling recognizes a read half
+  already closed during HTTP header delivery, preserving later CONNECT
+  admission on the same connection.
+- Datagram-only WebTransport sessions retain queued application datagrams during
+  graceful cooldown. Established CONNECT flushing no longer takes the accepting
+  session shutdown path; published sessions still terminate and drain normally.
 - The scheduled benchmark publisher refreshes the narrative contract document
   while keeping the executable contract parameters and schema immutable. This
   lets documented harness clarifications publish without rejecting every later
@@ -17,6 +74,45 @@ uses Semantic Versioning.
   accounting. The integration pin remains
   `85bd081c9103c077a7cc98271d09334d0f1043d4` pending the separate `uwz/main`
   sync.
+
+## [2.3.0] - 2026-11-11
+
+### Added
+
+- Optional `uz.sql` with pure-Zig PostgreSQL framing, MD5/SCRAM-SHA-256,
+  PostgreSQL-compatible Unicode password preparation, and verified TLS 1.3.
+- Worker-local bounded connection pools, generation-checked leases and
+  waiters, prepared statements, bound pipelines, typed rows, transactions,
+  savepoints, deadlines, and plaintext/verified-TLS cancellation requests.
+- Checksum-protected embedded migrations with PostgreSQL advisory locks and
+  SQLite exclusive transactions, rollback, and execution bounds.
+- Optional SQLite 3.54.1 compiled by Zig, with startup-prepared statements,
+  WAL, foreign keys, busy handling, bounded results, and VM work budgets.
+- Explicit worker service hooks with readiness, bounded startup failures,
+  rollback, and reverse shutdown; owned service detail in cluster failures.
+- Runnable PostgreSQL database routes, SQLite CRUD, and transaction/outbox
+  examples; isolated PostgreSQL TLS CI, SQL fuzzing, and pool diagnostics.
+
+### Changed
+
+- SQL and SQLite are separately enabled with `-Dsql=true` and `-Dsqlite=true`.
+  The C ABI remains core-only.
+- Cluster execution lives in a dedicated module while preserving the public
+  worker-group surface.
+- Connection parking, HTTP/2 storage layout, async response completion, and
+  QUIC header-set lifetimes have dedicated owners with compatible aliases.
+  Parking slots use eight fewer bytes each without reducing capacity.
+- Release-owner-approved SQL-ALLOC-001 permits SQLite's internal C allocations;
+  PostgreSQL's query allocation checks and SQLite's execution/result bounds
+  remain enforced. See [sql](https://github.com/farbenbuilds/uWebZockets/wiki/sql) and ADR 0013.
+
+### Security
+
+- SQL diagnostics omit credentials and parameter values. TLS chain/name and
+  SCRAM server-proof verification fail closed; cancellation quarantines
+  unknown transaction state and drains its owned completions.
+- Migration sources cannot escape their enclosing transactions, and checksum
+  or history changes fail closed with a bounded migration name.
 
 ## [2.2.0] - 2026-11-10
 
@@ -137,7 +233,7 @@ release are unchanged.
 - WebTransport, receive-side UDP GRO, the HttpArena `async` adapter, quiet-host
   performance evidence, cluster/timer ownership extraction, and final fork
   archives remain dated boundaries. See
-  [the deliberate boundaries](docs/roadmap.md#deliberate-boundaries).
+  [the deliberate boundaries](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap#deliberate-boundaries).
 - kTLS remains a standalone helper owned by v3.5.0 SB-31. `io_uring_prep_splice`
   remains conditional on measured benefit; plaintext `sendfile` is unchanged.
 - Framed file responses use bounded synchronous positional reads on the owning
@@ -166,7 +262,7 @@ policy are unchanged.
 
 ### Added
 
-- `docs/libxev_kqueue_findings.md` records the macOS kqueue investigation:
+- [libxev_kqueue_findings](https://github.com/farbenbuilds/uWebZockets/wiki/libxev_kqueue_findings) records the macOS kqueue investigation:
   the timer `.rearm` spin, the libxev invalid-state and duplicate-completion
   defects, the throughput and memory measurements, and the XEV-003 through
   XEV-005 fork fixes.
@@ -295,8 +391,8 @@ There is no wire-protocol, TLS, capacity, or request-path change.
 - `Response.end_best_effort` and `Response.end_with_headers_best_effort` for
   callbacks whose ABI cannot propagate a response write failure.
 - ADR 0007 records the lifecycle, failure-reporting, release-claiming, and
-  publish-report decisions. `docs/api.md`, `docs/architecture.md`,
-  `CODEBASE.md`, `README.md`, and `docs/roadmap.md` describe the new surface.
+  publish-report decisions. [api](https://github.com/farbenbuilds/uWebZockets/wiki/api), [architecture](https://github.com/farbenbuilds/uWebZockets/wiki/architecture),
+  `CODEBASE.md`, `README.md`, and [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap) describe the new surface.
 
 ### Changed
 
@@ -871,7 +967,7 @@ recorded here.
   contract, runner, and real-credential example land here; no measured result
   is claimed.
 - Windows runtime coverage stays compile-only. The two defects recorded in
-  [docs/roadmap.md](docs/roadmap.md#windows-runtime-blocker-details) - the
+  [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap#windows-runtime-blocker-details) - the
   pinned libxev IOCP accept-socket reuse and the queued-completion close path -
   still block the first native accept loop, so no runtime job is added and no
   Windows binaries are published.
@@ -1110,17 +1206,17 @@ applications recompile and behave unchanged.
   record per completed exchange and advances `uwz_http_requests`; HTTP/3 emits
   one record per completed exchange through the owning thread's sink; WebSocket
   upgrades record their `101` or HTTP/2 `200` response.
-- Documentation: new [getting started](docs/getting_started.md),
-  [API](docs/api.md), [deployment](docs/deployment.md),
-  [roadmap](docs/roadmap.md), [troubleshooting](docs/troubleshooting.md), and
-  [client](docs/client.md) guides; the protocol documentation is split into
-  [HTTP](docs/http.md), [HTTP/2](docs/http2.md), [HTTP/3](docs/quic.md),
-  [WebSocket](docs/websocket.md), and [JSON-RPC](docs/json_rpc.md) documents.
+- Documentation: new [getting started](https://github.com/farbenbuilds/uWebZockets/wiki/getting_started),
+  [API](https://github.com/farbenbuilds/uWebZockets/wiki/api), [deployment](https://github.com/farbenbuilds/uWebZockets/wiki/deployment),
+  [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap), [troubleshooting](https://github.com/farbenbuilds/uWebZockets/wiki/troubleshooting), and
+  [client](https://github.com/farbenbuilds/uWebZockets/wiki/client) guides; the protocol documentation is split into
+  [HTTP](https://github.com/farbenbuilds/uWebZockets/wiki/http), [HTTP/2](https://github.com/farbenbuilds/uWebZockets/wiki/http2), [HTTP/3](https://github.com/farbenbuilds/uWebZockets/wiki/quic),
+  [WebSocket](https://github.com/farbenbuilds/uWebZockets/wiki/websocket), and [JSON-RPC](https://github.com/farbenbuilds/uWebZockets/wiki/json_rpc) documents.
 - CI: `scripts/check_docs.sh` validates every relative markdown link in the
   lint job. Windows remains a compile-verified Tier 2 target: a native runtime
   gate is blocked by two accept-loop defects (one in the pinned libxev IOCP
   backend, one in the Windows close path), recorded in
-  [docs/roadmap.md](docs/roadmap.md#windows-runtime-blocker-details).
+  [roadmap](https://github.com/farbenbuilds/uWebZockets/wiki/roadmap#windows-runtime-blocker-details).
 
 ### Changed
 
@@ -1625,7 +1721,7 @@ semantics, exported names, and field layouts are unchanged.
   `mutable_context_pointer` comptime helper.
 - Documentation records the mandatory type-readability contract in
   `CODING_CONVENTION.md` section 8 and mirrors it in `README.md`, `AGENTS.md`,
-  `SKILL.md`, `CODEBASE.md`, and `CONTRIBUTE.md`; `docs/callback_lifecycle.md`
+  `SKILL.md`, `CODEBASE.md`, and `CONTRIBUTE.md`; [callback_lifecycle](https://github.com/farbenbuilds/uWebZockets/wiki/callback_lifecycle)
   source references were re-synchronized with the tree.
 
 ### Security
@@ -1896,8 +1992,8 @@ BBR boundaries.
   spinlock from the cross-worker wakeup path and cache-line separating the
   producer and consumer positions.
 - Added `examples/shared_nothing_cluster.zig` plus the restructured
-  `docs/architecture.md`, `docs/memory_model.md`, `docs/protocols.md`, and
-  `docs/operations.md`.
+  [architecture](https://github.com/farbenbuilds/uWebZockets/wiki/architecture), [memory_model](https://github.com/farbenbuilds/uWebZockets/wiki/memory_model), [protocols](https://github.com/farbenbuilds/uWebZockets/wiki/protocols), and
+  [operations](https://github.com/farbenbuilds/uWebZockets/wiki/operations).
 
 ### Changed
 

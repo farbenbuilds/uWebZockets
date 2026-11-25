@@ -38,7 +38,7 @@ downstream fix must wait for an upstream release.
   state, duplicate completion queueing, nested-submit dispatch, pending-delete
   flush, and active-count accounting. The 2.1.6 scheduler keeps its
   second-boundary guard until a separate fork patch normalizes libxev timer
-  timespecs. See [libxev_kqueue_findings.md](libxev_kqueue_findings.md).
+  timespecs. See [libxev_kqueue_findings.md](https://github.com/farbenbuilds/uWebZockets/wiki/libxev_kqueue_findings).
 
 ## Mirror validation in CI
 
@@ -224,6 +224,77 @@ Retirement criterion: <condition that makes the patch unnecessary>
 One commit carries one patch. Do not mix formatting, dependency refreshes, or
 unrelated upstream merges into a `uwz` commit. A generated build input that is
 not a patch gets its own ledger row and commit.
+
+### Local proposals awaiting maintained-fork review, 2026-11-17
+
+These unpublished local source checkpoints include historical steps toward
+the reviewed proposals. They are not part of the active pins above. No library
+build or CI step reads or applies their review archives. Required commit
+metadata is completed in the separate publication equivalents described below;
+the original experimental identities remain retained for evidence.
+
+| Proposed ID | Fork | Local commit | Invariant and evidence | Retirement criterion |
+| --- | --- | --- | --- | --- |
+| XEV-008 | libxev | `5b2cde22c4ab8e472b4d810a2f7225ff95cd61d5` | Canceled io_uring polls report typed `Canceled`; native Debug/ReleaseSafe and both downstream Linux backends pass | Base contains equivalent mapping and lifecycle regression |
+| LSQ-003 | lsquic | `f2c1329fd116fa7f6d40d142aeb55359c4ad8501` | ACK callback types match exactly; strict real TLS sanitizer regression passes | Base provides equivalent typed callbacks |
+| LSQ-004 | lsquic | `f7bfd697c967f550bf59fc6a720f48a15d3191d7` | Physical QPACK storage remains valid at logical capacity zero; strict HTTP/3 sanitizer regression passes | Base handles zero capacity without zero-length VLAs |
+| LSQ-005 | lsquic | `5accc8aea1d4a0fb2e02530686ab1ab42527f98f` | Immediate engine destruction reclaims retired crypto exactly once; unchanged TLS-only LSan probe passes | Base reclaims service-only retired crypto |
+| LSQ-006 | lsquic | `1aaac18c467e8b19a481dc6ef96db2b798e76edc` | Framing tests enforce LSQ-001 stream errors, sibling isolation and header ownership; all 83 existing Linux cases pass | Base tests equivalent maintained error policy |
+| LSQ-007 | lsquic | `0f7382b17b38d7fb0496a0b75b3c66ace79e49e8` | Synchronous uni creation preserves credit and lifetime; eight real-engine groups pass three modes | Base provides equivalent creation and lifetime semantics |
+| LSQ-008 | lsquic | `3e6c31890cb7c48d933b5114136324c5113fb0a8` | Historical reliable-reset implementation checkpoint; runtime validation was incomplete and receive advertisement remained disabled | Base provides equivalent reliable reset; final follow-through is LSQ-010 |
+| LSQ-009 | lsquic | `c434c4ae3a2ad9f584d2c17536f800623ef36df6` | Historical negotiated-reset checkpoint; independent interoperability passed, but legacy linking/lifetime assertions and ACK batching remained unresolved | Base provides equivalent negotiated runtime and lifetime behavior; LSQ-010 resolves this checkpoint |
+| LSQ-010 | lsquic | `3640992bb231d3f0f2647e03fda6a2776fcc23ca` | Reliable-reset prefix/final-credit ownership, obsolete ACKs, eight-stream ACK scans and deferred cleanup; 83 native Debug cases and ten ReleaseSafe regressions pass | Base preserves equivalent reset ownership and ACK accounting |
+| LSQ-011 | lsquic | `74b8a8e1213b73b3c86f3b43c9b6437f30f0d908` | Default-off bounded draft-16 SETTINGS generation; actual encrypted records pass three modes, while peer publication remained a following slice | Base provides equivalent opt-in settings generation |
+| LSQ-012 | lsquic | `8b0ef12414cdcf7b8c20e0b9f4fceb321358c2d0` | Immutable peer SETTINGS and quiescent notification after live handshake; fragmented/invalid delivery and lifecycle checks pass three modes | Base provides equivalent immutable peer publication |
+| LSQ-013 | lsquic | `9f0088c58fe67cccf1871dc172c90c2ec6f97944` | WT client uni admission/advertisement and initiator-specific bidi credit agree; encrypted uni and four bidi-half checks pass three modes | Base provides equivalent directional stream-credit policy |
+| LSQ-014 | lsquic | `a1947ce3a4ceeb98413e53014cc87f72b6d89869` | Historical child-stream checkpoint; 41 focused Debug scenarios passed, but delayed SETTINGS still exposed reset before typed publication | Base provides equivalent child association; LSQ-015 and LSQ-016 resolve this checkpoint |
+| LSQ-015 | lsquic | `202ed8b9e92929d1ec62ffe2e5034d1a00fda355` | Reset/STOP wait for typed publication, final size precedes suffix discard and rejected negotiation drains; 51 scenarios pass three modes, with placement findings still open | Base provides equivalent publication/reset ordering; LSQ-016 resolves placement findings |
+| LSQ-016 | lsquic | `2e229b3e0a9bb293c4d7f74f7532e09213b8cb5c` | Forbidden child placement is rejected and existing children survive GOAWAY; 65 scenarios, 83 native cases and foreign-library compilation pass | Base provides equivalent placement and GOAWAY isolation |
+| LSQ-017 | lsquic | `530e9e505eb04a0a4095b290f7eb052504ace94e` | Full-width explicit receive-half cancellation preserves transmit state and immutable peer errors; wire/logger and terminal-lifetime regressions pass | Base provides equivalent coded receive cancellation and full-width event metadata |
+| LSQ-018 | lsquic | `005ab244169f269689e511d6b77dd2187e318df1` | Opt-in WT uni closure replenishes peer count credit despite persistent critical streams; real App/TLS credit recovery passes three modes | Base provides equivalent deadlock-free uni credit replenishment |
+| LSQ-019 | lsquic | `c8cf3fbc201a5d6f6acb6ae45af476cfcd5d7840` | Quiescent receive high-water observations precede delivery/close, including NULL contexts and reset gaps; eight observer groups and 83 native cases pass | Base provides equivalent monotonic receive observation and rejected-association cleanup |
+| LSQ-020 | lsquic | `d1104a9fab040af659295a95fb448c971a7bc6de` | Receive snapshots distinguish published NULL-context children without changing layout or scheduling; eight observer groups pass three modes | Base exposes equivalent typed-publication state in receive snapshots |
+| LSQ-021 | lsquic | `8aca43c50bfa6995c3d007a8e75ad5145b5a2db8` | Adapt upstream `acd2bb73` QPACK terminal/blocking guards and guard the candidate-only reliable-reset header path; genuine prefix/context REDs turn GREEN, with exact ownership and a healthy sibling | Base provides equivalent terminal QPACK handling in ordinary and reliable-reset reads |
+| LSQ-022 | lsquic | `ed8f8f7642fbf4fc9399a0a6bb8f90b281e1f300` | Upstream `c638b570` address selection never replaces validated paths when no unvalidated slot exists; real-layout IPv4/IPv6 and connection-mode regressions preserve full path snapshots | Base provides equivalent validated-path preservation and regression coverage |
+
+The lsquic [review evidence record](../benchmarks/results/lsquic_uni_prerequisite_v1/2026_11_11/README.md)
+also records the baseline failures, independent reviews, source identities and
+cross-compilation limits. Raw evidence archives are not committed; the record
+states that clean-clone replay is unavailable. These rows identify the original experimental
+commits; intermediate failing checkpoints are historical, not independent
+passing candidates. LSQ-019 replaces the provisional identifier
+`LSQ-WT-RECEIVE-20261117`, and LSQ-020 records
+`LSQ-WT-PUBLISHED-20261117` from the original message.
+
+The [publication-preparation record](../benchmarks/results/dependency_publication_v2_3/2026_11_17/README.md)
+documents the original/publication histories, unchanged XEV-008 history,
+deterministic metadata conversion and exact per-commit source identities. Its
+raw archive is not committed.
+It preserves LSQ-003 through LSQ-007 byte-for-byte and maps the following
+thirteen commits to separate equivalents containing all required ledger
+fields. No published history is rewritten. The final converted source tree
+matches the independent-client candidate; this does not resolve newer upstream
+fixes, fork permissions, mirror equality or the remaining merge gates.
+
+The following [compatible-fix artifact](../benchmarks/results/lsquic_compatible_fixes_v1/2026_11_17/README.md)
+adds LSQ-021 and LSQ-022 without changing the original eighteen mappings.
+Their separate publication equivalents append to the prepared history at
+`3d775d801ccf7c9f04e0cc6d33952d81c66dae1f`, with the same source tree
+`26b4ecc1d026c2aa21a852c20a3f6d9e0ea7cbeb` as original `ed8f8f7`.
+All 85 native Debug cases, fifteen retained three-mode cohort runs and all
+27 public-client cases pass on that source; independent source and runtime
+reviews are clear. The original small incremental bundles reconstructed both
+complete histories from the exact earlier artifact; those archives are not
+committed, so clean-clone replay is unavailable. The newer upstream fixes are
+thus covered in this local candidate; maintained-fork synchronization, review,
+publication and production activation still require their own evidence.
+
+An authorized maintainer must import each proposal into a fork scratch branch,
+review it with a PR assignee and existing repository label, verify branch
+protections, and merge into the append-only integration branch. Then fetch the
+published integration commit, resolve fresh package hashes, update and compare
+all four manifest views, and run the required empty-cache and downstream gates.
+These local commit IDs are never substitutes for that integration process.
 
 ## Security and provenance review
 

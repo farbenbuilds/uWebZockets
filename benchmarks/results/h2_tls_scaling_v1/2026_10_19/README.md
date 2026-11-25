@@ -133,17 +133,16 @@ tree.
 | Path | Contents |
 | --- | --- |
 | `README.md` | Host record, result tables, hypothesis decisions, and reproduction commands |
-| `raw_evidence_archive.tgz` | Append-only archive of all raw h2load outputs, parsed summaries, metadata, CPU/RSS samples, worker accepts, server logs, exact body bytes, resumption evidence, post-commit rows, and the clean-clone build log |
-| `manifest.sha256` | SHA-256 of this README and the raw evidence archive |
+| raw evidence archive (omitted) | Append-only archive of all raw h2load outputs, parsed summaries, metadata, CPU/RSS samples, worker accepts, server logs, exact body bytes, resumption evidence, post-commit rows, and the clean-clone build log |
+| `manifest.sha256` | SHA-256 of this README |
 
-Extract the raw evidence with:
+The original raw evidence extraction procedure is not replayable from a clean clone:
 
 ```sh
-mkdir -p /tmp/uwz-h2-evidence
-tar -xzf raw_evidence_archive.tgz -C /tmp/uwz-h2-evidence
+# The raw evidence archive is not committed; this replay procedure is historical.
 ```
 
-Inside the archive, each `*_raw.txt` file contains the three sample outputs for
+Inside the original archive, each `*_raw.txt` file contained the three sample outputs for
 one cohort, separated by `===== sample N =====` headers. The derived
 `*_rates.txt` intermediates are not included because `summary.tsv` carries
 every rate and counter. Raw output was not rewritten; samples were only
@@ -175,3 +174,7 @@ scripts/benchmark_h2_tls.sh tls_cluster_w4 ./zig-out/bin/tls_cluster \
 Use `UWZ_MODE=plaintext-cluster` with an `http://` URL for the control, or
 `UWZ_MODE=tls-single UWZ_WORKERS=1` for the single-application listener.
 `scripts/probe_tls_resumption.sh 127.0.0.1:9443 20` records the ticket mix.
+
+## Omitted raw archive
+
+The raw evidence archive is intentionally not committed to this repository. Its SHA-256 was `4e19472ecdbe2fbdbd823ee07cb29645b946232a60eda5c69d8ac39f7b162fcc`. Clean-clone replay is unavailable; the textual record and README manifest above are retained as historical evidence.
