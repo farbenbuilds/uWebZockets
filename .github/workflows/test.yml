@@ -135,7 +135,9 @@ jobs:
     name: Fuzz smoke
     runs-on: ubuntu-24.04
     environment: Testing
-    timeout-minutes: 20
+    # Cold Nix setup can spend most of the old 20-minute budget before the
+    # fuzz targets start. Keep a finite bound with room for that setup.
+    timeout-minutes: 45
 
     steps:
       - name: Checkout repository
