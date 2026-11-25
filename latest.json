@@ -4,7 +4,7 @@
     "formula": "candidate_median_rps >= baseline_median_rps * minimum_baseline_ratio",
     "minimum_baseline_ratio": 0.9,
     "passed": true,
-    "threshold_rps": 206781.56100000002
+    "threshold_rps": 129783.64499999999
   },
   "methodology": {
     "build_optimize": "ReleaseFast",
@@ -32,36 +32,36 @@
     "git_ref": "refs/heads/main",
     "repository": "farbenbuilds/uWebZockets",
     "run_attempt": 1,
-    "run_id": 45407854717,
-    "workflow_run_url": "https://github.com/farbenbuilds/uWebZockets/actions/runs/45407854717"
+    "run_id": 45620030516,
+    "workflow_run_url": "https://github.com/farbenbuilds/uWebZockets/actions/runs/45620030516"
   },
-  "record_id": "45407854717-1-2e0f50108592",
-  "recorded_at": "2026-11-24T14:03:25Z",
+  "record_id": "45620030516-1-2e0f50108592",
+  "recorded_at": "2026-11-25T13:15:56Z",
   "results": {
     "baseline": {
-      "median_rps": 229757.29,
+      "median_rps": 144204.05,
       "samples_rps": [
-        228629.1,
-        229757.29,
-        233131.95
+        140475.38,
+        144204.05,
+        144324.24
       ]
     },
     "candidate": {
-      "median_rps": 231419.68,
+      "median_rps": 139210.25,
       "samples_rps": [
-        230294.78,
-        232906.1,
-        231419.68
+        138473.44,
+        139210.25,
+        139325.29
       ]
     },
-    "candidate_to_baseline_ratio": 1.0072354178620404
+    "candidate_to_baseline_ratio": 0.9653699046594045
   },
   "runner": {
     "architecture": "X64",
-    "cpu_model": "Intel(R) Xeon(R) 6975P-C",
-    "image": "ubuntu24/20261116.133.1",
-    "kernel": "Linux 7.0.0-1014-aws #14~24.04.1-Ubuntu SMP PREEMPT Fri Sep 18 21:24:59 UTC 2026 x86_64 GNU/Linux",
-    "name": "GitHub Actions 1000006793",
+    "cpu_model": "AMD EPYC 9V45 96-Core Processor",
+    "image": "ubuntu24/20261116.376.1",
+    "kernel": "Linux 7.0.0-1017-azure #17~24.04.1-Ubuntu SMP PREEMPT Thu Sep 24 18:46:57 UTC 2026 x86_64 GNU/Linux",
+    "name": "GitHub Actions 1000006799",
     "os": "Linux"
   },
   "schema_version": 1,
