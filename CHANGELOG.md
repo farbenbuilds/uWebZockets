@@ -75,6 +75,19 @@ uses Semantic Versioning.
   `85bd081c9103c077a7cc98271d09334d0f1043d4` pending the separate `uwz/main`
   sync.
 
+## [2.3.1] - 2026-11-25
+
+Patch release that repairs the 2.3.0 release provenance gate. No runtime, API,
+ABI, or maintained-dependency pin changes are included.
+
+### Fixed
+
+- Fast-forward the read-only lsquic mirror to upstream
+  `9efd3898b0342860d2e97d87cdf955de5f61acea` (v4.12.0) and record the reviewed
+  `cd23e526..9efd3898` range in `scripts/dependency_mirrors.env`. The exact
+  mirror check now passes for libxev, lsquic, and h1spec. The integration pin
+  remains `85bd081c9103c077a7cc98271d09334d0f1043d4`.
+
 ## [2.3.0] - 2026-11-11
 
 ### Added
